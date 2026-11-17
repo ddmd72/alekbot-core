@@ -17,11 +17,8 @@ from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
-from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
-from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
-from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
@@ -55,6 +52,7 @@ from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition.boot_setup import build_boot_checks
 from src.composition.identity_setup import build_identity
 from src.composition.operations_setup import build_operations
+from src.composition.session_routing_setup import build_session_routing
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -91,10 +89,8 @@ from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.call_text_file_service import CallTextFileService
-from src.services.channel_binding_service import ChannelBindingService
 from src.services.companion_context_assembler_service import CompanionContextAssemblerService
 from src.services.companion_extraction_service import CompanionExtractionService
-from src.services.companion_window_resolver import CompanionWindowResolver
 from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.document_delivery_service import DocumentDeliveryService
@@ -111,7 +107,6 @@ from src.services.language_preference_service import LanguagePreferenceService
 from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
-from src.services.overflow_routing_service import OverflowRoutingService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.prompt_builder import PromptBuilder
 from src.services.provider_registry import ProviderRegistry
@@ -248,40 +243,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     document_backends = build_document_backends(config, parser=parse_adapter)
     audio_service = document_backends.transcriber
 
-    logger.info("📦 Initializing Consolidation Queue...")
-    consolidation_queue = FirestoreConsolidationQueue(
-        db_client=db_client,
-        env_config=env_config
-    )
-
-    logger.info("🔗 Initializing Channel Binding Service...")
-    channel_binding_adapter = FirestoreChannelBindingAdapter(
-        db_client=db_client, env_config=env_config
-    )
-    channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
-
-    logger.info("🧑‍🏫 Initializing Companion Window Resolver...")
-    companion_window_resolver = CompanionWindowResolver(channel_binding_service)
-
-    # Overflow routing — when a session's sliding window overflows, the batch goes
-    # either to Alek's consolidation pipeline or to a companion's extraction pipeline,
-    # decided by the channel binding (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §9 item 3:
-    # "Absorb the ad-hoc flags one at a time: ChannelBinding stateless first").
-    # Built here, not with the rest of the companion pipeline further below, because
-    # ServiceContainer's session store needs overflow_callback at construction time.
-    # companion_extraction_queue is constructed here for the same reason and reused
-    # by the companion extraction pipeline below.
-    logger.info("🌊 Initializing Overflow Routing Service...")
-
-    companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
-    overflow_routing_service = OverflowRoutingService(
-        channel_binding_service=channel_binding_service,
-        user_repo=user_repo,
-        consolidation_queue=consolidation_queue,
-        companion_extraction_queue=companion_extraction_queue,
-        task_queue=agent_task_queue,
-    )
-    overflow_callback = overflow_routing_service.route_overflow
+    routing = build_session_routing(db_client, env_config, user_repo=user_repo, task_queue=agent_task_queue)
+    consolidation_queue, companion_extraction_queue = routing.consolidation_queue, routing.companion_extraction_queue
+    channel_binding_adapter, channel_binding_service = routing.channel_binding_adapter, routing.channel_binding_service
 
     # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
     logger.info("🏭 Initializing Service Container...")
@@ -291,8 +255,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         env_config=env_config,
         deploy_topology=topology,
         account_repo=account_repo,
-        overflow_callback=overflow_callback,
-        threshold_resolver=companion_window_resolver.resolve,
+        overflow_callback=routing.overflow_callback,
+        threshold_resolver=routing.threshold_resolver,
         alert_webhook=_alert_webhook,
         cipher=cipher,
         user_repo=user_repo,          # the email classifier reads the user's configuration per batch
