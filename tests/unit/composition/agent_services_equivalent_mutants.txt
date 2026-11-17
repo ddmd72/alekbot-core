@@ -1,0 +1,1 @@
+# Mutants a reviewer ruled equivalent for src.composition.agent_services: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.

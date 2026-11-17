@@ -292,6 +292,8 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.services.disabled_task", "tests/unit/services/disabled_task_equivalent_mutants.txt"),
     MutationTarget("src.services.language_resolver", "tests/unit/services/language_resolver_equivalent_mutants.txt"),
     MutationTarget("src.composition.deploy_topology", "tests/unit/composition/deploy_topology_equivalent_mutants.txt"),
+    MutationTarget("src.composition.agent_services", "tests/unit/composition/agent_services_equivalent_mutants.txt"),
+    MutationTarget("src.agents.agent_runtime", "tests/unit/agents/agent_runtime_equivalent_mutants.txt"),
     MutationTarget("src.domain.reminder_alert", "tests/unit/domain/reminder_alert_equivalent_mutants.txt"),
 )
 
