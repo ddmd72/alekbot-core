@@ -677,10 +677,9 @@ when it processed emails. The refresher is `BiographicalContextService.refresh_c
 handed to the agent through `AgentServices`): the service selects the baseline (`refresh_context`, §4.1) and saves it with
 the repository's `save_biographical_context_cache`, which only writes the document and lets a store error propagate. The
 refresh logs and swallows its own errors, so the previous cache stays. `ConsolidationService` then deletes the batch
-(§3 step 3). The Cabinet invalidate (§5.2), the janitor (§5.5, for each account it changed) and the owner's answer take
-the same refresher at construction. The memory review and the profile step still reach it through the repository's
-`refresh_biographical_context_cache`, which forwards to the service (the repository holds the service for them; the
-service gets the repository by `set_repository`).
+(§3 step 3). The Cabinet invalidate (§5.2), the janitor (§5.5, for each account it changed), the owner's answer, the
+memory review and the profile step take the same refresher at construction. The repository holds no service: the
+container builds the repository first and the context service over it.
 
 **A run that fails after it wrote refreshes too.** Stages 1–2b run inside a `try/finally`: if the run did not finish and
 its tracker saw a write (`wrote`), the `finally` rebuilds the cache (`consolidation_agent.py:789-844`); Stage 3 does the

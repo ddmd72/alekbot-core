@@ -152,7 +152,6 @@ class FirestoreFactRepository:
         db_client,
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
-        biographical_context_service: Optional[BiographicalContextService] = None,
         dedup_service: Optional[SmartDeduplication] = None,  # Injected!
     ):
         self._dedup_service = dedup_service or SmartDeduplication()
@@ -332,39 +331,27 @@ from ..domain.llm import Message    # ✅ domain → ok
 
 ### Problem
 
-Sometimes Application services need each other or Repository, creating circular dependencies.
+A cycle between an adapter and a service (the adapter calls the service, the service reads through the adapter) forces
+one of them to be built with `None` and completed after construction, and puts orchestration in the adapter.
 
 ### Solution
 
-1. Create objects with `None` for circular dependencies
-2. Set references after both objects exist
+Move the orchestration into the service and leave the adapter persistence only; the service then depends on the
+adapter's port, never the other way. Build the adapter first and the service over it. Callers that need the
+orchestration take it as a port of its own.
 
 ### Example
 
+The biographical cache: `BiographicalContextService.refresh_cache` (port `BiographicalCacheRefresher`) selects the
+context and saves it through `FactRepository.save_biographical_context_cache`, which only writes the document.
+
 ```python
-# Step 1: Create BiographicalContextService with None repository
+repository = FirestoreFactRepository(db_client, env_config, embedding_service=embedding_service)
 biographical_context_service = BiographicalContextService(
-    repository=None,  # Will be set later
-    config_service=config_service,
-    account_repo=account_repo,
+    repository=repository, config_service=config_service, account_repo=account_repo,
 )
-
-# Step 2: Create Repository (needs biographical_context_service)
-repository = FirestoreFactRepository(
-    db_client, env_config,
-    embedding_service=embedding_service,
-    biographical_context_service=biographical_context_service,  # DI
-)
-
-# Step 3: Resolve circular dependency
-biographical_context_service.set_repository(repository)
+# every fact-write path takes `bio_cache=biographical_context_service` (a BiographicalCacheRefresher)
 ```
-
-**Why This Works:**
-
-- Objects created in correct dependency order
-- Circular refs set after initialization
-- Services work correctly when called (refs exist by then)
 
 ---
 
