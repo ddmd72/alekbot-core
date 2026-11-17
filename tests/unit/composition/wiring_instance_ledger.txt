@@ -149,6 +149,7 @@ src.services.email_card_service.EmailCardService 1  # by-design single instance,
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
+src.services.execute_reminder_task.ExecuteReminderTask 1  # by-design the one execute_reminder runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (application_graph.py, Facts S4 T8e, T10a, T8g)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as _fact_profile_step in application_graph.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (application_graph.py:724,739,921, FACT_PROFILE_RFC 4.4)
