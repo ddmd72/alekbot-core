@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Tuple
 
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import empty_answer_alert, is_empty_answer
-from ..ports.alert_sink import AlertSinkPort
+from ..domain.notify_result import is_empty_answer
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from .background_empty_answer_reporter import BackgroundEmptyAnswerReporter
     from .email_review_service import EmailReviewService
     from .gmail_reconnect_flag import GmailReconnectFlag
     from .user_notification_service import UserNotificationService
@@ -26,13 +26,13 @@ class DailyEmailReviewTask:
         ensure_agents: Callable[[str], Awaitable[Any]],
         notification_service: "UserNotificationService",
         gmail_reconnect_flag: "GmailReconnectFlag",
-        alert_sink: Optional[AlertSinkPort],
+        empty_answer_reporter: "BackgroundEmptyAnswerReporter",
     ) -> None:
         self._email_review = email_review
         self._ensure_agents = ensure_agents
         self._notification = notification_service
         self._gmail_reconnect_flag = gmail_reconnect_flag
-        self._alert_sink = alert_sink
+        self._empty_answer_reporter = empty_answer_reporter
 
     async def __call__(self, payload: dict[str, Any], headers: dict[str, Any]) -> Tuple[dict[str, Any], int]:
         """
@@ -81,7 +81,7 @@ class DailyEmailReviewTask:
 
         if is_empty_answer(result):
             # Final: the per-date mark (set at fan-out) stays, so the review does not re-run today.
-            await self._empty_answer_final(user_id)
+            await self._empty_answer_reporter.report("daily_email_review", user_id)
             return {"status": "empty_answer_final", "emails": len(emails)}, 200
 
         if not result.delivered:
@@ -102,19 +102,3 @@ class DailyEmailReviewTask:
             f"[Worker] daily_email_review: delivered {len(emails)} emails to Smart for {user_id[:8]}"
         )
         return {"status": "ok", "emails": len(emails)}, 200
-
-    async def _empty_answer_final(self, user_id: str) -> None:
-        """The turn ended with no answer: final, never retried (one ERROR line + one ops alert, no content in either)."""
-        path = "daily_email_review"
-        logger.error(
-            "[Worker] background_empty_answer path=%s note=%s user=%s",
-            path, None, user_id[:8],
-            extra={"event": "background_empty_answer", "path": path, "note_id": None,
-                   "user_id": user_id[:8]},
-        )
-        if self._alert_sink is None:
-            return
-        try:
-            await self._alert_sink.post(empty_answer_alert(path, user_id, None))
-        except Exception as exc:
-            logger.warning("[Worker] background_empty_answer alert failed: %s", exc)

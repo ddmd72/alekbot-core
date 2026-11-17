@@ -6,19 +6,19 @@ it here through its task registry (built by `composition/worker_setup.py`).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Tuple
 
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import empty_answer_alert, is_empty_answer
+from ..domain.notify_result import is_empty_answer
 from ..domain.reminder_alert import build_reminder_alert, build_reminder_alert_summary
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..ports.agent_note_port import AgentNotePort
-from ..ports.alert_sink import AlertSinkPort
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from .background_empty_answer_reporter import BackgroundEmptyAnswerReporter
     from .user_notification_service import UserNotificationService
 
 
@@ -32,13 +32,13 @@ class ExecuteReminderTask:
         user_repo: UserRepository,
         ensure_agents: Callable[[str], Awaitable[Any]],
         notification_service: "UserNotificationService",
-        alert_sink: Optional[AlertSinkPort],
+        empty_answer_reporter: "BackgroundEmptyAnswerReporter",
     ) -> None:
         self._notes_port = notes_port
         self._user_repo = user_repo
         self._ensure_agents = ensure_agents
         self._notification = notification_service
-        self._alert_sink = alert_sink
+        self._empty_answer_reporter = empty_answer_reporter
 
     async def __call__(self, payload: dict[str, Any], headers: dict[str, Any]) -> Tuple[dict[str, Any], int]:
         """Run a single claimed reminder fire.
@@ -142,7 +142,7 @@ class ExecuteReminderTask:
         if is_empty_answer(result):
             # Final (owner decision 2026-10-23): a retry would repeat the SYNC actions the turn took, and a
             # conditional reminder may end empty every time. Take the success path below.
-            await self._empty_answer_final(user_id, note_id)
+            await self._empty_answer_reporter.report("execute_reminder", user_id, note_id)
         elif not result.delivered:
             logger.warning(
                 "[Worker] execute_reminder: delivery_failed note=%s user=%s "
@@ -168,19 +168,3 @@ class ExecuteReminderTask:
             "empty_answer_final" if is_empty_answer(result) else "ok", note_id, user_id[:8], due_at.isoformat(),
         )
         return {"status": "empty_answer_final" if is_empty_answer(result) else "ok"}, 200
-
-    async def _empty_answer_final(self, user_id: str, note_id: str) -> None:
-        """The turn ended with no answer: final, never retried (one ERROR line + one ops alert, no content in either)."""
-        path = "execute_reminder"
-        logger.error(
-            "[Worker] background_empty_answer path=%s note=%s user=%s",
-            path, note_id, user_id[:8],
-            extra={"event": "background_empty_answer", "path": path, "note_id": note_id,
-                   "user_id": user_id[:8]},
-        )
-        if self._alert_sink is None:
-            return
-        try:
-            await self._alert_sink.post(empty_answer_alert(path, user_id, note_id))
-        except Exception as exc:
-            logger.warning("[Worker] background_empty_answer alert failed: %s", exc)
