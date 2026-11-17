@@ -14,7 +14,9 @@ class _Factory:
 def _deps(notes_port):
     factory = _Factory()
     return dict(notes_port=notes_port, user_repo=object(), ensure_agents=factory.ensure_agents_for_user,
-                notification_service=object(), alert_sink=object())
+                notification_service=object(), alert_sink=object(), task_dispatch=None, video_registry=None,
+                quota_service=None, media_storage=None, link_service=None, short_link_service=None,
+                deep_research_fetch=None, prompt_content_store=None)
 
 
 def test_with_a_note_store_the_reminder_runner_holds_exactly_the_given_dependencies():
