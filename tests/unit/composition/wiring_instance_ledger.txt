@@ -104,6 +104,7 @@ src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
+src.composition.deploy_topology.DeployTopology 1  # by-design the graph's one topology, built by build_deploy_topology in build_application_graph (application_graph.py:242) and passed to the ServiceContainer, UserAgentFactory and SlackAdapterFactory
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.composition.email_card_runner.EmailCardRunner 1  # by-design the card step's one writer; it builds its agent once, lazily, on the pinned model (email_card_setup.py:35, email_card_runner.py:51-55)
