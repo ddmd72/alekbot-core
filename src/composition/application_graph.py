@@ -46,8 +46,8 @@ from src.composition.notification_setup import build_notifications
 from src.composition.companion_setup import build_companions
 from src.composition.memory_search_setup import build_memory_search
 from src.composition.agents_setup import build_agents
+from src.composition.integrations_setup import build_integrations
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
-from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
 from src.composition.document_service_setup import build_document_backends
 from src.composition.drive_note_setup import command_drive_note_service
@@ -58,7 +58,6 @@ from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.worker_setup import build_worker_tasks
-from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.fact_lifecycle_sweep import sweep_dry_run
@@ -102,9 +101,6 @@ from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
 from src.composition.deploy_topology import DeployTopology
-from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
-from src.composition.drive_connection_setup import build_drive_activation
-from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.ports.fact_search_port import FactSearchPort
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.drive_disconnect_service import DriveDisconnectService
@@ -373,24 +369,16 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         agents.factory, agents.long_turn_service, agents.language_preferences)
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
 
-    # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
-    oauth_credentials_port = container.oauth_credentials
     indexed_email_repo = container.indexed_email_repo
     email_indexing_service = container.email_indexing_service
 
-    # MS To Do services — reuse adapters from ServiceContainer
-    task_setup_service = None
-    if container.ms_todo_adapter and agent_task_queue:
-        task_setup_service = TaskSetupService(
-            lifecycle=container.ms_todo_adapter,
-            task_config=container.task_config_repo,
-            tasks_provider=container.ms_todo_adapter,
-            oauth_credentials=oauth_credentials_port,
-            task_search_index=container.task_search_index,
-            task_queue=agent_task_queue,
-            notification_url_base=topology.service_url,
-            connector=container.connectors.get(MICROSOFT_TODO),
-        )
+    integrations = build_integrations(db_client, env_config, container=container, boot=boot, ops=ops,
+                                      user_repo=user_repo, notification_service=notification_service,
+                                      languages=languages, ensure_agents=agent_factory.ensure_agents_for_user)
+    task_setup_service, _drive_sync_scheduler = integrations.task_setup, integrations.drive_sync_scheduler
+    _reconnect_service, _credential_revocation = integrations.reconnect, integrations.credential_revocation
+    _drive_disconnect, _connect_service = integrations.drive_disconnect, integrations.connect
+    _gmail_reconnect_flag = integrations.gmail_reconnect_flag
 
     # The one owner-zone resolver: the consolidation run, the memory review and the owner's answers (Facts S4).
     _owner_zones = OwnerTimezoneResolver(account_repo=account_repo, user_repo=user_repo)
@@ -438,66 +426,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     _fallback_service = AgentFallbackService(
         coordinator=coordinator,
         alert_webhook=_alert_webhook,
-    )
-
-    # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; RFC Δ5, Δ6). Built only when the
-    # drive queue exists (DRIVE_INDEXER_URL set): its ticks run on the indexer service.
-    _drive_sync_scheduler = None
-    if container.drive_task_queue and container.drive_index_repo and container.drive_connection_repo:
-        _drive_sync_scheduler = build_drive_sync_scheduler(
-            repo=container.drive_index_repo,
-            queue=container.drive_task_queue,
-            connections=container.drive_connection_repo,
-            connection_service=container.drive_connection_service,
-            notifier=notification_service,
-            alert_sink=_alert_webhook,
-            ensure_agents=agent_factory.ensure_agents_for_user,
-            localization=_localization,
-            language=_language_service,
-        )
-
-    # R1 (SECRETS_AT_REST_RFC §6.2, plan D-P4): Reconnect and one notice for a past connection with no credential.
-    # Lists its users from the feature stores; the hourly `reconnect_notice_sweep` covers Gmail and To Do (Drive's
-    # notice is the drive fan-out's; Drive's Reconnect reads its connections, MULTI_DRIVE_RFC §4.4).
-    _reconnect_service = IntegrationReconnectService(
-        credentials=oauth_credentials_port,
-        users=user_repo,
-        notifier=notification_service,
-        email_states=indexed_email_repo,
-        task_config=container.task_config_repo,
-        drive_connections=container.drive_connection_service,
-        alert_sink=_alert_webhook,
-        ensure_agents=agent_factory.ensure_agents_for_user,
-        mail_connector=container.connectors.get(GMAIL),
-        todo_connector=container.connectors.get(MICROSOFT_TODO),
-    )
-
-    # The integration connect flow (MULTI_DRIVE_RFC §4.3, §5.2): one revocation service (the provider-side revoke
-    # rule, also the Cabinet's disconnects) and one connect service over the registry's specs and realm edges, with
-    # one activation per integration. The drive one creates or reconnects the drive connection (§4.4, §5.2).
-    _credential_revocation = CredentialRevocationService(oauth_credentials_port, container.connectors.edges())
-    _drive_disconnect = (
-        DriveDisconnectService(container.drive_connection_service, _credential_revocation, container.user_drive,
-                               container.drive_note_repo, container.drive_task_queue)
-        if container.drive_connection_service is not None and container.user_drive is not None else None)
-    _drive_activation = (
-        build_drive_activation(connections=container.drive_connection_service, drive=container.user_drive,
-                               task_queue=container.drive_task_queue)
-        if container.drive_connection_service is not None and container.user_drive is not None else None)
-    _connect_service = build_oauth_connect_service(
-        db_client, env_config,
-        connectors=container.connectors,
-        credentials=oauth_credentials_port,
-        cipher=cipher,
-        digest_key=secret_digest_key,
-        revocation=_credential_revocation,
-        activations=build_connect_activations(
-            reconnect=_reconnect_service,
-            todo_connector=container.connectors.get(MICROSOFT_TODO),
-            task_queue=agent_task_queue,
-            drive_activation=_drive_activation,
-        ),
-        redirect_uri=auth_config.oauth_connect_redirect_uri,
     )
 
     # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
@@ -646,9 +574,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
     # from running twice; a claim whose attempt died is taken over by the retry.
     # TTL 3600s is garbage collection and the done-window, not the liveness rule.
-    _gmail_reconnect_flag = GmailReconnectFlag(
-        oauth_credentials=oauth_credentials_port, mail_connector=container.connectors.get(GMAIL),
-        ensure_agents=agent_factory.ensure_agents_for_user, notification_service=notification_service)
     worker_handler = WorkerHandler(
         task_claims=FirestoreTaskClaimStore(
             db_client=db_client,
