@@ -22,7 +22,7 @@ src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepos
 src.adapters.firestore_confirmed_people_repo.FirestoreConfirmedPeopleRepository 1  # by-design the one owner-confirmed people list store, built once on the ServiceContainer as confirmed_people and held by the one FactProfileService (service_container.py, fact_profile_setup.py, FACT_PROFILE_RFC 4.5)
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
 src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
-src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py build_worker_tasks, held by StartDailyEmailReviewTask), deep-research webhook claims, Telegram update dedup
+src.adapters.firestore_dedup_store.FirestoreDedupStore 2  # by-design two stores on two TTLs: worker daily-review marks (application_graph.py build_worker_tasks, held by StartDailyEmailReviewTask), Telegram update dedup
 src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 1  # by-design one connection store, held by the ServiceContainer and its DriveConnectionService (MULTI_DRIVE_RFC 4.4)
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance

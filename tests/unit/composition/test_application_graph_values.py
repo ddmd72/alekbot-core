@@ -73,10 +73,10 @@ async def test_the_coordinator_holds_the_billing_and_the_logger_agent(prod_graph
 
 
 @pytest.mark.slow
-async def test_both_deep_research_providers_are_registered_under_the_deploys_keys(prod_graph):
+async def test_claude_is_the_only_deep_research_provider_registered(prod_graph):
     registry = prod_graph.app.agent_factory.job_registry
 
-    assert sorted(registry.list_available()) == ["claude", "openai"]
+    assert sorted(registry.list_available()) == ["claude"]
 
 
 @pytest.mark.slow
