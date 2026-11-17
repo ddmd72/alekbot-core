@@ -105,6 +105,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
 | `DRIVE_UPGRADE_PASS_DEV` | `_DRIVE_UPGRADE_PASS` → `DRIVE_UPGRADE_PASS` (indexer) | optional; empty = `on`; `off` holds every version upgrade pass (Standing levers) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
+| `VOICE_DEBUG_TRANSCRIPT_USERS_DEV` | `_VOICE_DEBUG_TRANSCRIPT_USERS` → `VOICE_DEBUG_TRANSCRIPT_USERS` (relay) | optional, debug only; empty = off; `;`-separated user ids whose calls log speech text (relay knob 8 under Cloudflare Realtime SFU) |
 | `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
 | `SANDBOX_VPC_NETWORK_DEV`, `SANDBOX_VPC_SUBNET_DEV` | `_SANDBOX_VPC_NETWORK`, `_SANDBOX_VPC_SUBNET` | **required**: the custom VPC and its subnet both sandbox services deploy onto with no egress; `make deploy` refuses when either is empty, and the sandbox deploy scripts exit 4 (see Sandbox network) |
 | `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | `SANDBOX_LIGHT_URL_DEV` is required by the deploy target (it becomes `SANDBOX_PARSE_URL` on the main service and the indexer); see Sandbox light (parse) service |
@@ -167,6 +168,14 @@ relay; only the main service needs credentials, to mint SFU sessions.
    `LIVE_TEXT_LAG_MS` (ms, default `0`). It delays the release of Lelik's text on interpreter and tutor calls by that
    much audio, for the ear's lag behind the SFU; set it from probe P2 (`docs/10_rfcs/VOICE_CALL_LIVE_TEXT_RFC.md` §4.3).
    A value that is not an integer >= 0 gives `0` with a warning.
+8. One optional relay knob, **debug only and off by default**, read with `os.getenv` at boot
+   (`relay_main._voice_debug_transcript_users`): `VOICE_DEBUG_TRANSCRIPT_USERS`, user ids separated by `;` (a comma
+   breaks `--set-env-vars` and the substitution). A listed user's calls, in every mode, log `voice debug <fingerprint>:`
+   INFO lines: turn events, notes by kind, tool calls with their arguments and outputs, session updates, the Ask latch,
+   the language pair, and **the text of both sides' speech**. That carries third parties' speech (the other person on
+   an interpreter call) into Cloud Logging, kept 30 days: list a user only while debugging, then empty the key and
+   redeploy. The ids are never logged (the boot line gives only the count). The deploy sets it from the deploy-only key
+   `VOICE_DEBUG_TRANSCRIPT_USERS_DEV` (`_VOICE_DEBUG_TRANSCRIPT_USERS`, default empty).
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
 (`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.

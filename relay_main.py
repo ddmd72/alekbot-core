@@ -51,7 +51,7 @@ import logging
 import os
 import signal
 from pathlib import Path
-from typing import Callable, Dict, Type
+from typing import Callable, Dict, FrozenSet, Type
 from urllib.parse import urlsplit
 
 import websockets
@@ -127,6 +127,18 @@ def _live_text_lag_ms() -> int:
     return value
 
 
+def _voice_debug_transcript_users() -> FrozenSet[str]:
+    """VOICE_DEBUG_TRANSCRIPT_USERS, an optional debug knob read here (root CLAUDE.md: `os.getenv`, never settings): user
+    ids separated by `;` (a comma would break `--set-env-vars` and the cloudbuild substitution). A listed user's calls
+    log their speech text and events (`VoiceSessionService` `debug_transcript_users`). Unset or empty = off. The ids are
+    never logged: the boot line gives only how many are listed."""
+    raw = os.getenv("VOICE_DEBUG_TRANSCRIPT_USERS", "")
+    users = frozenset(part.strip() for part in raw.split(";") if part.strip())
+    if users:
+        logger.info(f"relay: voice debug transcript logging on for {len(users)} listed users")
+    return users
+
+
 def _load_thinking_cue() -> bytes:
     return _THINKING_CUE_PATH.read_bytes()
 
@@ -182,6 +194,8 @@ async def main() -> None:
         id_token_provider=lambda: _fetch_id_token(main_service_url),
     )
     alert_sink = SlackWebhookAdapter(webhook_url=billing_webhook_url)
+    # Debug only, off unless set: both the phone and the web service log a listed user's calls in detail.
+    debug_users = _voice_debug_transcript_users()
     session_service = VoiceSessionService(
         realtime_session_factory=_realtime_session_factory(api_keys, MULAW_8K),
         control_plane=control_plane,
@@ -204,6 +218,7 @@ async def main() -> None:
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
+        debug_transcript_users=debug_users,
     )
     handler = MediaStreamHandler(session_service=session_service)
 
@@ -233,6 +248,7 @@ async def main() -> None:
         control_hub=control_hub,
         web_pickup_max_wait_s=_WEB_PICKUP_MAX_WAIT_S,
         live_text_lag_ms=_live_text_lag_ms(),
+        debug_transcript_users=debug_users,
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service, dead_peer_timeout_s=_dead_peer_timeout_s())
     control_handler = CallControlHandler(control_hub)

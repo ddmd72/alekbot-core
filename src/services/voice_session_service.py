@@ -211,6 +211,10 @@ class _CallState:
     pair_followup_started: bool = False
     # The provider session cannot change its tools mid-call: the tool is never offered on this call.
     pair_unsupported: bool = False
+    # Debug only (`debug_transcript_users`): this call logs `voice debug` lines, timed from `debug_t0` (loop time).
+    debug: bool = False
+    debug_t0: float = 0.0
+    debug_latch: str = AskState.IDLE.value
     # Serialises the offer/withdraw and the instructions update: the control task and the consume loop both sync the
     # offer, and an Ask note must never reach the provider before the offer it depends on.
     pair_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -242,6 +246,7 @@ class VoiceSessionService:
         web_pickup_max_wait_s: float = 0.0,
         live_text_lag_ms: int = 0,
         live_text_tick_s: float = _LIVE_TEXT_TICK_S,
+        debug_transcript_users: frozenset = frozenset(),
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -266,7 +271,11 @@ class VoiceSessionService:
 
         `live_text_lag_ms`, `live_text_tick_s` (web calls only, interpreter and tutor mode calls with a control link,
         VOICE_CALL_LIVE_TEXT_RFC §4.3): the audio, in ms, the live text waits behind the played audio, and the beat on
-        which text whose audio has been played is sent to the page."""
+        which text whose audio has been played is sent to the page.
+
+        `debug_transcript_users` (debug only, temporary; empty = off): a call of a listed user, in any mode, logs its
+        turn events, notes, tool calls and both sides' transcript text as `voice debug <fingerprint>:` INFO lines. Text
+        never appears in any other line, and nothing changes for other users."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -287,6 +296,7 @@ class VoiceSessionService:
         self._web_pickup_max_wait_s = web_pickup_max_wait_s
         self._live_text_lag_ms = live_text_lag_ms
         self._live_text_tick_s = live_text_tick_s
+        self._debug_transcript_users = frozenset(debug_transcript_users)
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -330,6 +340,10 @@ class VoiceSessionService:
             state = _CallState(playback=playback, ticket=ticket, turn_ownership=spec.turn_ownership,
                                persona_anchor=build_persona_anchor(config["instructions"]) if relay_owned else None)
             context = RequestContext(user_id=config["user_id"], account_id=config["account_id"])
+            if config["user_id"] in self._debug_transcript_users:
+                state.debug = True
+                state.debug_t0 = asyncio.get_running_loop().time()
+                self._debug(state, f"call opened (mode={config.get('mode')}, provider={spec.provider})")
         except Exception as exc:
             logger.error(f"voice call {fingerprint(ticket)}: session config unusable: "
                          f"{redact_exception(exc, secrets=_config_secrets(fetched))}")
@@ -456,19 +470,19 @@ class VoiceSessionService:
                     logger.warning(f"voice call {fingerprint(ticket)}: resume: not honoured, opening fresh")
             if resumed:
                 # The earlier conversation, caller opening included, is already in the provider's context.
-                await session.submit_message("system", _RESUME_NOTE)
+                await self._system_note(session, state, _RESUME_NOTE)
             else:
                 # Provider-owned turns get no per-turn anchor, so the persona anchor goes in once at the start.
                 if state.turn_ownership is TurnOwnership.PROVIDER:
                     start_anchor = build_persona_anchor(config["instructions"])
                     if start_anchor is not None:
-                        await session.submit_message("system", start_anchor)
+                        await self._system_note(session, state, start_anchor)
                 if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
                     # A user turn, not system text: live, the caller's own request changed how
                     # Lelik spoke where the same rule as system text did not (2026-09-25).
                     await session.submit_message("user", self._caller_opening)
                 pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
-                await session.submit_message("system", pickup_note)
+                await self._system_note(session, state, pickup_note)
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
             consume_task = asyncio.ensure_future(
                 self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state,
@@ -664,15 +678,43 @@ class VoiceSessionService:
         # got there first: the lock holds the note until an offer in flight has been sent.
         await self._sync_pair_tool_offer(state)
         if step.insert_note:
-            await session.submit_message("system", _ASK_NOTE)
+            await self._system_note(session, state, _ASK_NOTE)
             logger.info(f"voice call {fingerprint(state.ticket)}: ask: note inserted")
         elif step.insert_translate_note:
             # Once the caller set the pair, every translate note names it, so the direction never depends on guessing.
             note = state.language_pair.note() if state.language_pair is not None else _TRANSLATE_NOTE
-            await session.submit_message("system", note)
+            await self._system_note(session, state, note)
             # Every utterance of an interpreter call: DEBUG, not INFO.
             logger.debug(f"voice call {fingerprint(state.ticket)}: ask: translate note inserted")
         self._apply_ask(state, step)
+
+    # ------------------------------------------------------------------ debug lines (`debug_transcript_users`)
+
+    @staticmethod
+    def _debug(state: _CallState, message: str) -> None:
+        """One `voice debug` INFO line, only on a listed user's call; the only lines that may carry speech text."""
+        if not state.debug:
+            return
+        elapsed_ms = round((asyncio.get_running_loop().time() - state.debug_t0) * 1000)
+        logger.info(f"voice debug {fingerprint(state.ticket)}: +{elapsed_ms}ms {message}")
+
+    @staticmethod
+    def _note_kind(state: _CallState, text: str) -> str:
+        if text == _ASK_NOTE:
+            return "ask"
+        if text == _TRANSLATE_NOTE:
+            return "translate"
+        if state.language_pair is not None and text == state.language_pair.note():
+            return "pair"
+        if text in (_PICKUP_NOTE, _WEB_PICKUP_NOTE):
+            return "pickup"
+        return "other"
+
+    @classmethod
+    async def _system_note(cls, session: RealtimeSessionPort, state: _CallState, text: str) -> None:
+        """Every system note the relay inserts goes through here (the debug line names its kind, never its text)."""
+        await session.submit_message("system", text)
+        cls._debug(state, f"system note inserted: {cls._note_kind(state, text)}")
 
     # ------------------------------------------------------------------ the interpreter's language pair
 
@@ -710,6 +752,12 @@ class VoiceSessionService:
             return False
         try:
             await session.update_session(instructions=instructions, tools=tools)
+            changed = []
+            if instructions is not None:
+                changed.append(f"instructions={len(instructions)} chars")
+            if tools is not None:
+                changed.append(f"tools=[{', '.join(str(tool.get('name')) for tool in tools)}]")
+            VoiceSessionService._debug(state, f"session updated: {'; '.join(changed)}")
         except NotImplementedError:
             state.pair_unsupported = True
             logger.warning(f"voice call {fingerprint(state.ticket)}: ask: the provider session cannot be updated "
@@ -734,7 +782,9 @@ class VoiceSessionService:
             else:
                 reason, output = "bad codes", PAIR_TOOL_BAD
             logger.info(f"voice call {fingerprint(state.ticket)}: ask: language pair refused ({reason})")
+            self._debug(state, f"language pair refused ({reason}), arguments: {payload.get('arguments')}")
             await session.submit_tool_result(call_id, output)
+            self._debug(state, f"tool output {call_id}: {output}")
             await self._reply_or_owe(session, state)
             return
         state.language_pair = pair
@@ -743,7 +793,9 @@ class VoiceSessionService:
         state.pair_followup_started = False
         logger.info(f"voice call {fingerprint(state.ticket)}: ask: language pair set "
                     f"({pair.caller}→caller, {pair.other}→other)")
+        self._debug(state, f"language pair set ({pair.caller}→caller, {pair.other}→other)")
         await session.submit_tool_result(call_id, pair.tool_ok())
+        self._debug(state, f"tool output {call_id}: {pair.tool_ok()}")
         # The standing block too: a translate note placed on speech_started lands late when the speech starts in the
         # tail of Lelik's playback, and the instructions do not depend on that.
         async with state.pair_lock:
@@ -755,6 +807,10 @@ class VoiceSessionService:
         """Record a step's report for the page: the state a reconnecting page gets in `welcome`, and an `ask_state`
         frame for the control task to send. Synchronous: the consume loop never waits on the page's socket."""
         report = step.report
+        if state.debug and state.ask is not None and state.ask.state.value != state.debug_latch:
+            reason_text = f", reason={report.reason.value}" if report is not None and report.reason is not None else ""
+            VoiceSessionService._debug(state, f"latch {state.debug_latch} -> {state.ask.state.value}{reason_text}")
+            state.debug_latch = state.ask.state.value
         if report is None or state.ask_link is None:
             return
         state.ask_link.set_state(ask=report.state)
@@ -789,6 +845,7 @@ class VoiceSessionService:
         tool_called = False  # Per response: this or a barge-in explains an empty transcript.
         async for event in session.receive_events():
             if event.type == "response_created":
+                self._debug(state, f"response_created (active={state.response_active}, reason={state.response_reason})")
                 if not state.response_active:
                     # Only a provider that owns turns starts a reply the relay did not claim.
                     state.response_reason = "provider"
@@ -813,6 +870,7 @@ class VoiceSessionService:
                     state.text.reply_started(
                         ask=state.ask is not None and state.ask.state is AskState.AWAITING_REPLY)
             elif event.type == "speech_started":
+                self._debug(state, f"speech_started {event.payload.get('item_id')}")
                 if state.ask is not None:
                     # First, before anything else is sent: a note created now lands right before the caller's turn
                     # (xAI probe, RFC §5.2), which is committed a second or more later.
@@ -829,6 +887,8 @@ class VoiceSessionService:
                 state.speech_dismissed = False
                 state.speech_in_greeting_guard = False
                 if state.response_active or not state.playback.caught_up:
+                    self._debug(state, f"barge-in: speech over Lelik (response_active={state.response_active}, "
+                                       f"played={state.playback.played_bytes} B, sent={state.playback.sent_bytes} B)")
                     if self._in_greeting_guard(state):
                         state.speech_in_greeting_guard = True
                     elif state.turn_ownership is TurnOwnership.PROVIDER:
@@ -849,6 +909,7 @@ class VoiceSessionService:
                     await clear_outbound_audio()
                 state.cue_tail_until = 0.0
             elif event.type == "speech_stopped":
+                self._debug(state, f"speech_stopped {event.payload.get('item_id')}")
                 if state.ask is not None:
                     self._apply_ask(state, state.ask.speech_stopped(event.payload.get("item_id")))
                 if state.text is not None:
@@ -868,6 +929,7 @@ class VoiceSessionService:
                 # Kept for the end-of-call report, never logged (VOICE_CALL_CONTROL_CHANNEL_RFC §9).
                 state.resume_handle = event.payload["handle"]
             elif event.type == "turn_committed":
+                self._debug(state, f"turn_committed {event.payload.get('item_id')}")
                 if state.ask is not None and state.ask.state is not AskState.IDLE and event.payload.get("item_id"):
                     # The language pair gate: a caller turn committed since the latest arm.
                     state.pair_items_since_arm.append(event.payload["item_id"])
@@ -893,6 +955,7 @@ class VoiceSessionService:
                         state.greeting_audible_at = asyncio.get_running_loop().time()
                     elapsed_ms =round((asyncio.get_running_loop().time() - state.response_started_at) * 1000)
                     logger.info(f"voice call {fingerprint(ticket)}: first audio after {elapsed_ms} ms ({state.response_reason})")
+                    self._debug(state, f"first audio {event.payload.get('item_id')} after {elapsed_ms} ms")
                     if state.reply_after_tool_since is not None:
                         after_tool_s = asyncio.get_running_loop().time() - state.reply_after_tool_since
                         logger.info(f"voice call {fingerprint(ticket)}: first audio after tool result: {after_tool_s:.1f}s")
@@ -914,10 +977,13 @@ class VoiceSessionService:
             elif event.type == "tool_call":
                 # Also for a language pair call: the response made a tool call, which explains an empty transcript.
                 tool_called = True
+                self._debug(state, f"tool call {event.payload.get('call_id')} {event.payload.get('name')}: "
+                                   f"{event.payload.get('arguments')}")
                 if state.response_cancelled:
                     call_id = event.payload.get("call_id")
                     logger.info(f"voice call {fingerprint(ticket)}: delegation {call_id} skipped (response cancelled)")
                     await session.submit_tool_result(call_id, _CANCELLED_TOOL_CALL)
+                    self._debug(state, f"tool output {call_id}: {_CANCELLED_TOOL_CALL}")
                 elif state.ask is not None and event.payload.get("name") == SET_LANGUAGE_PAIR:
                     # Interpreter calls only: call-local state, never a delegation.
                     await self._handle_language_pair(session, state, event.payload)
@@ -925,6 +991,7 @@ class VoiceSessionService:
                     self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
             elif event.type == "user_transcript":
                 pending_request_text += event.payload["text"]
+                self._debug(state, f"caller said ({event.payload.get('item_id')}): {event.payload['text']}")
                 if state.text is not None:
                     item = event.payload.get("item_id")
                     state.text.caller_text(item, event.payload["text"], ask=self._ask_marked(state, item))
@@ -934,7 +1001,11 @@ class VoiceSessionService:
                                            event.payload.get("audio_offset_ms"), state.playback.sent_bytes)
             elif event.type == "model_transcript":
                 pending_response_text += event.payload["text"]
+                self._debug(state, f"Lelik said: {event.payload['text']}")
             elif event.type == "response_done":
+                status = event.payload.get("status")
+                self._debug(state, "response_done" + (f" (status={status})" if status is not None else "")
+                            + (" (cancelled)" if state.response_cancelled else ""))
                 state.response_active = False
                 if state.pair_followup_pending and state.pair_followup_started:
                     # The confirmation of an accepted pair has been given: the Ask cycle is over unless the latch holds.
@@ -1055,7 +1126,7 @@ class VoiceSessionService:
         state.response_started_at = asyncio.get_running_loop().time()
         logger.info(f"voice call {fingerprint(state.ticket)}: starting response ({reason})")
         if note:
-            await session.submit_message("system", note)
+            await self._system_note(session, state, note)
         await session.request_response()
 
     async def _watch_silence(self, session: RealtimeSessionPort, state: _CallState) -> None:
@@ -1271,10 +1342,12 @@ class VoiceSessionService:
                 note = _LATE_FAILURE_NOTE.format(request=answer.request)
             else:
                 note = _LATE_ANSWER_NOTE.format(request=answer.request, output=answer.output)
-            await session.submit_message("system", note)
+            await self._system_note(session, state, note)
             channel = "system note"
+            self._debug(state, f"tool output {answer.call_id} (as a system note): {answer.output}")
         else:
             await session.submit_tool_result(answer.call_id, answer.output)
+            self._debug(state, f"tool output {answer.call_id}: {answer.output}")
             channel = "late function_call_output" if late else "function_call_output"
         logger.info(f"voice call {fingerprint(state.ticket)}: answer {answer.call_id} injected as {channel}, "
                     f"{len(answer.output)} chars")
