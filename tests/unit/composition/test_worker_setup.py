@@ -14,7 +14,8 @@ class _Factory:
 def _deps(notes_port):
     factory = _Factory()
     return dict(notes_port=notes_port, user_repo=object(), ensure_agents=factory.ensure_agents_for_user,
-                notification_service=object(), alert_sink=object())
+                notification_service=object(), alert_sink=object(), email_review=object(), task_dispatch=object(),
+                daily_review_marks=object(), gmail_reconnect_flag=object(), account_repo=object())
 
 
 def test_with_a_note_store_the_reminder_runner_holds_exactly_the_given_dependencies():
