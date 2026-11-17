@@ -1,6 +1,6 @@
 """
 DriveNoteDeletedSearch — the owner-notes source of the deleted-files search (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §6.4,
-D9, D16, D21; plan part C). A `DeletedSource` of DriveSearchService (`add_deleted_source`): the deleted-files
+D9, D16, D21; plan part C). A `DeletedSource` of DriveSearchService (`deleted_sources`): the deleted-files
 search of the drive specialist, one section, one result list with the archived transcripts (§0.3). It reads the note
 store only, never the index, so it needs neither the opt-in flag nor a connection (it runs before the index gate).
 

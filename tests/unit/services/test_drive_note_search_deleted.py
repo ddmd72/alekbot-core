@@ -81,12 +81,12 @@ class World:
         self.emb = AsyncMock(spec=EmbeddingService)
         self.emb.get_embedding.return_value = [1.0, 0.0, 0.0]
         counter = itertools.count(1)
-        self.svc = DriveSearchService(self.index, self.emb, self.drive, connection_service(repo), embedding_space=SPACE,
-                                      nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror)
         nonces = itertools.count(1)
         self.source = DriveNoteDeletedSearch(self.notes, self.emb, embedding_space=SPACE, store_keys=store_keys,
                                              nonce=lambda: f"note{next(nonces):04d}")
-        self.svc.add_deleted_source(self.source)
+        self.svc = DriveSearchService(self.index, self.emb, self.drive, connection_service(repo), embedding_space=SPACE,
+                                      nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror,
+                                      deleted_sources=[self.source])
 
     def put(self, *notes):
         for note in notes:
