@@ -4,7 +4,8 @@ be built in, and a dependency that arrives late is `None` until then).
 (a) In `src/composition/` and `main.py`, a call of a method named `attach_*`, `set_*`, `register_*` or `register` is
 allowed only on `late_wiring_calls_allowlist.txt`: `<path>::<callee>  # <count>  # <reason>`, where `<callee>` is the
 called expression as written (`worker_handler.attach_slack_worker`) and the count is exact. The permanent exceptions
-(the Registry pattern and the one real router-factory cycle) carry the count `*` and a reason starting with `permanent`.
+(the Registry pattern, the one real router-factory cycle and the late Telegram platform binding of `register_late_platform`,
+owner ruling 2026-11-17) carry the count `*` and a reason starting with `permanent`.
 
 (b) In `src/services/` and `src/handlers/`, a method named `attach_*` or `set_*` is allowed only on
 `late_wiring_setters_allowlist.txt`: `<path>::<Class>.<method>  # <reason>`.
