@@ -20,7 +20,7 @@ from src.domain.long_turn import LongTurnRecord, LongTurnStatus
 from src.domain.turn_clock import STALE_AFTER_S
 from src.ports.long_turn_registry import LongTurnRegistry
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -30,8 +30,8 @@ TITLE = "plan the weekend in Coimbra"
 
 
 class Turns:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={TURNS: "development_long_turns"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={TURNS: "development_long_turns"})
         self.registry: LongTurnRegistry = FirestoreLongTurnRegistry(self.db, TURNS)
 
     @property
@@ -44,9 +44,9 @@ class Turns:
 
 
 @pytest.fixture
-def turns(monkeypatch):
+def turns(monkeypatch, kit_db):
     pin_datetime(monkeypatch, registry_module, T0)
-    return Turns()
+    return Turns(kit_db)
 
 
 def record(turn_id="turn1", user_id="u1", heartbeat_age=5.0, **over) -> LongTurnRecord:
