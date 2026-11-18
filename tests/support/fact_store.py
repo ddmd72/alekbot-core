@@ -3,7 +3,7 @@ import hashlib
 import random
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from unittest.mock import AsyncMock
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
@@ -53,15 +53,18 @@ def make_env_config() -> SimpleNamespace:
 
 
 class FactStore:
-    """db + repo + write service + management adapter, all real, over one EvalDb.
+    """db + repo + write service + management adapter, all real, over one database.
 
     `indexes` (a path to `config/firestore.indexes.json` or its parsed list) switches the fake's index refusal on, with the
-    facts collection mapped to its declared group; the default is the fake without refusal.
+    facts collection mapped to its declared group; the default is the fake without refusal. `kit_db` is the kits' database
+    factory (`tests/support/kit_backend.py`: `EvalDb` in the unit suite, the test database in the cloud gate); without it
+    the store is built over a fresh `EvalDb`. `groups` maps further collection names to their declared groups.
     """
 
-    def __init__(self, indexes: Union[None, str, Path, list] = None) -> None:
-        groups: Optional[dict] = None if indexes is None else {FACTS: FACTS_INDEX_GROUP}
-        self.db = EvalDb(indexes=indexes, groups=groups)
+    def __init__(self, indexes: Union[None, str, Path, list] = None, kit_db: Optional[Callable[..., Any]] = None,
+                 groups: Optional[Dict[str, str]] = None) -> None:
+        mapped: Dict[str, str] = {FACTS: FACTS_INDEX_GROUP, **(groups or {})}
+        self.db = (kit_db or EvalDb)(indexes=indexes, groups=mapped)
         self.embedder = HashEmbedder()
         self.repo = FirestoreFactRepository(self.db, make_env_config(), embedding_service=self.embedder)
         self.write = FactWriteService(self.embedder)
