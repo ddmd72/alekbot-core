@@ -89,11 +89,16 @@ class AuthenticationService:
             logger.warning(f"⛔ OAuth sign-in rejected: email not verified: {email}")
             raise AccessDeniedError(f"Email not verified: {email}")
 
-        whitelist = await self.whitelist_repo.get_whitelist()
-        if not whitelist.is_allowed(email):
+        if not await self._whitelisted(email):
             logger.warning(f"⛔ OAuth sign-in rejected: email not in whitelist: {email}")
             raise AccessDeniedError(f"Email not in whitelist: {email}")
         return email
+
+    async def _whitelisted(self, email: str) -> bool:
+        """The one access-list check, for sign-in (`_require_allowed_email`) and session renewal (`resume_session`).
+        `email` comes normalised (lowercase, stripped)."""
+        whitelist = await self.whitelist_repo.get_whitelist()
+        return whitelist.is_allowed(email)
 
     async def handle_oauth_callback(
         self,
@@ -250,15 +255,21 @@ class AuthenticationService:
     async def resume_session(self, user_id: str) -> Tuple[UserProfile, BillingAccount]:
         """
         The stored user and their account, for renewing a session (`/auth/refresh`): the new access token's role and
-        tier come from what is stored now, as at sign-in, never from the refresh token's payload.
+        tier come from what is stored now, as at sign-in, never from the refresh token's payload. The stored email is
+        checked against the whitelist as at sign-in, so an email taken off the list stops renewing.
 
         Raises:
-            AccessDeniedError: the user is absent or inactive, or their account is absent.
+            AccessDeniedError: the user is absent or inactive, their email is missing or not on the whitelist, or
+                their account is absent.
         """
         user = await self.user_repo.get_user(user_id)
         if user is None or not user.is_active:
             logger.warning(f"⛔ Session renewal refused: user {user_id} is absent or inactive")
             raise AccessDeniedError(f"User {user_id} is absent or inactive")
+        email = (user.email or "").lower().strip()
+        if not email or not await self._whitelisted(email):
+            logger.warning(f"⛔ Session renewal refused: user {user_id} has no email on the whitelist")
+            raise AccessDeniedError(f"User {user_id} has no email on the whitelist")
         account = await self.account_repo.get_account(user.account_id) if user.account_id else None
         if account is None:
             logger.warning(f"⛔ Session renewal refused: user {user_id} has no stored account")

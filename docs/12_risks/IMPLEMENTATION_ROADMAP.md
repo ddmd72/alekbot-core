@@ -18,15 +18,6 @@ the next free id and says what is wrong, where (file and function, not line numb
 - Fix: a token bucket per `user_id` on those routes. `src/utils/rate_limiter.py` holds a token bucket, but no code
   uses it today.
 
-### SEC-2: `/auth/refresh` does not re-check the whitelist [P2]
-
-- `refresh_token_endpoint` (`src/web/oauth_app.py`) loads the stored user and account
-  (`AuthenticationService.resume_session`: an absent or inactive user is refused), but does not read the whitelist. An
-  email removed from the whitelist can still refresh until the refresh token expires (`REFRESH_TOKEN_TTL`, 24 h by
-  default; see `decisions/cabinet_session_24h_cap.md` and `decisions/cabinet_oauth_whitelist_gate.md`).
-- Fix: re-check the whitelist on refresh and refuse on a miss. Open question first: which stored email the check
-  reads (sign-in checks the verified ID-token email, which the user document does not always hold).
-
 ### SEC-3: Error responses carry exception text [P2]
 
 - No app-level `errorhandler` is registered, and several Cabinet routes return `{"error": str(e)}`, one of them as a
@@ -309,3 +300,4 @@ the next free id and says what is wrong, where (file and function, not line numb
 | TD-4 | `update_fact` overwrote fact text in place | Facts S2, 2026-10-23 (history starts at the S2 deploy) | `decisions/fact_versions_one_writer.md` |
 | TD-7 | Cost priced by the agent's default model, not the model that ran | 2026-07-30 | `decisions/billing_per_model_pricing.md` |
 | TD-8 | `anthropic` unpinned | pinned 2026-08-11 (the wider sweep is R-5) | `requirements.txt` |
+| SEC-2 | `/auth/refresh` did not re-check the whitelist | 2026-11-18 (the stored `user.email`, as the chat path) | `decisions/cabinet_oauth_whitelist_gate.md` |

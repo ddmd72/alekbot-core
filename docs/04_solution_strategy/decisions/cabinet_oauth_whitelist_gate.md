@@ -54,11 +54,13 @@ The dead `platform="oauth"` branch of `IAMService.authorize`, `IAMService._creat
 the `email` parameter of `PlatformAuthPort.authorize` were deleted. A second, uncalled whitelist
 path is what made the real one look present.
 
-## Revocation latency: ≤48h, accepted
+## Revocation latency: ≤24h, accepted
 
-The check runs at login, not per request, and not at refresh (SEC-2 in `IMPLEMENTATION_ROADMAP.md`).
-The Cabinet session slides (`cabinet_session_24h_cap.md`): a refresh token lives 24h from login and
-a refresh mints a 24h access token, so a revoked email loses access within 48h of its last login. A
+The check runs at login and at every refresh, not per request.
+Since 2026-11-18 (owner decision) `/auth/refresh` re-checks the list: `AuthenticationService.resume_session` passes the
+stored `user.email` through the same `_whitelisted` check sign-in uses (the chat path also checks `user.email`; a user
+with no stored email is refused), and a miss is the refresh's ordinary 401. A revoked email therefore keeps only the
+access token it holds, up to 24h (`cabinet_session_24h_cap.md`). A
 per-request check in `auth_required` would add one Firestore read to every API call. For instant
 revocation, rotate the session signing secret, which logs everyone out.
 
