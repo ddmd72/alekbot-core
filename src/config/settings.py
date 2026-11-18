@@ -29,7 +29,7 @@ def load_settings():
     """Load all required settings from .env and Secret Manager with environment awareness.
 
     NOTE: print() is used intentionally here and in get_secret() above (which
-    load_settings() calls for every secret) — logger is not yet initialized
+    load_settings() calls for each key the environment leaves empty) — logger is not yet initialized
     when load_settings() runs (it's called during bootstrap before any logging
     infrastructure is set up). Do NOT replace with logger.
     """
