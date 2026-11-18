@@ -222,6 +222,13 @@ def _parse_dt(value: Optional[str], user_tz: ZoneInfo) -> Optional[datetime]:
         return None
 
 
+def _bad_due(tool: str, value: Any) -> Dict[str, str]:
+    return {"error": (
+        f"{tool}: 'due' {value!r} names no time. Send an ISO-8601 datetime; a local time inside the "
+        "spring clock change does not exist, so pick one after it."
+    )}
+
+
 def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
     if not value:
         return None
@@ -229,6 +236,14 @@ def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
         return TaskComplexity(value)
     except ValueError:
         return None
+
+
+def _bad_complexity(tool: str, value: Any) -> Optional[Dict[str, str]]:
+    """A tool error when `complexity` was sent but is not a TaskComplexity value; None when absent or valid."""
+    if not value or _parse_complexity(value) is not None:
+        return None
+    allowed = ", ".join(c.value for c in TaskComplexity)
+    return {"error": f"{tool}: unknown 'complexity' {value!r}; use one of: {allowed}."}
 
 
 _BINDABLE = ("create_self_reminder", "update_self_reminder")
@@ -502,7 +517,12 @@ class NotesAgent(BaseAgent):
         if name == "create_self_reminder":
             due = _parse_dt(args.get("due"), self._user_tz)
             if due is None:
+                if args.get("due"):
+                    return _bad_due(name, args.get("due"))
                 return {"error": "create_self_reminder requires 'due' field (ISO-8601 datetime)."}
+            complexity_error = _bad_complexity(name, args.get("complexity"))
+            if complexity_error:
+                return complexity_error
             try:
                 rule = self._normalize_rule(args.get("recurrence"))
             except ValueError as exc:
@@ -556,6 +576,11 @@ class NotesAgent(BaseAgent):
                 return {"error": "Pass either 'recurrence' or 'clear_recurrence', not both."}
 
             due = _parse_dt(args.get("due"), self._user_tz)
+            if due is None and args.get("due"):
+                return _bad_due(name, args.get("due"))
+            complexity_error = _bad_complexity(name, args.get("complexity"))
+            if complexity_error:
+                return complexity_error
             if rule:
                 # A new rule must own the schedule, so the fire time is snapped onto
                 # it — against the new due when given, otherwise the stored one.
