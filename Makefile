@@ -166,9 +166,9 @@ help: ## Show this help message
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
 	@echo "  make test-affected   Inner loop: only the unit tests testmon selects for your changes"
-	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, coverage gate) + G2"
+	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, coverage gate) + offline integration + G2"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
-	@echo "  make test-integration Run integration tests"
+	@echo "  make test-integration Offline integration tests (tests/integration/offline, network guard; part of make check)"
 	@echo "  make test-cloud      Cloud gate: the parity scenarios on the Firestore test database and, with TEST_GCS_BUCKET, the GCS test bucket (serial, by hand)"
 	@echo "  make lint            Lint src/ and the root entry points with ruff"
 	@echo "  make format          Format src/ with ruff"
@@ -304,9 +304,13 @@ test-affected: ## Inner loop: only the unit tests testmon selects for your chang
 		echo "🌱 Seeding .testmondata from $(TESTMON_SEED)"; $(PYTHON) scripts/seed_testmondata.py "$(TESTMON_SEED)/.testmondata" .testmondata; fi
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon --testmon-forceselect -m "not timing"
 
-test-integration: ## Run integration tests
-	@echo "🧪 Running integration tests..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/ -v --asyncio-mode=auto
+# The offline integration tests (mocked or scripted, no real service), under the network guard; part of `make check` and
+# `make ci`. The G2 end-to-end case has its own target (test-g2-offline), so it is deselected here.
+G2_OFFLINE_TEST := tests/integration/offline/test_drive_g2_end_to_end.py::test_text_layer_g2_cases_find_their_substring_in_the_window
+test-integration: ## Offline integration tests (tests/integration/offline, network guard on, without the G2 case)
+	@echo "🧪 Running the offline integration tests..."
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/offline/ -q --asyncio-mode=auto -p tests.plugins.network_guard \
+	    --deselect $(G2_OFFLINE_TEST)
 
 # Cloud gate (RFC §4): real writes to the Firestore TEST database and, with TEST_GCS_BUCKET set, the GCS TEST bucket (the guards
 # are in tests/cloud/conftest.py and tests/cloud/test_gcs_parity_cloud.py; GCS skips without the variable); never in
@@ -333,7 +337,7 @@ check-types: ## mypy (lenient) on src/adapters — informational, never fails
 
 test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted models, offline)
 	@echo "🧪 Running the offline G2 end-to-end test..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/offline/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
 
 # Where the run writes which tests ran and which were skipped (tests/plugins/skip_report.py); CI uploads it.
 SKIP_REPORT_PATH ?= skip-report.json
@@ -348,10 +352,10 @@ test-ci: ## Unit suite once: slow tests and the coverage gate (part of `make ci`
 	@echo "🚦 Enforcing per-layer coverage floors..."
 	@$(PYTHON) scripts/check_coverage_layers.py
 
-check: lint typecheck test-unit test-g2-offline ## ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 (CI runs `make ci`)
+check: lint typecheck test-unit test-integration test-g2-offline ## ruff lint + mypy (domain/ports) + unit/architecture tests + offline integration tests + offline G2 (CI runs `make ci`)
 	@echo "✅ All checks passed"
 
-ci: lint typecheck test-ci test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, coverage gate) + offline G2
+ci: lint typecheck test-ci test-integration test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, coverage gate) + offline integration tests + offline G2
 	@echo "✅ CI passed"
 
 # ============================================================================

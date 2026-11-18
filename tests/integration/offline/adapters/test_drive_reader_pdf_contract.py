@@ -6,7 +6,7 @@ from src.adapters.claude_adapter import ClaudeAdapter
 from src.adapters.openai_adapter import OpenAIAdapter
 from src.ports.llm_port import LLMRequest, Message, MessagePart
 from tests.contracts.adapter_contracts import PDF_FILE_INPUT_IS_INLINE, STRUCTURED_OUTPUT_PDF_SENDS_NO_CITATIONS
-from tests.integration.adapters.conftest import ClaudeCapturingStub, OpenAIResponsesCapturingStub
+from tests.integration.offline.adapters.conftest import ClaudeCapturingStub, OpenAIResponsesCapturingStub
 
 _SCHEMA = {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}}
 

@@ -14,7 +14,7 @@ from tests.contracts.adapter_contracts import (
     SCHEMA_WITH_CLIENT_TOOLS_USES_DELIVER_TOOL,
     SCHEMA_WITHOUT_TOOLS_USES_NATIVE_FORMAT,
 )
-from tests.integration.adapters.conftest import ClaudeCapturingStub, OpenAIResponsesCapturingStub
+from tests.integration.offline.adapters.conftest import ClaudeCapturingStub, OpenAIResponsesCapturingStub
 
 _MESSAGES = [Message(role="user", parts=[MessagePart(text="Hi")])]
 _TOOLS = [{"name": "search_memory", "description": "Search memories",

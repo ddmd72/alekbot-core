@@ -19,7 +19,7 @@ from tests.contracts.adapter_contracts import (
     GMAIL_AUTHORIZATION_HEADER_PRESENT,
     GMAIL_LIST_EMAILS_PAGE_TOKEN_EXCLUDES_QUERY,
 )
-from tests.integration.adapters.conftest import GmailCapturingStub
+from tests.integration.offline.adapters.conftest import GmailCapturingStub
 
 
 def _credentials() -> OAuthCredential:

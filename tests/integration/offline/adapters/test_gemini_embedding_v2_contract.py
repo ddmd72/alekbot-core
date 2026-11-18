@@ -16,7 +16,7 @@ init path + SDK-call surface.
 import pytest
 
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-from tests.integration.adapters.conftest import GeminiEmbeddingCapturingStub
+from tests.integration.offline.adapters.conftest import GeminiEmbeddingCapturingStub
 
 
 @pytest.mark.asyncio

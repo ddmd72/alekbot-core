@@ -25,4 +25,4 @@ python scripts/prompt/sync_components.py \
 echo "✅ Test components uploaded successfully!"
 echo ""
 echo "Run tests:"
-echo "  pytest tests/integration/test_prompt_4level_e2e.py -v -s"
+echo "  pytest tests/cloud/test_prompt_4level_cloud.py -v -s"

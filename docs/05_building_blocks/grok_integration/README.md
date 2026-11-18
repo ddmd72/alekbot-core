@@ -206,5 +206,5 @@ Wire tests mock at the SDK boundary `adapter.client.responses.create`
 (see [`ADAPTER_WIRE_TESTING.md`](../../how_to/ADAPTER_WIRE_TESTING.md)):
 
 - `tests/unit/adapters/test_grok_adapter.py`
-- `tests/integration/adapters/` — reuses `OpenAIResponsesCapturingStub`, shared with `OpenAIAdapter`
+- `tests/integration/offline/adapters/` — reuses `OpenAIResponsesCapturingStub`, shared with `OpenAIAdapter`
 - `tests/contracts/adapter_contracts.py` — `"grok"` validators for tool_choice and grounding
