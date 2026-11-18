@@ -543,6 +543,8 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P23 | **Mutation metric**: `mutmut` on the store modules, weekly or owner-run; survivors are a backlog | sched | 0.5 | suites that verify nothing, as a trend | 3 (revised 2026-10-27: dropped, the weekly semantic run is the metric; see "Rules revised") |
 | P24 | **`tests/integration/` split**: `tests/integration/offline/` (mocked, scripted; may join `make check` if fast) and `tests/cloud/` (§4); the two cloud-writing tests move under the guards or go to a reviewer for retirement | check / cloud | 0.5 | live-data pollution by tests | 3 |
 
+**Built (P22b, 2026-11-18).** `.github/workflows/render.yml`, after a merge to `main` and on `workflow_dispatch`, on a plain `ubuntu-latest` runner (no custom image, no secrets): job `render` runs `npm ci` in `docx_generator/` and `pdf_generator/`, installs chrome-headless-shell, runs the eight real-render test files that `ci.yml` skips and fails when any of them skips for a missing prerequisite (skip report, `tests/plugins/skip_report.py`); job `sandbox-image` builds the `render` and `light` targets of `Dockerfile.sandbox` without pushing. The tests that need the built image (`SANDBOX_TEST_IMAGE`, marker `docker`) still run in no gate.
+
 **Built (P2, 2026-10-22).** H3 (`tests/unit/conftest.py` + `tests/support/network_guard.py`; the offline G2 run gets the same guard
 from `-p tests.plugins.network_guard` in `make test-g2-offline`, so no file under `tests/integration/` changed), the per-layer
 floors (`scripts/check_coverage_layers.py`, `.coveragerc` with `branch = True`, the root `*_main.py` and `patch = subprocess`),

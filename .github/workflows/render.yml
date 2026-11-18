@@ -1,0 +1,130 @@
+name: Render
+
+# Post-merge real-render gate (TEST_COVERAGE_SYSTEMIC_RFC P22b). ci.yml never installs node modules or a browser, so the
+# DOCX / PDF / HTML render tests skip there (tests/skip_ledger.txt, gate `never`). This workflow installs them on a plain
+# GitHub-hosted runner (no custom image), runs exactly those tests and fails when one of them skips. It also builds both
+# targets of Dockerfile.sandbox (never pushed). No secrets, no registry login, no cloud credentials, no Slack.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: real node + Puppeteer render tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Puppeteer's postinstall would download a full Chrome; the engine drives chrome-headless-shell only (installed below).
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_CACHE_DIR: ${{ github.workspace }}/.cache/puppeteer
+      SKIP_REPORT_PATH: skip-report-render.json
+      # slow-marked render tests (test_html_render_engine_real.py) run only with this switch.
+      RUN_SLOW_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          # Dockerfile.sandbox installs the distro nodejs (no pin); docx needs node ^18 || >=20, puppeteer >=18. 22 is the
+          # sandbox track's major (the engine tests run under it locally).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            docx_generator/package-lock.json
+            pdf_generator/package-lock.json
+
+      - name: npm ci (docx_generator, pdf_generator)
+        run: |
+          (cd docx_generator && npm ci --omit=dev)
+          (cd pdf_generator && npm ci --omit=dev)
+
+      - name: Cache chrome-headless-shell
+        id: browser-cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/puppeteer
+          key: chrome-headless-shell-${{ runner.os }}-${{ hashFiles('pdf_generator/package-lock.json') }}
+
+      - name: Install chrome-headless-shell
+        # The revision the installed puppeteer expects (the lockfile pins puppeteer), as in Dockerfile.sandbox.
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        working-directory: pdf_generator
+        run: npx puppeteer browsers install chrome-headless-shell
+
+      - name: Real-render tests
+        # The files whose skipif needs node / node_modules / chrome-headless-shell (tests/skip_ledger.txt rows gated `never`
+        # for P22b). The runner is non-root, as those tests require.
+        run: |
+          python -m pytest -p no:cacheprovider -p tests.plugins.skip_report --asyncio-mode=auto -q -rs \
+            tests/unit/adapters/sandbox_client/test_docx_runner_contract.py \
+            tests/unit/adapters/sandbox_client/test_pdf_runner_contract.py \
+            tests/unit/adapters/sandbox_client/test_html_renderer_contract.py \
+            tests/unit/adapters/sandbox_engine/test_docx_render_engine.py \
+            tests/unit/adapters/sandbox_engine/test_docx_render_engine_limits.py \
+            tests/unit/adapters/sandbox_engine/test_html_render_engine_real.py \
+            tests/unit/adapters/sandbox_engine/test_html_render_no_network.py \
+            tests/unit/adapters/sandbox_engine/test_render_html_filter.py
+
+      - name: Fail when a render test was skipped
+        # A skipped render test is the failure this job exists to catch (a missing install must not read as green). Only
+        # the two prerequisites this job does not provide may skip: the built sandbox image (SANDBOX_TEST_IMAGE) and
+        # Playwright Chromium (the in-process renderer case, no CI job installs it).
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, re, sys
+          report = json.load(open("skip-report-render.json"))
+          allowed = re.compile(r"SANDBOX_TEST_IMAGE|built render image|Playwright Chromium")
+          bad = {r: v["tests"] for r, v in report["skipped_by_reason"].items() if not allowed.search(r)}
+          passed = report["outcomes"].get("passed", 0)
+          print("outcomes:", report["outcomes"])
+          for reason, tests in bad.items():
+              print(f"::error title=render test skipped::{reason}: {len(tests)} test(s), e.g. {tests[0]}")
+          if bad or passed == 0:
+              sys.exit(1)
+          PY
+
+      - name: Skip report as a step summary
+        if: always()
+        continue-on-error: true
+        run: python scripts/ci/skip_report_summary.py skip-report-render.json >> "$GITHUB_STEP_SUMMARY"
+
+  sandbox-image:
+    name: build Dockerfile.sandbox (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [render, light]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          target: ${{ matrix.target }}
+          push: false
+          cache-from: type=gha,scope=sandbox-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=sandbox-${{ matrix.target }}

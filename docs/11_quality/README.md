@@ -20,3 +20,7 @@ the coverage numbers. A docs-only change (defined in `scripts/ci/docs_only.py`: 
 `timing` job, but still runs the doc-reading tests listed in `DOC_READING_TESTS`. Three weekly cloud workflows,
 `Mutation survivors`, `Firestore parity` and `Spec drift` (the providers' published specs against
 `contracts/spec_drift/`), write artifacts that a scheduled routine reads; they never post to Slack.
+
+**Real render.** `.github/workflows/render.yml` (after a merge to `main`, and `workflow_dispatch`) installs node modules and
+chrome-headless-shell on a plain runner and runs the DOCX / PDF / HTML render tests that `ci.yml` skips; it is red when one of them
+skips for a missing prerequisite. A second job builds both targets of `Dockerfile.sandbox` (never pushed). No secrets, no Slack.
