@@ -218,7 +218,7 @@ src/
   config/       — EnvironmentConfig, Settings, AuthConfig.   utils/ — logger, telemetry, file_conversion.
   web/          — Quart apps: OAuth, Cabinet, MCP consent, voice webhooks, landing, sandbox server routes.
   skills/       — System skills (SKILL.md + files), loaded at startup; the repo is public.
-main.py         — Main service bootstrap: settings, Firestore, `build_application_graph`, web layer, MCP ASGI dispatcher, /worker.
+main.py         — Main service bootstrap: settings, Firestore, `build_application_graph`, web layer (the `/worker`, `/health` routes are `src/web/main_service_routes.py`, the MCP ASGI dispatcher `src/web/mcp_dispatcher.py`).
 indexer_main.py — Drive indexer service (`drive_sync`-only /worker).   relay_main.py — voice relay (plain websockets).
 job_main.py     — Cloud Run Job (deep research).   sandbox_main.py — untrusted-content sandbox (imports no app layers).
 docx_generator/ — Node.js project for DOCX; not a Python package.

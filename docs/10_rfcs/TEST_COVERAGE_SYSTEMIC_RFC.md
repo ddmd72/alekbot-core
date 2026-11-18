@@ -639,8 +639,9 @@ the `returns:` lines of the Consolidation tools other than `search_existing_fact
   tripwires behind them, and sends every one of their 99 routes, plus every route of the MCP SDK app, an anonymous request: refused, nothing
   touched or written. A `PUBLIC` list holds the routes public by design, one reason each. An AST companion ties every `register_blueprint` in
   `main.py`, `indexer_main.py` and `sandbox_main.py`, and `_is_mcp_path`'s literals, to what the probe builds.
-- **`/worker` is held by an AST check** (`tests/unit/test_main_worker_route_gate.py`: the gate is awaited first, its 401 returned unchanged),
-  the owner's choice over moving `/worker` out of `main.py`; tidying `main.py` is an open owner topic.
+- **`/worker` is held by an AST check** (`tests/unit/test_main_worker_route_gate.py`: the gate is awaited first, its 401 returned unchanged).
+  `/worker` now lives in the `main_service` blueprint (`src/web/main_service_routes.py`); the check parses that module and stays, since
+  statement order and async-ness are not visible to a route test (`tests/unit/web/test_main_service_routes.py` drives the route itself).
 - **The inventory's negative tests**, route-level on real repositories over H1: deep-research Svix HMAC, Slack signature, Graph webhook, voice
   OIDC, Cabinet owner and foreign tenant, every `/auth/*` refusal, MCP consent and the SDK app, the relay's ticket.
 - **Known defects as strict xfails:** the open redirect after sign-in (a fix PR follows); the Graph webhook trusting the URL's user id (owner:
@@ -735,8 +736,9 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     Closed by the matrix card: all five rows answer 200 through the deployed route, with their outcomes asserted (the Slack notice, the history pair,
     the To Do config, the reindex task, the completed job); `_probe` seeds them (`_seed_rows`, `tests/support/prompt_seed.py` for the notice formatter's
     prompt). Three other rows changed as a consequence of the seed: `daily_email_review`, `start_email_indexing` and `renew_all_task_subscriptions`.
-- **Left for "tidy main.py":** the voice closures; `/worker`, `/health` and `/favicon` as a blueprint (then `test_main_worker_route_gate.py` retires);
-  the MCP dispatcher; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the main.py allowlist entries.
+- **Left for "tidy main.py":** the voice closures; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the
+  main.py allowlist entries. Done: `/worker`, `/health` and `/favicon` are the `main_service` blueprint and the MCP dispatcher is
+  `src/web/mcp_dispatcher.py` (`test_main_worker_route_gate.py` retargeted to the blueprint module, kept).
 
 **Built (P16, 2026-10-27).** The clock suite. Test-only: no `src/` change. Files and deviations:
 - **Harness.** `tests/support/clock_instants.py` (self-test `tests/unit/support/test_clock_instants.py`): the 2026 DST instants, the skipped and

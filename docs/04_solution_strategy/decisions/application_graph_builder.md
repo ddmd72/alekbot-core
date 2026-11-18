@@ -27,5 +27,5 @@ graph alone, or "tidy main.py" runs.
 
 ## Triggers to revise
 
-`/worker` moves into a blueprint (then `test_main_worker_route_gate.py` retires); a second process needs the graph
-(`indexer_main`, `job_main`, `relay_main` still wire themselves).
+A second process needs the graph (`indexer_main`, `job_main`, `relay_main` still wire themselves). (The earlier trigger, `/worker` as a
+blueprint, fired: it is the `main_service` blueprint and `test_main_worker_route_gate.py` parses that module.)
