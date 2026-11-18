@@ -475,7 +475,6 @@ class TestReviewQuestionPostedOnce:
     was delivered, without one it was never posted. The post is `:580`, the ref write `:586`, `mark_asked` `:589`. Not a
     duplicate of `test_fact_review_questions.py:554-584`, which crashes `mark_asked`, after the ref is stored."""
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D11)
     async def test_a_question_posted_whose_ref_write_failed_is_not_posted_again(self):
         """The post succeeds and the ref write raises once; the next day's run must not post q1 again nor tell the
         owner it was not delivered.

@@ -1219,7 +1219,7 @@ memory-write lease (the one consolidation holds, so the two never write at once;
 named task):
 1. *Owner check.* The user must be the account's first owner, and the profile must belong to the account; else a WARNING and
    `not_owner`. Questions, sessions, language and timezone are the owner's; facts are the account's.
-2. *Housekeeping.* A question whose send never finished is completed (it has a message reference: it was posted) or taken
+2. *Housekeeping.* A question whose send never finished is completed (it has a message reference or a recorded post, `posted_at`: it was posted) or taken
    back (it has none: a "not delivered" pair is appended and the question goes back to the front of the queue). An asked
    question sent on an earlier local day becomes `unanswered`: still open, still timing out, no longer the current one.
 3. *Timeouts, in code.* A question sent (`asked`, `unanswered`) 14 days ago is closed by silence. If its fact is still the
@@ -1509,7 +1509,7 @@ close-out (an abandoned-refusal alert, the expiry errors added to the account's 
 | an owner's answer finds the fact changed since the question (a rewritten fact, a different current text) or its write conflicts | `changed` or `conflict`: nothing is written, the owner gets "That fact has changed in the meantime…" (a button keeps its buttons), the question stays open | none | — | the owner may answer again; the review or the timeout handles it otherwise |
 | an owner's answer is refused by the write rules (`not_applied`) | WARNING, `answers_not_applied` counted, the question stays open; a digit reply is left to ordinary conversation | none | — | no |
 | a question cannot be sent (its pair is not stored, or the post fails) | pair not stored: the question goes back to the front of the queue, nothing posted. Post failed: a "not delivered" pair is appended, the question goes back to the front, no more are sent that day, `not_delivered` is counted | none | — | the next day's run |
-| the post succeeded but a mark failed (a crash between the post and `asked`) | housekeeping of the next run completes a pending question that has a message reference as `asked`; it is never sent twice | none | — | — |
+| the post succeeded but a mark failed (a crash between the post and `asked`) | housekeeping of the next run completes a pending question that has a message reference or a recorded post (`posted_at`, written right after the post and before the reference, so a lost reference write is covered too) as `asked`; it is never sent twice | none | — | — |
 | an error in the reply intake | ERROR, `reply_intake_failed` counted (a 🚨 the next morning), the message goes on as ordinary conversation | none | — | no |
 | a Slack click arrives with a bad signature, or the queue is down | 401 with nothing parsed; 503 or 500 when the task is not queued (Slack shows the click as failed) | none | — | the owner clicks again |
 | the digest is not delivered or cannot be read | the claim is released and the marks stay, so the next run tries again; an error is logged and never fails the run | none | — | yes, the next run |

@@ -438,8 +438,8 @@ class FactReviewService:
             await self._refresh_after_error(account_id, writes)
 
     async def _housekeeping(self, account_id: str, now: datetime, zone: str) -> None:
-        """Step 5. A `stuck_pending` question with a message ref was delivered: it becomes asked at its `appended_at`. One
-        without a ref is retracted (the not-delivered pair, only when its frame was appended) and goes back to the front
+        """Step 5. A `stuck_pending` question with a message ref or a recorded post was delivered: it becomes asked at its `appended_at`. One
+        with neither is retracted (the not-delivered pair, only when its frame was appended) and goes back to the front
         of the queue. Then an asked question from an earlier owner-local day becomes unanswered and stops being current.
         A send claimed today is left alone: it may still be running. These moves are the same for every question, a profile
         one included (it reads `scope="all"`); a profile question past its timeout is then closed `timeout`, and nothing
@@ -675,8 +675,8 @@ class FactReviewService:
         domain's `may_send` in its transaction) for the owner-local day of `now`: none → nothing. The message in the
         message language (`texts.message_for`), then the pair (`review_frame` + `question_text`, raising when not
         stored): a failure puts the question back at the queue's front (`sent` kept, no failed day). The post: the
-        returned ref is stored (`set_message_ref`) before the question is asked (`mark_asked`), so a crash in between is
-        completed by housekeeping, never resent. A post that raises is not delivered: the not-delivered pair
+        post is recorded (`mark_posted`), then the returned ref is stored (`set_message_ref`), before the question is asked
+        (`mark_asked`), so a crash or a lost ref write in between is completed by housekeeping, never resent. A post that raises is not delivered: the not-delivered pair
         (`_retract`), the question back at the front with today as the failed day, `not_delivered` counted. A question
         closed meanwhile (the Cabinet, the review) stays closed; its close released the next one, so nothing is
         released here. Writes no fact (`writes` is not marked); store errors raise."""
@@ -711,6 +711,8 @@ class FactReviewService:
             await self._retract(appended)
             await self._requeue(appended, failed_today=True, why="it was not delivered")
             return _StepResult(counts={CounterField.NOT_DELIVERED: 1})
+        # The post is recorded before its ref: a ref write that is lost leaves a posted question, never a "not delivered" one.
+        await self._review_store.mark_posted(qid, now)
         if not await self._review_store.set_message_ref(qid, ref):
             logger.warning(f"[FactReview] question {qid} was posted at {ref.message_id} but closed meanwhile; ref not kept")
             return _StepResult(counts={CounterField.QUESTIONS_SENT: 1})
