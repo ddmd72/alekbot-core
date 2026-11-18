@@ -199,7 +199,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     languages = build_languages(config, user_repo=identity.user_repo, account_repo=identity.account_repo)
     notifications = build_notifications(config, db_client, env_config, coordinator=coordinator,
                                         session_store=container.session_store, media_storage=delivery.media_storage,
-                                        languages=languages)
+                                        link_service=delivery.link_service, languages=languages)
     jobs = build_background_jobs(container=container, coordinator=coordinator,
                                  notification_service=notifications.service, task_queue=ops.task_queue,
                                  delivery=delivery, user_repo=identity.user_repo, languages=languages)

@@ -3,19 +3,20 @@ RichContentService — application-layer dispatcher for rich content delivery.
 
 Agents declare *what* to generate (RichContent); this service handles *how*:
   - converts LLM-generated text to binary formats (xlsx, docx)
-  - .html files → GCS public URL (returned to caller for link delivery)
+  - .html files → private media bucket + a `/f/<token>` capability link (returned to the caller for link
+    delivery; needs the user id and the link service), else uploaded to the platform like any other file
   - other files → direct platform upload via PlatformMediaPort
 
 ConversationHandler calls process() for each non-table rich content item
 after the text response has been delivered.
 
 Returns:
-  Optional[str] — public URL when content was stored in GCS (html),
+  Optional[str] — the `/f/<token>` link when an html page was stored privately,
                   None when content was uploaded as a file attachment.
 
 Supported types:
   file      — LLM-generated content
-              .html              → GCS upload → return URL
+              .html              → private upload → return the `/f/<token>` link (no user id → platform upload)
               .md / .txt         → UTF-8 encode → platform upload
               .xlsx (CSV→xlsx)   → platform upload
               .docx (Markdown→docx) → platform upload
@@ -27,13 +28,17 @@ Planned (M3+):
 import csv
 import io
 import uuid
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..ports.platform_media_port import PlatformMediaPort
 from ..ports.media_storage_port import MediaStoragePort
 from ..ports.html_renderer_port import HtmlRendererPort, HtmlRenderError
 from ..domain.messaging import MEDIA_CONTENT_TYPES as _MEDIA_CONTENT_TYPES, ResponseChannel, RichContent
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    # Type-only import (REQ-ARCH-22: services must not import services at runtime); injected via the constructor.
+    from .file_link_service import FileLinkService
 
 
 class RichContentService:
@@ -44,25 +49,30 @@ class RichContentService:
         media_port: PlatformMediaPort,
         storage_port: Optional[MediaStoragePort] = None,
         html_renderer: Optional[HtmlRendererPort] = None,
+        link_service: Optional["FileLinkService"] = None,
     ) -> None:
         self._media_port = media_port
         self._storage_port = storage_port
         self._html_renderer = html_renderer
+        # The bucket is private: a stored page reaches the user only through a `/f/<token>` capability link
+        # (decisions/rich_content_one_delivery_path.md), never as its storage key.
+        self._link_service = link_service
 
-    async def process(self, content: RichContent, channel_id: str) -> Optional[str]:
+    async def process(self, content: RichContent, channel_id: str, user_id: Optional[str] = None) -> Optional[str]:
         """
         Process a single RichContent item and deliver it to the platform.
 
         Args:
             content:    Structured content descriptor from LLM output
             channel_id: Platform-specific channel identifier
+            user_id:    The owner, for an html page's capability link; without it the page is uploaded as a file
 
         Returns:
-            Public URL string if content was stored in GCS (html file type),
+            The `/f/<token>` link if an html page was stored privately,
             None for all other types (direct upload or skip).
         """
         if content.content_type == "file":
-            return await self._handle_file(content, channel_id)
+            return await self._handle_file(content, channel_id, user_id)
         elif content.content_type == "widget":
             await self._handle_widget(content, channel_id)
             return None
@@ -78,14 +88,15 @@ class RichContentService:
         content: RichContent,
         response_channel: ResponseChannel,
         thread_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Route one rich-content item to the right delivery path (chat turns and background notifications alike):
           - media types (file, widget, ...) → process() on the channel's id (convert + upload, or GCS URL)
           - table and others → ResponseChannel.send_rich_content (Block Kit / fallback)
 
-        When process() returns a URL (e.g. HTML → GCS), the URL is sent as a plain message so
-        Slack unfurls it as a preview.
+        When process() returns a link (an html page → `/f/<token>`), it is sent as a plain message so
+        Slack unfurls it as a preview. `user_id` is the owner the link is minted for.
         """
         if content.content_type not in _MEDIA_CONTENT_TYPES:
             await response_channel.send_rich_content(content, thread_id=thread_id)
@@ -99,7 +110,7 @@ class RichContentService:
             )
             await response_channel.send_rich_content(content, thread_id=thread_id)
             return
-        url = await self.process(content, channel_id)
+        url = await self.process(content, channel_id, user_id)
         if url:
             await response_channel.send_message(url, thread_id=thread_id)
 
@@ -107,7 +118,7 @@ class RichContentService:
     # Private handlers
     # ------------------------------------------------------------------
 
-    async def _handle_file(self, content: RichContent, channel_id: str) -> Optional[str]:
+    async def _handle_file(self, content: RichContent, channel_id: str, user_id: Optional[str] = None) -> Optional[str]:
         filename = content.data.get("filename", "document.md").strip()
         title = content.data.get("title", filename).strip()
         text_content = content.data.get("content", "")
@@ -118,9 +129,10 @@ class RichContentService:
 
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "md"
 
-        # HTML → GCS public URL (if storage_port configured)
-        if ext == "html" and self._storage_port:
-            return await self._store_html(text_content, filename)
+        # HTML → private bucket + capability link, when one can be minted for this user; otherwise the page is
+        # uploaded below like any other file (as on Telegram), never posted as its storage key.
+        if ext == "html" and self._can_link(user_id):
+            return await self._store_html(text_content, filename, user_id)
 
         # All other formats → encode/convert → platform file upload
         try:
@@ -192,17 +204,26 @@ class RichContentService:
             channel_id=channel_id,
         )
 
-    async def _store_html(self, html_content: str, filename: str) -> Optional[str]:
-        """Upload HTML to GCS and return public URL. Falls back to plain text upload on error."""
+    def _can_link(self, user_id: Optional[str]) -> bool:
+        return bool(self._storage_port and self._link_service and user_id)
+
+    async def _store_html(self, html_content: str, filename: str, user_id: Optional[str] = None) -> Optional[str]:
+        """Store the page in the private bucket and return its `/f/<token>` link for `user_id`; None (nothing
+        stored) when no link can be minted or the upload fails."""
+        storage, links = self._storage_port, self._link_service
+        if storage is None or links is None or not user_id:
+            logger.warning("RichContentService: no capability link for '%s' (no storage, link service or user id)",
+                           filename)
+            return None
         try:
             html_bytes = html_content.encode("utf-8")
             key = f"html/{uuid.uuid4()}-{filename}"
-            url = await self._storage_port.store(
+            stored_key = await storage.store(
                 data=html_bytes,
                 key=key,
                 content_type="text/html; charset=utf-8",
             )
-            return url
+            return links.build_link(key=stored_key, user_id=user_id)
         except Exception as e:
             logger.error(
                 "RichContentService: GCS upload failed for '%s' — %s; skipping delivery",
