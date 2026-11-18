@@ -112,6 +112,8 @@ async def test_store_outage_propagates_and_stores_nothing(fake, store):
     assert fake.names(BUCKET) == []
 
 
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
 async def test_signed_url_with_a_local_signer_needs_no_object(monkeypatch, fake, store):
     monkeypatch.setattr(google.auth, "default", lambda *a, **k: (_KeyCredentials(), "proj"))
     url = await store.generate_signed_url(KEY, 300)
@@ -123,6 +125,8 @@ async def test_signed_url_with_a_local_signer_needs_no_object(monkeypatch, fake,
     assert fake.names(BUCKET) == []                   # the key does not exist
 
 
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
 async def test_signed_url_with_runtime_credentials_signs_through_iam(monkeypatch, fake, store):
     monkeypatch.setattr(google.auth, "default", lambda *a, **k: (_RuntimeCredentials("runtime-sa@example.com"), "p"))
     await store.generate_signed_url(KEY, 60)
@@ -131,6 +135,8 @@ async def test_signed_url_with_runtime_credentials_signs_through_iam(monkeypatch
         "runtime-sa@example.com", "access-token", timedelta(seconds=60))
 
 
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
 async def test_signed_url_without_ambient_credentials_sends_no_iam_signer(monkeypatch, fake, store):
     """Pins only the signing request. The real client then signs with what it holds, or raises (with no ambient
     credentials `storage.Client()` itself would already have raised: this branch is reachable only when the client
@@ -145,6 +151,8 @@ async def test_signed_url_without_ambient_credentials_sends_no_iam_signer(monkey
         None, None, timedelta(seconds=60))
 
 
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
 async def test_signed_url_with_an_unknown_signer_is_a_runtime_error(monkeypatch, fake, store):
     monkeypatch.setattr(google.auth, "default", lambda *a, **k: (_RuntimeCredentials("default"), "proj"))
     with pytest.raises(RuntimeError):
