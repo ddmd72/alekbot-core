@@ -433,5 +433,5 @@ with one tap.
   Alek" opens Safari on the call button. It does not autostart, by owner decision: iOS allows
   the AudioContext (ringback) only inside a user gesture, and an accidental open must not place
   a call.
-- **Session.** It is capped at 24h with no silent refresh, and an expired session goes to login
-  and back to the call page. See `decisions/cabinet_session_24h_cap.md`.
+- **Session.** A login gives 24h (a refresh slides it; the call page does not call refresh), and an
+  expired session goes to login and back to the call page. See `decisions/cabinet_session_24h_cap.md`.

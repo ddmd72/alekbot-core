@@ -755,7 +755,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P16-D4: recurrence drops `fold` (DAILY in the repeated hour returns an instant before the anchor; HOURLY and 15-minute rules lose a real hour on
     the fall-back day).
   - P16-D5: a skipped local wall time is accepted as the earlier offset; an unknown Cabinet zone answers 500.
-  - P16-D6: `/auth/refresh` mints a fresh 24 h access token (the cap from login is not enforced).
+  - P16-D6: `/auth/refresh` mints a fresh 24 h access token (the cap from login is not enforced). Not a defect since the owner
+    chose a sliding session (`decisions/cabinet_session_24h_cap.md`); the pin is retired or rewritten by its reviewer.
   - P16-D7: the billing summary's Month line mixes months after traffic past 00:00Z on the 1st.
   - P16-D10: To Do sends an aware time's wall-clock digits labelled UTC (due, start, reminder).
   - P16-D11: the automatic To Do reminder is 20:00 UTC. A fix needs a zone input, so its reviewer rewrites that test.
