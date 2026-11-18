@@ -4,7 +4,12 @@ turned into Admin API indexes (TEST_COVERAGE_SYSTEMIC_RFC §4 "Indexes"). Pure: 
 The render keeps the `development_*` composites of one collection group and renames the group to `test_*` (the prefix of
 `APP_ENV=test`); field overrides (single-field configs and exemptions) are not rendered. A signature is the scope plus
 `(field, mode)` per field without `__name__` (the server appends `__name__` to every composite), where the mode is the
-order, `CONTAINS` or `VECTOR`; it is what decides whether a wanted index already exists.
+order, `CONTAINS` or `VECTOR`. The key (`wanted_key`, `existing_key`) adds the vector dimensions and the direction of
+`__name__`: as declared, else the one the server appends (the direction of the last ordered field, ascending without one),
+so two indexes that differ only there are two indexes; it is what decides whether a wanted index already exists.
+
+`probe_query(collection, index)` is a query only that composite serves (or None when no query needs it as a composite):
+the cloud gate runs it after the Admin API reports READY, because a fresh index can still answer "currently building".
 """
 import json
 from pathlib import Path
@@ -81,14 +86,57 @@ def of_group(indexes: Any, group: str) -> List[Any]:
     return [i for i in indexes if i.name.split("/collectionGroups/", 1)[-1].split("/", 1)[0] == group]
 
 
+def _name_direction(declared: Optional[str], orders: List[str]) -> str:
+    """The direction of `__name__` in a composite: as declared, else the last ordered field's (ascending without one)."""
+    return declared or (orders[-1] if orders else "ASCENDING")
+
+
 def wanted_key(index: Dict[str, Any]) -> Tuple[Any, ...]:
-    """`wanted_signature` plus the dimension of each vector field: two vector indexes that differ only in dimension are
-    different indexes (what `ensure_indexes` compares)."""
-    return wanted_signature(index), tuple(f["vectorConfig"]["dimension"] for f in index["fields"] if "vectorConfig" in f)
+    """`wanted_signature` plus the dimension of each vector field (two vector indexes that differ only in dimension are
+    different indexes) and the direction of `__name__` (what `ensure_indexes` compares)."""
+    name = next((f.get("order") for f in index["fields"] if f["fieldPath"] == "__name__"), None)
+    orders = [f["order"] for f in index["fields"] if f["fieldPath"] != "__name__" and "order" in f]
+    return (wanted_signature(index), tuple(f["vectorConfig"]["dimension"] for f in index["fields"] if "vectorConfig" in f),
+            _name_direction(name, orders))
 
 
 def existing_key(index: Any) -> Tuple[Any, ...]:
-    return existing_signature(index), tuple(f.vector_config.dimension for f in index.fields if f.vector_config.dimension)
+    def order(f: Any) -> Optional[str]:
+        return None if f.vector_config.dimension or f.array_config else f.order.name
+
+    name = next((order(f) for f in index.fields if f.field_path == "__name__"), None)
+    orders = [o for o in (order(f) for f in index.fields if f.field_path != "__name__") if o]
+    return (existing_signature(index), tuple(f.vector_config.dimension for f in index.fields if f.vector_config.dimension),
+            _name_direction(name, orders))
+
+
+PROBE_VALUE = "__index_probe__"
+
+
+def probe_query(collection: Any, index: Dict[str, Any]) -> Any:
+    """A query on `collection` (a Firestore collection reference, sync or async, or the fake's) that needs exactly the
+    composite `index`, limited to one result; None when no query needs it as a composite (all its fields are equality or
+    array filters, which Firestore serves by merging single-field indexes). A vector index: a pre-filter on every other
+    field and `find_nearest` on the vector. Otherwise: an equality (or `array_contains`) filter on every field but the last,
+    and the last as the ordering, in its direction."""
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+    from google.cloud.firestore_v1.vector import Vector
+
+    fields = [f for f in index["fields"] if f["fieldPath"] != "__name__"]
+    vector = next((f for f in fields if "vectorConfig" in f), None)
+    rest = [f for f in fields if f is not vector] if vector else fields[:-1]
+    if not vector and (len(fields) < 2 or "order" not in fields[-1]):
+        return None
+    query = collection
+    for f in rest:
+        op = "array_contains" if "arrayConfig" in f else "=="
+        query = query.where(filter=FieldFilter(f["fieldPath"], op, PROBE_VALUE))
+    if vector:
+        return query.find_nearest(vector_field=vector["fieldPath"],
+                                  query_vector=Vector([1.0] * int(vector["vectorConfig"]["dimension"])),
+                                  distance_measure=DistanceMeasure.COSINE, limit=1)
+    return query.order_by(fields[-1]["fieldPath"], direction=fields[-1]["order"]).limit(1)
 
 
 def admin_index(index: Dict[str, Any]) -> Any:

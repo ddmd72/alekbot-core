@@ -19,6 +19,7 @@ import importlib
 import os
 import time
 import uuid
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,13 +28,13 @@ from typing import Any, Callable, Dict, Iterator, List, Set
 import google.auth
 import pytest
 from dotenv import dotenv_values
-from google.api_core.exceptions import AlreadyExists
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition
 from google.auth import impersonated_credentials
 from google.cloud import firestore, firestore_admin_v1, storage
 
 from src.config.environment import EnvironmentConfig
 from tests.support.cloud_credentials import select_credentials
-from tests.support.cloud_indexes import admin_index, existing_key, of_group, wanted_key
+from tests.support.cloud_indexes import admin_index, existing_key, of_group, probe_query, wanted_key
 from tests.support.firestore_eval import EvalDb
 from tests.support.gcs_fake import FakeGcs
 from tests.support.gcs_kit_backend import RealKitGcsBackend, run_prefix
@@ -44,6 +45,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 INDEX_READY_TIMEOUT_S = 15 * 60
 INDEX_POLL_S = 10
+INDEX_SERVING_TIMEOUT_S = 10 * 60      # after READY: until a probe query stops answering "currently building"
+INDEX_SERVING_BACKOFF_S = (5, 60)      # first and longest wait between probes
 Index = firestore_admin_v1.Index
 
 
@@ -109,10 +112,16 @@ def gcs_bucket(cloud):
 # ------------------------------------------------------------------------------------------------ indexes
 
 @pytest.fixture(scope="module")
-def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]]], None]:
+def ensure_indexes(cloud: SimpleNamespace) -> Iterator[Callable[[str, List[Dict[str, Any]]], None]]:
     """`ensure(collection, indexes)`: create the missing indexes (in `config/firestore.indexes.json` shape) of a collection
-    on the test database and wait until all are READY. Created once and kept: the collection ids are fixed names."""
+    on the test database, wait until all are READY, then until each one serves its probe query (`probe_query`): a freshly
+    READY index can still refuse a query as "currently building" (seen on the test database 2026-11-18, first run of the
+    drive mirror and note groups), so that answer is retried with backoff for up to `INDEX_SERVING_TIMEOUT_S`; any other
+    answer ends the wait (the kit's own query then reports it). Created once and kept: the collection ids are fixed names."""
     admin = firestore_admin_v1.FirestoreAdminClient(credentials=cloud.credentials)
+    probe_db = firestore.Client(project=cloud.project, database=cloud.database, credentials=cloud.credentials)
+    if probe_db._database != cloud.database or probe_db.project != cloud.project:
+        pytest.fail("guard: the constructed probe client does not point at the test database and project")
     done: Set[str] = set()
     failed: Set[str] = set()
 
@@ -144,12 +153,40 @@ def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]
             if Index.State.NEEDS_REPAIR in wanted:
                 pytest.fail(f"an index of {collection} needs repair")
             if all(state == Index.State.READY for state in wanted):
-                return
+                break
             if time.monotonic() > deadline:
                 pytest.fail(f"the indexes of {collection} were not READY within {INDEX_READY_TIMEOUT_S // 60} minutes")
             time.sleep(INDEX_POLL_S)
+        for index in indexes:
+            _wait_serving(collection, index)
 
-    return ensure
+    def _wait_serving(collection: str, index: Dict[str, Any]) -> None:
+        query = probe_query(probe_db.collection(collection), index)
+        if query is None:
+            return
+        started = time.monotonic()
+        deadline = started + INDEX_SERVING_TIMEOUT_S
+        wait, longest = INDEX_SERVING_BACKOFF_S
+        refusals = 0
+        while True:
+            try:
+                query.get()
+                if refusals:      # visible in the run's warnings summary: the wait this seam exists for
+                    warnings.warn(f"an index of {collection} answered 'currently building' {refusals} time(s) after READY; "
+                                  f"it served after {time.monotonic() - started:.0f}s")
+                return
+            except FailedPrecondition as exc:
+                if "currently building" not in str(exc):
+                    return
+                if time.monotonic() > deadline:
+                    pytest.fail(f"an index of {collection} was READY but still building after "
+                                f"{INDEX_SERVING_TIMEOUT_S // 60} minutes")
+                refusals += 1
+            time.sleep(wait)
+            wait = min(wait * 2, longest)
+
+    yield ensure
+    probe_db.close()
 
 
 # ------------------------------------------------------------------------------------------------ store kits (P12)
