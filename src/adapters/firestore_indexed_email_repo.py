@@ -35,7 +35,9 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
       updates only the cursor fields, `set_reconnect_flags` only `reconnect_notified` / `disconnected_by_user_at`
       (an `update`, so a missing state stays missing); `list_indexing_user_ids` is one equality query on `provider`.
     - `save_batch` and `mark_consolidated` write in batches of 500 (`batch.set` of the whole document / `batch.update`);
-      `delete_by_user` deletes 500 per query until none is left.
+      `delete_by_user` deletes 500 per query until none is left. Before each `save_batch` chunk, one `get_all` (field
+      `consolidated_at`) reads the stored marks of the emails sent without one, and the batch carries them over; a mark
+      written between that read and the commit is lost (the email is consolidated once more).
     - `get_consolidation_marks`: `get_all` of the `{user_id}_{email_id}` refs (500 per call) with
       `field_paths=["consolidated_at"]`; a missing document is left out.
     - `get_unconsolidated_batch` needs the composite index (user_id, consolidated_at, indexed_at); a document without a
@@ -89,7 +91,11 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
     # ------------------------------------------------------------------
 
     async def save_batch(self, emails: List[IndexedEmail]) -> int:
-        """Upsert batch. Chunks automatically at Firestore's 500-write limit."""
+        """Upsert batch. Chunks automatically at Firestore's 500-write limit.
+
+        An email sent without consolidated_at keeps the stored one (read per chunk before its batch), so a re-indexed
+        email is not consolidated again.
+        """
         if not emails:
             return 0
 
@@ -97,16 +103,30 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
         chunk_size = 500
         for i in range(0, len(emails), chunk_size):
             chunk = emails[i : i + chunk_size]
+            marks = await self._stored_marks([e for e in chunk if e.consolidated_at is None])
             batch = self.db.batch()
             for email in chunk:
                 data = email.model_dump()
-                doc_ref = self.collection.document(f"{email.user_id}_{email.email_id}")
-                batch.set(doc_ref, data)
+                doc_id = f"{email.user_id}_{email.email_id}"
+                if email.consolidated_at is None and marks.get(doc_id) is not None:
+                    data["consolidated_at"] = marks[doc_id]
+                batch.set(self.collection.document(doc_id), data)
                 written += 1
             await batch.commit()
 
         logger.info(f"💾 [IndexedEmail] save_batch: {written} docs written")
         return written
+
+    async def _stored_marks(self, emails: List[IndexedEmail]) -> Dict[str, Optional[datetime]]:
+        """The stored consolidated_at of these emails' documents, by document id (a missing document is left out)."""
+        if not emails:
+            return {}
+        refs = [self.collection.document(f"{e.user_id}_{e.email_id}") for e in emails]
+        marks: Dict[str, Optional[datetime]] = {}
+        async for snap in self.db.get_all(refs, field_paths=["consolidated_at"]):
+            if snap.exists:
+                marks[snap.id] = self._strip_tz((snap.to_dict() or {}).get("consolidated_at"))
+        return marks
 
     # ------------------------------------------------------------------
     # Indexing state (cursor tracking)
