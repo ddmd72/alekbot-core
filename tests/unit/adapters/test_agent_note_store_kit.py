@@ -219,6 +219,7 @@ async def test_update_sets_recurrence_instruction_and_workspace_file(notes):
     assert updated == await notes.port.get_note("u1", note.note_id)
 
 
+@pytest.mark.h1_only("reads the fake's write stamp (versions) to show nothing was written")
 async def test_update_with_nothing_given_writes_nothing(notes):
     note = await create(notes)
     stamp = notes.col.versions[note.note_id]
@@ -241,6 +242,7 @@ async def test_update_refuses_foreign_absent_empty_overlong_and_writes_nothing(n
     assert notes.docs == {note.note_id: before}
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_update_of_a_note_deleted_meanwhile_raises_not_found(notes, monkeypatch):
     note = await create(notes)
     notes.col.yield_on_get = True     # both read the note; the delete lands first, the update finds it gone
@@ -341,6 +343,7 @@ async def test_reschedule_compares_a_naive_stored_due_as_utc_defensive_branch(no
     assert notes.docs["r1"]["due"] == T0 + timedelta(days=1)
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_two_concurrent_reschedules_exactly_one_wins(notes, monkeypatch):
     note = await create(notes, due=T0, recurrence="FREQ=DAILY")
     notes.col.yield_on_get = True     # both transactions read the same due; the second commit aborts and re-reads
@@ -382,6 +385,7 @@ async def test_claim_one_time_refuses_foreign_moved_absent(notes, case):
     assert notes.docs == {note.note_id: before}
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_two_concurrent_one_time_claims_exactly_one_wins(notes, monkeypatch):
     note = await create(notes, due=T0)
     notes.col.yield_on_get = True     # both transactions read the unclaimed note; the second commit aborts and re-reads
@@ -425,6 +429,7 @@ async def test_mark_fire_delivered_on_a_deleted_note_raises_not_found(notes):
     assert notes.docs == {}
 
 
+@pytest.mark.h1_only("reads the fake's write stamps (versions, the commit clock) to show nothing was written")
 async def test_mark_fire_delivered_with_an_empty_id_writes_nothing(notes):
     clock = notes.db._clock
     await notes.port.mark_fire_delivered("", T0)
@@ -433,6 +438,7 @@ async def test_mark_fire_delivered_with_an_empty_id_writes_nothing(notes):
 
 # ---------------------------------------------------------------------------------------------------- errors
 
+@pytest.mark.h1_only("injects the failure by patching EvalDocRef.set")
 async def test_a_backend_error_in_create_propagates(notes, monkeypatch):
     async def unavailable(self, data, merge=False):
         raise RuntimeError("unavailable")
@@ -443,6 +449,7 @@ async def test_a_backend_error_in_create_propagates(notes, monkeypatch):
     assert notes.docs == {}
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_a_backend_error_in_list_due_propagates(notes):
     notes.seed("d1", user_id="u1", text="call dad", due=T0, created_at=T0)
     notes.col.fail = RuntimeError("unavailable")
