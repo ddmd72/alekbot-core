@@ -124,6 +124,7 @@ async def test_an_inherited_file_that_is_stored_is_accepted(store):
     assert list(store.files()) == [logbook.sha256]
 
 
+@pytest.mark.h1_only("lists every stored document through the fake's collection map (cols)")
 async def test_an_inherited_file_that_is_missing_raises_naming_the_path_and_writes_nothing(store):
     with pytest.raises(SkillFileMissing) as raised:
         await store.repo.save_version("u1", "a1", skill(files=[fil()]), cap=20)
@@ -131,6 +132,7 @@ async def test_an_inherited_file_that_is_missing_raises_naming_the_path_and_writ
     assert store.everything() == {}
 
 
+@pytest.mark.h1_only("lists every stored document through the fake's collection map (cols)")
 async def test_a_staged_file_that_expired_raises_and_writes_nothing(store):
     logbook = fil()
     await store.repo.create_draft("u1", "ab12", skill(files=[logbook]), staged={logbook.sha256: LOGBOOK})
@@ -143,6 +145,7 @@ async def test_a_staged_file_that_expired_raises_and_writes_nothing(store):
     assert "u1:car-service" not in store.docs(SK)
 
 
+@pytest.mark.h1_only("lists every stored document through the fake's collection map (cols)")
 async def test_a_draft_that_is_gone_raises_draft_not_found_and_writes_nothing(store):
     with pytest.raises(SkillDraftNotFound):
         await store.repo.save_version("u1", "a1", skill(), cap=20, draft_code="zz99")
@@ -161,6 +164,7 @@ async def test_the_cap_counts_only_this_users_skills_and_an_update_at_the_cap_is
     assert await store.repo.save_version("u1", "a1", skill(name="passport-renewal", body="new body"), cap=3) == 2
 
 
+@pytest.mark.h1_only("requires the forced interleaving from the fake's query log (executed)")
 async def test_two_concurrent_first_saves_of_one_name_get_versions_one_and_two(store):
     store.db.collection(SK).yield_on_get = True      # both saves read the index document before either commits
     got = await asyncio.gather(store.repo.save_version("u1", "a1", skill(body="first"), cap=20),
@@ -170,6 +174,7 @@ async def test_two_concurrent_first_saves_of_one_name_get_versions_one_and_two(s
     assert sorted(store.versions()) == ["v1", "v2"] and store.docs(SK)["u1:car-service"]["current"] == 2
 
 
+@pytest.mark.h1_only("requires the forced interleaving from the fake's query log (executed)")
 async def test_two_concurrent_saves_of_one_draft_code_save_once_and_the_loser_finds_no_draft(store):
     await store.repo.create_draft("u1", "ab12", skill())
     store.db.collection(DR).yield_on_get = True      # both saves read the draft before either commits
@@ -265,6 +270,7 @@ async def test_get_draft_is_scoped_to_the_user_and_an_expired_draft_reads_none(s
     assert await store.repo.get_draft("u1", "ab12") is None            # at the instant: expired, before the TTL sweep
 
 
+@pytest.mark.h1_only("seeds a naive datetime raw and asserts the fake keeps it naive")
 async def test_get_draft_reads_a_naive_expiry_as_utc(store):
     base = {"user_id": "u1", "name": "car-service", "description": "d", "body": BODY, "files": [], "staged": []}
     store.docs(DR)["u1:aware"] = {**base, "expires_at": NOW - timedelta(days=1)}
@@ -320,6 +326,7 @@ async def test_delete_skill_removes_the_versions_the_files_and_the_index_documen
     assert await store.repo.delete_skill("u3", "car-service") is False
 
 
+@pytest.mark.h1_only("counts the fake's batch commits (commits)")
 async def test_delete_skill_over_one_chunk_commits_in_batches_and_deletes_every_document(store):
     await store.repo.save_version("u1", "a1", skill(), cap=20)
     files = store.files()
