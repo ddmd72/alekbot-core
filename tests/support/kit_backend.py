@@ -17,7 +17,8 @@ Raw access stays the kit's: `db.collection(name).docs` is the stored documents a
 dict; here it is a fresh synchronous read of the collection (`RawDocs`): assigning, deleting or popping a document, and
 setting, deleting or popping a top-level field of one (`RawDoc`), is written through to Firestore. A nested value is
 frozen (`FrozenDict`, `FrozenList`: equal to the plain value, a change raises `TypeError`), so a nested edit that would
-not reach Firestore fails instead of being lost. Nothing is silently ignored: a public attribute set on a collection or
+not reach Firestore fails instead of being lost. A copy of the view or of a document (`copy.copy`, `copy.deepcopy`)
+is a plain snapshot, as on the fake. Nothing is silently ignored: a public attribute set on a collection or
 the database raises (except `yield_on_get`, which only interleaves the fake's reads: keep a test that sets it only when
 its assertion holds under real concurrency; and except a replaced method of the real object, so a fault injected with
 `monkeypatch.setattr(collection, "document", failing)` runs here too, and fails if the adapter never calls it),
@@ -156,6 +157,13 @@ class RawDoc(dict):
     def clear(self) -> None:
         raise NotImplementedError("RawDoc: assign the document in RawDocs instead")
 
+    def __copy__(self) -> Dict[str, Any]:
+        """A copy is a plain snapshot (the fake's `copy.copy(doc)`), never a second write-through view."""
+        return thaw(self)
+
+    def __deepcopy__(self, memo: Any) -> Dict[str, Any]:
+        return thaw(self)
+
 
 class RawDocs(dict):
     """The documents of one collection, read now (doc id -> `RawDoc`); assigning, deleting or popping one is written through."""
@@ -191,6 +199,14 @@ class RawDocs(dict):
 
     def popitem(self) -> Any:
         raise NotImplementedError("RawDocs: pop a named document instead")
+
+    def __copy__(self) -> Dict[str, Dict[str, Any]]:
+        """A copy is a plain snapshot of the documents (the fake's `copy.deepcopy(col.docs)`): copying the view itself
+        would copy its client and replay every document as a write."""
+        return {doc_id: thaw(doc) for doc_id, doc in self.items()}
+
+    def __deepcopy__(self, memo: Any) -> Dict[str, Dict[str, Any]]:
+        return self.__copy__()
 
 
 FAKE_ONLY_ATTRIBUTES = frozenset({"yield_on_get"})   # interleaves the fake's reads only; real reads interleave on their own

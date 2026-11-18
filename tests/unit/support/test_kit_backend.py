@@ -123,6 +123,20 @@ def test_a_raw_documents_top_level_field_change_rewrites_the_document():
         doc.setdefault("x", 1)
 
 
+def test_a_copy_of_the_raw_view_or_of_a_raw_document_is_a_plain_snapshot_and_writes_nothing():
+    import copy
+    col = SyncCollection({"u1": {"config": {"tier": "eco"}, "tags": ["a"]}})
+    raw = RawDocs(col)
+    for snapshot in (copy.deepcopy(raw), copy.copy(raw)):
+        assert snapshot == {"u1": {"config": {"tier": "eco"}, "tags": ["a"]}}
+        assert type(snapshot) is dict and type(snapshot["u1"]) is dict and type(snapshot["u1"]["config"]) is dict
+        snapshot["u1"]["config"]["tier"] = "performance"
+    for doc in (copy.deepcopy(raw["u1"]), copy.copy(raw["u1"])):
+        assert type(doc) is dict and type(doc["tags"]) is list
+        doc["tags"].append("b")
+    assert col.writes == [] and col.docs == {"u1": {"config": {"tier": "eco"}, "tags": ["a"]}}
+
+
 # --------------------------------------------------------------------------------------------------- the backend
 
 class Sync:
