@@ -16,7 +16,7 @@ from src.ports.alert_sink import AlertSinkPort
 from src.ports.quota_service import QuotaService
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.redelivery_world import require
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 ACCOUNTS = "eval_domain_accounts_v2"
@@ -36,8 +36,8 @@ class RecordingSink(AlertSinkPort):
 
 
 class Billing:
-    def __init__(self, sink=None) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
+    def __init__(self, kit_db, sink=None) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
         self.repo = FirestoreAccountRepository(self.db, ACCOUNTS)
         self.sink = sink
         self.quota: QuotaService = FirestoreQuotaService(self.repo, sink)
@@ -53,9 +53,9 @@ class Billing:
 
 
 @pytest.fixture
-def billing(monkeypatch):
+def billing(monkeypatch, kit_db):
     pin_datetime(monkeypatch, account_module, T0)
-    return Billing(RecordingSink())
+    return Billing(kit_db, RecordingSink())
 
 
 def io_trace(monkeypatch) -> list:
@@ -139,17 +139,17 @@ async def test_a_repository_error_is_swallowed_and_posts_nothing(billing):
     assert billing.db.collection(ACCOUNTS).docs == {}
 
 
-async def test_a_failing_sink_is_swallowed(monkeypatch):
+async def test_a_failing_sink_is_swallowed(monkeypatch, kit_db):
     pin_datetime(monkeypatch, account_module, T0)
-    billing = Billing(RecordingSink(fails=True))
+    billing = Billing(kit_db, RecordingSink(fails=True))
     await billing.seed(daily_cost=4.6)
     assert await billing.quota.record_usage("a1", MODEL, 300, 0.5) is None
     assert billing.usage()["daily_cost"] == pytest.approx(5.1)
 
 
-async def test_no_sink_is_a_no_op(monkeypatch):
+async def test_no_sink_is_a_no_op(monkeypatch, kit_db):
     pin_datetime(monkeypatch, account_module, T0)
-    billing = Billing(None)
+    billing = Billing(kit_db, None)
     await billing.seed(daily_cost=4.6)
     assert await billing.quota.record_usage("a1", MODEL, 300, 0.5) is None
     assert billing.usage()["daily_cost"] == pytest.approx(5.1)
