@@ -143,7 +143,7 @@ _TOOL_DECLARATIONS = [
             "properties": {
                 "note_id": {
                     "type": "string",
-                    "description": "Reminder ID (epoch-ms string from working_memory).",
+                    "description": "Reminder ID, as given in working_memory.",
                 },
                 "text": {
                     "type": "string",
@@ -189,7 +189,7 @@ _TOOL_DECLARATIONS = [
             "properties": {
                 "note_id": {
                     "type": "string",
-                    "description": "Reminder ID (epoch-ms string from working_memory).",
+                    "description": "Reminder ID, as given in working_memory.",
                 },
             },
             "required": ["note_id"],

@@ -148,9 +148,6 @@ async def test_two_notes_created_a_millisecond_apart_are_both_kept(notes, monkey
     assert (await notes.port.get_note("u2", b.note_id)).text == "water the garden"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G1-2: two notes created in one millisecond overwrite each other "
-                          "(note id = creation millisecond, plain set)")
 async def test_two_notes_created_in_the_same_millisecond_are_both_kept(notes):
     """Flips when the note id carries a uuid suffix (`f"{epoch_ms}-{uuid4().hex}"`), so ids never collide."""
     a = await create(notes, user_id="u1", texts=DAD)

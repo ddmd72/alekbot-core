@@ -2,7 +2,8 @@
 FirestoreAgentNoteAdapter — persists orchestrator self-reminders.
 
 Collection: {env_prefix}orchestrator_notes
-Document ID: epoch milliseconds string (time-sortable, collision window = 1ms)
+Document ID: "{epoch_ms}-{uuid4 hex}" (time-prefixed; the uuid suffix makes two notes created in one millisecond
+distinct). Older documents carry a bare epoch-milliseconds id.
 
 Constraints enforced here (not at port boundary):
   - MAX_WORDS_PER_NOTE = 25  (text label only — instruction has no limit)
@@ -23,6 +24,7 @@ now; _read_recurrence translates the old shape on read (no backfill).
 
 from datetime import datetime, timezone
 from typing import List, Optional
+from uuid import uuid4
 
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -69,7 +71,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
                 f"Note cap reached ({self.MAX_NOTES_PER_USER}). Delete a note first."
             )
 
-        note_id = str(int(now.timestamp() * 1000))
+        note_id = f"{int(now.timestamp() * 1000)}-{uuid4().hex}"
         doc: dict = {
             "user_id": data.user_id,
             "text": data.text,
