@@ -37,8 +37,9 @@ import asyncio
 import json
 import math
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone, tzinfo
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
@@ -74,6 +75,15 @@ _FORCE_ANSWER = "Answer the delegation now from the tool results above. Call no 
 _FACTS_MAX_CHARS = 6000
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _resolve_zone(name: Optional[str]) -> tzinfo:
+    """The user's IANA zone; UTC (logged) when the name is empty or unknown."""
+    try:
+        return ZoneInfo(name or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(f"📋 TasksAgent: unknown timezone {name!r}, using UTC")
+        return timezone.utc
 
 
 def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -182,7 +192,7 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                         "Reminder alert date/time in ISO-8601. "
                         "Set when the user specifies a reminder time. "
                         "When omitted and due_datetime is provided, reminder is automatically "
-                        "set to 8pm the day before the due date."
+                        "set to 8pm (the user's local time) the day before the due date."
                     ),
                 },
                 "importance": {
@@ -275,7 +285,7 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                     "description": (
                         "New due date/time in ISO-8601. Omit if not changing. "
                         "When changed without an explicit reminder_datetime, reminder is "
-                        "automatically moved to 8pm the day before the new due date."
+                        "automatically moved to 8pm (the user's local time) the day before the new due date."
                     ),
                 },
                 "start_datetime": {
@@ -397,7 +407,9 @@ class TasksAgent(BaseAgent):
         task_indexing: TaskIndexingService,
         user_id: Optional[str] = None,
         monotonic: Callable[[], float] = time.monotonic,
+        user_timezone: str = "UTC",
     ) -> None:
+        """`user_timezone`: the user's IANA zone; the automatic reminder is 20:00 of that zone (UTC when unknown)."""
         super().__init__(config)
         self._set_execution_context(execution_context)
         self.execution_context = execution_context
@@ -408,6 +420,7 @@ class TasksAgent(BaseAgent):
         self._indexing = task_indexing
         self.user_id = user_id
         self._monotonic = monotonic
+        self._user_tz = _resolve_zone(user_timezone)
 
         logger.info(
             f"📋 TasksAgent initialized "
@@ -629,6 +642,7 @@ class TasksAgent(BaseAgent):
             reminder_dt, is_reminder_on = self._derive_reminder(
                 self._parse_datetime(args.get("reminder_datetime")),
                 parsed_due,
+                self._user_tz,
             )
             task = await self._tasks.create_task(
                 user_id=user_id,
@@ -658,7 +672,7 @@ class TasksAgent(BaseAgent):
             if parsed_due is not None and parsed_reminder is None and is_reminder_on is not False:
                 current = await self._tasks.get_task(user_id, list_id, task_id)
                 if current.due_datetime is None:
-                    reminder_dt, is_reminder_on = self._derive_reminder(None, parsed_due)
+                    reminder_dt, is_reminder_on = self._derive_reminder(None, parsed_due, self._user_tz)
             recurrence: Optional[TaskRecurrence] = None
             if rec_args := args.get("recurrence"):
                 recurrence = self._parse_recurrence(rec_args, args.get("due_datetime"))
@@ -702,22 +716,24 @@ class TasksAgent(BaseAgent):
     def _derive_reminder(
         explicit_reminder: Optional[datetime],
         due_datetime: Optional[datetime],
+        zone: tzinfo,
     ) -> Tuple[Optional[datetime], bool]:
         """
         Return (reminder_datetime, is_reminder_on).
 
         Priority:
           1. explicit_reminder is set → use it as-is, is_reminder_on=True.
-          2. due_datetime is set → auto-set to 8pm the day before, is_reminder_on=True.
+          2. due_datetime is set → 20:00 in `zone` (the user's) on the evening before the due date,
+             is_reminder_on=True. The due date is the date as written for a naive due (a date-only due is that
+             day), and the date in `zone` for an aware one. Returned as naive UTC, the adapter's convention.
           3. Neither → (None, False): no reminder.
         """
         if explicit_reminder is not None:
             return explicit_reminder, True
         if due_datetime is not None:
-            auto = (due_datetime - timedelta(days=1)).replace(
-                hour=20, minute=0, second=0, microsecond=0
-            )
-            return auto, True
+            due_day: date = (due_datetime.astimezone(zone) if due_datetime.tzinfo is not None else due_datetime).date()
+            local = datetime.combine(due_day - timedelta(days=1), dtime(20, 0), tzinfo=zone)
+            return local.astimezone(timezone.utc).replace(tzinfo=None), True
         return None, False
 
     def _list_page(self, tasks: List[Task], args: Dict[str, Any]) -> Dict[str, Any]:

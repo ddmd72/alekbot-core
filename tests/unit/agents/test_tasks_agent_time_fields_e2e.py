@@ -23,6 +23,7 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.task import Task, TaskCreate
 from src.services.task_indexing_service import TaskIndexingService
 from tests.support import http_boundary_fake
+from tests.support.clock_instants import BERLIN, HELSINKI, NEW_YORK, transition
 from tests.support.fact_store import HashEmbedder
 from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import CredentialsStore, creds
@@ -45,7 +46,7 @@ def _instant(payload: Dict[str, str]) -> datetime:
 class Rig:
     """One TasksAgent of a user in `zone`, over the real To Do adapter (Graph boundary fake) and the real index."""
 
-    def __init__(self, script: List[Any], monkeypatch: Any) -> None:
+    def __init__(self, script: List[Any], monkeypatch: Any, zone: str = "UTC") -> None:
         self.llm = ScriptedLLM(script)
         self.fake = http_boundary_fake.install(monkeypatch)
         self.fake.todo_empty_account()
@@ -62,7 +63,7 @@ class Rig:
             config=AgentConfig(agent_id=f"tasks_agent_{USER}", agent_type="tasks", timeout_ms=60_000,
                                capabilities=["task_management"]),
             execution_context=execution_context(self.llm, "tasks"), prompt_builder=StubPromptBuilder(),
-            tasks_provider=self.provider, task_indexing=self.indexing, user_id=USER)
+            tasks_provider=self.provider, task_indexing=self.indexing, user_id=USER, user_timezone=zone)
         self._seen = 0
 
     def _route_tasks(self) -> None:
@@ -153,3 +154,93 @@ async def test_an_unparsable_due_with_a_recurrence_is_refused(monkeypatch):
 
     (result,) = rig.results_of("create_task")
     assert rig.sent("POST", TASKS_URL) == [] and "error" in result
+
+
+# ------------------------------------------------------------- the automatic reminder in the user's zone (P16-D11)
+
+def _evening_before(zone: str, due_day: str) -> datetime:
+    """20:00 in `zone` on the day before `due_day` (YYYY-MM-DD), as an aware UTC instant."""
+    day = datetime.fromisoformat(due_day) - timedelta(days=1)
+    return day.replace(hour=20, tzinfo=ZoneInfo(zone)).astimezone(timezone.utc)
+
+
+async def test_a_date_only_due_gets_its_reminder_at_20_local_the_evening_before(monkeypatch):
+    rig = await Rig([tools(("create_task", {"title": "Car service", "due_datetime": "2026-11-04"})),
+                     text("Created.")], monkeypatch, zone=BERLIN).start()
+
+    await rig.run()
+
+    (post,) = rig.sent("POST", TASKS_URL)
+    require(rig.finished(), "every scripted answer was used")
+    assert post.json["isReminderOn"] is True
+    assert _instant(post.json["reminderDateTime"]) == _evening_before(BERLIN, "2026-11-04")   # 19:00Z
+
+
+async def test_the_evening_before_is_a_local_evening_even_when_it_is_the_next_utc_day(monkeypatch):
+    """New York, the evening of Nov 3 (EST) is 01:00Z on Nov 4: the reminder is still the local evening before."""
+    rig = await Rig([tools(("create_task", {"title": "Car service", "due_datetime": "2026-11-04T09:00:00"})),
+                     text("Created.")], monkeypatch, zone=NEW_YORK).start()
+
+    await rig.run()
+
+    (post,) = rig.sent("POST", TASKS_URL)
+    assert _instant(post.json["reminderDateTime"]) == datetime(2026, 11, 4, 1, 0, tzinfo=timezone.utc)
+
+
+async def test_an_update_that_gives_a_due_sets_the_reminder_in_the_users_zone(monkeypatch):
+    rig = await Rig([tools(("update_task", {"task_ref": REF, "due_datetime": "2026-11-04"})), text("Updated.")],
+                    monkeypatch, zone=HELSINKI).start()
+    await rig.seed()
+
+    await rig.run()
+
+    (patch,) = [r.json for r in rig.sent("PATCH", f"{TASKS_URL}/")]
+    assert patch["isReminderOn"] is True
+    assert _instant(patch["reminderDateTime"]) == _evening_before(HELSINKI, "2026-11-04")   # 18:00Z
+
+
+async def test_an_aware_due_is_dated_in_the_users_zone(monkeypatch):
+    """00:30Z on Nov 4 is 19:30 on Nov 3 in New York: the due day there is Nov 3, the reminder Nov 2, 20:00 local."""
+    rig = await Rig([tools(("create_task", {"title": "Car service", "due_datetime": "2026-11-04T00:30:00+00:00"})),
+                     text("Created.")], monkeypatch, zone=NEW_YORK).start()
+
+    await rig.run()
+
+    (post,) = rig.sent("POST", TASKS_URL)
+    assert _instant(post.json["reminderDateTime"]) == _evening_before(NEW_YORK, "2026-11-03")
+
+
+async def test_the_evening_before_takes_the_offset_of_its_own_side_of_a_dst_change(monkeypatch):
+    """Berlin leaves summer time on Oct 25: the evening of Oct 24 is CEST (18:00Z), the evening of Oct 25 CET (19:00Z)."""
+    fall = transition(BERLIN, "fall", "T").utc
+    require(fall.date().isoformat() == "2026-10-25", "the Berlin fall transition is on Oct 25")
+    rig = await Rig([tools(("create_task", {"title": "Car service", "due_datetime": "2026-10-25"}),
+                           ("create_task", {"title": "Car service", "due_datetime": "2026-10-26"})),
+                     text("Created.")], monkeypatch, zone=BERLIN).start()
+
+    await rig.run()
+
+    first, second = [p.json for p in rig.sent("POST", TASKS_URL)]
+    assert _instant(first["reminderDateTime"]) == datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+    assert _instant(second["reminderDateTime"]) == datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc)
+
+
+async def test_an_unknown_zone_reads_as_utc(monkeypatch):
+    rig = await Rig([tools(("create_task", {"title": "Car service", "due_datetime": "2026-11-04"})),
+                     text("Created.")], monkeypatch, zone="Mars/Olympus_Mons").start()
+
+    await rig.run()
+
+    (post,) = rig.sent("POST", TASKS_URL)
+    assert _instant(post.json["reminderDateTime"]) == datetime(2026, 11, 3, 20, 0, tzinfo=timezone.utc)
+
+
+async def test_an_explicit_reminder_is_kept_whatever_the_zone(monkeypatch):
+    rig = await Rig([tools(("create_task", {"title": "Car service", "due_datetime": "2026-11-04",
+                                            "reminder_datetime": "2026-11-03T07:00:00Z"})),
+                     text("Created.")], monkeypatch, zone=BERLIN).start()
+
+    await rig.run()
+
+    (post,) = rig.sent("POST", TASKS_URL)
+    assert _instant(post.json["reminderDateTime"]) == datetime(2026, 11, 3, 7, 0, tzinfo=timezone.utc)

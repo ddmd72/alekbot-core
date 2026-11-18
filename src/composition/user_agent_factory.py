@@ -551,6 +551,7 @@ class UserAgentFactory(AgentFactoryPort):
                 tasks_provider=self.tasks_provider,
                 task_indexing=self.task_indexing,
                 user_id=user_id,
+                user_timezone=user_profile.config.timezone,
             )
 
         fact_management_adapter = self.fact_management_adapter_factory(search_enrichment_service)
