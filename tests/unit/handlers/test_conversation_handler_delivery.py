@@ -34,6 +34,8 @@ from src.domain.messaging import FileAttachment, MessageContext, RichContent, Sm
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import StatusType
 from src.handlers.conversation_handler import ConversationHandler
+from src.services.file_access_token_service import FileAccessTokenService
+from src.services.file_link_service import FileLinkService
 from src.services.rich_content_service import RichContentService
 
 
@@ -224,8 +226,17 @@ class TestDeliverItem:
         channel.send_message.assert_not_awaited()
 
     async def test_html_gcs_link_success_sends_link(self):
-        rcs = MagicMock()
-        rcs._store_html = AsyncMock(return_value="https://gcs/doc.html")
+        """P11-G4-5 (O8): the page is stored privately and the link is the item owner's `/f/<token>` to it."""
+        stored = {}
+
+        class _PrivateBucket:  # MediaStoragePort fake: keeps the object, answers its key
+            async def store(self, data, key, content_type):
+                stored[key] = (data, content_type)
+                return key
+
+        base, tokens = "https://alek.example.com", FileAccessTokenService(secret_key="s" * 40)
+        rcs = RichContentService(media_port=_FakeMedia(), storage_port=_PrivateBucket(),
+                                 link_service=FileLinkService(token_service=tokens, base_url=base))
         handler = _make_handler(MagicMock(), rich_content_service=rcs)
 
         channel = MagicMock()
@@ -237,10 +248,14 @@ class TestDeliverItem:
         )
         await handler._deliver_item(item, channel, thread_id="T1", user_id="user-1")
 
-        rcs._store_html.assert_awaited_once_with("<h1>Report</h1>", "doc.html")
-        channel.send_message.assert_awaited_once_with(
-            "<https://gcs/doc.html|Open Report>", "T1"
-        )
+        [key] = stored
+        assert key.startswith("html/") and key.endswith("-doc.html")
+        assert stored[key] == (b"<h1>Report</h1>", "text/html; charset=utf-8")
+        channel.send_message.assert_awaited_once()
+        text, thread = channel.send_message.await_args.args
+        assert thread == "T1" and text.startswith(f"<{base}/f/") and text.endswith("|Open Report>")
+        access = tokens.verify(text[len(f"<{base}/f/"):-len("|Open Report>")])
+        assert access.user_id == "user-1" and access.key == key
 
     async def test_html_gcs_link_exception_logs_warning(self):
         rcs = MagicMock()
