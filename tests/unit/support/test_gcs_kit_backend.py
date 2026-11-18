@@ -180,3 +180,21 @@ def test_fake_only_settings_raise(backend):
         gcs.signed_urls
     with pytest.raises(ValueError, match="one kit_gcs per test"):
         backend(buckets={"media-test": "plain"})
+
+
+@pytest.mark.parametrize("method", ["upload_from_file", "upload_from_filename", "compose", "rewrite", "download_to_filename"])
+def test_a_method_the_backend_does_not_wrap_raises_naming_it(backend, method):
+    gcs = backend(buckets={"media-test": "plain"})
+    blob = gcs.client().bucket("media-test").blob("a.md")
+    blob._inner.__dict__[method] = lambda *a, **k: pytest.fail("reached the real blob")   # the stand-in's own
+    with pytest.raises(AttributeError, match=f"PrefixedBlob.{method}: a method the GCS kit backend does not wrap"):
+        getattr(blob, method)
+
+
+def test_properties_and_the_passed_methods_still_reach_the_real_blob(backend):
+    gcs = backend(buckets={"media-test": "plain"})
+    blob = gcs.client().bucket("media-test").blob("a.md")
+    blob.upload_from_string(b"x", content_type="text/plain")
+    assert blob.generation is not None and blob.size == 1 and blob.content_type == "text/plain"
+    from datetime import timedelta
+    assert "a.md" in blob.generate_signed_url(timedelta(seconds=60), version="v4")

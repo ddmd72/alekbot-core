@@ -253,9 +253,16 @@ class PrefixedBucket:
 
 class PrefixedBlob:
     """A real `storage.Blob` whose `name` is the kit's name (the prefix taken off); every request goes through `RealGcs.run`.
-    Reading or setting any other attribute is the real blob's (a read-only property raises there, as in the SDK)."""
+    Reading or setting a property is the real blob's (a read-only property raises there, as in the SDK). A method of the
+    real blob is reachable only when this class wraps it (the requests below) or it is in `PASSED_METHODS`: any other one
+    (`upload_from_file`, `compose`, `rewrite`, ...) would skip the access-change refusal and the fault and hook bookkeeping,
+    so it raises, naming the method (wrap it here, with its op, to use it)."""
 
     _OWN = frozenset({"_bucket", "_inner"})
+    # Methods passed to the real blob unwrapped, each with why it is safe: it sends no request that reads or writes an object.
+    PASSED_METHODS = frozenset({
+        "generate_signed_url",      # signs locally or through IAM signBlob; never touches the object or its ACL
+    })
 
     def __init__(self, bucket: PrefixedBucket, inner: Any) -> None:
         object.__setattr__(self, "_bucket", bucket)
@@ -271,7 +278,12 @@ class PrefixedBlob:
         return self._bucket
 
     def __getattr__(self, attr: str) -> Any:
-        return getattr(self._inner, attr)
+        found = getattr(self._inner, attr)
+        if callable(found) and attr not in self.PASSED_METHODS:
+            raise AttributeError(f"PrefixedBlob.{attr}: a method the GCS kit backend does not wrap (it would skip the "
+                                 "access-change refusal and the fault and hook bookkeeping); wrap it in "
+                                 "tests/support/gcs_kit_backend.py with its op")
+        return found
 
     def __setattr__(self, attr: str, value: Any) -> None:
         if attr in self._OWN:

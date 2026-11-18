@@ -41,8 +41,9 @@ class _Clock:
         self.now += seconds
 
 
-def _retrying(api, clock):
-    return BuildingIndexRetry(api, sleep=clock.sleep, clock=clock)
+def _retrying(api, clock, run=None):
+    """A fresh run state unless one is given: the module's RUN_STATE is the session's and must not leak between tests."""
+    return BuildingIndexRetry(api, sleep=clock.sleep, clock=clock, run={"expired": False} if run is None else run)
 
 
 @pytest.mark.parametrize("method", BuildingIndexRetry.RETRIED)
@@ -71,3 +72,20 @@ async def test_any_other_answer_is_raised_at_once(answer):
 def test_every_other_call_is_the_apis_own():
     api = _Api()
     assert _retrying(api, _Clock()).commit(request="c") == ("commit", {"request": "c"})
+
+
+async def test_once_one_call_passed_the_deadline_every_later_call_raises_at_once():
+    run, clock = {"expired": False}, _Clock()
+    with pytest.raises(FailedPrecondition, match="currently building"):
+        await _retrying(_Api(*[BUILDING] * 30), clock, run).run_query(request="q")
+    assert run["expired"]
+    waited = list(clock.waits)
+    later = _Api(BUILDING, "rows")                       # another test's client, same run
+    with pytest.raises(FailedPrecondition, match="currently building"):
+        await _retrying(later, clock, run).run_aggregation_query(request="q")
+    assert clock.waits == waited and len(later.calls) == 1
+    assert await _retrying(_Api("rows"), clock, run).run_query(request="q") == "rows"     # a served query still is
+
+
+def test_the_default_run_state_is_the_modules():
+    assert BuildingIndexRetry(_Api())._run is kit_backend.RUN_STATE

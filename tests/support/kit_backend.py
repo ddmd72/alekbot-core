@@ -412,6 +412,7 @@ class RealKitBackend:
 
 BUILDING_RETRY_S = 10 * 60          # how long a query may keep meeting "index currently building"
 BUILDING_BACKOFF_S = (5.0, 60.0)    # first and longest wait between attempts
+RUN_STATE: Dict[str, bool] = {"expired": False}     # run-wide: set once a call has waited past BUILDING_RETRY_S
 
 
 class BuildingIndexRetry:
@@ -420,15 +421,19 @@ class BuildingIndexRetry:
     of the test database can give it after the Admin API reports READY, and after a probe query it served once (seen
     2026-11-19: a probe served, the same query minutes later was refused again), so readiness is settled where the kit's
     query is sent. Any other answer, and the same one past the deadline, is raised as it came. Every other call is the
-    API's own. Installed by the cloud `kit_db` fixture: `client._firestore_api_internal = BuildingIndexRetry(api)`."""
+    API's own. Installed by the cloud `kit_db` fixture: `client._firestore_api_internal = BuildingIndexRetry(api)`.
+    The deadline is per call, the give-up is run-wide: once one call has waited past it, `run["expired"]` is set (the
+    module's `RUN_STATE` by default, shared by every instance of the session) and every later call raises that answer at
+    once, so a run against an index that never finishes fails fast instead of waiting ten minutes per query."""
 
     RETRIED = ("run_query", "run_aggregation_query")
 
     def __init__(self, api: Any, sleep: Callable[[float], Any] = asyncio.sleep,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, run: Optional[Dict[str, bool]] = None) -> None:
         self._api = api
         self._sleep = sleep
         self._clock = clock
+        self._run = RUN_STATE if run is None else run
         self.refusals = 0
 
     def __getattr__(self, attr: str) -> Any:
@@ -445,7 +450,10 @@ class BuildingIndexRetry:
             try:
                 result = await call(*args, **kwargs)
             except FailedPrecondition as exc:
-                if "currently building" not in str(exc) or self._clock() > deadline:
+                if "currently building" not in str(exc) or self._run.get("expired"):
+                    raise
+                if self._clock() > deadline:
+                    self._run["expired"] = True
                     raise
                 refused += 1
                 self.refusals += 1
