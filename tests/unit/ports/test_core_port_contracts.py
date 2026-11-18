@@ -75,7 +75,8 @@ class TestAccountRepositoryContract:
             name for name, method in inspect.getmembers(AccountRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
+        # set_member_role (one iam_policy entry by its field path) joined so concurrent invite accepts keep both members.
+        assert len(abstract_methods) == 7, f"Expected 7 abstract methods, got {abstract_methods}"
 
 
 class TestAccountRepositoryMockImplementation:
