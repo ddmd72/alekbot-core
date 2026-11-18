@@ -21,6 +21,7 @@ HOOKS = tuple(re.escape(h) for h in ("interfere_on_txn_", "raise_on_txn_read", "
     r"\.commits\b(?!\s*=(?!=))", r"\.fail\s*=(?!=)",
     r"\.executed\b(?!\s*=(?!=))",     # the fake's query log, read
     r"\._check_index\b",               # the fake's index refusal, read or replaced
+    r"\.txn_versions\b",               # the fake's per-document transaction stamps, read
 )
 # A naive datetime written raw: the real client stores it as UTC, so only the fake returns it naive. Counted only in the marked
 # test's own source (a helper that builds one somewhere would otherwise excuse any test that calls it).
@@ -169,6 +170,8 @@ async def test_through_a_helper(stores):
     ("self.executed = []", False),
     ("assert run.executed_at is None", False),
     ("assert check_index_ok", False),
+    ("stamp = db.collection(COL).txn_versions[ACC]", True),
+    ("assert run.txn_versions_seen == 1", False),
 ])
 def test_the_commit_log_and_the_fail_switch_count_only_as_themselves(line, hooked):
     source = "import pytest\n\n@pytest.mark.h1_only('fake-only')\nasync def test_x(store):\n    " + line + "\n"
