@@ -310,8 +310,6 @@ async def test_search_and_count_write_nothing(store):
     script_spent(script.llm)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P14-D1: an update of only unknown keys reports `updated` and names none of them")
 async def test_an_update_of_only_unknown_keys_is_not_reported_as_updated(store):
     """`parse_fact_update` (src/domain/fact_update.py) drops keys it does not know (`domain`, `context_priority`,
     `context`) without a word, so the model is told `updated` for a call that changed nothing it asked for.

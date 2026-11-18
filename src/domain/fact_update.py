@@ -33,6 +33,12 @@ class ParsedFactUpdate:
     as_history: bool = False
 
 
+# The keys `parse_fact_update` reads; any other key of `updates` changes nothing and is named in a note.
+UPDATE_KEYS: Final[frozenset[str]] = frozenset({
+    "content", "tags", "metadata", "state", "temporal_class", "reported_date", "superseded_by", "expiry", "as_history",
+})
+UNKNOWN_KEYS_IGNORED: Final[str] = "not fields an update changes, ignored: {keys}"
+
 # The shape of a history rewrite, and its content-change rule (checked where the stored text is known).
 AS_HISTORY_SHAPE_REFUSAL: Final[str] = (
     "as_history rewrites the fact as history and needs updates {state: CURRENT, content: <the history text>, "
@@ -44,7 +50,7 @@ AS_HISTORY_SAME_TEXT: Final[str] = "as_history needs content: the history text, 
 def parse_fact_update(updates: Mapping[str, Any], timezone_name: Optional[str] = None) -> ParsedFactUpdate:
     """Validate `updates` before any embedding or write. Raises ValueError with a message the model can act on.
 
-    Unknown keys are ignored. A non-dict `metadata` is ignored. Empty `content`, `tags: null` and `tags: []` are
+    Unknown keys are ignored, with a note naming them (`UNKNOWN_KEYS_IGNORED`). A non-dict `metadata` is ignored. Empty `content`, `tags: null` and `tags: []` are
     refused: an empty field never destroys data. State STALE is refused (only the system marks a fact stale). An
     `expiry` sent with a closing state is dropped, with a note; any other `expiry` must parse (FactExpiryError).
     `timezone_name` (the owner's zone) lets `reported_date` be the consolidator's own conversation stamp. `as_history`
@@ -64,6 +70,9 @@ def parse_fact_update(updates: Mapping[str, Any], timezone_name: Optional[str] =
     reported_date = parse_reported_date(updates.get("reported_date"), timezone_name)
     superseded_by = _parse_superseded_by(updates)
     expiry, notes = _parse_update_expiry(updates, state)
+    unknown = sorted(str(key) for key in updates if key not in UPDATE_KEYS)
+    if unknown:
+        notes = (*notes, UNKNOWN_KEYS_IGNORED.format(keys=", ".join(unknown)))
     parsed = ParsedFactUpdate(
         content=content, tags=tags, metadata=metadata, state=state, temporal_class=temporal_class,
         reported_date=reported_date, superseded_by=superseded_by, expiry=expiry, notes=notes,
