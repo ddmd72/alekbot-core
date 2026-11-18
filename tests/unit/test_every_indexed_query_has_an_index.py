@@ -75,9 +75,11 @@ CONSTRUCTOR_ARGUMENTS: Dict[Tuple[str, str], str] = {
     ("src/adapters/firestore_session_store.py", "collection_prefix"): _ENV.sessions_collection,
 }
 
-# (file, function) -> the names a filter field written as an f-string can take: each is checked.
-FIELD_CHOICES: Dict[Tuple[str, str], Tuple[str, ...]] = {
-    ("src/adapters/firestore_drive_index_repo.py", "FirestoreDriveIndexRepository.enrich_queue"):
+# (file, function, the field's source text) -> the names a filter field written as an f-string can take: each is checked.
+# A field whose source text differs stays unresolved.
+FIELD_CHOICES: Dict[Tuple[str, str, str], Tuple[str, ...]] = {
+    ("src/adapters/firestore_drive_index_repo.py", "FirestoreDriveIndexRepository.enrich_queue",
+     "f'{EnrichJob(job).value}_state'"):
         tuple(f"{job.value}_state" for job in EnrichJob),
 }
 
@@ -108,6 +110,14 @@ _SHAPING = {"select", "limit", "limit_to_last", "offset", "start_at", "start_aft
 _CONSUMING = {"stream", "get", "count", "sum", "avg", "explain", "on_snapshot"}
 _ENV_BASE = re.compile(r"(^|\.)_?(env_config|env|environment)$")
 _MAX_DEPTH = 8
+
+
+def _loc(rel: str, call: ast.Call) -> Tuple[str, int, int]:
+    """Where a builder call sits: the end of its `.where` attribute, one position per call along a chain (a chain's calls
+    share the start of the whole expression)."""
+    return (rel, call.func.end_lineno, call.func.end_col_offset)
+
+
 _TRANSPARENT = {"zip", "enumerate", "list", "tuple", "sorted", "reversed", "len", "set", "frozenset", "bool", "any", "all", "iter"}
 
 
@@ -281,9 +291,9 @@ class Project:
                 if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                     inner = scope + [child.name]
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr in _BUILDERS:
-                    self.calls[(module.rel, child.lineno, child.col_offset)] = ".".join(scope) or "<module>"
+                    self.calls[_loc(module.rel, child)] = ".".join(scope) or "<module>"
                     parts = [ast.unparse(a) for a in child.args] + [f"{k.arg}={ast.unparse(k.value)}" for k in child.keywords]
-                    self.call_text[(module.rel, child.lineno, child.col_offset)] = f"{child.func.attr}({', '.join(parts)})"
+                    self.call_text[_loc(module.rel, child)] = f"{child.func.attr}({', '.join(parts)})"
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "FieldFilter":
                     self.filter_calls[(module.rel, child.lineno, child.col_offset)] = ".".join(scope) or "<module>"
                 visit(child, inner)
@@ -630,7 +640,8 @@ class Walker:
         choices: Tuple[str, ...] = ()
         if not isinstance(field, str) or isinstance(field, Unresolved):
             where = (frame.module.rel, getattr(node, "lineno", -1), getattr(node, "col_offset", -1))
-            choices = FIELD_CHOICES.get((frame.module.rel, self.project.filter_calls.get(where, "")), ())
+            text = ast.unparse(node.args[0] if node.args else kw.get("field_path", node))
+            choices = FIELD_CHOICES.get((frame.module.rel, self.project.filter_calls.get(where, ""), text), ())
             field = Unresolved("<" + ast.unparse(node.args[0] if node.args else kw.get("field_path", node)) + ">")
         if not isinstance(op, str):
             op = Unresolved("?")
@@ -642,7 +653,7 @@ class Walker:
         return FF(field, op)
 
     def query_call(self, name: str, node: ast.Call, bases: List[Any], frame: Frame) -> Any:
-        where = (frame.module.rel, node.lineno, node.col_offset)
+        where = _loc(frame.module.rel, node)
         queries = [b if isinstance(b, Q) else Q(b, ()) for b in bases]
         if name in _CONSUMING:
             for arg in [*node.args, *[k.value for k in node.keywords]]:
@@ -850,9 +861,24 @@ def test_the_filter_tables_of_unread_count_queries_are_equality_only():
     are equality-only (plus `kind in`) exactly while every operator in those tables is `==`."""
     module = next(m for m in PROJECT.modules if m.rel == "src/adapters/firestore_drive_index_repo.py")
     node = module.method("FirestoreDriveIndexRepository", "unread_count_queries").node
+    assert _filter_triples_are_equality_only(node)
+
+
+def _filter_triples_are_equality_only(node: ast.AST) -> bool:
+    """Every 3-tuple that starts with a string literal (a field) has the literal "==" second; a named constant or any other
+    operator fails, it is never skipped."""
     triples = [t for t in ast.walk(node) if isinstance(t, ast.Tuple) and len(t.elts) == 3
-               and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in t.elts[:2])]
-    assert triples and {t.elts[1].value for t in triples} == {"=="}
+               and isinstance(t.elts[0], ast.Constant) and isinstance(t.elts[0].value, str)]
+    return bool(triples) and all(isinstance(t.elts[1], ast.Constant) and t.elts[1].value == "==" for t in triples)
+
+
+def test_the_equality_only_check_fails_a_named_or_other_operator():
+    ok = ast.parse("x = [(('a', '==', 1),), ('b', '==', 2)]")
+    named = ast.parse("OP = '=='\nx = [('a', OP, 1)]")
+    other = ast.parse("x = [('a', '>', 1), ('b', '==', 2)]")
+    assert _filter_triples_are_equality_only(ok)
+    assert not _filter_triples_are_equality_only(named)
+    assert not _filter_triples_are_equality_only(other)
 
 
 def test_the_enrich_queue_is_checked_for_every_job():
@@ -1035,3 +1061,15 @@ def test_an_unfollowed_call_is_listed_by_its_text():
 ''')
     loc = next(l for l in project.calls if l not in project.covered)
     assert project.call_text[loc] == "where(filter=FieldFilter('a', '==', 1))"
+
+
+def test_a_changed_enrich_field_is_not_checked_as_the_state_fields():
+    """FIELD_CHOICES applies to the field's own source text only: another f-string stays unresolved."""
+    rel = "src/adapters/firestore_drive_index_repo.py"
+    body = '''
+    async def enrich_queue(self, job):
+        await self._col.where(filter=FieldFilter("connection_id", "==", 1)).where(filter=FieldFilter(f"{EnrichJob(job).value}_ready_at", "==", 1)).order_by("a").order_by("b").get()
+'''
+    source = _SNIPPET_HEAD.format(name="development_things").replace("class Repo:", "class FirestoreDriveIndexRepository:") + body
+    project = _load_project({rel: source})
+    assert [classify(site) for site in project.sites.values()] == ["unresolved"]
