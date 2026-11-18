@@ -58,13 +58,14 @@ class FactStore:
     `indexes` (a path to `config/firestore.indexes.json` or its parsed list) switches the fake's index refusal on, with the
     facts collection mapped to its declared group; the default is the fake without refusal. `kit_db` is the kits' database
     factory (`tests/support/kit_backend.py`: `EvalDb` in the unit suite, the test database in the cloud gate); without it
-    the store is built over a fresh `EvalDb`. `groups` maps further collection names to their declared groups.
+    the store is built over a fresh `EvalDb`. `groups` maps further collection names to their declared groups;
+    `vector_dimension` (one or a set) is passed to the database (the dimensions of the vectors the test queries).
     """
 
     def __init__(self, indexes: Union[None, str, Path, list] = None, kit_db: Optional[Callable[..., Any]] = None,
-                 groups: Optional[Dict[str, str]] = None) -> None:
+                 groups: Optional[Dict[str, str]] = None, vector_dimension: Any = None) -> None:
         mapped: Dict[str, str] = {FACTS: FACTS_INDEX_GROUP, **(groups or {})}
-        self.db = (kit_db or EvalDb)(indexes=indexes, groups=mapped)
+        self.db = (kit_db or EvalDb)(indexes=indexes, groups=mapped, vector_dimension=vector_dimension)
         self.embedder = HashEmbedder()
         self.repo = FirestoreFactRepository(self.db, make_env_config(), embedding_service=self.embedder)
         self.write = FactWriteService(self.embedder)

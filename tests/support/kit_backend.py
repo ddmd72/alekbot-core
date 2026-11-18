@@ -24,7 +24,8 @@ its assertion holds under real concurrency; and except a replaced method of the 
 `monkeypatch.setattr(collection, "document", failing)` runs here too, and fails if the adapter never calls it),
 `collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other than `None` or
 `config/firestore.indexes.json` raises, a private name set on a wrapper (a fake's internal such as `_check_index`)
-raises, `kit_db(vector_dimension=n)` renders the vector indexes at dimension n (`EvalDb` checks the same), and any
+raises, `kit_db(vector_dimension=n)` renders the vector indexes at dimension n (or at each of a set of
+dimensions; `EvalDb` checks the same), and any
 other attribute is the real client's, so a fake-only hook
 (`interfere_on_txn_read`, `versions`, a patched `EvalDocRef`) fails here: such a test carries
 `@pytest.mark.h1_only("<why>")` and is skipped in the cloud run.
@@ -212,22 +213,43 @@ class RawDocs(dict):
 FAKE_ONLY_ATTRIBUTES = frozenset({"yield_on_get"})   # interleaves the fake's reads only; real reads interleave on their own
 
 
+class NeverCalled:
+    """A replacement a test installs to prove the code does NOT call a method (a guard, not a fault):
+    `monkeypatch.setattr(db, "transaction", never_called(spy))`. On the fake it is the test's own `spy`, which asserts or
+    records; on the real backend the seam fails the test the moment it is called, and exempts it from the check that an
+    injected fault was reached. Any replacement not declared this way is a fault and must be reached."""
+
+    def __init__(self, fn: Any) -> None:
+        self.fn = fn
+
+    def __call__(self, *a: Any, **k: Any) -> Any:
+        return self.fn(*a, **k)
+
+
+def never_called(fn: Any) -> NeverCalled:
+    return NeverCalled(fn)
+
+
 class Injected:
     """A method a test replaced on a wrapper (a fault it injects), counting its calls. A replacement the adapter never
     calls would make the test pass on the real backend without its fault ever happening (the fake routes a call through
-    a path the real client does not, e.g. a subcollection of a document reference): such a test fails instead."""
+    a path the real client does not, e.g. a subcollection of a document reference): such a test fails instead. A
+    declared guard (`never_called`) is the reverse: calling it fails, and it is never required to be reached."""
 
     def __init__(self, fn: Any, where: str) -> None:
         self.fn = fn
         self.where = where
         self.calls = 0
+        self.guard = isinstance(fn, NeverCalled)
 
     def __call__(self, *a: Any, **k: Any) -> Any:
         self.calls += 1
+        if self.guard:
+            pytest.fail(f"{self.where} was called, but the test declared it never_called")
         return self.fn(*a, **k)
 
     def check_reached(self) -> None:
-        if not self.calls:
+        if not self.calls and not self.guard:
             pytest.fail(f"the injected fault on {self.where} was never reached on the real backend: inject it where the "
                         "adapter calls it, or mark the test h1_only")
 
@@ -345,10 +367,10 @@ class RealKitBackend:
         self.touched: Set[str] = set()
         self.injections: List[Injected] = []
         self._db: Optional[RealKitDb] = None
-        self._vector_dimension: Optional[int] = None
+        self._vector_dimension: Any = None
 
     def __call__(self, indexes: Any = None, groups: Optional[Dict[str, str]] = None,
-                 vector_dimension: Optional[int] = None) -> RealKitDb:
+                 vector_dimension: Any = None) -> RealKitDb:
         """`EvalDb`'s signature. `indexes` switches the fake's refusal; the real database refuses on its own with the
         indexes of the repository file, so any other index set (`[]`, a hand-made list) cannot be honoured here."""
         if not (indexes is None or (isinstance(indexes, (str, Path)) and Path(indexes).resolve() == INDEXES_FILE)):

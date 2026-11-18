@@ -359,3 +359,40 @@ def test_a_private_name_of_a_fake_set_on_a_wrapper_is_refused():
     for target in (db, db.collection("eval_sessions")):
         with pytest.raises(AttributeError, match="h1_only"):
             target._check_index = lambda *a: None
+
+
+# --------------------------------------------------------------------------------------------------- guards, several dimensions
+
+def test_a_declared_guard_that_is_never_called_passes_and_one_that_is_called_fails(monkeypatch):
+    from tests.support.kit_backend import never_called
+    backend, db = backend_and_db()
+    spied = []
+    with monkeypatch.context() as m:
+        m.setattr(db, "transaction", never_called(lambda: spied.append(1)))
+    backend.purge_touched()                                   # not reached, and that is the point: no failure
+    with monkeypatch.context() as m:
+        m.setattr(db, "transaction", never_called(lambda: spied.append(1)))
+        with pytest.raises(pytest.fail.Exception, match="declared it never_called"):
+            db.transaction()
+    assert spied == []
+    assert never_called(lambda: "the fake runs the spy")() == "the fake runs the spy"
+
+
+def test_an_undeclared_replacement_still_has_to_be_reached(monkeypatch):
+    backend, db = backend_and_db()
+    with pytest.raises(pytest.fail.Exception, match="never reached"):
+        with monkeypatch.context() as m:
+            m.setattr(db, "transaction", lambda: None)
+    with pytest.raises(pytest.fail.Exception, match="never reached"):
+        backend.purge_touched()
+
+
+def test_several_vector_dimensions_render_one_vector_index_each_and_the_rest_once():
+    from tests.support.cloud_indexes import wanted_key
+    plain = dict(VECTOR_INDEX, fields=[{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "at", "order": "DESCENDING"}])
+    rendered = render_indexes("development_task_search_index", [VECTOR_INDEX, plain], vector_dimension={768, 3})
+    assert [[f.get("vectorConfig", {}).get("dimension") for f in i["fields"]] for i in rendered] == \
+        [[None, 3], [None, 768], [None, None]]
+    assert len({wanted_key(i) for i in rendered}) == 3
+    assert render_indexes("development_task_search_index", [VECTOR_INDEX], vector_dimension=2) == \
+        render_indexes("development_task_search_index", [VECTOR_INDEX], vector_dimension={2})
