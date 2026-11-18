@@ -685,7 +685,8 @@ class TestInviteCodeRepositoryContract:
             name for name, method in inspect.getmembers(InviteCodeRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+        # complete (stamps completed_at) joined so a finished accept's code never resumes.
+        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
 
 
 class TestInviteCodeRepositoryMockImplementation:
