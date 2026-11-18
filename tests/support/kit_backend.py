@@ -215,15 +215,16 @@ FAKE_ONLY_ATTRIBUTES = frozenset({"yield_on_get"})   # interleaves the fake's re
 
 class NeverCalled:
     """A replacement a test installs to prove the code does NOT call a method (a guard, not a fault):
-    `monkeypatch.setattr(db, "transaction", never_called(spy))`. On the fake it is the test's own `spy`, which asserts or
-    records; on the real backend the seam fails the test the moment it is called, and exempts it from the check that an
-    injected fault was reached. Any replacement not declared this way is a fault and must be reached."""
+    `monkeypatch.setattr(db, "transaction", never_called(spy))`. Calling it fails the test at once on both backends
+    (`pytest.fail` raises a `BaseException`, so an adapter's `except Exception` cannot swallow it); `spy` only names it.
+    So a fault mis-declared as a guard can never pass by firing on the fake. On the real backend it is also exempt from
+    the check that an injected fault was reached. Any replacement not declared this way is a fault and must be reached."""
 
     def __init__(self, fn: Any) -> None:
         self.fn = fn
 
     def __call__(self, *a: Any, **k: Any) -> Any:
-        return self.fn(*a, **k)
+        pytest.fail(f"{getattr(self.fn, '__name__', repr(self.fn))} was called, but the test declared it never_called")
 
 
 def never_called(fn: Any) -> NeverCalled:

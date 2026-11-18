@@ -375,7 +375,28 @@ def test_a_declared_guard_that_is_never_called_passes_and_one_that_is_called_fai
         with pytest.raises(pytest.fail.Exception, match="declared it never_called"):
             db.transaction()
     assert spied == []
-    assert never_called(lambda: "the fake runs the spy")() == "the fake runs the spy"
+
+
+async def test_a_reached_never_called_fails_on_the_plain_evaldb_too_and_no_except_exception_swallows_it(monkeypatch):
+    from tests.support.kit_backend import never_called
+    db = EvalDb()
+    ran = []
+
+    def failing():
+        ran.append(1)
+        raise RuntimeError("backend down")
+
+    monkeypatch.setattr(db, "transaction", never_called(failing))
+
+    def adapter_that_swallows_errors():
+        try:
+            db.transaction()
+        except Exception:
+            return "swallowed"
+
+    with pytest.raises(pytest.fail.Exception, match="failing was called, but the test declared it never_called"):
+        adapter_that_swallows_errors()
+    assert ran == []
 
 
 def test_an_undeclared_replacement_still_has_to_be_reached(monkeypatch):
