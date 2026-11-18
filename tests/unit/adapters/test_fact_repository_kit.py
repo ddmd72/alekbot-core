@@ -31,8 +31,8 @@ CONTEXT_COLLECTION = "eval_user_context"
 
 
 @pytest.fixture
-def store():
-    return FactStore(indexes=INDEXES_FILE)
+def store(kit_db):
+    return FactStore(indexes=INDEXES_FILE, kit_db=kit_db)
 
 
 def plain(doc):

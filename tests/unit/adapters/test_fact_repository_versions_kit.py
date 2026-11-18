@@ -24,8 +24,8 @@ NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def store():
-    return FactStore(indexes=INDEXES_FILE)
+def store(kit_db):
+    return FactStore(indexes=INDEXES_FILE, kit_db=kit_db)
 
 
 async def seed(store, text, **over):
@@ -88,7 +88,7 @@ async def test_write_superseding_checks_each_source_token_against_its_own_snapsh
         await seed(store, name)
     sources = [await resolve(store, f"f-{n}") for n in "abc"]
     before = {k: copy.deepcopy(v) for k, v in store.docs.items()}
-    store.interfere("f-b", {"text": "changed elsewhere"})   # interleaving source: a commit lands on b at its transactional read
+    store.db.interfere_on_txn_read(FACTS, "f-b", {"text": "changed elsewhere"})   # interleaving source: a commit lands on b at its transactional read
 
     new = make_fact("merged")
     with pytest.raises(FactWriteConflict) as caught:
@@ -396,7 +396,7 @@ async def test_invalidate_merged_source_raises_resolution_error_and_writes_nothi
 
 async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     await seed(store, "x")
-    store.interfere("f-x", {"text": "edited elsewhere"})
+    store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "edited elsewhere"})
 
     await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
 
@@ -409,7 +409,7 @@ async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_la
     await seed(store, "likes tea", id="f-v1", lineage_id="L")
     await seed(store, "likes tea", id="f-v2", lineage_id="L", version=2)
     closure = {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": NOW}
-    store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
+    store.db.interfere_on_txn_read(FACTS, "f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
 
     await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-v1", ACC)
 
@@ -421,8 +421,8 @@ async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_la
 
 async def test_invalidate_second_conflict_raises_and_writes_nothing(store):
     await seed(store, "x")
-    store.interfere("f-x", {"text": "first edit"})
-    store.interfere("f-x", {"text": "second edit"})
+    store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "first edit"})
+    store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "second edit"})
 
     with pytest.raises(FactWriteConflict):
         await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)

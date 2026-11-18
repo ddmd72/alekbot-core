@@ -9,7 +9,6 @@ from src.domain.entities import FactState
 from src.domain.person_cards import PersonCard
 from tests.support.fact_kit import ACC, OTHER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
-from tests.support.firestore_eval import EvalDb
 
 COLLECTION = "eval_person_cards"
 MARIA = PersonCard("doe_mari", "Maria Doe", ("Maria Doe", "Mariia"), ("w:maria", "x:doe", "x:mari"), "mother", 11)
@@ -24,8 +23,8 @@ def env():
 
 
 @pytest.fixture
-def db():
-    return EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture
@@ -91,8 +90,8 @@ def test_the_collection_is_the_prefixed_person_cards():
 # ------------------------------------------------------------------------------------------------ list_profile_people
 
 @pytest.fixture
-def store():
-    return FactStore(indexes=INDEXES_FILE)
+def store(kit_db):
+    return FactStore(indexes=INDEXES_FILE, kit_db=kit_db)
 
 
 @pytest.fixture(params=["firestore", "kit"])

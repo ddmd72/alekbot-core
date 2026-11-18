@@ -24,8 +24,8 @@ from tests.support.fact_write import EXPIRY_NONE, ctx
 
 
 @pytest.fixture
-def store():
-    return FactStore(indexes=INDEXES_FILE)
+def store(kit_db):
+    return FactStore(indexes=INDEXES_FILE, kit_db=kit_db)
 
 
 def meta(**over):
