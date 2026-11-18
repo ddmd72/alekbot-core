@@ -11,7 +11,7 @@ Covers (per RFC §14):
 - list_tasks: delegates to tasks_provider.list_tasks
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -576,7 +576,7 @@ class TestDeriveReminder:
         from src.agents.tasks_agent import TasksAgent
 
         explicit = datetime(2026, 3, 31, 20, 0)
-        reminder_dt, is_on = TasksAgent._derive_reminder(explicit, None)
+        reminder_dt, is_on = TasksAgent._derive_reminder(explicit, None, timezone.utc)
         assert reminder_dt == explicit
         assert is_on is True
 
@@ -584,14 +584,14 @@ class TestDeriveReminder:
         from src.agents.tasks_agent import TasksAgent
 
         due = datetime(2026, 4, 1, 9, 0)
-        reminder_dt, is_on = TasksAgent._derive_reminder(None, due)
+        reminder_dt, is_on = TasksAgent._derive_reminder(None, due, timezone.utc)
         assert reminder_dt == datetime(2026, 3, 31, 20, 0, 0)
         assert is_on is True
 
     def test_neither_returns_none_false(self):
         from src.agents.tasks_agent import TasksAgent
 
-        reminder_dt, is_on = TasksAgent._derive_reminder(None, None)
+        reminder_dt, is_on = TasksAgent._derive_reminder(None, None, timezone.utc)
         assert reminder_dt is None
         assert is_on is False
 
