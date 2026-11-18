@@ -392,6 +392,7 @@ async def test_merge_never_raises_and_a_failed_creation_is_a_failed_result(store
     json.dumps(res)
 
 
+@pytest.mark.h1_only("injects the read failure with raise_on_txn_read")
 async def test_a_backend_failure_on_one_source_fails_the_whole_merge_and_writes_nothing(store):
     # Reviewer edit (facts S2, D3): was test_merge_reports_only_the_sources_it_superseded, which pinned a partial merge
     # (source a superseded, b failed). The merge is one transaction now: the backend failing on b writes nothing.
@@ -530,6 +531,7 @@ async def test_search_alternative_query_defaults_to_the_primary(store):
     assert any(other != plain_ for other in others)
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_search_failure_or_no_account_returns_an_empty_list(store):
     await create(store, "likes green tea")
     adapter = _searching(store)

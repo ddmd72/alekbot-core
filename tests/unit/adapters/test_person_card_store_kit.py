@@ -68,6 +68,7 @@ async def test_replace_with_nothing_deletes_the_accounts_cards(db, cards):
     assert await cards.list_cards(ACC) == [] and len(await cards.list_cards(OTHER)) == 1
 
 
+@pytest.mark.h1_only("counts the fake's batch commits (commits)")
 async def test_a_large_replacement_goes_in_batches_of_at_most_500(db, cards):
     many = [PersonCard(f"k{i:04d}", f"P{i}", (f"P{i}",), (), None, 10) for i in range(1100)]
     await cards.replace_cards(ACC, many)

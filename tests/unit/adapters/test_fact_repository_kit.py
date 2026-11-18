@@ -418,6 +418,7 @@ async def test_search_projection_returns_vector_and_context_and_defaults_the_res
     assert got.model_dump(exclude=defaulted) == fact.model_dump(exclude=defaulted)
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_search_backend_error_propagates(store):
     put_raw(store, "own", "own")
     store.db.collection(FACTS).fail = RuntimeError("backend down")
@@ -660,6 +661,7 @@ async def test_refresh_of_an_unchanged_account_writes_the_same_content(store):
     assert {k: v for k, v in second.items() if k != "refreshed_at"} == {k: v for k, v in first.items() if k != "refreshed_at"}
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_refresh_never_raises_and_keeps_the_previous_cache_on_a_failure(store):
     await _seed_account_for_cache(store)
     refresher = _cache_refresher(store)

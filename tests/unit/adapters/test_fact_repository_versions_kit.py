@@ -62,6 +62,7 @@ def stamp(store, doc_id):
 
 # ------------------------------------------------------------------------------------------ write_superseding
 
+@pytest.mark.h1_only("reads the fake's write stamps (versions) to show what one commit wrote")
 async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_doc_in_one_commit(store):
     await seed(store, "a")
     await seed(store, "b")
@@ -83,6 +84,7 @@ async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_d
     assert stamp(store, "f-merged") == stamp(store, "f-a") == stamp(store, "f-b")
 
 
+@pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
 async def test_write_superseding_checks_each_source_token_against_its_own_snapshot(store):
     for name in "abc":
         await seed(store, name)
@@ -243,6 +245,7 @@ async def test_update_fact_fields_on_a_deleted_doc_raises_conflict(store):
 
 # ------------------------------------------------------------------------------------------- error mapping
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_read_time_aborted_becomes_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -256,6 +259,7 @@ async def test_read_time_aborted_becomes_conflict(store):
     assert store.docs == before
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_exhausted_commit_retries_become_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -267,6 +271,7 @@ async def test_exhausted_commit_retries_become_conflict(store):
         await store.repo.update_fact_fields(stored, {"last_updated": NOW})
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_an_error_that_replaced_an_aborted_is_a_conflict_through_cause_and_context(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -287,6 +292,7 @@ async def test_an_error_that_replaced_an_aborted_is_a_conflict_through_cause_and
         assert caught.value.fact_id == "f-x", chain
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_a_chained_error_without_an_aborted_stays_itself(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -298,6 +304,7 @@ async def test_a_chained_error_without_an_aborted_stays_itself(store):
         await store.repo.update_fact_fields(stored, {"last_updated": NOW})
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_a_value_error_not_caused_by_aborted_is_not_a_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -394,6 +401,7 @@ async def test_invalidate_merged_source_raises_resolution_error_and_writes_nothi
     assert store.docs == before
 
 
+@pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
 async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     await seed(store, "x")
     store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "edited elsewhere"})
@@ -404,6 +412,7 @@ async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     assert store.docs["f-x"]["state"] == "invalidated"
 
 
+@pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
 async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_lands_on_the_new_version(store):
     # same text in both versions: a concurrent version with another text is refused, test_fact_invalidate_shown_text.py
     await seed(store, "likes tea", id="f-v1", lineage_id="L")
@@ -419,6 +428,7 @@ async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_la
     assert check_lineages(store.docs.items()) == {}
 
 
+@pytest.mark.h1_only("forces concurrent commits with interfere_on_txn_read")
 async def test_invalidate_second_conflict_raises_and_writes_nothing(store):
     await seed(store, "x")
     store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "first edit"})
@@ -430,6 +440,7 @@ async def test_invalidate_second_conflict_raises_and_writes_nothing(store):
     assert store.docs["f-x"]["text"] == "second edit" and store.docs["f-x"]["state"] == "current"
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_invalidate_aborted_is_conflict_not_value_error(store):
     await seed(store, "x")
     store.db.raise_on_txn_read(FACTS, "f-x", Aborted("contention"))
