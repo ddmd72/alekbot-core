@@ -12,7 +12,7 @@ from src.config.environment import EnvironmentConfig
 from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from tests.support.firestore_eval import EvalDb
 
-COORDINATOR, SESSIONS, MEDIA = object(), object(), object()
+COORDINATOR, SESSIONS, MEDIA, LINKS = object(), object(), object(), object()
 LANGUAGES = SimpleNamespace(localization=object(), resolver=object())
 
 
@@ -28,7 +28,7 @@ def build(monkeypatch):
 
     def run(**config):
         return build_notifications({"SLACK_BOT_TOKEN": "xoxb-test-1", **config}, EvalDb(), env, coordinator=COORDINATOR,
-                                   session_store=SESSIONS, media_storage=MEDIA, languages=LANGUAGES)  # type: ignore[arg-type]
+                                   session_store=SESSIONS, media_storage=MEDIA, link_service=LINKS, languages=LANGUAGES)  # type: ignore[arg-type]
     return run
 
 
