@@ -333,6 +333,7 @@ def _firestore(adapter):
     return repo, db
 
 
+@pytest.mark.h1_only("reads the raw writes of the fake's transaction log (db.transactions)")
 async def test_firestore_writes_updated_at_as_a_server_timestamp(adapter):
     from google.cloud import firestore
     repo, db = _firestore(adapter)
@@ -367,6 +368,7 @@ async def test_firestore_stub_holds_only_its_fields(adapter):
     assert versions_of(db, "u:n1") == {}
 
 
+@pytest.mark.h1_only("counts the fake's batch commits (db.commits)")
 async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter):
     repo, db = _firestore(adapter)
     note = await first(repo)
@@ -379,6 +381,7 @@ async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter)
     assert len(db.commits) == 1 and len(db.commits[0]) == 3              # v1..v3 in a batch, the rest with the stub
 
 
+@pytest.mark.h1_only("drives the fake collection's query-failure switch (fail =)")
 async def test_firestore_errors_are_store_unavailable(adapter):
     repo, db = _firestore(adapter)
     db.collection(NOTES).fail = ServiceUnavailable("down")
@@ -389,6 +392,7 @@ async def test_firestore_errors_are_store_unavailable(adapter):
         await repo.changed_since(U, None, 5)
 
 
+@pytest.mark.h1_only("reads the fake's query log (db.executed())")
 async def test_firestore_every_query_filters_the_user(adapter):
     repo, db = _firestore(adapter)
     await first(repo)
@@ -503,6 +507,7 @@ async def test_closing_a_missing_previous_version_is_tolerated(adapter):
     assert [v.version for v in await repo.list_versions(U, "n1")] == [2]
 
 
+@pytest.mark.h1_only("the contention is the drive fake's buffered transaction (contended)")
 async def test_firestore_a_contended_first_write_reruns_and_conflicts_writing_nothing(adapter):
     from unittest.mock import patch
     from tests.unit.adapters.firestore_drive_note_fakes import contended
