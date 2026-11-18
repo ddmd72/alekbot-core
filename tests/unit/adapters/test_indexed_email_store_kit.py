@@ -61,6 +61,7 @@ async def test_save_round_trip_stores_no_v1_vector_and_returns_naive_utc_dates(r
     assert got == sent.model_copy(update={"email_date": datetime(2026, 10, 5, 10, 0)})
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_save_uses_the_user_scoped_document_id_and_501_emails_are_two_commits(repo):
     assert await repo.save_batch([]) == 0
     assert await repo.save_batch([email(f"e{i}") for i in range(501)]) == 501
