@@ -25,17 +25,13 @@ class EmailIndexingJobRepository(ABC):
         Idempotency: a repeat stores the same job.
         """
 
+    @abstractmethod
     async def create_job_if_absent(self, job: IndexingJob) -> bool:
-        """Persist `job` under its job_id only when no job has that id; True when this call stored it.
+        """Persist `job` under its job_id only when no job has that id, atomically; True only for the call that stored it.
 
         The scheduler's auto-index uses it with a deterministic id per (user, provider, local date): of two ticks that
-        race, one gets True and the other False, so one day starts one job. This default is a read, then a write, and is
-        NOT atomic: a backend that can create a document atomically must override it (the Firestore adapter does).
+        race, exactly one gets True and the other False, so one day starts one job. Existing jobs are never replaced.
         """
-        if await self.get_job(job.job_id) is not None:
-            return False
-        await self.create_job(job)
-        return True
 
     @abstractmethod
     async def update_job(

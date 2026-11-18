@@ -151,7 +151,8 @@ class FactAnswerService(ChoiceHandlerPort):
             return AnswerResult.CHANGED
         async with self._answering(question_id):
             # Two deliveries of one click read the question open together; the second finds it closed here, so the
-            # answer is written once (P15-D12). The main service runs one instance (decisions/worker_task_dedup.md).
+            # answer is written once (P15-D12). The main service runs one instance (decisions/worker_task_dedup.md);
+            # a rolling-deploy overlap can still apply an answer twice (accepted, see decisions/worker_task_dedup.md).
             current = await self._question(question_id)
             if current is None or not current.is_open:
                 logger.info(f"[FactAnswer] question {question_id} was answered meanwhile; answer not applied")
