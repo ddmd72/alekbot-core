@@ -66,3 +66,9 @@ def test_the_renderer_is_built_only_with_its_switch_and_the_slack_kit_renders_wi
 def test_the_bundle_is_frozen(build):
     with pytest.raises(dataclasses.FrozenInstanceError):
         build().service = None  # type: ignore[misc]
+
+
+def test_slacks_rich_content_links_html_pages_through_the_given_link_service(build):
+    """P11-G4-5 (O8): Slack's kit stores an html page in the media bucket and links it through `/f/<token>`."""
+    kit = build().slack_kit
+    assert kit.rich_content._storage_port is MEDIA and kit.rich_content._link_service is LINKS
