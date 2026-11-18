@@ -137,15 +137,33 @@ async def test_html_file_without_a_user_is_uploaded_as_a_file_and_not_stored(mon
     assert fake.names(BUCKET) == []
 
 
-async def test_html_link_store_failure_delivers_nothing_and_says_so(monkeypatch, fake, caplog):
-    """P11-G4-5: the upload fails: no link (and no key) goes out, and the failure is an ERROR."""
+class RecordingChannel:
+    """The chat channel `deliver` posts to: what the user would read, in order."""
+
+    def __init__(self, channel_id: str) -> None:
+        self.channel_id = channel_id
+        self.messages: List[tuple] = []
+        self.rich: List[RichContent] = []
+
+    async def send_message(self, text, thread_id=None, **kw):
+        self.messages.append((text, thread_id))
+
+    async def send_rich_content(self, content, thread_id=None):
+        self.rich.append(content)
+
+
+async def test_html_link_store_failure_posts_no_link_and_says_so(monkeypatch, fake, caplog):
+    """P11-G4-5: the upload fails: no link (and no key) goes out, and the failure is an ERROR. Review F: the page
+    itself still reaches the chat, as a file in that channel, through `deliver` as a turn or a notification calls it."""
     platform = RecordingPlatform()
     service, _ = _linking_service(monkeypatch, fake, platform)
+    channel = RecordingChannel("C1")
     fake.fail_next("upload", ServiceUnavailable("503"))
     with caplog.at_level(logging.ERROR):
-        out = await service.process(RichContent("file", {"filename": "trip-notes.html", "content": PAGE}, ""), "C1",
-                                    user_id="u1")
-    assert out is None and platform.files == []
+        await service.deliver(RichContent("file", {"filename": "trip-notes.html", "content": PAGE}, ""), channel,
+                              "t1", user_id="u1")
+    assert channel.messages == [] and channel.rich == [] and fake.names(BUCKET) == []
+    assert platform.files == [Upload(PAGE.encode("utf-8"), "trip-notes.html", "trip-notes.html", "C1")]
     assert any(r.levelno == logging.ERROR and "trip-notes.html" in r.getMessage() for r in caplog.records)
 
 
