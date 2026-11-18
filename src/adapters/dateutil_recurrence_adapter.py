@@ -5,15 +5,24 @@ Recurrence is evaluated on the user's LOCAL wall clock and converted back to UTC
 so "every day at 09:00" stays 09:00 across a DST transition. The anchor is always
 the reminder's current ``due``; rules carry no ``DTSTART`` of their own.
 
+The two DST edges:
+- A repeated (fall-back) wall time: a DAILY or coarser rule keeps the anchor's pass
+  (fold) — from a first-pass anchor it is the first pass (RFC 5545 §3.3.5), from a
+  second-pass anchor the second. HOURLY and MINUTELY rules step in real time: both
+  passes are occurrences, so the 25-hour fall-back day has 25 hourly fires.
+- A skipped (spring) wall time is read with the offset before the jump, one local
+  hour later.
+
 Every expansion is bounded by ``_HORIZON_YEARS``: an RRULE that never matches
 (``FREQ=MONTHLY;BYMONTHDAY=31;BYMONTH=2``) would otherwise make ``rrule.after()``
 iterate without end. The bound is applied by handing dateutil a probe copy of the
 rule with an ``UNTIL`` — beyond the horizon the answer is ``None``, never a hang.
 """
 
+import math
 from datetime import datetime, timedelta, timezone
 from itertools import islice
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dateutil.rrule import rrule, rrulestr
@@ -35,6 +44,11 @@ _MIN_GAP = timedelta(minutes=_MIN_MINUTELY_INTERVAL)
 # INTERVAL says. The pattern repeats every period, so this many occurrences show it.
 _GAP_PROBE_OCCURRENCES = 500
 _REJECTED_PARTS = ("DTSTART", "EXDATE", "RDATE")
+
+# Sub-daily rules step in real time (both passes of a repeated hour fire); coarser rules keep the anchor's pass.
+_REAL_TIME_FREQ = {"HOURLY": timedelta(hours=1), "MINUTELY": timedelta(minutes=1)}
+# A zone's UTC offset never moves by more than this between nearby moments (DST shifts are 1 h, at most 2 h).
+_MAX_SHIFT = timedelta(hours=3)
 
 _FREQ_UNIT = {
     "MINUTELY": "minute",
@@ -113,15 +127,48 @@ class DateutilRecurrenceAdapter(RecurrencePort):
         zone = self._zone(tz)
         # Local wall clock in, local wall clock out — the whole point of evaluating
         # in the user's zone rather than UTC.
-        local_anchor = anchor.astimezone(zone).replace(tzinfo=None)
+        local = anchor.astimezone(zone)
         try:
-            occurrence = self._expand(rule, local_anchor, inc=inc)
+            parts = self._parse(rule)
+            step = _REAL_TIME_FREQ.get(parts.get("FREQ", ""))
+            if step is not None:
+                return self._real_time(rule, step * self._interval(parts), anchor, zone, inc)
+            occurrence = self._expand(rule, local.replace(tzinfo=None), inc=inc)
         except ValueError as exc:
             logger.warning("⚠️ [Recurrence] Unusable rule %r: %s", rule, exc)
             return None
         if occurrence is None:
             return None
-        return occurrence.replace(tzinfo=zone).astimezone(timezone.utc)
+        # The anchor's pass: a repeated wall time on the anchor's side of the fall-back.
+        return occurrence.replace(tzinfo=zone, fold=local.fold).astimezone(timezone.utc)
+
+    def _real_time(
+        self, rule: str, period: timedelta, anchor: datetime, zone: ZoneInfo, inc: bool
+    ) -> Optional[datetime]:
+        """First instant at/after (``inc``) or after ``anchor`` among every instant that reads as one of the rule's
+        wall times. An instant after the anchor can read as an earlier wall time (the second pass of a repeated
+        hour), so the walk starts whole periods earlier — which keeps the rule's phase (INTERVAL, and the
+        BYMINUTE/BYSECOND it takes from the start) — and stops once no later wall time can beat the best instant.
+        """
+        wall_anchor = anchor.astimezone(zone).replace(tzinfo=None, fold=0)
+        start = wall_anchor - period * math.ceil(_MAX_SHIFT / period)
+        best: Optional[datetime] = None
+        best_wall = start
+        for wall in self._bounded(rule, start):
+            if best is not None and wall > best_wall + _MAX_SHIFT:
+                break
+            for instant in self._instants(wall, zone):
+                if (instant >= anchor if inc else instant > anchor) and (best is None or instant < best):
+                    best, best_wall = instant, wall
+        return best
+
+    @staticmethod
+    def _instants(wall: datetime, zone: ZoneInfo) -> List[datetime]:
+        """Every UTC instant that reads as ``wall``: two in a repeated hour, one otherwise; a skipped wall time has
+        none and is read with the offset before the jump."""
+        readings = {wall.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc) for fold in (0, 1)}
+        real = [u for u in readings if u.astimezone(zone).replace(tzinfo=None) == wall]
+        return real or [wall.replace(tzinfo=zone, fold=0).astimezone(timezone.utc)]
 
     def _expand(self, rule: str, local_anchor: datetime, inc: bool) -> Optional[datetime]:
         """First match at/after ``local_anchor``, or None past the horizon.

@@ -148,12 +148,12 @@ class TestFallBackFoldZeroAnchors:
 
 # The measured partition, one literal table: (anchor label, rule, kind) → "xfail" (P16-D4) or "pass".
 FOLD1_PARTITION: Dict[Tuple[str, str, str], str] = {
-    ("T", "D", "first"): "xfail", ("T", "H", "first"): "xfail", ("T", "M", "first"): "xfail",
-    ("T+1m", "D", "first"): "xfail", ("T+1m", "H", "first"): "xfail", ("T+1m", "M", "first"): "xfail",
-    ("T+30m", "D", "first"): "xfail", ("T+30m", "H", "first"): "xfail", ("T+30m", "M", "first"): "xfail",
-    ("T", "D", "next"): "xfail", ("T", "H", "next"): "pass", ("T", "M", "next"): "xfail",
-    ("T+1m", "D", "next"): "xfail", ("T+1m", "H", "next"): "pass", ("T+1m", "M", "next"): "xfail",
-    ("T+30m", "D", "next"): "pass", ("T+30m", "H", "next"): "pass", ("T+30m", "M", "next"): "xfail",
+    ("T", "D", "first"): "pass", ("T", "H", "first"): "pass", ("T", "M", "first"): "pass",
+    ("T+1m", "D", "first"): "pass", ("T+1m", "H", "first"): "pass", ("T+1m", "M", "first"): "pass",
+    ("T+30m", "D", "first"): "pass", ("T+30m", "H", "first"): "pass", ("T+30m", "M", "first"): "pass",
+    ("T", "D", "next"): "pass", ("T", "H", "next"): "pass", ("T", "M", "next"): "pass",
+    ("T+1m", "D", "next"): "pass", ("T+1m", "H", "next"): "pass", ("T+1m", "M", "next"): "pass",
+    ("T+30m", "D", "next"): "pass", ("T+30m", "H", "next"): "pass", ("T+30m", "M", "next"): "pass",
 }
 
 
@@ -224,7 +224,6 @@ class TestFallBackControls:
 
 class TestFallBackUserVisible:
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D4)
     def test_a_reminder_created_in_the_second_pass_gets_the_second_fold_due(self, adapter):
         """Daily 02:30 Berlin, created at 01:10Z on the fall-back day (local 02:10 CET, the second pass): the
         offset-aware due is 02:30 CET = 01:30Z. Today it is 00:30Z, already past, so it fires at the next tick."""
@@ -233,14 +232,12 @@ class TestFallBackUserVisible:
         got = _utc(adapter.first_occurrence(_daily(repeated.wall.hour, repeated.wall.minute), created, BERLIN))
         assert got == repeated.fold1.utc, f"due={got:%H:%MZ}, expected {repeated.fold1.utc:%H:%MZ}"
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D4)
     @pytest.mark.parametrize("zone", ZONES)
     def test_hourly_fires_once_per_real_hour_over_the_fall_back_day(self, adapter, zone):
         """Local midnight to local midnight on the fall-back day is 25 real hours, so 25 hourly occurrences."""
         count = _count_over_the_fall_back_day(adapter, zone, "FREQ=HOURLY", cap=30)
         assert count == 25, f"{count} hourly occurrences for 25 real hours"
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D4)
     @pytest.mark.parametrize("zone", ZONES)
     def test_every_15_minutes_over_the_fall_back_day(self, adapter, zone):
         """25 real hours hold 100 quarter-hours; today the repeated hour's four are lost (96)."""

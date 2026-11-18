@@ -50,7 +50,10 @@ class RecurrencePort(ABC):
         """First occurrence strictly after ``after`` (both UTC) — the reschedule step.
 
         ``tz`` is the user's IANA zone: recurrence is evaluated on the local wall
-        clock, so "every day at 09:00" stays 09:00 across a DST transition.
+        clock, so "every day at 09:00" stays 09:00 across a DST transition. In a
+        repeated (fall-back) hour a DAILY or coarser rule keeps the anchor's pass
+        and HOURLY/MINUTELY rules step in real time (both passes fire); a skipped
+        (spring) wall time is read one local hour later.
         Returns ``None`` when the rule yields nothing within the implementation's
         horizon — the caller must treat that as "cannot reschedule", never as now.
         """
