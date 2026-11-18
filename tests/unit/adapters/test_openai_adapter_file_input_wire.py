@@ -101,4 +101,4 @@ async def test_image_still_goes_as_input_image():
     adapter = _adapter()
     await adapter.generate_content(_request(MessagePart(file_data={"base64": "abc", "mime_type": "image/png"})))
     part = adapter.client.responses.create.call_args.kwargs["input"][-1]["content"][0]
-    assert part == {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+    assert part == {"type": "input_image", "image_url": "data:image/png;base64,abc", "detail": "auto"}
