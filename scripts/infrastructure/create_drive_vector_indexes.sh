@@ -6,13 +6,13 @@
 #          indexes, so these six are created here. They are also declared in config/firestore.indexes.json.
 #          Every pre-filter is `connection_id` since MULTI_DRIVE_RFC §8 (slice 1b: one index per connection); the
 #          user_id forms created before are dropped by the owner at the 1b deploy (the drive data is wiped then).
-# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_drive_vector_indexes.sh
+# Usage:   PROJECT_ID=<project> FIRESTORE_DATABASE=<database> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_drive_vector_indexes.sh
 # ==============================================================================
 
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID (from .env)}"
-DATABASE_ID="us-production"
+DATABASE_ID="${FIRESTORE_DATABASE:?set FIRESTORE_DATABASE (from .env); there is no default database}"
 COLLECTION="${COLLECTION_PREFIX-development_}drive_index_records"
 CHUNK_COLLECTION="${COLLECTION_PREFIX-development_}drive_index_chunks"
 HINT_COLLECTION="${COLLECTION_PREFIX-development_}drive_index_hints"

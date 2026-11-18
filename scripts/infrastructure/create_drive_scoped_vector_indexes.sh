@@ -9,13 +9,13 @@
 #          config/firestore.indexes.json. Both must be READY before the code that queries them is deployed.
 # Owner-run, once, before the deploy; wait for READY (the status commands are printed at the end). A dry run by default:
 # it prints the gcloud commands; APPLY=1 creates the indexes.
-# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] [APPLY=1] bash ./scripts/infrastructure/create_drive_scoped_vector_indexes.sh
+# Usage:   PROJECT_ID=<project> FIRESTORE_DATABASE=<database> [COLLECTION_PREFIX=development_] [APPLY=1] bash ./scripts/infrastructure/create_drive_scoped_vector_indexes.sh
 # ==============================================================================
 
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID (from .env)}"
-DATABASE_ID="us-production"
+DATABASE_ID="${FIRESTORE_DATABASE:?set FIRESTORE_DATABASE (from .env); there is no default database}"
 CHUNK_COLLECTION="${COLLECTION_PREFIX-development_}drive_index_chunks"
 HINT_COLLECTION="${COLLECTION_PREFIX-development_}drive_index_hints"
 VECTOR_CONFIG='{"dimension":"768", "flat": "{}"}'

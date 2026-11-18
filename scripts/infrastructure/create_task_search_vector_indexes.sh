@@ -6,13 +6,13 @@
 #          `make deploy-indexes` skips vector indexes, so they are created here. They are also
 #          declared in config/firestore.indexes.json. The distance measure is not part of an index
 #          (it is chosen per query); only dimension and flat are.
-# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_task_search_vector_indexes.sh
+# Usage:   PROJECT_ID=<project> FIRESTORE_DATABASE=<database> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_task_search_vector_indexes.sh
 # ==============================================================================
 
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID (from .env)}"
-DATABASE_ID="${FIRESTORE_DATABASE:-us-production}"
+DATABASE_ID="${FIRESTORE_DATABASE:?set FIRESTORE_DATABASE (from .env); there is no default database}"
 COLLECTION="${COLLECTION_PREFIX-development_}task_search_index"
 VECTOR_CONFIG='{"dimension":"768", "flat": "{}"}'
 

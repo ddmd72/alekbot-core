@@ -30,7 +30,7 @@ def apply_field_override(override, project_id, database_id):
     return False
 
 
-def deploy_indexes(file_path, project_id, database_id="us-production"):
+def deploy_indexes(file_path, project_id, database_id):
     if not os.path.exists(file_path):
         print(f"❌ File not found: {file_path}")
         sys.exit(1)
@@ -90,12 +90,12 @@ def deploy_indexes(file_path, project_id, database_id="us-production"):
     return failures
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python deploy_firestore_indexes.py <json_file> <project_id> [database_id]")
+    if len(sys.argv) != 4 or not sys.argv[3].strip():
+        print("Usage: python deploy_firestore_indexes.py <json_file> <project_id> <database_id>")
+        print("The database is explicit: there is no default.")
         sys.exit(1)
 
-    database_id = sys.argv[3] if len(sys.argv) > 3 else "us-production"
-    failed = deploy_indexes(sys.argv[1], sys.argv[2], database_id)
+    failed = deploy_indexes(sys.argv[1], sys.argv[2], sys.argv[3])
     if failed:
         print(f"❌ {len(failed)} index creation(s) failed: {', '.join(failed)}")
         sys.exit(1)

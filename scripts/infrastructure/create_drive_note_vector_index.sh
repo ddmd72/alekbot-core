@@ -7,13 +7,13 @@
 #          config/firestore.indexes.json (the composites 1-5 are).
 # Owner-run, once, before the deploy; wait for READY (the status command is printed at the end). A dry run by default:
 # it prints the gcloud command; APPLY=1 creates the index.
-# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] [APPLY=1] bash ./scripts/infrastructure/create_drive_note_vector_index.sh
+# Usage:   PROJECT_ID=<project> FIRESTORE_DATABASE=<database> [COLLECTION_PREFIX=development_] [APPLY=1] bash ./scripts/infrastructure/create_drive_note_vector_index.sh
 # ==============================================================================
 
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID (from .env)}"
-DATABASE_ID="us-production"
+DATABASE_ID="${FIRESTORE_DATABASE:?set FIRESTORE_DATABASE (from .env); there is no default database}"
 COLLECTION="${COLLECTION_PREFIX-development_}drive_notes"
 VECTOR_CONFIG='{"dimension":"768", "flat": "{}"}'
 
