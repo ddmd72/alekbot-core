@@ -68,6 +68,20 @@ class TestLinkPlatform:
         resp = await world.client.post(path, headers={**world.token(ALEX), "Content-Type": "application/json"}, data=data)
         assert resp.status_code == 400
 
+    @pytest.mark.parametrize("platform", ["telegram", "discord"])
+    async def test_only_slack_links_here_other_platforms_are_refused(self, world, platform):
+        before = dict(world.user_doc("usr-1"))
+        resp = await world.client.post("/api/user/link-platform", headers=world.token(ALEX),
+                                       json={"platform": platform, "platform_user_id": "not-numeric"})
+        assert resp.status_code == 400
+        assert world.user_doc("usr-1") == before
+
+    async def test_slack_still_links(self, world):
+        resp = await world.client.post("/api/user/link-platform", headers=world.token(ALEX),
+                                       json={"platform": "slack", "platform_user_id": "U0ALEX01"})
+        assert resp.status_code == 200
+        assert _identities(world, "usr-1") == {"slack": "U0ALEX01"}
+
     async def test_a_phone_cannot_be_linked_without_the_otp_proof(self, world):
         resp = await world.client.post("/api/user/link-platform", headers=world.token(ALEX),
                                        json={"platform": "phone", "platform_user_id": "+12025550142"})

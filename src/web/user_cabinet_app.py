@@ -67,12 +67,15 @@ DOCS_OWNER_USER_ID = os.getenv('DOCS_OWNER_USER_ID')
 _E164_PATTERN = re.compile(r"^\+[1-9]\d{6,14}$")
 
 # How many questions one request of answers may name.
+# Platforms POST /api/user/link-platform binds directly (the others have their own validating routes).
+_LINK_PLATFORM_ALLOWED = frozenset({"slack"})
+
 MAX_BULK_ANSWERS = 50
 MALFORMED_ANSWER = "each answer needs a question_id and one of that question's options"
 
 
-async def _json_object_body():
-    """The request body as a JSON object, for every Cabinet write route.
+async def _json_object_body() -> tuple[Optional[Dict[str, Any]], Optional[tuple]]:
+    """The request body as a JSON object, for the Cabinet write routes that call it.
 
     Returns ``(body, None)``, or ``(None, (response, 400))`` when the body is not valid JSON or not a JSON object: a
     malformed request body is a client error, so it never reaches a route's own ``except Exception`` (which answers 500).
@@ -303,9 +306,15 @@ def create_user_cabinet_blueprint(
             
             if not platform or not platform_user_id:
                 return jsonify({"error": "platform and platform_user_id are required"}), 400
-            if platform == "phone":
-                # A phone is bound only through the OTP routes (/api/user/phone/...): this route carries no proof.
-                return jsonify({"error": "a phone number is linked only through the OTP verification"}), 400
+            if platform not in _LINK_PLATFORM_ALLOWED:
+                # Allow-list: telegram has its own validated route, a phone is bound only through the OTP routes.
+                if platform == "telegram":
+                    hint = "use /api/user/link-telegram for Telegram"
+                elif platform == "phone":
+                    hint = "a phone number is linked only through the OTP verification"
+                else:
+                    hint = "unsupported platform"
+                return jsonify({"error": hint}), 400
             
             # Link platform ID to user (uses user_repo from closure)
             await user_repo.add_platform_id(g.user_id, platform, platform_user_id)
@@ -1038,7 +1047,7 @@ def create_user_cabinet_blueprint(
             body, bad_body = await _json_object_body()
             if bad_body is not None:
                 return bad_body
-            query = (body or {}).get("query", "").strip()
+            query = body.get("query", "").strip()
             if not query:
                 return jsonify({"error": "query is required"}), 400
 
