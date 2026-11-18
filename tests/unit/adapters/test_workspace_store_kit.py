@@ -26,8 +26,8 @@ def _adapter(fake: FakeGcs) -> GcsWorkspaceAdapter:
 
 
 @pytest.fixture
-def fake():
-    return FakeGcs(buckets={BUCKET: "versioned"})
+def fake(kit_gcs):
+    return kit_gcs(buckets={BUCKET: "versioned"})
 
 
 @pytest.fixture

@@ -24,8 +24,8 @@ def _adapter(monkeypatch, fake: FakeGcs, service_account_email=None) -> GcsMedia
 
 
 @pytest.fixture
-def fake():
-    return FakeGcs(buckets={BUCKET: "plain"})
+def fake(kit_gcs):
+    return kit_gcs(buckets={BUCKET: "plain"})
 
 
 @pytest.fixture
