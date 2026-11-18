@@ -4,7 +4,7 @@
 still serves itself and refuses a key it already has. Each runner owns only its own dependencies; a feature whose
 dependency is absent gets a `DisabledTask` answering the refusal the task gave before it left the handler.
 """
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional
+from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple
 
 from ..domain.worker_task import WorkerTask
 from ..domain.notification_kind import NotificationKind
@@ -22,6 +22,7 @@ from ..services.deep_research_notice_sender import DeepResearchNoticeSender
 from ..services.disabled_task import DisabledTask
 from ..services.email_review_service import EmailReviewService
 from ..services.execute_reminder_task import ExecuteReminderTask
+from ..services.geo_mark_turn_task import GeoMarkTurnTask
 from ..services.gmail_reconnect_flag import GmailReconnectFlag
 from ..services.provider_registry import ProviderRegistry
 from ..services.start_daily_email_review_task import StartDailyEmailReviewTask
@@ -39,8 +40,11 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
                        media_storage: Optional[Any], link_service: Optional[Any], short_link_service: Optional[Any],
                        email_review: Optional[EmailReviewService], daily_review_marks: Optional[DedupStore],
                        gmail_reconnect_flag: GmailReconnectFlag,
-                       account_repo: Optional[AccountRepository]) -> Mapping[str, WorkerTask]:
-    """Task type -> runner for every task served outside `WorkerHandler`."""
+                       account_repo: Optional[AccountRepository],
+                       geo_mark_turn: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None,
+                       ) -> Mapping[str, WorkerTask]:
+    """Task type -> runner for every task served outside `WorkerHandler`. `geo_mark_turn` is the platform's runner of
+    a queued `$geo` question (the Slack adapter's entry); None: the task answers 501."""
     tasks: Dict[str, WorkerTask] = {}
     empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=alert_sink)
     if notes_port is None:
@@ -86,4 +90,5 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
     else:
         tasks["billing_daily_summary"] = BillingDailySummaryTask(
             billing_webhook=alert_sink, account_repo=account_repo, user_repo=user_repo)
+    tasks["geo_mark_turn"] = GeoMarkTurnTask(run_turn=geo_mark_turn)
     return tasks

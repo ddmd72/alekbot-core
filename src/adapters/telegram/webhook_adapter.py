@@ -6,12 +6,14 @@ import hmac
 import mimetypes
 from typing import List, Optional
 from quart import Blueprint, request, jsonify
-from telegram import Bot, Update
+from telegram import Bot, Location, Update
 
 from ...ports.platform_port import PlatformPort
 from .response_channel import TelegramResponseChannel
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...domain.chat_text import unwrapped
+from ...domain.geo_mark import GeoFix, GeoSource
+from ...domain.ui_messages import UIMessage
 from ...domain.messaging import MessageContext, FileAttachment, session_id_for
 from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
@@ -28,6 +30,21 @@ def _reply_to_metadata(message) -> dict:
     if isinstance(message_id, int) and not isinstance(message_id, bool):
         return {"reply_to_message_id": str(message_id)}
     return {}
+
+
+def _message_metadata(message, *, chat_id, telegram_user_id, update_id, preferred_language, agent_mirror) -> dict:
+    """The metadata every non-command Telegram turn carries (a text turn and a location pin alike)."""
+    return {
+        "platform": "telegram",
+        "chat_id": chat_id,
+        "telegram_user_id": telegram_user_id,
+        "preferred_language": preferred_language,
+        "agent_mirror": agent_mirror,
+        "turn_id": f"telegram:{update_id}" if update_id is not None else None,
+        "origin_message_id": str(message.message_id),
+        "event_time": message.date.timestamp() if message.date else None,
+        **_reply_to_metadata(message),
+    }
 
 
 class TelegramWebhookAdapter(PlatformPort):
@@ -228,6 +245,18 @@ class TelegramWebhookAdapter(PlatformPort):
 
             thread_id = str(message.message_thread_id) if message.is_topic_message else None
 
+            # Location pin (GEO_MARKS_RFC §4.6): a point is a mark, a venue and a live location are not,
+            # a forwarded point is someone else's. No text is read: the Bot API gives a location no caption.
+            location = getattr(message, "location", None)
+            if isinstance(location, Location) and not getattr(message, "forward_origin", None):
+                await self._handle_location(
+                    message, location, update_id=update_id, session_id=session_id, user_id=user_id,
+                    account_id=account_id, ui_lang=ui_lang, thread_id=thread_id, chat_id=chat_id,
+                    telegram_user_id=telegram_user_id, preferred_language=preferred_language,
+                    agent_mirror=agent_mirror, response_channel=response_channel,
+                )
+                return
+
             # Explicit command protocol ($command) — mirrors Slack adapters.
             # Without this, "$consolidate" & co. fall through to the agent stack as
             # normal messages and the LLM roleplays a fake result. "channel" carries
@@ -288,17 +317,10 @@ class TelegramWebhookAdapter(PlatformPort):
                 language=ui_lang.value,
                 attachments=attachments,
                 thread_id=thread_id,
-                metadata={
-                    "platform": "telegram",
-                    "chat_id": chat_id,
-                    "telegram_user_id": telegram_user_id,
-                    "preferred_language": preferred_language,
-                    "agent_mirror": agent_mirror,
-                    "turn_id": f"telegram:{update_id}" if update_id is not None else None,
-                    "origin_message_id": str(message.message_id),
-                    "event_time": message.date.timestamp() if message.date else None,
-                    **_reply_to_metadata(message),
-                }
+                metadata=_message_metadata(
+                    message, chat_id=chat_id, telegram_user_id=telegram_user_id, update_id=update_id,
+                    preferred_language=preferred_language, agent_mirror=agent_mirror,
+                ),
             )
 
             # 7. Call ConversationHandler (platform-agnostic!)
@@ -306,6 +328,45 @@ class TelegramWebhookAdapter(PlatformPort):
 
         except Exception as e:
             logger.error(f"❌ Error processing Telegram message: {e}", exc_info=True)
+
+    async def _handle_location(
+        self, message, location, *, update_id, session_id, user_id, account_id, ui_lang, thread_id, chat_id,
+        telegram_user_id, preferred_language, agent_mirror, response_channel,
+    ) -> None:
+        """A venue or a live location gets a one-line notice; a plain pin becomes a GeoFix for the handler."""
+        notice = None
+        if getattr(message, "venue", None) is not None:
+            notice = UIMessage.GEO_TELEGRAM_VENUE
+        elif location.live_period:
+            notice = UIMessage.GEO_TELEGRAM_LIVE
+        if notice is not None:
+            await response_channel.send_message(self._ui_text(ui_lang, notice), thread_id=thread_id)
+            logger.info("📍 Telegram location not taken as a mark: %s", "venue" if notice is UIMessage.GEO_TELEGRAM_VENUE else "live")
+            return
+        try:
+            fix = GeoFix.parse(location.latitude, location.longitude, location.horizontal_accuracy,
+                               message.date, GeoSource.TELEGRAM_PIN)
+        except ValueError:
+            logger.info("📍 Telegram location dropped: not a valid fix")
+            return
+        logger.info("📍 Telegram pin received (accuracy %s)", "given" if fix.accuracy_m is not None else "absent")
+        metadata = _message_metadata(
+            message, chat_id=chat_id, telegram_user_id=telegram_user_id, update_id=update_id,
+            preferred_language=preferred_language, agent_mirror=agent_mirror,
+        )
+        metadata["channel"] = str(chat_id)  # the bound-channel check reads it, as on the command path
+        context = MessageContext(
+            text="", session_id=session_id, user_id=user_id, account_id=account_id,
+            language=ui_lang.value, thread_id=thread_id, metadata=metadata,
+        )
+        await self.conversation_handler.handle_geo_mark(fix, context, response_channel)
+
+    def _ui_text(self, language, message: UIMessage) -> str:
+        """A fixed UI line in the user's UI language (Ukrainian when no localization is wired)."""
+        if self._localization:
+            return self._localization.get_ui_string(language, message)
+        from ...locales.uk import UI_STRINGS
+        return UI_STRINGS[message.value]
 
     async def _translate_platform_files(
         self, platform_files: list, is_voice: bool = False
