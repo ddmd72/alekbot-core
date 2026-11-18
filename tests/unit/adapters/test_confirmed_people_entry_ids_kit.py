@@ -6,7 +6,6 @@ from src.adapters.firestore_confirmed_people_repo import FirestoreConfirmedPeopl
 from src.domain.confirmed_people import parse_confirmed_people
 from tests.support.fact_kit import ACC, OTHER
 from tests.support.fact_store import make_env_config
-from tests.support.firestore_eval import EvalDb, eval_transactions
 
 COLLECTION = "eval_confirmed_people_ids"
 HOUSEHOLD = parse_confirmed_people({
@@ -21,9 +20,8 @@ RENAMED = parse_confirmed_people({
 
 
 @pytest.fixture
-def db():
-    with eval_transactions():
-        yield EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture
