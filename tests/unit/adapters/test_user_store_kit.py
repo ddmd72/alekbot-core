@@ -17,7 +17,6 @@ from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserProfile
 from tests.support.clock_instants import pin_datetime
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 USERS = "eval_users"
@@ -25,8 +24,8 @@ T0 = datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def repo():
-    db = EvalDb(indexes=INDEXES_FILE, groups={USERS: "development_users"})
+def repo(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={USERS: "development_users"})
     return FirestoreUserRepository(db, SimpleNamespace(domain_users_collection=USERS, is_production=False), None)
 
 
