@@ -13,14 +13,16 @@ A kit builds its store over `kit_db(indexes=..., groups=...)`, the factory this 
 `test_kits_<name>`. The names are fixed, not per run, because an index belongs to a collection id. Every collection a test
 touches is purged (recursively) before its first use and after the test, so each test starts empty; one runner at a time.
 
-Raw access stays the kit's: `db.collection(name).docs` is the stored documents as a dict. On the fake it is the fake's dict;
-here it is a fresh synchronous read of the collection (`RawDocs`): assigning, deleting or popping a document, and setting,
-deleting or popping a top-level field of one (`RawDoc`), is written through to Firestore. A nested value is frozen
-(`FrozenDict`, `FrozenList`: equal to the plain value, a change raises `TypeError`), so a nested edit that would not reach
-Firestore fails instead of being lost. Nothing is silently ignored: a public attribute set on a collection or the database
-raises (except `yield_on_get`, which only interleaves the fake's reads: keep a test that sets it only when its assertion
-holds under real concurrency), `collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other
-than `None` or `config/firestore.indexes.json` raises, and any other attribute is the real client's, so a fake-only hook
+Raw access stays the kit's: `db.collection(name).docs` is the stored documents as a dict. On the fake it is the fake's
+dict; here it is a fresh synchronous read of the collection (`RawDocs`): assigning, deleting or popping a document, and
+setting, deleting or popping a top-level field of one (`RawDoc`), is written through to Firestore. A nested value is
+frozen (`FrozenDict`, `FrozenList`: equal to the plain value, a change raises `TypeError`), so a nested edit that would
+not reach Firestore fails instead of being lost. Nothing is silently ignored: a public attribute set on a collection or
+the database raises (except `yield_on_get`, which only interleaves the fake's reads: keep a test that sets it only when
+its assertion holds under real concurrency; and except a replaced method of the real object, so a fault injected with
+`monkeypatch.setattr(collection, "document", failing)` runs here too, and fails if the adapter never calls it),
+`collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other than `None` or
+`config/firestore.indexes.json` raises, and any other attribute is the real client's, so a fake-only hook
 (`interfere_on_txn_read`, `versions`, a patched `EvalDocRef`) fails here: such a test carries
 `@pytest.mark.h1_only("<why>")` and is skipped in the cloud run.
 """
@@ -192,15 +194,58 @@ class RawDocs(dict):
 FAKE_ONLY_ATTRIBUTES = frozenset({"yield_on_get"})   # interleaves the fake's reads only; real reads interleave on their own
 
 
+class Injected:
+    """A method a test replaced on a wrapper (a fault it injects), counting its calls. A replacement the adapter never
+    calls would make the test pass on the real backend without its fault ever happening (the fake routes a call through
+    a path the real client does not, e.g. a subcollection of a document reference): such a test fails instead."""
+
+    def __init__(self, fn: Any, where: str) -> None:
+        self.fn = fn
+        self.where = where
+        self.calls = 0
+
+    def __call__(self, *a: Any, **k: Any) -> Any:
+        self.calls += 1
+        return self.fn(*a, **k)
+
+    def check_reached(self) -> None:
+        if not self.calls:
+            pytest.fail(f"the injected fault on {self.where} was never reached on the real backend: inject it where the "
+                        "adapter calls it, or mark the test h1_only")
+
+
 class _NoSilentAttributes:
-    """Setting a public attribute raises: on the fake it would steer behaviour, here it would do nothing."""
+    """Setting a public attribute raises (on the fake it would steer behaviour, here it would do nothing), unless it
+    replaces a method of the wrapped real object: a fault a test injects that way (`monkeypatch.setattr(collection,
+    "document", failing)`) runs on the real backend too, because the wrapper is the object the store holds and the one
+    `db.collection(name)` returns again (`RealKitDb` keeps one per path, as the fake keeps one per name). The replacement
+    is wrapped in `Injected`; one that was never called fails when it is replaced or undone, and when the test ends."""
+
+    def _wrapped(self) -> Any:
+        raise NotImplementedError
 
     def __setattr__(self, attr: str, value: Any) -> None:
         if attr.startswith("_") or attr in FAKE_ONLY_ATTRIBUTES:
             object.__setattr__(self, attr, value)
             return
-        raise AttributeError(f"{type(self).__name__}.{attr}: a fake-only setting has no effect on the real backend; "
-                             "mark the test h1_only")
+        own = getattr(self._wrapped(), attr, None)
+        if not callable(own):
+            raise AttributeError(f"{type(self).__name__}.{attr}: a fake-only setting has no effect on the real backend; "
+                                 "mark the test h1_only")
+        current = self.__dict__.get(attr)
+        if isinstance(current, Injected) and current is not value:
+            current.check_reached()
+        if not isinstance(value, Injected) and value != own:      # the wrapped object's own method: a restore
+            value = Injected(value, f"{type(self).__name__}.{attr}")
+            self._backend.injections.append(value)    # type: ignore[attr-defined]
+        object.__setattr__(self, attr, value)
+
+    def __delattr__(self, attr: str) -> None:
+        """`monkeypatch` undoes a replacement by deleting the instance attribute."""
+        current = self.__dict__.get(attr)
+        if isinstance(current, Injected):
+            current.check_reached()
+        object.__delattr__(self, attr)
 
 
 class RealCollection(_NoSilentAttributes):
@@ -210,6 +255,9 @@ class RealCollection(_NoSilentAttributes):
         self._backend = backend
         self._path = path
         self._ref = backend.client.collection(path)
+
+    def _wrapped(self) -> Any:
+        return self._ref
 
     @property
     def docs(self) -> RawDocs:
@@ -225,14 +273,22 @@ class RealKitDb(_NoSilentAttributes):
     def __init__(self, backend: "RealKitBackend", groups: Optional[Dict[str, str]]) -> None:
         self._backend = backend
         self._groups = dict(groups or {})
+        self._collections: Dict[str, RealCollection] = {}
 
     def _mapped(self, path: tuple) -> str:
         segments = "/".join(path).split("/")
         segments[0] = self._backend.touch(segments[0], self._groups)
         return "/".join(segments)
 
+    def _wrapped(self) -> Any:
+        return self._backend.client
+
     def collection(self, *path: str) -> RealCollection:
-        return RealCollection(self._backend, self._mapped(path))
+        """One wrapper per real path, so a method a test replaces on it is the one every user of this database calls."""
+        path_ = self._mapped(path)
+        if path_ not in self._collections:
+            self._collections[path_] = RealCollection(self._backend, path_)
+        return self._collections[path_]
 
     def document(self, *path: str) -> Any:
         return self._backend.client.document(self._mapped(path))
@@ -265,6 +321,8 @@ class RealKitBackend:
         self._ensure = ensure
         self._indexes = indexes
         self.touched: Set[str] = set()
+        self.injections: List[Injected] = []
+        self._db: Optional[RealKitDb] = None
 
     def __call__(self, indexes: Any = None, groups: Optional[Dict[str, str]] = None) -> RealKitDb:
         """`EvalDb`'s signature. `indexes` switches the fake's refusal; the real database refuses on its own with the
@@ -272,7 +330,10 @@ class RealKitBackend:
         if not (indexes is None or (isinstance(indexes, (str, Path)) and Path(indexes).resolve() == INDEXES_FILE)):
             raise ValueError("kit_db(indexes=...) other than None or config/firestore.indexes.json cannot be honoured on "
                              "the real backend: mark the test h1_only")
-        return RealKitDb(self, groups)
+        if self._db is not None:      # two fakes are independent; two real databases would share every test_* collection
+            raise ValueError("one database per test on the real backend: share the db, or mark the test h1_only")
+        self._db = RealKitDb(self, groups)
+        return self._db
 
     def touch(self, name: str, groups: Optional[Dict[str, str]]) -> str:
         """The real name of a top-level collection; on its first use in this test its indexes are made READY and it is purged."""
@@ -290,5 +351,8 @@ class RealKitBackend:
         self.sync.recursive_delete(self.sync.collection(real))
 
     def purge_touched(self) -> None:
+        """The test's teardown: purge what it touched, then fail if a fault it injected was never reached."""
         for real in sorted(self.touched):
             self.purge(real)
+        for injected in self.injections:
+            injected.check_reached()

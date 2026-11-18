@@ -5,8 +5,8 @@ import time
 import pytest
 
 import src.adapters.firestore_session_store as session_module
-from tests.support.firestore_eval import EvalDocRef
-from tests.unit.adapters.test_session_store_kit import SESS, docs, make_store, msg, raw
+from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.unit.adapters.test_session_store_kit import SESS, docs, make_store, msg, new_db, raw
 
 
 class ErrorLog:
@@ -25,7 +25,7 @@ def errors(monkeypatch):
 
 
 async def test_append_message_failure_is_logged_not_raised(errors, monkeypatch):
-    store = make_store()
+    store = make_store(new_db(EvalDb))
 
     async def boom(*a, **kw):
         raise RuntimeError("batch-down")
@@ -38,7 +38,7 @@ async def test_append_message_failure_is_logged_not_raised(errors, monkeypatch):
 
 
 async def test_delete_session_failure_is_logged_not_raised(errors, monkeypatch):
-    store = make_store()
+    store = make_store(new_db(EvalDb))
 
     async def boom(self, option=None):
         raise RuntimeError("delete-down")
@@ -51,7 +51,7 @@ async def test_delete_session_failure_is_logged_not_raised(errors, monkeypatch):
 
 
 async def test_cleanup_deletes_only_expired_sessions():
-    store = make_store()
+    store = make_store(new_db(EvalDb))
     store.ttl_hours = 1
     now = time.time()
     col = store.db.collection(SESS)
