@@ -228,24 +228,24 @@ async def test_list_returns_active_accounts_only(accounts):
 
 # ----------------------------------------------------------------------------------------------------- update
 
-async def test_update_account_stores_the_new_iam_policy(accounts):
-    account = await accounts.seed()
-    account.iam_policy = {"u1": "owner", "u2": "member"}
-    await accounts.repo.update_account(account)
+async def test_a_member_set_by_set_member_role_is_stored_and_read_back(accounts):
+    # Members change only through set_member_role (update_account keeps iam_policy as stored).
+    await accounts.seed()
+    await accounts.repo.set_member_role("a1", "u2", "member")
     assert accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u2": "member"}
     assert (await accounts.repo.get_account("a1")).iam_policy == {"u1": "owner", "u2": "member"}
 
 
 async def test_update_account_keeps_usage_counted_since_the_callers_read(accounts):
-    """Flips when update_account writes every field but usage (`update(model_dump(exclude={"usage"}))`)."""
+    """Flips when update_account writes the usage it was given (the caller's read of daily_cost 1.0)."""
     await accounts.seed(daily_cost=1.0)
-    account = await accounts.repo.get_account("a1")                # the invite flow's read
+    account = await accounts.repo.get_account("a1")                # a caller's read
     require(account.usage.daily_cost == pytest.approx(1.0), "the read predates the increment")
     await accounts.repo.increment_account_usage("a1", tokens=100, cost=0.5)
     require(accounts.usage()["daily_cost"] == pytest.approx(1.5), "the increment landed after the read")
-    account.iam_policy = {**account.iam_policy, "u2": "member"}
+    account.daily_cost_limit = 9.0
     await accounts.repo.update_account(account)
-    require(accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u2": "member"}, "the update was stored")
+    require(accounts.docs["a1"]["daily_cost_limit"] == 9.0, "the update was stored")
     assert (accounts.usage()["daily_cost"], accounts.usage()["total_tokens"]) == (pytest.approx(1.5), 100)
 
 
