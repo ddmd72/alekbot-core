@@ -11,7 +11,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-import pytest
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -101,9 +100,6 @@ async def test_a_language_switch_then_a_sign_in_keep_both_changes():
     assert "LANG_FIXED_FR" in w.db.collection("overrides").docs["USER_u1"]["tokens"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-4: concurrent profile updates lose one (each caller writes the whole profile it read, no "
-    "precondition); owner decision"))
 async def test_a_language_switch_during_a_sign_in_keeps_both_changes():
     """Flips when the callers write only the fields they changed (a field-level update), or write under a
     `last_update_time` precondition and re-read on conflict."""

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 from datetime import datetime, timezone
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
@@ -31,13 +31,24 @@ def _sanitize_user_doc(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
+def _value_at(data: Dict[str, Any], path: str) -> Any:
+    """The value at a dotted path of a dumped profile; ValueError when the path names no field."""
+    value: Any = data
+    for key in path.split("."):
+        if not isinstance(value, dict) or key not in value:
+            raise ValueError(f"update_user_fields: {path!r} is not a profile field")
+        value = value[key]
+    return value
+
+
 class FirestoreUserRepository(UserRepository):
     """
     Firestore implementation of UserRepository.
 
     Firestore mechanics (the port states the observable contract): collection `EnvironmentConfig.domain_users_collection`,
     document id `user_id`, body `UserProfile.model_dump()` written with a plain `set` (no precondition) by create_user,
-    update_user and unlink_platform_identity. Lookups are single-field equality queries with `limit(1)`
+    update_user and unlink_platform_identity; update_user_fields is an `update` of the given dotted paths and
+    `updated_at` (a missing document raises NotFound). Lookups are single-field equality queries with `limit(1)`
     (`platform_identities.<platform>` is a dotted path). link_platform_identity reads the user and queries the identity
     inside one transaction, then sets the whole document.
     """
@@ -233,6 +244,14 @@ class FirestoreUserRepository(UserRepository):
     async def update_user(self, user: UserProfile) -> UserProfile:
         user.updated_at = datetime.now(timezone.utc)
         await self.users_col.document(user.user_id).set(user.model_dump())
+        return user
+
+    async def update_user_fields(self, user: UserProfile, fields: Sequence[str]) -> UserProfile:
+        user.updated_at = datetime.now(timezone.utc)
+        data = user.model_dump()
+        changes: Dict[str, Any] = {path: _value_at(data, path) for path in fields}
+        changes["updated_at"] = user.updated_at
+        await self.users_col.document(user.user_id).update(changes)
         return user
 
     async def delete_user(self, user_id: str) -> bool:
