@@ -71,6 +71,7 @@ async def test_add_exclusions_stores_one_document_per_user_type_and_pattern_and_
     assert "exclusion_id" not in stored
 
 
+@pytest.mark.h1_only("reads the fake's commit log (db.commits)")
 async def test_add_exclusions_of_nothing_is_a_no_op(store):
     await store.adapter.add_exclusions([])
     assert store.docs == {} and store.db.commits == []
@@ -97,6 +98,7 @@ async def test_delete_exclusion_removes_the_document_by_id_and_a_missing_id_is_a
     assert [e.pattern for e in await store.adapter.get_exclusions("u1")] == ["example.org"]
 
 
+@pytest.mark.h1_only("sets the fake's collection .fail")
 async def test_backend_errors_propagate(store):
     await store.adapter.add_exclusions([exclusion()])
     store.db.collection(EXCL).fail = ServiceUnavailable("down")

@@ -230,6 +230,7 @@ async def test_a_refresh_rebuilt_with_replace_keeps_the_identity(store):
     assert got.access_token == "at-refreshed"
 
 
+@pytest.mark.h1_only("reads the fake's commit log (db.commits)")
 async def test_an_update_of_another_users_or_no_credential_writes_nothing(store):
     await store.repo.save(cred(CLARA, subject="sub-c"))
     (clara,) = await store.repo.list_for_user(CLARA)
