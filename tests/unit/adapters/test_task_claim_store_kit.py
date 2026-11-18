@@ -21,7 +21,7 @@ from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.ports.task_claim_store import TaskClaimStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.redelivery_world import require
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 SHARED = "eval_worker_task_dedup"
@@ -30,8 +30,8 @@ TASK = "execute_reminder-0f3a"
 
 
 class Shared:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup"})
         self.claims: TaskClaimStore = FirestoreTaskClaimStore(self.db, SHARED, ttl_seconds=3600)
         self.daily = FirestoreDedupStore(self.db, SHARED, ttl_seconds=172800)
         self.webhook = FirestoreDedupStore(self.db, SHARED, ttl_seconds=259200)
@@ -71,9 +71,9 @@ def io_trace(monkeypatch) -> list:
 
 
 @pytest.fixture
-def shared(monkeypatch):
+def shared(monkeypatch, kit_db):
     at(monkeypatch)
-    return Shared()
+    return Shared(kit_db)
 
 
 async def test_a_claim_without_expires_at_is_expired_and_taken_over_even_when_done(shared):
