@@ -93,6 +93,24 @@ def build_transport_security(resource_uri: str) -> TransportSecuritySettings:
     )
 
 
+def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
+    """The facts app's OAuth settings: it is the authorization server for both resources, so its registration
+    offers the drive scope too."""
+    return AuthSettings(
+        issuer_url=AnyHttpUrl(issuer_root),
+        resource_server_url=AnyHttpUrl(resource_uri),
+        required_scopes=[MCP_DEFAULT_SCOPE],
+        # Off on purpose: `verify_access_token` already refuses a token whose `aud` is not this resource
+        # (canonicalised). Explicit, so the SDK's default flipping to True in 3.0 changes nothing here.
+        validate_token_resource=False,
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
+            default_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
+        ),
+    )
+
+
 @dataclass
 class MCPComponents:
     fastmcp: FastMCP
@@ -239,16 +257,7 @@ def build_mcp_components(
         instructions="alekbot exocortex — retrieve user's memory facts via get_user_context.",
         # streamable_http_path defaults to "/mcp" — keep it.
         auth_server_provider=sdk_provider,
-        auth=AuthSettings(
-            issuer_url=AnyHttpUrl(issuer_root),
-            resource_server_url=AnyHttpUrl(auth_config.mcp_resource_uri),
-            required_scopes=[MCP_DEFAULT_SCOPE],
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
-                default_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
-            ),
-        ),
+        auth=_facts_auth_settings(issuer_root, auth_config.mcp_resource_uri),
         transport_security=transport_security,
         stateless_http=True,  # Cloud Run may route subsequent requests to different instances
     )
