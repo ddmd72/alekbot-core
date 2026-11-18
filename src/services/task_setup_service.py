@@ -110,6 +110,8 @@ class TaskSetupService:
         if not list_id:
             list_id = await self._lifecycle.ensure_primary_list(user_id)
             list_id = await self._task_config.set_primary_list_id_if_absent(user_id, list_id)
+            # `config` was read before the list id was stored: carry it, or the save below erases it.
+            config.primary_list_id = list_id
         if not list_id:
             logger.warning(f"⚠️ No primary_list_id for user {user_id[:8]} — skipping subscriptions")
             return
