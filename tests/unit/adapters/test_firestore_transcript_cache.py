@@ -11,7 +11,6 @@ from src.adapters.firestore_transcript_cache import FirestoreTranscriptCache
 from src.config.environment import EnvironmentConfig
 from src.ports.transcript_cache_port import TranscriptCachePort
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COLLECTION = "eval_audio_transcripts"
@@ -22,8 +21,8 @@ LIFE = timedelta(days=90)
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={COLLECTION: "development_audio_transcripts"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={COLLECTION: "development_audio_transcripts"})
         self.cache: TranscriptCachePort = FirestoreTranscriptCache(self.db, COLLECTION)
 
     @property
@@ -32,9 +31,9 @@ class Store:
 
 
 @pytest.fixture
-def store(monkeypatch):
+def store(monkeypatch, kit_db):
     pin_datetime(monkeypatch, cache_module, T0)
-    return Store()
+    return Store(kit_db)
 
 
 def at(monkeypatch, delta: timedelta) -> None:
