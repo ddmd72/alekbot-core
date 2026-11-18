@@ -106,6 +106,7 @@ async def test_below_the_limit_and_already_over_post_nothing(billing, start):
     assert billing.usage()["daily_cost"] == pytest.approx(start + 0.5)
 
 
+@pytest.mark.h1_only("traces the fake's EvalDocRef reads and writes and sets yield_on_get")
 async def test_concurrent_calls_cross_exactly_once(billing, monkeypatch):
     await billing.seed(daily_cost=4.0)
     billing.db.collection(ACCOUNTS).yield_on_get = True      # every call pre-reads 4.0 before any increment lands
