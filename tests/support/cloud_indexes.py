@@ -10,9 +10,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from google.cloud import firestore_admin_v1
-
-Index = firestore_admin_v1.Index
 LIVE_PREFIX, TEST_PREFIX = "development_", "test_"
 
 
@@ -52,6 +49,8 @@ def existing_signature(index: Any) -> Tuple[str, Tuple[Tuple[str, str], ...]]:
             return "CONTAINS"
         return f.order.name
 
+    from google.cloud.firestore_admin_v1 import Index     # imported here: the unit suite loads this module through kit_backend
+
     return (Index.QueryScope(index.query_scope).name,
             tuple((f.field_path, mode(f)) for f in index.fields if f.field_path != "__name__"))
 
@@ -64,6 +63,8 @@ def of_group(indexes: Any, group: str) -> List[Any]:
 
 def admin_index(index: Dict[str, Any]) -> Any:
     """The Admin API `Index` of one entry in `config/firestore.indexes.json` shape (`__name__` passed as declared)."""
+    from google.cloud.firestore_admin_v1 import Index
+
     field_cls = Index.IndexField
     vector = field_cls.VectorConfig
 

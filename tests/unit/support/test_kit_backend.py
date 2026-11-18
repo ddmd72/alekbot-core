@@ -154,7 +154,7 @@ class Async:
 def test_the_backend_maps_names_makes_indexes_ready_once_and_purges_before_first_use_and_after():
     ensured, sync, client = [], Sync(), Async()
     backend = RealKitBackend(client, sync, lambda group, wanted: ensured.append((group, wanted)), [SESSIONS_INDEX])
-    db = backend(indexes="ignored", groups={"eval_sessions": "development_sessions"})
+    db = backend(indexes=INDEXES_FILE, groups={"eval_sessions": "development_sessions"})
     assert db.collection("eval_sessions").document("u1:C1") == "test_sessions/u1:C1"
     assert db.collection("eval_sessions/u1/versions").path == "test_sessions/u1/versions"
     assert db.collection("eval_notes").path == "test_kits_eval_notes"
@@ -164,3 +164,69 @@ def test_the_backend_maps_names_makes_indexes_ready_once_and_purges_before_first
     assert sync.purged == ["test_sessions", "test_kits_eval_notes"]
     backend.purge_touched()
     assert sync.purged[2:] == ["test_kits_eval_notes", "test_sessions"]
+
+
+# --------------------------------------------------------------------------------------------------- nothing is silently lost
+
+def test_a_nested_raw_value_is_frozen_equal_to_the_plain_value_and_copies_thaw():
+    import copy
+    col = SyncCollection({"u1": {"config": {"tier": "eco"}, "history": [{"text": "hi"}]}})
+    doc = RawDocs(col)["u1"]
+    assert doc == {"config": {"tier": "eco"}, "history": [{"text": "hi"}]}
+    for edit in (lambda: doc["config"].__setitem__("tier", "x"), lambda: doc["history"].append({}),
+                 lambda: doc["history"][0].update(text="y"), lambda: doc["config"].pop("tier")):
+        with pytest.raises(TypeError, match="frozen"):
+            edit()
+    plain = copy.deepcopy(doc["history"])
+    plain[0]["text"] = "changed"
+    assert type(plain) is list and type(plain[0]) is dict
+    doc["config"] = {"tier": "performance"}
+    with pytest.raises(TypeError):
+        doc["config"]["tier"] = "eco"
+    assert col.docs["u1"]["config"] == {"tier": "performance"} and type(col.writes[-1][2]["config"]) is dict
+
+
+class Client(Async):
+    def document(self, path):
+        return f"doc:{path}"
+
+
+def backend_and_db(groups=None):
+    backend = RealKitBackend(Client(), Sync(), lambda *_: None, [SESSIONS_INDEX])
+    return backend, backend(groups=groups or {"eval_sessions": "development_sessions"})
+
+
+def test_a_public_attribute_set_on_the_database_or_a_collection_raises_except_yield_on_get():
+    _, db = backend_and_db()
+    col = db.collection("eval_sessions")
+    col.yield_on_get = True
+    for target in (col, db):
+        with pytest.raises(AttributeError, match="h1_only"):
+            target.fail = RuntimeError("down")
+
+
+def test_document_paths_are_mapped_and_database_wide_calls_raise():
+    _, db = backend_and_db()
+    assert db.document("eval_sessions/u1:C1") == "doc:test_sessions/u1:C1"
+    assert db.document("eval_notes", "n1") == "doc:test_kits_eval_notes/n1"
+    with pytest.raises(NotImplementedError):
+        db.collections()
+    with pytest.raises(NotImplementedError):
+        db.recursive_delete(db.collection("eval_sessions"))
+
+
+def test_a_collection_group_is_mapped_when_grouped_or_already_used_and_left_alone_otherwise():
+    backend, db = backend_and_db()
+    assert db.collection_group("eval_sessions") == "test_sessions"
+    assert db.collection_group("eval_notes") == "eval_notes"
+    db.collection("eval_notes")
+    assert db.collection_group("eval_notes") == "test_kits_eval_notes"
+    assert backend.client.groups == ["test_sessions", "eval_notes", "test_kits_eval_notes"]
+
+
+def test_an_index_set_the_real_database_cannot_honour_is_refused():
+    backend, _ = backend_and_db()
+    assert backend(indexes=None) and backend(indexes=INDEXES_FILE) and backend(indexes=str(INDEXES_FILE))
+    for indexes in ([], [SESSIONS_INDEX], "elsewhere.json"):
+        with pytest.raises(ValueError, match="h1_only"):
+            backend(indexes=indexes)
