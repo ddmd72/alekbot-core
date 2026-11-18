@@ -140,8 +140,9 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     `tests/unit/support/test_h1_only_marks.py` checks each mark names a reason and reaches one of those hooks. `h1_only` is forbidden on
     a test that fails on the real backend: the test database is the arbiter, so the fake is fixed, or an adapter defect is a strict
     xfail `P12-D<n>`. A missing index is a setup gap, never a mark: `render_indexes` renders composites only, so a kit whose adapter
-    runs a collection-group query with a filter (today `firestore_drive_index_repo.py`, through `test_drive_index_v2_parity.py`) first
-    adds its COLLECTION_GROUP single-field override to the cloud index model (Admin API `update_field`).
+    runs a collection-group query with a filter first adds its COLLECTION_GROUP single-field override to the cloud index model
+    (Admin API `update_field`); no converted kit reaches one today (`firestore_drive_index_repo.py`'s `_subdoc_refs` is called
+    from `scripts/` only, not by `test_drive_index_v2_parity.py`).
   - **Converting a kit.** The fixture swap is one `test(mechanical): …` commit (no assertion changed); the `h1_only` marks are a separate
     commit; the PR body gives each kit's passed / skipped / failed counts on the test database. One kit by hand:
     `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly` (never `-p no:logging`: it
