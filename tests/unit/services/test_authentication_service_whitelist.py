@@ -57,6 +57,7 @@ def user_repo():
     repo.get_user_by_email = AsyncMock(return_value=None)
     repo.get_user = AsyncMock(return_value=None)
     repo.update_user = AsyncMock(side_effect=lambda u: u)
+    repo.update_user_fields = AsyncMock(side_effect=lambda u, fields: u)
     repo.create_user = AsyncMock(side_effect=lambda u: u)
     return repo
 

@@ -34,6 +34,7 @@ def mock_user_repo():
     repo.get_user_by_external_id = AsyncMock(return_value=None)
     repo.create_user = AsyncMock(side_effect=lambda user: user)
     repo.update_user = AsyncMock(side_effect=lambda user: user)
+    repo.update_user_fields = AsyncMock(side_effect=lambda user, fields: user)
     repo.get_user = AsyncMock()
     repo.link_platform_identity = AsyncMock()
     return repo

@@ -308,7 +308,7 @@ async def test_user_info_fetch_fails_falls_back_to_claims(
 
     user = UserProfile(user_id="u1", email="u@example.com", account_id="acc1")
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=user)
-    mock_user_repo.update_user = AsyncMock(return_value=user)
+    mock_user_repo.update_user_fields = AsyncMock(return_value=user)
     account = BillingAccount(account_id="acc1", tier=AccountTier.FREE, iam_policy={})
     mock_account_repo.get_account = AsyncMock(return_value=account)
 
@@ -324,7 +324,7 @@ async def test_update_user_exception_reraises(
     _base_provider_setup(mock_provider)
     user = UserProfile(user_id="u1", email="u@example.com", account_id="acc1")
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=user)
-    mock_user_repo.update_user = AsyncMock(side_effect=RuntimeError("firestore"))
+    mock_user_repo.update_user_fields = AsyncMock(side_effect=RuntimeError("firestore"))
     with pytest.raises(RuntimeError, match="firestore"):
         await auth_service.handle_oauth_callback("code", "http://cb")
 
@@ -356,7 +356,7 @@ async def test_missing_account_id_raises(
     # User has no account_id
     user = UserProfile(user_id="u-noact", email="u@example.com", account_id="")
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=user)
-    mock_user_repo.update_user = AsyncMock(return_value=user)
+    mock_user_repo.update_user_fields = AsyncMock(return_value=user)
     with pytest.raises(ValueError, match="no account_id"):
         await auth_service.handle_oauth_callback("code", "http://cb")
 
@@ -369,7 +369,7 @@ async def test_account_not_found_raises(
     _base_provider_setup(mock_provider)
     user = UserProfile(user_id="u1", email="u@example.com", account_id="acc-ghost")
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=user)
-    mock_user_repo.update_user = AsyncMock(return_value=user)
+    mock_user_repo.update_user_fields = AsyncMock(return_value=user)
     mock_account_repo.get_account = AsyncMock(return_value=None)
     with pytest.raises(ValueError, match="not found"):
         await auth_service.handle_oauth_callback("code", "http://cb")

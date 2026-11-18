@@ -57,6 +57,7 @@ def _make_handler(
     session_store.append_messages_batch = AsyncMock()
     session_store.load_session = AsyncMock(return_value=None)
     session_store.save_session = AsyncMock()
+    session_store.remove_head = AsyncMock(return_value=True)
 
     agent_factory = MagicMock()
     agent_factory.ensure_agents_for_user = AsyncMock()

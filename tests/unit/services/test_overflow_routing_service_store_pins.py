@@ -2,9 +2,10 @@
 `OverflowRoutingService.route_overflow`, the real `FirestoreConsolidationQueue`, channel-binding and user repositories on
 one `EvalDb`, and the real `GcpTaskQueue` over a recording Cloud Tasks client.
 
-The memory map lists the loss as known (`docs/05_building_blocks/memory/README.md`, the row "enqueue of the batch fails
-at overflow": lost, no recovery). The pin asserts a fix-shape-free outcome: after a failed enqueue, the cut messages are
-still in SOME stored document (the session, the queue, or an outbox of any shape).
+Fixed by owner decision O2 (the batch is queued under a deterministic id first, then cut from the session; the memory
+map's row "enqueue of the batch fails at overflow" now says the messages stay in the session). The test asserts a
+fix-shape-free outcome: after a failed enqueue, the cut messages are still in SOME stored document (the session, the
+queue, or an outbox of any shape).
 """
 import asyncio
 from pathlib import Path

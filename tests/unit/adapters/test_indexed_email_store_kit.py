@@ -2,9 +2,9 @@
 `FirestoreIndexedEmailRepository` on the evaluating Firestore fake (H1), with the index refusal ON (vector indexes
 included). Assertions are on the raw stored documents and on what readers return.
 
-One strict xfail: P11-G2-1 (a re-saved email loses consolidated_at). The vector search, the pending-embedding reads
-and `update_vectors` (and the xfail P11-G2-2 of the vector search) were removed with the v1 vectors (email index v2,
-slice 10).
+P11-G2-1 (a re-saved email lost consolidated_at) is fixed; its former pin passes. The vector search, the
+pending-embedding reads and `update_vectors` (and the xfail P11-G2-2 of the vector search) were removed with the v1
+vectors (email index v2, slice 10).
 """
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
