@@ -31,6 +31,13 @@ class _Journal(EmailIndexingJobRepository):
         self.jobs[job.job_id] = job
         self.created.append(job)
 
+    async def create_job_if_absent(self, job: IndexingJob) -> bool:
+        if job.job_id in self.jobs:
+            return False
+        self.jobs[job.job_id] = job
+        self.created.append(job)
+        return True
+
     async def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
         self.jobs[job_id] = self.jobs[job_id].model_copy(update=updates)
 
@@ -111,8 +118,6 @@ def _assert_fired_in_the_configured_local_hour(zone: str, ticks: List[datetime],
 
 _SPRING_DAY = {z: datetime(w.naive.year, w.naive.month, w.naive.day) for z, w in SKIPPED_HOUR.items()}
 _FALL_DAY = {z: datetime(r.wall.year, r.wall.month, r.wall.day) for z, r in REPEATED_HOUR.items()}
-_D1 = dict(strict=True, raises=AssertionError,
-           reason="P16-D1: the auto-index hour is matched by equality on the local hour; a skipped hour never fires, a repeated hour fires twice, and one bad zone aborts the fan-out; owner decision")
 
 
 @pytest.mark.parametrize("zone", ZONES)
@@ -123,14 +128,14 @@ async def test_an_ordinary_hour_creates_one_job_on_each_transition_day(zone):
         _assert_fired_in_the_configured_local_hour(zone, ticks, 8)
 
 
-@pytest.mark.parametrize("zone", [pytest.param(z, marks=pytest.mark.xfail(**_D1)) for z in ZONES])
+@pytest.mark.parametrize("zone", ZONES)
 async def test_the_skipped_hour_still_creates_one_job_that_local_day(zone):
     hour = SKIPPED_HOUR[zone].naive.hour
     # No local-hour guard here: a fix may fire the skipped hour's job at the next local hour.
     assert await _jobs_on_local_day(zone, _SPRING_DAY[zone], hour) == 1
 
 
-@pytest.mark.parametrize("zone", [pytest.param(z, marks=pytest.mark.xfail(**_D1)) for z in ZONES])
+@pytest.mark.parametrize("zone", ZONES)
 async def test_the_repeated_hour_creates_one_job_that_local_day(zone):
     hour = REPEATED_HOUR[zone].wall.hour
     ticks = await _job_ticks_on_local_day(zone, _FALL_DAY[zone], hour)
@@ -147,7 +152,6 @@ async def test_a_running_job_blocks_the_second_pass_of_the_repeated_hour(zone):
     assert len(journal.created) == 1
 
 
-@pytest.mark.xfail(**_D1)
 async def test_one_user_with_an_unknown_zone_does_not_stop_the_next_user():
     service, journal, users = await _service(_profile("u1", "Mars/Base", 8), _profile("u2", BERLIN, 8))
     assert await service._oauth.list_user_ids("gmail") == ["u1", "u2"], "the bad zone must come first"

@@ -187,6 +187,9 @@ class FirestoreFactReviewStore(FactReviewStore):
 
     # ------------------------------------------------------------------------------------------------ question writes
 
+    async def mark_posted(self, question_id: str, at: datetime) -> bool:
+        return await self._move(question_id, lambda q: q.post_recorded(at))
+
     async def set_message_ref(self, question_id: str, ref: MessageRef) -> bool:
         return await self._move(question_id, lambda q: q.posted(ref))
 

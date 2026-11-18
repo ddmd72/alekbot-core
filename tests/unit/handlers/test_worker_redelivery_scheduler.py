@@ -139,9 +139,6 @@ async def test_the_auto_index_ticked_twice_starts_one_job(prod_graph, monkeypatc
     assert _bodies("email_indexing") == [{"task_type": "email_indexing", "job_id": jobs[0]["job_id"]}]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P15-D6: two concurrent auto-index ticks both pass the running-job guard and start two jobs; "
-                          "owner decision")
 async def test_the_auto_index_ticked_twice_concurrently_starts_one_job(prod_graph, monkeypatch):
     """Two ticks at once both read "no running job" and both create one. Interleaving source: a `Rendezvous` right
     after `get_latest_job` (a query, which never yields; `src/adapters/firestore_email_job_repo.py:74-87`), so both

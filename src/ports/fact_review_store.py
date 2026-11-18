@@ -74,9 +74,15 @@ class FactReviewStore(ABC):
     # ------------------------------------------------------------------------------------------------ question writes
 
     @abstractmethod
+    async def mark_posted(self, question_id: str, at: datetime) -> bool:
+        """`post_recorded(at)`, in a transaction over the question: the post succeeded and its ref is not stored yet, so a
+        crash or a lost `set_message_ref` leaves a question housekeeping completes as asked, not one it sends again.
+        False: no such question, or not a pending, appended, not yet posted one."""
+
+    @abstractmethod
     async def set_message_ref(self, question_id: str, ref: MessageRef) -> bool:
-        """`posted(ref)`, in a transaction over the question. False: no such question, or not a pending, appended,
-        not yet posted one."""
+        """`posted(ref)`, in a transaction over the question. False: no such question, or not a pending, appended
+        one without a ref."""
 
     @abstractmethod
     async def record_reply(self, question_id: str, text: str, at: datetime) -> ReplyRecord:
@@ -149,7 +155,7 @@ class FactReviewStore(ABC):
 
     @abstractmethod
     async def complete_delivered(self, question_id: str) -> bool:
-        """`completed()`, in a transaction over the question: a pending question with a message ref becomes asked at
+        """`completed()`, in a transaction over the question: a pending question with a message ref or `posted_at` becomes asked at
         its `appended_at`. False: no such question, or not pending and posted."""
 
     @abstractmethod

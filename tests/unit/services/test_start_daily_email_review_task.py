@@ -88,8 +88,10 @@ async def test_each_eligible_user_is_marked_then_enqueued_with_the_mark_as_the_t
 
     assert await task({}, {}) == ({"started": 2, "failed": 0}, 200)
     assert dispatch.calls == [
-        ("daily_email_review", {"user_id": "user-1", "account_id": "acct-1"}, DEADLINE, "daily_review:user-1:2026-10-22"),
-        ("daily_email_review", {"user_id": "user-2", "account_id": "acct-2"}, DEADLINE, "daily_review:user-2:2026-10-22"),
+        ("daily_email_review", {"user_id": "user-1", "account_id": "acct-1", "slot_date": "2026-10-22"}, DEADLINE,
+         "daily_review:user-1:2026-10-22"),
+        ("daily_email_review", {"user_id": "user-2", "account_id": "acct-2", "slot_date": "2026-10-22"}, DEADLINE,
+         "daily_review:user-2:2026-10-22"),
     ]
     assert marks.held == {"daily_review:user-1:2026-10-22", "daily_review:user-2:2026-10-22"}
 

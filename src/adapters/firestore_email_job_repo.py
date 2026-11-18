@@ -9,6 +9,7 @@ Doc ID: job_id (UUID set by caller)
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
@@ -18,14 +19,19 @@ from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..utils.logger import logger
 
 
+_CONDITIONAL_UPDATE_ATTEMPTS = 3
+
+
 class FirestoreEmailJobRepository(EmailIndexingJobRepository):
     """Firestore mechanics behind the port's contract.
 
     Collection `EnvironmentConfig.email_indexing_jobs_collection` (`{prefix}email_indexing_jobs_v1`), document id
     job_id. Composite indexes (config/firestore.indexes.json): (user_id, started_at desc),
     (user_id, provider, started_at desc) and (provider, user_id, started_at desc) for the two newest-first reads,
-    (status, updated_at) for the stale query. `update_job` is a plain document `update` (no precondition); a datetime
-    subclass in `updates` is rewritten as a plain datetime first. Reads rebuild every date field as a naive plain
+    (status, updated_at) for the stale query. `create_job_if_absent` is a document `create` (AlreadyExists = False).
+    `update_job` is a plain document `update`; with `expected_status` it reads the job and writes under a
+    `last_update_time` precondition (re-reading when another writer got in between), so a job whose status moved on is
+    left alone; a datetime subclass in `updates` is rewritten as a plain datetime first. Reads rebuild every date field as a naive plain
     datetime (Firestore returns `DatetimeWithNanoseconds`).
     """
 
@@ -45,8 +51,22 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
             f"provider={job.provider} triggered_by={job.triggered_by}"
         )
 
-    async def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
-        """Partial update called after each successful chunk."""
+    async def create_job_if_absent(self, job: IndexingJob) -> bool:
+        try:
+            await self.collection.document(job.job_id).create(job.model_dump())
+        except AlreadyExists:
+            logger.info(f"📋 Job {job.job_id} already exists, not created again")
+            return False
+        logger.info(
+            f"📋 Job created: {job.job_id} user={job.user_id[:8]} "
+            f"provider={job.provider} triggered_by={job.triggered_by}"
+        )
+        return True
+
+    async def update_job(
+        self, job_id: str, updates: Dict[str, Any], expected_status: Optional[str] = None
+    ) -> bool:
+        """Partial update called after each successful chunk; with `expected_status`, only while the job has it."""
         # DatetimeWithNanoseconds is a datetime subclass returned by Firestore reads.
         # Writing it back fails in some SDK versions: '_nanosecond' attribute missing.
         # Normalize any datetime subclass to a plain datetime before the write.
@@ -55,8 +75,26 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
             if isinstance(v, datetime) and type(v) is not datetime else v
             for k, v in updates.items()
         }
-        await self.collection.document(job_id).update(sanitized)
-        logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
+        ref = self.collection.document(job_id)
+        if expected_status is None:
+            await ref.update(sanitized)
+            logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
+            return True
+        for _ in range(_CONDITIONAL_UPDATE_ATTEMPTS):
+            snap = await ref.get()
+            if not snap.exists:
+                await ref.update(sanitized)  # raises the backend's NotFound, as the unconditional write does
+            if (snap.to_dict() or {}).get("status") != expected_status:
+                logger.info(f"📋 Job {job_id} is no longer {expected_status}, update skipped")
+                return False
+            try:
+                await ref.update(sanitized, option=self.db.write_option(last_update_time=snap.update_time))
+            except FailedPrecondition:
+                continue  # another writer got in between: read again and re-check the status
+            logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
+            return True
+        logger.warning(f"📋 Job {job_id} kept changing, conditional update given up")
+        return False
 
     # Datetime fields that may carry DatetimeWithNanoseconds from Firestore.
     _DATETIME_FIELDS = (

@@ -132,12 +132,8 @@ _SLOT_DATE_IS_THE_UTC_DATE = [
     pytest.param(NEW_YORK, 9, datetime(2026, 10, 27, 9, 12), date(2026, 10, 27), id="new_york-09"),
 ]
 _SLOT_DATE_DIFFERS_FROM_THE_UTC_DATE = [
-    pytest.param(HELSINKI, 0, datetime(2026, 7, 15, 0, 12), date(2026, 7, 15), id="helsinki-00-summer",
-                 marks=pytest.mark.xfail(strict=True, raises=AssertionError,
-                                         reason="P16-D2: the report date is the UTC date of the run, not the review slot's local date; owner decision")),
-    pytest.param(NEW_YORK, 23, datetime(2026, 10, 26, 23, 12), date(2026, 10, 26), id="new_york-23-autumn",
-                 marks=pytest.mark.xfail(strict=True, raises=AssertionError,
-                                         reason="P16-D2: the report date is the UTC date of the run, not the review slot's local date; owner decision")),
+    pytest.param(HELSINKI, 0, datetime(2026, 7, 15, 0, 12), date(2026, 7, 15), id="helsinki-00-summer"),
+    pytest.param(NEW_YORK, 23, datetime(2026, 10, 26, 23, 12), date(2026, 10, 26), id="new_york-23-autumn"),
 ]
 
 

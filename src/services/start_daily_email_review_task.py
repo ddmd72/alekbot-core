@@ -68,7 +68,7 @@ class StartDailyEmailReviewTask:
             try:
                 await self._task_dispatch.enqueue_worker_task(
                     "daily_email_review",
-                    {"user_id": user.user_id, "account_id": user.account_id},
+                    {"user_id": user.user_id, "account_id": user.account_id, "slot_date": user.slot_date.isoformat()},
                     deadline_seconds=self._deadline_seconds,
                     # A queue call that errored after creating the task cannot yield a second task.
                     dedup_key=mark_key,
