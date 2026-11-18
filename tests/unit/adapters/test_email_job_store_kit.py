@@ -23,7 +23,6 @@ from pydantic import ValidationError
 from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from src.domain.email import IndexingJob
 from tests.support.clock_instants import UTC_MIDNIGHT
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 JOBS = "eval_email_indexing_jobs_v1"
@@ -32,13 +31,13 @@ DATE_FIELDS = ("last_email_date", "backfill_until", "max_email_date", "min_email
                "completed_at")
 
 
-def _adapter(db: EvalDb) -> FirestoreEmailJobRepository:
+def _adapter(db) -> FirestoreEmailJobRepository:
     return FirestoreEmailJobRepository(db, SimpleNamespace(email_indexing_jobs_collection=JOBS))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={JOBS: "development_email_indexing_jobs_v1"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={JOBS: "development_email_indexing_jobs_v1"})
         self.repo = _adapter(self.db)
 
     @property
@@ -47,8 +46,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def job(job_id="j1", user="u1", provider="gmail", status="running", started=T, updated=None, **over) -> IndexingJob:
