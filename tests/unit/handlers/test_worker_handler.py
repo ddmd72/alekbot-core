@@ -1429,12 +1429,12 @@ class TestHandleStartDailyEmailReview:
         # deadline_seconds is mandatory here: DAILY_DIGEST's 1500s budget exceeds the
         # Cloud Tasks default of 600s, which would truncate then retry the whole review.
         ns.task_dispatch.enqueue_worker_task.assert_any_call(
-            "daily_email_review", {"user_id": _USER_A, "account_id": _ACC_A},
+            "daily_email_review", {"user_id": _USER_A, "account_id": _ACC_A, "slot_date": "2026-10-22"},
             deadline_seconds=1620,
             dedup_key=f"daily_review:{_USER_A}:2026-10-22",
         )
         ns.task_dispatch.enqueue_worker_task.assert_any_call(
-            "daily_email_review", {"user_id": _USER_B, "account_id": _ACC_B},
+            "daily_email_review", {"user_id": _USER_B, "account_id": _ACC_B, "slot_date": "2026-10-22"},
             deadline_seconds=1620,
             dedup_key=f"daily_review:{_USER_B}:2026-10-22",
         )

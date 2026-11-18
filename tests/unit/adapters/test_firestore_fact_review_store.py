@@ -38,9 +38,10 @@ def model_fields():
 
 async def a_fully_filled_question(world) -> FactReviewQuestion:
     """Every field of the model set: an archive fallback with a date and noise, sent, replied to, shown to the review,
-    closed by the owner with a digit."""
+    closed by the owner with a digit; its post recorded (`posted_at`) beside its message ref."""
     asked = build_question(
-        QuestionStatus.ASKED, question_id="full", fallback="archive", fallback_date=date(2026, 12, 1), noise=True)
+        QuestionStatus.ASKED, question_id="full", fallback="archive", fallback_date=date(2026, 12, 1), noise=True,
+        posted_at=NOW - timedelta(days=3))
     full = (asked.with_reply("it ended in spring", NOW).offered(NOW + timedelta(minutes=5))
             .closed(ClosedBy.OWNER, AT, AnswerKind.ENDED, "digit"))
     return await world.put_question(full)
