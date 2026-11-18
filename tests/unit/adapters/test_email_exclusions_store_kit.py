@@ -27,8 +27,8 @@ def _adapter(db: EvalDb) -> FirestoreEmailExclusionsAdapter:
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={EXCL: "development_email_exclusions"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={EXCL: "development_email_exclusions"})
         self.adapter = _adapter(self.db)
 
     @property
@@ -37,8 +37,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def exclusion(user="u1", kind="sender_domain", pattern="example.com", reason="recurring newsletter") -> EmailExclusion:
