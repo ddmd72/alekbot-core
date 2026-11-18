@@ -146,9 +146,6 @@ async def test_set_primary_is_per_user(store):
 
 # ----------------------------------------------------------------------------------------------- P11-G3-2
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G3-2: a subscription without expires_at reads as an aware now, every caller compares with a naive now "
-    "(a code defect whatever the stored data holds: the fallback exists only for this case)"))
 async def test_a_subscription_without_expires_at_reads_naive(store):
     """Every expires_at the store returns is naive UTC, whatever the stored document lacks. Flipping fix
     (`firestore_task_config_repository.py` `_sub_from_dict`): `expires_at or datetime.now(timezone.utc).replace(tzinfo=None)`;
