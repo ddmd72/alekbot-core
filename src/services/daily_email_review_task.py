@@ -1,7 +1,7 @@
 """The `daily_email_review` `/worker` task: one user's review of the last 24 h of mail, delivered to SmartAgent."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Tuple
 
 from ..domain.exceptions import OAuthGrantRevokedError
@@ -34,6 +34,15 @@ class DailyEmailReviewTask:
         self._gmail_reconnect_flag = gmail_reconnect_flag
         self._empty_answer_reporter = empty_answer_reporter
 
+    @staticmethod
+    def _slot_date(raw: Any) -> str:
+        if isinstance(raw, str):
+            try:
+                return date.fromisoformat(raw).isoformat()
+            except ValueError:
+                logger.warning(f"[Worker] daily_email_review: unusable slot_date {raw!r}, using the UTC date")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     async def __call__(self, payload: dict[str, Any], headers: dict[str, Any]) -> Tuple[dict[str, Any], int]:
         """
         Fetch last 24h emails for a user and deliver to SmartAgent for analysis.
@@ -55,7 +64,9 @@ class DailyEmailReviewTask:
             logger.info(f"[Worker] daily_email_review: no emails in last 24h for {user_id[:8]}")
             return {"status": "no_emails"}, 200
 
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # The review's date is the local date of its slot, carried by the fan-out; a task queued before the field
+        # existed has none and keeps the UTC date of the run.
+        date_str = self._slot_date(payload.get("slot_date"))
         system_alert = self._email_review.build_alert(date_str, len(emails))
 
         await self._ensure_agents(user_id)
