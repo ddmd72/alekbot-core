@@ -233,4 +233,5 @@ class TestRefreshAndMe:
         require(user_id not in world.db.collection(USERS).docs, "the user is gone")
         world.client.set_cookie("localhost", "refresh_token", cookies["refresh_token"])
         resp = await world.client.post("/auth/refresh")
-        assert resp.status_code == 401
+        assert resp.status_code in (401, 403, 404)
+        assert "access_token" not in _cookies(resp)

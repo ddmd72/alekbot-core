@@ -30,21 +30,21 @@ def _config(w: CabinetWorld, user_id: str = "usr-1") -> dict:
     return w.user_doc(user_id)["config"]
 
 
-# (path, a valid body, the stored config key, the stored value)
+# (path, a valid body, the stored config key, the stored value, the key of the GET response that carries it)
 _SETTINGS = [
-    ("/api/user/timezone", {"timezone": "Europe/Lisbon"}, "timezone", "Europe/Lisbon"),
-    ("/api/user/location", {"location": "  Springfield "}, "location", "Springfield"),
-    ("/api/user/voice-languages", {"voice_languages": ["pt", "en"]}, "voice_languages", ["pt", "en"]),
-    ("/api/gmail/auto-index", {"enabled": True, "hour": 6}, "gmail_auto_index", True),
-    ("/api/gmail/daily-review", {"enabled": True, "hour": 21}, "gmail_daily_review", True),
-    ("/api/user/deep-research", {"second_pass": True}, "deep_research_second_pass", True),
+    ("/api/user/timezone", {"timezone": "Europe/Lisbon"}, "timezone", "Europe/Lisbon", "timezone"),
+    ("/api/user/location", {"location": "  Springfield "}, "location", "Springfield", "location"),
+    ("/api/user/voice-languages", {"voice_languages": ["pt", "en"]}, "voice_languages", ["pt", "en"], "voice_languages"),
+    ("/api/gmail/auto-index", {"enabled": True, "hour": 6}, "gmail_auto_index", True, "enabled"),
+    ("/api/gmail/daily-review", {"enabled": True, "hour": 21}, "gmail_daily_review", True, "enabled"),
+    ("/api/user/deep-research", {"second_pass": True}, "deep_research_second_pass", True, "second_pass"),
 ]
 _IDS = [s[0].rsplit("/", 1)[1] for s in _SETTINGS]
 
 
 class TestEverySettingIsStoredOnTheCallersUserOnly:
-    @pytest.mark.parametrize("path, body, key, value", _SETTINGS, ids=_IDS)
-    async def test_the_write_lands_on_the_token_user_and_reads_back(self, world, path, body, key, value):
+    @pytest.mark.parametrize("path, body, key, value, shown", _SETTINGS, ids=_IDS)
+    async def test_the_write_lands_on_the_token_user_and_reads_back(self, world, path, body, key, value, shown):
         other_before = dict(_config(world, "usr-2"))
         resp = await world.client.put(path, headers=world.token(ALEX), json=body)
         assert resp.status_code == 200
@@ -52,10 +52,11 @@ class TestEverySettingIsStoredOnTheCallersUserOnly:
         assert _config(world, "usr-2") == other_before
         read = await world.client.get(path, headers=world.token(ALEX))
         assert read.status_code == 200
+        assert (await read.get_json())[shown] == value
         assert _config(world, "usr-2") == other_before
 
-    @pytest.mark.parametrize("path, body, key, value", _SETTINGS, ids=_IDS)
-    async def test_a_token_of_a_user_with_no_record_is_404_and_creates_none(self, world, path, body, key, value):
+    @pytest.mark.parametrize("path, body, key, value, shown", _SETTINGS, ids=_IDS)
+    async def test_a_token_of_a_user_with_no_record_is_404_and_creates_none(self, world, path, body, key, value, shown):
         ghost = ("usr-9", "acc-9", "ghost@example.com")
         resp = await world.client.put(path, headers=world.token(ghost), json=body)
         assert resp.status_code == 404
@@ -99,7 +100,8 @@ class TestMalformedValuesAreRefusedAndNothingIsWritten:
 
     @pytest.mark.xfail(strict=True, raises=AssertionError,
                        reason="P19-D3: a request body that is not JSON answers 500 on every Cabinet write route "
-                              "(get_json raises BadRequest, caught by `except Exception`, user_cabinet_app.py:537-559); a client error")
+                              "(get_json raises BadRequest, caught by `except Exception`, user_cabinet_app.py:537-559); no repo spec: "
+                              "HTTP convention (RFC 9110 section 15.5.1), a malformed request body is a client error (400)")
     @pytest.mark.parametrize("path", ["/api/user/timezone", "/api/gmail/auto-index", "/api/user/deep-research"])
     async def test_a_body_that_is_not_json_is_a_4xx(self, world, path):
         resp = await world.client.put(path, headers={**world.token(ALEX), "Content-Type": "application/json"}, data="{nope")
@@ -182,10 +184,12 @@ class TestTheCabinetApiHonoursTheSessionCap:
     async def test_the_cookie_session_is_capped_the_same_way(self, monkeypatch, world):
         _pin(monkeypatch, T0)
         world.client.set_cookie("localhost", "access_token", world.token(ALEX)["Authorization"][7:])
+        _pin(monkeypatch, T0 + timedelta(seconds=DAY - 1))
+        assert (await world.client.put("/api/user/location", json={"location": "Springfield"})).status_code == 200
         _pin(monkeypatch, T0 + timedelta(seconds=DAY + 1))
         resp = await world.client.put("/api/user/location", json={"location": "Porto"})
         assert resp.status_code == 401
-        assert _config(world)["location"] is None
+        assert _config(world)["location"] == "Springfield"
 
     @pytest.mark.parametrize("token", [expired_token(), forged_token()], ids=["expired", "forged"])
     async def test_an_expired_or_forged_token_writes_nothing(self, world, token):
