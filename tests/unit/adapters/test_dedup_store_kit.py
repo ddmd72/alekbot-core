@@ -140,6 +140,7 @@ async def test_a_naive_expires_at_is_read_as_utc_defensive_branch(stores):
     assert await stores.daily.is_duplicate(DAILY_KEY) is True
 
 
+@pytest.mark.h1_only("reads the fake's write log (versions)")
 @pytest.mark.parametrize("key", ["", None])
 async def test_an_empty_key_is_never_marked(stores, key):
     """The adapter's guard, not a port promise: no caller passes an empty key."""
@@ -161,6 +162,7 @@ async def test_release_deletes_and_an_absent_release_is_quiet(stores):
     assert await stores.webhook.try_mark_processed(WEBHOOK_KEY) is True
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.create")
 async def test_a_mark_released_twice_between_create_and_read_gives_way(stores, monkeypatch):
     """Another holder's mark is released right after each of our creates met it: one more create, then give way.
     (Released once and claimed on the retry: test_firestore_dedup_store_reclaim.py.)"""
@@ -181,6 +183,7 @@ async def test_a_mark_released_twice_between_create_and_read_gives_way(stores, m
     assert DAILY_KEY not in stores.docs()
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.create")
 async def test_a_backend_error_propagates_and_marks_nothing(stores, monkeypatch):
     async def unavailable(self, data):
         raise RuntimeError("unavailable")

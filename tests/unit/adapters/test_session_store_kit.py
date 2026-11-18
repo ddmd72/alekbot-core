@@ -120,6 +120,7 @@ async def test_save_session_writes_the_state_owner_or_the_session_id(store):
     assert docs(store)[SID]["owner_id"] == "u2"
 
 
+@pytest.mark.h1_only("reads the fake's collection map (db.cols)")
 async def test_the_collection_name_is_kept_or_completed():
     db = EvalDb()
     await FirestoreSessionStore(db).append_messages_batch(SID, [msg(TEXTS[0])])
@@ -165,6 +166,7 @@ async def test_threshold_resolver_override_and_none_fallback(handoffs, kit_db):
 
 # --------------------------------------------------------------------------------------------------- atomicity
 
+@pytest.mark.h1_only("injects a conflicting commit with interfere_on_txn_read")
 async def test_concurrent_appends_are_all_kept(store):
     await store.append_messages_batch(SID, [msg(TEXTS[0])], owner_id="u1")
     stored = docs(store)[SID]["history"]
@@ -211,6 +213,7 @@ async def test_messages_without_parts_or_content_round_trip(store):
     assert (await store.load_session(SID)).history == sent
 
 
+@pytest.mark.h1_only("injects a read error with raise_on_txn_read")
 async def test_append_message_appends_one_and_swallows_errors(store):
     await store.append_message(SID, msg(TEXTS[0]), owner_id="u1")
     store.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE firestore down"))
@@ -275,6 +278,7 @@ async def test_an_unreadable_document_reads_empty_without_raising(store):
     assert (await store.load_session(SID)).history == []
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.get")
 async def test_a_backend_error_on_load_reads_empty_and_keeps_the_document(store, monkeypatch):
     await append_each(store, 1)
 
@@ -286,12 +290,14 @@ async def test_a_backend_error_on_load_reads_empty_and_keeps_the_document(store,
     assert texts(store) == TEXTS[:1]
 
 
+@pytest.mark.h1_only("injects a read error with raise_on_txn_read")
 async def test_append_default_swallows_and_stores_nothing(store):
     store.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE firestore down"))
     assert await store.append_messages_batch(SID, [msg(TEXTS[0])], owner_id="u1") is None
     assert SID not in docs(store)
 
 
+@pytest.mark.h1_only("injects a read error with raise_on_txn_read")
 async def test_append_raise_on_error_reraises_and_stores_nothing(store):
     store.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE firestore down"))
     raised = None
@@ -302,6 +308,7 @@ async def test_append_raise_on_error_reraises_and_stores_nothing(store):
     assert raised is not None and SID not in docs(store)
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.set")
 async def test_save_session_swallows_a_backend_error(store, monkeypatch):
     async def down(*_a, **_k):
         raise ServiceUnavailable("503 UNAVAILABLE firestore down")
@@ -331,6 +338,7 @@ async def test_latest_session_id_is_the_most_recent_of_the_owner(store):
     assert await store.get_latest_session_id("u9") is None
 
 
+@pytest.mark.h1_only("needs a database without the declared index")
 async def test_latest_session_id_without_the_index_reads_none():
     store = make_store(db=EvalDb(indexes=[]))
     docs(store)["u1:C1"] = {"history": [], "owner_id": "u1", "last_activity": 10.0}
