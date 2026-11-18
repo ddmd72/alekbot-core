@@ -65,8 +65,10 @@ async def test_create_replaces_an_existing_profile(repo):
 
 async def test_empty_tier_complexity_overrides_are_dropped_on_read(repo):
     await repo.create_user(alex())
-    docs(repo)["u1"]["config"]["complexity_settings_overrides"] = {
+    config = dict(docs(repo)["u1"]["config"])        # a nested edit does not reach the real backend: assign the field
+    config["complexity_settings_overrides"] = {
         "small_talk": {"tier": ""}, "deep_reasoning": {"tier": "performance"}, "info_search": "broken"}
+    docs(repo)["u1"]["config"] = config
     got = await repo.get_user("u1")
     assert list(got.config.complexity_settings_overrides) == [TaskComplexity.DEEP_REASONING]
     assert got.config.complexity_settings_overrides[TaskComplexity.DEEP_REASONING].tier == PerformanceTier.PERFORMANCE
