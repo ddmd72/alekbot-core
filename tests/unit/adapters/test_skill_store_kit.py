@@ -38,8 +38,8 @@ def _adapter(db: EvalDb) -> FirestoreSkillRepository:
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={SK: "development_skills", DR: "development_skill_drafts"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={SK: "development_skills", DR: "development_skill_drafts"})
         self.repo = _adapter(self.db)
 
     def docs(self, collection: str) -> dict:
@@ -60,9 +60,9 @@ class Store:
 
 
 @pytest.fixture
-def store(monkeypatch):
+def store(monkeypatch, kit_db):
     pin_datetime(monkeypatch, firestore_skill_repository, NOW)
-    return Store()
+    return Store(kit_db)
 
 
 def fil(path="notes/logbook.md", content=LOGBOOK) -> SkillFile:
@@ -322,8 +322,9 @@ async def test_delete_skill_removes_the_versions_the_files_and_the_index_documen
 
 async def test_delete_skill_over_one_chunk_commits_in_batches_and_deletes_every_document(store):
     await store.repo.save_version("u1", "a1", skill(), cap=20)
+    files = store.files()
     for i in range(460):
-        store.files()[sha256_text(f"file {i}")] = {"content": f"file {i}", "size": 6, "created_at": NOW}
+        files[sha256_text(f"file {i}")] = {"content": f"file {i}", "size": 6, "created_at": NOW}
     commits_before = len(store.db.commits)
     assert await store.repo.delete_skill("u1", "car-service") is True
     assert len(store.db.commits) - commits_before == 2
@@ -332,8 +333,9 @@ async def test_delete_skill_over_one_chunk_commits_in_batches_and_deletes_every_
 
 async def test_delete_skill_failing_midway_leaves_the_skill_listed_and_a_repeat_finishes(store, monkeypatch):
     await store.repo.save_version("u1", "a1", skill(), cap=20)
+    files = store.files()
     for i in range(460):
-        store.files()[sha256_text(f"file {i}")] = {"content": f"file {i}", "size": 6, "created_at": NOW}
+        files[sha256_text(f"file {i}")] = {"content": f"file {i}", "size": 6, "created_at": NOW}
     real_batch, commits = store.db.batch, []
 
     def batch_whose_second_commit_fails():
