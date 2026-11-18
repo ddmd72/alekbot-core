@@ -75,11 +75,13 @@ async def test_save_batch_writes_each_record_under_its_id_with_a_vector_value_an
     assert isinstance(doc["vector"], Vector) and stored_vector(doc["vector"]) == VEC
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_save_batch_of_nothing_returns_zero_and_writes_nothing(store):
     assert await store.repo.save_batch([]) == 0
     assert store.docs == {} and store.db.commits == []
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_save_batch_goes_in_batches_of_500(store):
     assert await store.repo.save_batch([record(f"r{i:03d}") for i in range(501)]) == 501
     assert len(store.docs) == 501
@@ -132,6 +134,7 @@ async def test_find_nearest_skips_a_record_that_does_not_validate_and_takes_a_mi
     assert sorted(r.id for r in got) == ["fallback-id", "ok"]
 
 
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_find_nearest_propagates_backend_errors(store):
     await store.repo.save_batch([record("r1")])
     store.db.collection(REC).fail = ServiceUnavailable("down")
