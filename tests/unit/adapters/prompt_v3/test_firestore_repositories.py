@@ -84,6 +84,8 @@ async def test_token_repository_save():
     db = Mock()
     security_port = MockSecurityPort()
     repo = FirestoreTokenRepository(db, "test_system_tokens", "test_user_tokens", security_port)
+    # The client is async: set() returns a coroutine the repository must await (P10-D1).
+    db.collection.return_value.document.return_value.set = AsyncMock()
 
     token = Token(
         id=TokenId("TEST_TOKEN"),
@@ -97,7 +99,7 @@ async def test_token_repository_save():
 
     db.collection.assert_called_with("test_system_tokens")
     db.collection.return_value.document.assert_called_with("TEST_TOKEN")
-    db.collection.return_value.document.return_value.set.assert_called_once()
+    db.collection.return_value.document.return_value.set.assert_awaited_once()
 
 
 # ========== FirestoreBlueprintRepository Tests ==========
@@ -130,6 +132,8 @@ async def test_blueprint_repository_save():
     """Test FirestoreBlueprintRepository.save() with v4 data model."""
     db = Mock()
     repo = FirestoreBlueprintRepository(db, "test_blueprints")
+    # The client is async: set() returns a coroutine the repository must await (P10-D3).
+    db.collection.return_value.document.return_value.set = AsyncMock()
 
     blueprint = Blueprint(
         id="test_blueprint",
@@ -141,6 +145,7 @@ async def test_blueprint_repository_save():
 
     db.collection.assert_called_with("test_blueprints")
     db.collection.return_value.document.assert_called_with("test_blueprint")
+    db.collection.return_value.document.return_value.set.assert_awaited_once()
 
 
 # ========== FirestoreAgentProfileRepository Tests ==========

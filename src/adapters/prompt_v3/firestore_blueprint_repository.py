@@ -83,7 +83,7 @@ class FirestoreBlueprintRepository(BlueprintRepository):
             data["tail_categories"] = list(blueprint.tail_categories)
 
         doc_ref = self.db.collection(self.collection_name).document(blueprint.id)
-        doc_ref.set(data)
+        await doc_ref.set(data)
         logger.info(f"Saved blueprint: {blueprint.id}")
 
     async def delete(self, blueprint_id: str) -> None:
@@ -93,7 +93,7 @@ class FirestoreBlueprintRepository(BlueprintRepository):
         if not doc.exists:
             raise KeyError(f"Blueprint not found: {blueprint_id}")
 
-        doc_ref.delete()
+        await doc_ref.delete()
         logger.info(f"Deleted blueprint: {blueprint_id}")
 
     async def exists(self, blueprint_id: str) -> bool:

@@ -3,8 +3,9 @@ over the three real v3 stores on one `EvalDb` (P10). The service is built by `bu
 `ServiceContainer` and the indexer call, with a real `EnvironmentConfig`; assertions are on the assembled prompt text.
 
 Seeding: overrides go through `set_override_tokens`. Tokens, blueprints and agent profiles are seeded as raw documents,
-because `FirestoreTokenRepository.save` and `FirestoreBlueprintRepository.save` do not write on the production client
-(P10-D1, P10-D3, pinned in the kit files) and the profile port has no writer.
+so the resolution does not lean on the stores' writers (`FirestoreTokenRepository.save` and
+`FirestoreBlueprintRepository.save` are covered by the kit files; P10-D1 and P10-D3, the missing awaits, are fixed) and the
+profile port has no writer.
 
 Not repeated here: the cache key, TTL and `invalidate_cache` mechanics (`test_prompt_assembly_cache.py`) and the runtime
 blocks (`test_prompt_assembly_service.py`); this file covers what a write does to the next assembly over real stores.

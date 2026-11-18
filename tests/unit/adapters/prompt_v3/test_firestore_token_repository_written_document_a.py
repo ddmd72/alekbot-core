@@ -1,8 +1,8 @@
 """FirestoreTokenRepository.save: the identity and content fields of the written document.
 
-`save` calls `doc_ref.set(data)` without `await` (P10-D1, pinned in tests/unit/adapters/test_prompt_token_store_kit.py),
-so the fake document reference records the dict at call time and hands back an already-completed future: the write is
-seen whether or not the adapter awaits it, and the test stays valid once the defect is fixed. A document missing one of these fields cannot
+The fake document reference records the dict at call time and hands back an already-completed future, so the write is
+seen whether or not the adapter awaits it (it did not until P10-D1 was fixed; the kit
+tests/unit/adapters/test_prompt_token_store_kit.py checks the awaited write). A document missing one of these fields cannot
 be read back by `get`/`list` (`data["category"]`, `data["class"]`, `data["content"]`, `token_id`).
 """
 import asyncio

@@ -1,7 +1,8 @@
 """Provisioning of the drive-note store's queries (DRIVE_FILE_NOTES_RFC §3.5): every composite a repository method needs
 is declared in config/firestore.indexes.json under the live `development_drive_notes` collection, the queries that need
 none use only the `user_id` single-field index, and `text`, `keys`, `note_vector` and `snapshot` are exempt from
-single-field indexing. The vector index (§3.5 item 6) is S3's script and is not declared here."""
+single-field indexing. The vector index of `find_nearest` (§3.5 item 6) is declared too (P12-D1), matching S3's script,
+which creates it (the index deploy skips vector indexes)."""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,7 +84,15 @@ def test_the_declared_composites():
     assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("archived_at", "DESCENDING")] in declared
     assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("updated_at", "DESCENDING")] in declared
     assert [("user_id", "ASCENDING"), ("embedding_pending", "ASCENDING")] in declared
-    assert len(declared) == 5
+    assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("embedding_space", "ASCENDING"), ("note_vector", None)] in declared
+    assert len(declared) == 6
+
+
+def test_the_declared_vector_index_is_the_scripts():
+    """`find_nearest`'s index as `scripts/infrastructure/create_drive_note_vector_index.sh` creates it: 768, flat."""
+    vectors = [f["vectorConfig"] for idx in _raw() if idx["collectionGroup"] == LIVE and "fields" in idx
+               for f in idx["fields"] if "vectorConfig" in f]
+    assert vectors == [{"dimension": 768, "flat": {}}]
 
 
 def test_the_exemptions():
