@@ -8,6 +8,11 @@ name: Render
 on:
   push:
     branches: [main]
+  pull_request:
+    # Only a change to this workflow or to the ledger rules that name its files runs the jobs before the merge.
+    paths:
+      - ".github/workflows/render.yml"
+      - "tests/support/skip_ledger.py"
   workflow_dispatch:
 
 permissions:
@@ -42,9 +47,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Dockerfile.sandbox installs the distro nodejs (no pin); docx needs node ^18 || >=20, puppeteer >=18. 22 is the
-          # sandbox track's major (the engine tests run under it locally).
-          node-version: "22"
+          # Mirrors the sandbox image's distro node: python:3.11-slim is Debian 13 (trixie), whose nodejs is 20.x.
+          node-version: "20"
           cache: npm
           cache-dependency-path: |
             docx_generator/package-lock.json
@@ -69,47 +73,49 @@ jobs:
         run: npx puppeteer browsers install chrome-headless-shell
 
       - name: Real-render tests
-        # The files whose skipif needs node / node_modules / chrome-headless-shell (tests/skip_ledger.txt rows gated `never`
-        # for P22b). The runner is non-root, as those tests require.
+        # The files whose skipif needs node / node_modules / chrome-headless-shell (the `render-job` rows of
+        # tests/skip_ledger.txt; tests/unit/test_render_job_covers_ledger.py keeps both lists equal). The runner is
+        # non-root, as those tests require. The `docker` tests belong to job sandbox-image.
+        env:
+          TESTS: >-
+            tests/unit/adapters/sandbox_client/test_docx_runner_contract.py
+            tests/unit/adapters/sandbox_client/test_pdf_runner_contract.py
+            tests/unit/adapters/sandbox_client/test_html_renderer_contract.py
+            tests/unit/adapters/sandbox_engine/test_docx_render_engine.py
+            tests/unit/adapters/sandbox_engine/test_docx_render_engine_limits.py
+            tests/unit/adapters/sandbox_engine/test_html_render_engine_real.py
+            tests/unit/adapters/sandbox_engine/test_html_render_no_network.py
         run: |
           python -m pytest -p no:cacheprovider -p tests.plugins.skip_report --asyncio-mode=auto -q -rs \
-            tests/unit/adapters/sandbox_client/test_docx_runner_contract.py \
-            tests/unit/adapters/sandbox_client/test_pdf_runner_contract.py \
-            tests/unit/adapters/sandbox_client/test_html_renderer_contract.py \
-            tests/unit/adapters/sandbox_engine/test_docx_render_engine.py \
-            tests/unit/adapters/sandbox_engine/test_docx_render_engine_limits.py \
-            tests/unit/adapters/sandbox_engine/test_html_render_engine_real.py \
-            tests/unit/adapters/sandbox_engine/test_html_render_no_network.py \
-            tests/unit/adapters/sandbox_engine/test_render_html_filter.py
+            -m "not docker" --junitxml=junit-render.xml $TESTS
+          echo "$TESTS" > render-tests.txt
 
-      - name: Fail when a render test was skipped
+      - name: Fail when a render test was skipped or a file ran nothing
         # A skipped render test is the failure this job exists to catch (a missing install must not read as green). Only
-        # the two prerequisites this job does not provide may skip: the built sandbox image (SANDBOX_TEST_IMAGE) and
-        # Playwright Chromium (the in-process renderer case, no CI job installs it).
+        # the in-process renderer case may skip: it needs Playwright Chromium, which no job installs.
         if: always()
-        run: |
-          python - <<'PY'
-          import json, re, sys
-          report = json.load(open("skip-report-render.json"))
-          allowed = re.compile(r"SANDBOX_TEST_IMAGE|built render image|Playwright Chromium")
-          bad = {r: v["tests"] for r, v in report["skipped_by_reason"].items() if not allowed.search(r)}
-          passed = report["outcomes"].get("passed", 0)
-          print("outcomes:", report["outcomes"])
-          for reason, tests in bad.items():
-              print(f"::error title=render test skipped::{reason}: {len(tests)} test(s), e.g. {tests[0]}")
-          if bad or passed == 0:
-              sys.exit(1)
-          PY
+        run: python scripts/ci/check_junit_ran.py junit-render.xml $(cat render-tests.txt) --allow-skip "Playwright Chromium"
 
       - name: Skip report as a step summary
         if: always()
         continue-on-error: true
         run: python scripts/ci/skip_report_summary.py skip-report-render.json >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload the skip report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: skip-report-render
+          path: |
+            skip-report-render.json
+            junit-render.xml
+          if-no-files-found: warn
+
   sandbox-image:
     name: build and test Dockerfile.sandbox (${{ matrix.target }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -142,7 +148,7 @@ jobs:
           push: false
           tags: ${{ env.IMAGE_TAG }}
           cache-from: type=gha,scope=sandbox-${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=sandbox-${{ matrix.target }}
+          cache-to: type=gha,mode=min,scope=sandbox-${{ matrix.target }}
 
       - uses: actions/setup-python@v5
         with:
@@ -153,29 +159,35 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: docker-marked tests against the built image
-        # The tests start the image with `docker run` as the runner user (the runner's docker daemon is the only one).
+        # The tests start the image with `docker run` as the runner user. test_child_launcher runs its children as the
+        # image's engine user (Dockerfile.sandbox: useradd sandboxengine).
         env:
           SANDBOX_IMAGE_ENV: ${{ matrix.image_env }}
+          SANDBOX_TEST_USER: sandboxengine
           TESTS: ${{ matrix.tests }}
         run: |
           export "$SANDBOX_IMAGE_ENV=$IMAGE_TAG"
-          python -m pytest -p no:cacheprovider -p tests.plugins.skip_report --asyncio-mode=auto -q -rs -m docker $TESTS
+          python -m pytest -p no:cacheprovider -p tests.plugins.skip_report --asyncio-mode=auto -q -rs \
+            -m docker --junitxml=junit-image.xml $TESTS
 
-      - name: Fail when a docker test was skipped
+      - name: Fail when a docker test was skipped or a file ran nothing
         if: always()
-        run: |
-          python - <<'PY'
-          import json, sys
-          report = json.load(open("skip-report-image.json"))
-          print("outcomes:", report["outcomes"])
-          skipped = report["skipped_by_reason"]
-          for reason, info in skipped.items():
-              print(f"::error title=docker test skipped::{reason}: {info['count']} test(s), e.g. {info['tests'][0]}")
-          if skipped or report["outcomes"].get("passed", 0) == 0:
-              sys.exit(1)
-          PY
+        env:
+          TESTS: ${{ matrix.tests }}
+        run: python scripts/ci/check_junit_ran.py junit-image.xml $TESTS
 
       - name: Skip report as a step summary
         if: always()
         continue-on-error: true
         run: python scripts/ci/skip_report_summary.py skip-report-image.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the skip report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: skip-report-image-${{ matrix.target }}
+          path: |
+            skip-report-image.json
+            junit-image.xml
+          if-no-files-found: warn
