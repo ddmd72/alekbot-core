@@ -24,7 +24,7 @@ import src.adapters.firestore_dedup_store as dedup_module
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.ports.dedup_store import DedupStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 SHARED = "eval_worker_task_dedup"
@@ -37,8 +37,8 @@ TELEGRAM_KEY = "telegram::1001"
 
 
 class Stores:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup",
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup",
                                                        EVENTS: "development_event_dedup"})
         self.daily: DedupStore = FirestoreDedupStore(self.db, SHARED, ttl_seconds=DAILY_TTL)
         self.webhook: DedupStore = FirestoreDedupStore(self.db, SHARED, ttl_seconds=WEBHOOK_TTL)
@@ -49,9 +49,9 @@ class Stores:
 
 
 @pytest.fixture
-def stores(monkeypatch):
+def stores(monkeypatch, kit_db):
     pin_datetime(monkeypatch, dedup_module, T0)
-    return Stores()
+    return Stores(kit_db)
 
 
 def at(monkeypatch, delta: timedelta) -> None:

@@ -40,8 +40,11 @@ class Handoffs:
         self.calls.append((owner, session_id, [m.parts[0].text for m in messages]))
 
 
-def make_store(db=None, handoffs=None, **kw):
-    db = db or EvalDb(indexes=INDEXES_FILE, groups={SESS: "development_sessions"})
+def new_db(kit_db):
+    return kit_db(indexes=INDEXES_FILE, groups={SESS: "development_sessions"})
+
+
+def make_store(db, handoffs=None, **kw):
     return FirestoreSessionStore(db, SESS, max_history_length=kw.pop("max_history_length", 4),
                                  batch_size=kw.pop("batch_size", 2), overflow_callback=handoffs, **kw)
 
@@ -52,8 +55,8 @@ def handoffs():
 
 
 @pytest.fixture
-def store(handoffs):
-    return make_store(handoffs=handoffs)
+def store(handoffs, kit_db):
+    return make_store(new_db(kit_db), handoffs=handoffs)
 
 
 def docs(store):
@@ -147,11 +150,11 @@ async def test_a_long_append_cuts_several_batches_in_one_call(store, handoffs):
     assert handoffs.calls == [("u1", SID, TEXTS[:2]), ("u1", SID, TEXTS[2:4])]
 
 
-async def test_threshold_resolver_override_and_none_fallback(handoffs):
+async def test_threshold_resolver_override_and_none_fallback(handoffs, kit_db):
     async def resolve(session_id):
         return (3, 1) if session_id == SID else None
 
-    store = make_store(handoffs=handoffs, threshold_resolver=resolve)
+    store = make_store(new_db(kit_db), handoffs=handoffs, threshold_resolver=resolve)
     await append_each(store, 4, SID)
     await append_each(store, 4, SID2)
     await settle(store)
