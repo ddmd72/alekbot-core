@@ -183,10 +183,6 @@ class TestRefresh:
         assert "access_token" not in body
         assert "access_token=" not in _set_cookies(resp)
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="known defect: an access token presented as refresh is a client error answered 500 + "
-                              "ERROR log; verify_refresh_token raises ValueError (session_service.py:225-226), which "
-                              "oauth_app.py:318-320 turns into 500")
     async def test_access_token_presented_as_refresh_is_401(self):
         w = World()
         w.client.set_cookie("localhost", "refresh_token", access_token())

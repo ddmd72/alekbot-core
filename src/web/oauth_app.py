@@ -294,9 +294,16 @@ def create_oauth_blueprint(
             return jsonify({"error": "Missing refresh token"}), 401
 
         try:
-            # Verify refresh token
             payload = session_service.verify_refresh_token(refresh_token)
+        except jwt.ExpiredSignatureError:
+            logger.warning("⏰ Refresh token expired")
+            return jsonify({"error": "Refresh token expired"}), 401
+        except (jwt.InvalidTokenError, ValueError) as e:
+            # ValueError: a valid token of the wrong type (an access token sent as refresh) is a client error too.
+            logger.warning(f"❌ Invalid refresh token: {e}")
+            return jsonify({"error": "Invalid refresh token"}), 401
 
+        try:
             user_id = payload["sub"]
             account_id = payload["account_id"]
 
@@ -335,12 +342,6 @@ def create_oauth_blueprint(
 
             return response
 
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Refresh token expired")
-            return jsonify({"error": "Refresh token expired"}), 401
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"❌ Invalid refresh token: {e}")
-            return jsonify({"error": "Invalid refresh token"}), 401
         except Exception as e:
             # Log detail server-side; never leak exception internals to the client.
             logger.error(f"❌ Token refresh failed: {e}")
