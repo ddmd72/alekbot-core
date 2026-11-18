@@ -19,6 +19,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from google.api_core.exceptions import NotFound
 from google.cloud.firestore_v1.types.write import WriteResult
 
 import src.adapters.firestore_account_repo as account_module
@@ -235,8 +236,6 @@ async def test_update_account_stores_the_new_iam_policy(accounts):
     assert (await accounts.repo.get_account("a1")).iam_policy == {"u1": "owner", "u2": "member"}
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G1-3: update_account overwrites usage counters incremented since the caller's read")
 async def test_update_account_keeps_usage_counted_since_the_callers_read(accounts):
     """Flips when update_account writes every field but usage (`update(model_dump(exclude={"usage"}))`)."""
     await accounts.seed(daily_cost=1.0)
@@ -248,6 +247,14 @@ async def test_update_account_keeps_usage_counted_since_the_callers_read(account
     await accounts.repo.update_account(account)
     require(accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u2": "member"}, "the update was stored")
     assert (accounts.usage()["daily_cost"], accounts.usage()["total_tokens"]) == (pytest.approx(1.5), 100)
+
+
+async def test_update_account_of_an_absent_account_raises_and_writes_nothing(accounts):
+    account = await accounts.seed()
+    del accounts.docs["a1"]
+    with pytest.raises(NotFound):
+        await accounts.repo.update_account(account)
+    assert accounts.docs == {}
 
 
 # ----------------------------------------------------------------------------------------------------- errors

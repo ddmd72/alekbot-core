@@ -32,6 +32,8 @@ Manages the creation and consumption of invite codes.
 - **Invite Types:** `PERSONAL`, `FAMILY`, `ORGANIZATION`.
 - **Auto-Consumption:** Invite codes can be automatically consumed during the OAuth callback flow.
 - **Validation:** Ensures codes are not expired or already used.
+- **Single use:** a team invite is claimed in one Firestore transaction before the joiner's user and account are
+  written, so of concurrent consumers of one code exactly one joins; a new code never replaces a stored one.
 
 ### 2.4 WhitelistRepository
 

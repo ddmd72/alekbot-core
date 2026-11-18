@@ -84,12 +84,14 @@ class InMemoryMCPRepo(MCPClientRepository):
     async def get_refresh_token(self, token_hash: str) -> Optional[MCPRefreshToken]:
         return self.refresh_tokens.get(token_hash)
 
-    async def revoke_refresh_token(self, token_hash: str) -> None:
+    async def revoke_refresh_token(self, token_hash: str) -> bool:
         existing = self.refresh_tokens.get(token_hash)
-        if existing:
-            self.refresh_tokens[token_hash] = existing.model_copy(
-                update={"revoked_at": datetime.now(timezone.utc)}
-            )
+        if not existing:
+            return False
+        self.refresh_tokens[token_hash] = existing.model_copy(
+            update={"revoked_at": datetime.now(timezone.utc)}
+        )
+        return existing.revoked_at is None
 
     async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
         raise NotImplementedError

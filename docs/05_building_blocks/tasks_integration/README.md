@@ -91,6 +91,7 @@ Driven side (background processing):
 Webhook side (MS Graph push):
   POST /webhook/microsoft-tasks/{user_id}
     → validate clientState
+    → the subscription must be the URL user's, on the notified list (owns_subscription)
     → created/updated → TaskIndexingService.index_task_by_ref(user_id, list_id, task_id)
     → deleted         → TaskIndexingService.deindex_task(user_id, task_id)
     → self-healing    → TaskSetupService.handle_subscription_renewal(user_id, sub_id)
@@ -501,6 +502,8 @@ For real change notifications:
 2. For each notification in `value[]`:
    a. Verify `clientState == MICROSOFT_TASKS_WEBHOOK_SECRET`. On mismatch: log warning, skip notification. If no secret configured: skip verification (dev mode).
    b. Extract `list_id` and `task_id` from the `resource` path using regex `r"/me/todo/lists/([^/]+)/tasks/([^/]+)"`.
+      The notification's `subscriptionId` must be a subscription stored for the URL's `user_id` on that `list_id`
+      (`TaskSetupService.owns_subscription`); otherwise, or when that read fails, skip the notification.
    c. `changeType == "deleted"` → `TaskIndexingService.deindex_task(user_id, task_id)`
    d. `changeType == "created"` or `"updated"` → `TaskIndexingService.index_task_by_ref(user_id, list_id, task_id)`
    e. Trigger self-healing subscription renewal: `TaskSetupService.handle_subscription_renewal(user_id, sub_id)`.
@@ -510,7 +513,10 @@ For real change notifications:
 
 `clientState` in each notification is compared against the `MICROSOFT_TASKS_WEBHOOK_SECRET`
 environment variable. This provides CSRF-equivalent protection: only Graph API (which knows
-the secret set at subscription time) can trigger index updates.
+the secret set at subscription time) can trigger index updates. The secret is one for every
+subscription, so it does not say whose notification it is: the subscription id and list are
+checked against the URL user's stored subscriptions, and a notification for another user's
+subscription touches nothing.
 
 ---
 

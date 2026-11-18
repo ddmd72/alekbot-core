@@ -48,9 +48,10 @@ class FirestoreAccountRepository(AccountRepository):
         return account
 
     async def update_account(self, account: BillingAccount) -> BillingAccount:
+        # Every field but usage: the counters are increment_account_usage's, and a whole-document write would undo an
+        # increment that landed since the caller's read.
         doc_ref = self.accounts_collection.document(account.account_id)
-        data = account.model_dump()
-        await doc_ref.set(data)
+        await doc_ref.update(account.model_dump(exclude={"usage"}))
         return account
 
     async def increment_account_usage(

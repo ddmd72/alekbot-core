@@ -9,7 +9,8 @@ POST /webhook/microsoft-tasks/{user_id}
   ?validationToken=XYZ -> return XYZ as text/plain 200 (Graph one-time validation)
   Change notification:
     1. Verify clientState == MICROSOFT_TASKS_WEBHOOK_SECRET
-    2. Extract list_id from resource path
+    2. Extract list_id from resource path; the subscription must be one stored for {user_id} on that list
+       (the secret is shared by every subscription, so it alone does not bind a notification to a user)
     3. Graph API for consumer accounts sends list-level resource (no task_id):
          todob2/graph/v1/users('email')/todoApp/lists('id')/tasks
        Enqueue reindex_task_list for the affected list.
@@ -121,6 +122,21 @@ def create_microsoft_tasks_webhook_blueprint(
             list_id = list_match.group(1) or list_match.group(2)
             task_match = _TASK_ID_RE.search(resource)
             task_id = (task_match.group(1) or task_match.group(2)) if task_match else None
+
+            # clientState is one secret for every subscription, so it does not say whose notification this is: only
+            # a subscription stored for the URL's user, on the notified list, may touch that user's data.
+            try:
+                bound = await task_setup.owns_subscription(user_id, sub_id, list_id)
+            except Exception as exc:
+                logger.error(f"[MSTasksWebhook] Cannot check sub={sub_id[:8]} for user={user_id[:8]}: {exc}",
+                             exc_info=True)
+                continue
+            if not bound:
+                logger.warning(
+                    f"[MSTasksWebhook] sub={sub_id[:8]} list={list_id[:8]} is not a subscription of "
+                    f"user={user_id[:8]} — ignoring"
+                )
+                continue
 
             logger.info(
                 f"[MSTasksWebhook] changeType={change_type} "

@@ -16,6 +16,7 @@ document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt 
 from datetime import datetime, timezone
 from typing import Optional
 
+from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
 from ..config.environment import EnvironmentConfig
@@ -169,11 +170,18 @@ class FirestoreMCPClientRepository(MCPClientRepository):
 
     async def consume_auth_code(self, code: str) -> Optional[MCPAuthCode]:
         ref = self._codes.document(self._code_doc_id(code))
-        doc = await ref.get()
-        if not doc.exists:
-            return None
-        await ref.delete()
-        return self._code_from_fs(doc.to_dict(), code)
+
+        # One transaction reads and deletes: of concurrent consumers one commits, the others re-run and read nothing.
+        @firestore.async_transactional
+        async def _consume(transaction) -> Optional[dict]:
+            doc = await ref.get(transaction=transaction)
+            if not doc.exists:
+                return None
+            transaction.delete(ref)
+            return doc.to_dict()
+
+        data = await _consume(self.db.transaction())
+        return None if data is None else self._code_from_fs(data, code)
 
     # --- refresh tokens ---
 
@@ -215,12 +223,21 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             return None
         return self._refresh_from_fs(doc.to_dict())
 
-    async def revoke_refresh_token(self, token_hash: str) -> None:
+    async def revoke_refresh_token(self, token_hash: str) -> bool:
         ref = self._refresh.document(token_hash)
-        doc = await ref.get()
-        if not doc.exists:
-            return
-        await ref.update({"revoked_at": datetime.now(timezone.utc)})
+
+        # One transaction reads and revokes: of concurrent revokers of an active token exactly one sees it active.
+        @firestore.async_transactional
+        async def _revoke(transaction) -> bool:
+            doc = await ref.get(transaction=transaction)
+            if not doc.exists:
+                return False
+            was_active = not doc.to_dict().get("revoked_at")
+            transaction.update(ref, {"revoked_at": datetime.now(timezone.utc)})
+            return was_active
+
+        revoked: bool = await _revoke(self.db.transaction())
+        return revoked
 
     async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
         # One grant has one unrevoked token at a time (rotation revokes the old one); the limit only bounds a

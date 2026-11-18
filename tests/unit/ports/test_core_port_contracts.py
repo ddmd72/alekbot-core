@@ -676,12 +676,15 @@ class TestInviteCodeRepositoryContract:
     def test_has_list_by_user(self):
         assert getattr(InviteCodeRepository.list_by_user, "__isabstractmethod__", False)
 
+    def test_has_claim(self):
+        assert getattr(InviteCodeRepository.claim, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(InviteCodeRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 4, f"Expected 4 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
 
 
 class TestInviteCodeRepositoryMockImplementation:
