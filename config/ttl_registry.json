@@ -1,0 +1,284 @@
+{
+ "_about": "Every document or value that writes `expires_at` or `purge_after` under src/ (tests/support/ttl_registry.py scans for writers; tests/unit/test_ttl_registry.py). deleted_by: ttl-policy (a Firestore TTL policy, in the generated runbook of docs/07_deployment/README.md), janitor, never, unverified (the code says a policy is meant, the runbook lists none), provider, not-stored. prefixed:false = the collection-group id carries no environment prefix; runbook_also / runbook_row=merged put two groups in one runbook row.",
+ "entries": [
+  {
+   "id": "facts",
+   "collection": "domain_facts_v2",
+   "field": "expires_at",
+   "deleted_by": "janitor",
+   "note": "a fact's expiry is a decision: the janitor stales the fact, never deletes it; no TTL policy, ever (tests/unit/test_facts_have_no_ttl_policy.py)",
+   "writers": [
+    "src/domain/entities.py",
+    "src/domain/fact_lifecycle.py",
+    "src/domain/fact_update_lifecycle.py",
+    "src/domain/search.py",
+    "src/domain/due_fact.py",
+    "src/adapters/firestore_repo.py"
+   ]
+  },
+  {
+   "id": "voice_tickets",
+   "collection": "voice_tickets",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "tickets, the one-call marker, call-kind keys, late-answer records",
+   "writers": [
+    "src/adapters/firestore_ephemeral_store.py"
+   ]
+  },
+  {
+   "id": "long_turns",
+   "collection": "long_turns",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "long-turn registry records",
+   "writers": [
+    "src/adapters/firestore_long_turn_registry.py"
+   ]
+  },
+  {
+   "id": "skill_drafts",
+   "collection": "skill_drafts",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "unsaved skill drafts (30 days) and their staged file contents",
+   "writers": [
+    "src/adapters/firestore_skill_repository.py"
+   ],
+   "runbook_also": "draft_files"
+  },
+  {
+   "id": "draft_files",
+   "collection": "draft_files",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "staged file contents of unsaved skill drafts",
+   "note": "an unprefixed subcollection group (never `files`), keyed by collection-group across the database (firestore_skill_repository.py `_DRAFT_FILES`); its runbook row is merged into skill_drafts",
+   "writers": [
+    "src/adapters/firestore_skill_repository.py"
+   ],
+   "prefixed": false,
+   "runbook_row": "merged"
+  },
+  {
+   "id": "memory_fact_drafts",
+   "collection": "memory_fact_drafts",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "unconfirmed memory-fact drafts (7 days)",
+   "writers": [
+    "src/adapters/firestore_memory_fact_draft_repository.py"
+   ]
+  },
+  {
+   "id": "worker_task_dedup",
+   "collection": "worker_task_dedup",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "Cloud Tasks claims (1 h), daily-review marks (48 h)",
+   "writers": [
+    "src/adapters/firestore_task_claim_store.py",
+    "src/adapters/firestore_dedup_store.py"
+   ]
+  },
+  {
+   "id": "drive_model_usage",
+   "collection": "drive_model_usage",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "monthly drive model-usage documents (the `{user}:initial` document has no `expires_at`)",
+   "writers": [
+    "src/adapters/firestore_drive_index_repo.py"
+   ]
+  },
+  {
+   "id": "oauth_flows",
+   "collection": "oauth_flows",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows",
+   "writers": [
+    "src/adapters/firestore_ephemeral_store.py",
+    "src/services/oauth_connect_service.py",
+    "src/domain/oauth_flow.py"
+   ]
+  },
+  {
+   "id": "event_dedup",
+   "collection": "event_dedup",
+   "field": "expires_at",
+   "deleted_by": "unverified",
+   "note": "the store writes `expires_at` \"for Firestore TTL policy\" (1 h default) but the deployment runbook lists no policy on this collection; reads check expiry themselves",
+   "writers": [
+    "src/adapters/firestore_dedup_store.py"
+   ]
+  },
+  {
+   "id": "drive_note_erase_requests",
+   "collection": "drive_note_erase_requests",
+   "field": "expires_at",
+   "deleted_by": "unverified",
+   "note": "the collection's property says a TTL policy on `expires_at` exists; the deployment runbook does not list it",
+   "writers": [
+    "src/adapters/firestore_ephemeral_store.py"
+   ]
+  },
+  {
+   "id": "short_links",
+   "collection": "short_links",
+   "field": "expires_at",
+   "deleted_by": "unverified",
+   "note": "the repository says a policy is meant and unverified; the runbook lists none; `resolve` checks expiry itself",
+   "writers": [
+    "src/domain/short_link.py",
+    "src/adapters/firestore_short_link_repository.py",
+    "src/services/short_link_service.py"
+   ]
+  },
+  {
+   "id": "invite_codes",
+   "collection": "invite_codes_v2",
+   "field": "expires_at",
+   "deleted_by": "never",
+   "note": "expiry is checked when a code is redeemed; nothing deletes the document",
+   "writers": [
+    "src/domain/invite_code.py",
+    "src/adapters/firestore_invite_code_repo.py",
+    "src/services/invite_code_service.py",
+    "src/web/user_cabinet_app.py"
+   ]
+  },
+  {
+   "id": "mcp_auth_codes",
+   "collection": "mcp_auth_codes",
+   "field": "expires_at",
+   "deleted_by": "unverified",
+   "note": "short-lived (about 10 minutes) by the collection's description; the runbook lists no policy. The same files also write the refresh-token expiry (mcp_refresh_tokens)",
+   "writers": [
+    "src/adapters/firestore_mcp_client_repository.py",
+    "src/domain/mcp.py",
+    "src/services/mcp_authorization_service.py",
+    "src/composition/mcp_sdk_oauth_provider.py",
+    "src/composition/drive_mcp_setup.py"
+   ]
+  },
+  {
+   "id": "mcp_refresh_tokens",
+   "collection": "mcp_refresh_tokens",
+   "field": "expires_at",
+   "deleted_by": "unverified",
+   "note": "rotated on use; the runbook lists no policy on expiry",
+   "writers": [
+    "src/adapters/firestore_mcp_client_repository.py",
+    "src/domain/mcp.py",
+    "src/services/mcp_authorization_service.py",
+    "src/composition/mcp_sdk_oauth_provider.py",
+    "src/composition/drive_mcp_setup.py"
+   ]
+  },
+  {
+   "id": "sessions",
+   "collection": "sessions",
+   "field": "expires_at",
+   "deleted_by": "never",
+   "note": "`expires_at` is written and never read; expiry is a lazy 90-day check in `load_session`; no TTL policy",
+   "writers": [
+    "src/adapters/firestore_session_store.py"
+   ]
+  },
+  {
+   "id": "task_config",
+   "collection": "task_config",
+   "field": "expires_at",
+   "deleted_by": "never",
+   "note": "the expiry of a Microsoft Graph webhook subscription inside the task-config document; the renewal tick replaces it, nothing deletes it",
+   "writers": [
+    "src/domain/task.py",
+    "src/adapters/firestore_task_config_repository.py",
+    "src/services/task_setup_service.py",
+    "src/adapters/microsoft/todo_adapter.py"
+   ]
+  },
+  {
+   "id": "drive_links_expires_at",
+   "collection": "drive_links",
+   "field": "expires_at",
+   "deleted_by": "never",
+   "note": "read-checked (a link dies 5 minutes after issue); the record is deleted by the `purge_after` policy",
+   "writers": [
+    "src/adapters/firestore_drive_link_store.py",
+    "src/domain/drive_link.py",
+    "src/services/drive_link_service.py",
+    "src/domain/drive_link_outcome.py"
+   ]
+  },
+  {
+   "id": "provider_files",
+   "collection": null,
+   "field": "expires_at",
+   "deleted_by": "provider",
+   "note": "when the model provider drops an uploaded input file; not a document of ours",
+   "writers": [
+    "src/adapters/gemini_batch_adapter.py",
+    "src/domain/batch_transcription.py",
+    "src/services/drive_transcript_stage.py"
+   ]
+  },
+  {
+   "id": "source_tokens_and_cache",
+   "collection": null,
+   "field": "expires_at",
+   "deleted_by": "not-stored",
+   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim",
+   "writers": [
+    "src/adapters/google/google_drive_adapter.py",
+    "src/domain/drive_media_source.py",
+    "src/domain/llm.py",
+    "src/services/voice_mcp_token_service.py"
+   ]
+  },
+  {
+   "id": "fact_review_questions",
+   "collection": "fact_review_questions",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "closed memory-review questions (90 days after closing; an open question has no `purge_after`)",
+   "writers": [
+    "src/adapters/firestore_fact_review_store.py"
+   ]
+  },
+  {
+   "id": "fact_review_messages",
+   "collection": "fact_review_messages",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written)",
+   "writers": [
+    "src/adapters/firestore_fact_review_store.py"
+   ]
+  },
+  {
+   "id": "audio_transcripts",
+   "collection": "audio_transcripts",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "cached transcripts of opened chat audio (90 days after they were written; chat uploads themselves are deleted after 30 days by the bucket lifecycle)",
+   "writers": [
+    "src/adapters/firestore_transcript_cache.py",
+    "src/services/document_service.py"
+   ]
+  },
+  {
+   "id": "drive_links",
+   "collection": "drive_links",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "the drive connector's one-time download links (a day after issue; a link itself dies 5 minutes after issue, checked on read)",
+   "writers": [
+    "src/adapters/firestore_drive_link_store.py",
+    "src/domain/drive_link.py",
+    "src/services/drive_link_service.py"
+   ]
+  }
+ ]
+}
