@@ -21,7 +21,7 @@ from src.domain.email_card_lifecycle import CardExpect, CardWriteResult, gone_fi
 from src.domain.email_memory_candidate import SETTLED_FOR_MEMORY, memory_card
 from src.ports.email_memory_batches import EmailMemoryBatches
 from src.ports.indexed_email_repository import IndexedEmailRepository
-from tests.support.firestore_eval import EvalDb, eval_transactions
+from tests.support.firestore_eval import EvalDb
 from tests.unit.domain.email_card_fixtures import BOOKING_BODY, NONCE, PEOPLE, answer_json, mail
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -32,16 +32,18 @@ NOW = datetime(2026, 11, 13, 8, 0, tzinfo=timezone.utc)
 STALE_BEFORE = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)    # mail indexed before 12:00 has waited long enough
 
 
-def _world(indexes_file: Path):
-    db = EvalDb(indexes=indexes_file, groups={FACTS: GROUP, STATE: "development_email_indexing_state"})
+def _groups() -> dict:
+    return {FACTS: GROUP, STATE: "development_email_indexing_state"}
+
+
+def _world(db):
     env = SimpleNamespace(domain_email_facts_collection=FACTS, email_indexing_state_collection=STATE)
     return db, FirestoreIndexedEmailRepository(db, env), FirestoreEmailCardStore(db, env)
 
 
 @pytest.fixture
-def world():
-    with eval_transactions():
-        yield _world(INDEXES_FILE)
+def world(kit_db):
+    return _world(kit_db(indexes=INDEXES_FILE, groups=_groups()))
 
 
 def email(email_id: str, hour: int, user_id: str = "user-1", **over) -> IndexedEmail:
@@ -181,11 +183,10 @@ async def test_the_settled_read_needs_the_declared_composite_index(tmp_path):
     assert len(without) == len(declared) - 1
     path = tmp_path / "indexes.json"
     path.write_text(json.dumps(without))
-    with eval_transactions():
-        _, repo, _ = _world(path)
-        await repo.save_batch([email("m1", 1)])
-        with pytest.raises(FailedPrecondition):
-            await batch(repo)
+    _, repo, _ = _world(EvalDb(indexes=path, groups=_groups()))
+    await repo.save_batch([email("m1", 1)])
+    with pytest.raises(FailedPrecondition):
+        await batch(repo)
 
 
 async def test_with_no_settled_state_only_the_stale_read_runs(world):
