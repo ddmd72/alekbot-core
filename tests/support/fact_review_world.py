@@ -9,7 +9,7 @@ and `seed_state` store domain models through that adapter's own document form. T
 (T5a) is here.
 """
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
 from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore, question_document, state_document
@@ -213,16 +213,19 @@ class FakeLanguageService(LanguageServicePort):
 
 
 class ReviewWorld:
-    def __init__(self) -> None:
-        self.store, self.repo, self.bio = make_fact_world()
+    """`kit_db` is the kits' database factory (`tests/support/kit_backend.py`); without it the world is built over a fresh
+    `EvalDb`."""
+
+    def __init__(self, kit_db: Optional[Callable[..., Any]] = None) -> None:
         self.env = EnvironmentConfig()
+        sessions = f"{self.env.firestore_collection_prefix}sessions"
+        # the index file declares the sessions index under the live name
+        self.store, self.repo, self.bio = make_fact_world(kit_db=kit_db, groups={sessions: "development_sessions"})
         self.counters = FirestoreFactLifecycleCounters(self.store.db, self.env)
         self.lease = FirestoreMemoryWriteLease(self.store.db, self.env)
         self.queue, self.tasks = make_task_queue()
         self.localization = FileLocalizationAdapter()
         self.sink = RecordingSink()
-        sessions = f"{self.env.firestore_collection_prefix}sessions"
-        self.store.db.groups[sessions] = "development_sessions"      # the index file declares the sessions index under the live name
         self.session_store = ReviewSessionStore(self.store.db, sessions)
         self.notification_state = FakeNotificationState(NOW)
         self.channels = RecordingChannelFactory()

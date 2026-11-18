@@ -18,7 +18,7 @@ import src.adapters.firestore_ephemeral_store as ephemeral_module
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.ports.ephemeral_store import EphemeralStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -30,8 +30,8 @@ TICKET = {"user_id": "u1", "account_id": "a1", "call_kind": "phone"}
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={TICKETS: "development_voice_tickets"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={TICKETS: "development_voice_tickets"})
         self.store: EphemeralStore = FirestoreEphemeralStore(self.db, TICKETS)
 
     @property
@@ -44,9 +44,9 @@ class Store:
 
 
 @pytest.fixture
-def store(monkeypatch):
+def store(monkeypatch, kit_db):
     pin_datetime(monkeypatch, ephemeral_module, T0)
-    return Store()
+    return Store(kit_db)
 
 
 def at(monkeypatch, seconds: float) -> None:
@@ -95,6 +95,7 @@ async def test_a_value_is_live_up_to_its_expiry_instant(store, monkeypatch, seco
     assert TICKET_KEY in store.docs
 
 
+@pytest.mark.h1_only("reads the fake's write stamps (versions, the commit clock) to show nothing was written")
 async def test_get_of_an_absent_key_is_none_and_writes_nothing(store):
     clock = store.db._clock
     assert await store.store.get(TICKET_KEY) is None
@@ -127,12 +128,14 @@ async def test_get_and_delete_of_an_expired_value_consumes_it_and_returns_none(s
     assert store.docs == {}
 
 
+@pytest.mark.h1_only("reads the fake's write stamps (versions) to show nothing was written")
 async def test_get_and_delete_of_an_absent_key_is_none_and_writes_nothing(store):
     assert await store.store.get_and_delete(TICKET_KEY) is None
     # no write stamp on the key: nothing was written (an empty transaction commit still takes a DB-wide stamp in the fake)
     assert store.docs == {} and store.col.versions == {}
 
 
+@pytest.mark.h1_only("counts transactional reads through a patched EvalDocRef.get to require the forced interleaving")
 async def test_two_concurrent_get_and_delete_exactly_one_wins(store, monkeypatch):
     await store.store.set(TICKET_KEY, TICKET, ttl_s=300)
     reads = []
@@ -208,6 +211,7 @@ async def test_an_expired_legacy_document_without_value_reads_as_absent(store, m
 
 # ---------------------------------------------------------------------------------------------------- errors
 
+@pytest.mark.h1_only("injects the failure by patching EvalDocRef methods")
 @pytest.mark.parametrize("method", ["get", "set", "delete", "get_and_delete"])
 async def test_a_backend_error_propagates(store, monkeypatch, method):
     if method != "set":
@@ -225,6 +229,7 @@ async def test_a_backend_error_propagates(store, monkeypatch, method):
     assert store.docs == before
 
 
+@pytest.mark.h1_only("forces an abort on every attempt with interfere_on_txn_read")
 async def test_a_transaction_aborted_on_every_attempt_raises_value_error(store):
     await store.store.set(TICKET_KEY, TICKET, ttl_s=300)
     for _ in range(5):      # every attempt: another transaction rewrites the document after this one read it

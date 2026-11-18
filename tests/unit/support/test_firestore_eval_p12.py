@@ -44,3 +44,14 @@ async def test_without_a_vector_dimension_none_is_checked():
     await db.collection("tasks").document("short").set({"v": Vector([1.0, 0.0])})
     await db.collection("tasks").document("long").set({"v": Vector([1.0, 0.0, 0.0])})
     assert sorted(s.id for s in await nearest(db, [1.0, 0.0]).get()) == ["long", "short"]
+
+
+async def test_several_vector_dimensions_accept_each_and_refuse_any_other():
+    db = EvalDb(vector_dimension={2, 3})
+    await db.collection("tasks").document("two").set({"v": Vector([1.0, 0.0])})
+    await db.collection("tasks").document("three").set({"v": Vector([1.0, 0.0, 0.0])})
+    await db.collection("tasks").document("four").set({"v": Vector([1.0, 0.0, 0.0, 0.0])})
+    assert [s.id for s in await nearest(db, [1.0, 0.0]).get()] == ["two"]
+    assert [s.id for s in await nearest(db, [1.0, 0.0, 0.0]).get()] == ["three"]
+    with pytest.raises(FailedPrecondition, match="Missing vector index configuration"):
+        await nearest(db, [1.0, 0.0, 0.0, 0.0]).get()

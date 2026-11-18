@@ -19,13 +19,14 @@ from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, NoCacheRefresh, embed
+from tests.support.kit_backend import never_called
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def store():
-    return FactStore(indexes=INDEXES_FILE)
+def store(kit_db):
+    return FactStore(indexes=INDEXES_FILE, kit_db=kit_db)
 
 
 async def seed(store, text, **over):
@@ -62,6 +63,7 @@ def stamp(store, doc_id):
 
 # ------------------------------------------------------------------------------------------ write_superseding
 
+@pytest.mark.h1_only("reads the fake's write stamps (versions) to show what one commit wrote")
 async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_doc_in_one_commit(store):
     await seed(store, "a")
     await seed(store, "b")
@@ -83,12 +85,13 @@ async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_d
     assert stamp(store, "f-merged") == stamp(store, "f-a") == stamp(store, "f-b")
 
 
+@pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
 async def test_write_superseding_checks_each_source_token_against_its_own_snapshot(store):
     for name in "abc":
         await seed(store, name)
     sources = [await resolve(store, f"f-{n}") for n in "abc"]
     before = {k: copy.deepcopy(v) for k, v in store.docs.items()}
-    store.interfere("f-b", {"text": "changed elsewhere"})   # interleaving source: a commit lands on b at its transactional read
+    store.db.interfere_on_txn_read(FACTS, "f-b", {"text": "changed elsewhere"})   # interleaving source: a commit lands on b at its transactional read
 
     new = make_fact("merged")
     with pytest.raises(FactWriteConflict) as caught:
@@ -146,7 +149,7 @@ async def test_write_superseding_with_nothing_to_replace_is_refused_before_any_i
     def no_transaction():
         raise AssertionError("a transaction was opened")
 
-    monkeypatch.setattr(store.db, "transaction", no_transaction)
+    monkeypatch.setattr(store.db, "transaction", never_called(no_transaction))
     with pytest.raises(ValueError, match="replaces no document"):
         await store.repo.write_superseding(make_fact("new"), [])
 
@@ -163,7 +166,7 @@ async def test_write_superseding_refuses_a_new_fact_without_a_vector_before_any_
     def no_transaction():
         raise AssertionError("a transaction was opened")
 
-    monkeypatch.setattr(store.db, "transaction", no_transaction)
+    monkeypatch.setattr(store.db, "transaction", never_called(no_transaction))
     with pytest.raises(ValueError, match=missing):
         await store.repo.write_superseding(incomplete, closed_by(incomplete, [old], "stage1"))
 
@@ -243,6 +246,7 @@ async def test_update_fact_fields_on_a_deleted_doc_raises_conflict(store):
 
 # ------------------------------------------------------------------------------------------- error mapping
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_read_time_aborted_becomes_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -256,6 +260,7 @@ async def test_read_time_aborted_becomes_conflict(store):
     assert store.docs == before
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_exhausted_commit_retries_become_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -267,6 +272,7 @@ async def test_exhausted_commit_retries_become_conflict(store):
         await store.repo.update_fact_fields(stored, {"last_updated": NOW})
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_an_error_that_replaced_an_aborted_is_a_conflict_through_cause_and_context(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -287,6 +293,7 @@ async def test_an_error_that_replaced_an_aborted_is_a_conflict_through_cause_and
         assert caught.value.fact_id == "f-x", chain
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_a_chained_error_without_an_aborted_stays_itself(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -298,6 +305,7 @@ async def test_a_chained_error_without_an_aborted_stays_itself(store):
         await store.repo.update_fact_fields(stored, {"last_updated": NOW})
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_a_value_error_not_caused_by_aborted_is_not_a_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -394,9 +402,10 @@ async def test_invalidate_merged_source_raises_resolution_error_and_writes_nothi
     assert store.docs == before
 
 
+@pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
 async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     await seed(store, "x")
-    store.interfere("f-x", {"text": "edited elsewhere"})
+    store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "edited elsewhere"})
 
     await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
 
@@ -404,12 +413,13 @@ async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     assert store.docs["f-x"]["state"] == "invalidated"
 
 
+@pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
 async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_lands_on_the_new_version(store):
     # same text in both versions: a concurrent version with another text is refused, test_fact_invalidate_shown_text.py
     await seed(store, "likes tea", id="f-v1", lineage_id="L")
     await seed(store, "likes tea", id="f-v2", lineage_id="L", version=2)
     closure = {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": NOW}
-    store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
+    store.db.interfere_on_txn_read(FACTS, "f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
 
     await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-v1", ACC)
 
@@ -419,10 +429,11 @@ async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_la
     assert check_lineages(store.docs.items()) == {}
 
 
+@pytest.mark.h1_only("forces concurrent commits with interfere_on_txn_read")
 async def test_invalidate_second_conflict_raises_and_writes_nothing(store):
     await seed(store, "x")
-    store.interfere("f-x", {"text": "first edit"})
-    store.interfere("f-x", {"text": "second edit"})
+    store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "first edit"})
+    store.db.interfere_on_txn_read(FACTS, "f-x", {"text": "second edit"})
 
     with pytest.raises(FactWriteConflict):
         await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
@@ -430,6 +441,7 @@ async def test_invalidate_second_conflict_raises_and_writes_nothing(store):
     assert store.docs["f-x"]["text"] == "second edit" and store.docs["f-x"]["state"] == "current"
 
 
+@pytest.mark.h1_only("injects the read error with raise_on_txn_read")
 async def test_invalidate_aborted_is_conflict_not_value_error(store):
     await seed(store, "x")
     store.db.raise_on_txn_read(FACTS, "f-x", Aborted("contention"))

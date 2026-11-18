@@ -17,13 +17,15 @@ Raw access stays the kit's: `db.collection(name).docs` is the stored documents a
 dict; here it is a fresh synchronous read of the collection (`RawDocs`): assigning, deleting or popping a document, and
 setting, deleting or popping a top-level field of one (`RawDoc`), is written through to Firestore. A nested value is
 frozen (`FrozenDict`, `FrozenList`: equal to the plain value, a change raises `TypeError`), so a nested edit that would
-not reach Firestore fails instead of being lost. Nothing is silently ignored: a public attribute set on a collection or
+not reach Firestore fails instead of being lost. A copy of the view or of a document (`copy.copy`, `copy.deepcopy`)
+is a plain snapshot, as on the fake. Nothing is silently ignored: a public attribute set on a collection or
 the database raises (except `yield_on_get`, which only interleaves the fake's reads: keep a test that sets it only when
 its assertion holds under real concurrency; and except a replaced method of the real object, so a fault injected with
 `monkeypatch.setattr(collection, "document", failing)` runs here too, and fails if the adapter never calls it),
 `collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other than `None` or
 `config/firestore.indexes.json` raises, a private name set on a wrapper (a fake's internal such as `_check_index`)
-raises, `kit_db(vector_dimension=n)` renders the vector indexes at dimension n (`EvalDb` checks the same), and any
+raises, `kit_db(vector_dimension=n)` renders the vector indexes at dimension n (or at each of a set of
+dimensions; `EvalDb` checks the same), and any
 other attribute is the real client's, so a fake-only hook
 (`interfere_on_txn_read`, `versions`, a patched `EvalDocRef`) fails here: such a test carries
 `@pytest.mark.h1_only("<why>")` and is skipped in the cloud run.
@@ -156,6 +158,13 @@ class RawDoc(dict):
     def clear(self) -> None:
         raise NotImplementedError("RawDoc: assign the document in RawDocs instead")
 
+    def __copy__(self) -> Dict[str, Any]:
+        """A copy is a plain snapshot (the fake's `copy.copy(doc)`), never a second write-through view."""
+        return thaw(self)
+
+    def __deepcopy__(self, memo: Any) -> Dict[str, Any]:
+        return thaw(self)
+
 
 class RawDocs(dict):
     """The documents of one collection, read now (doc id -> `RawDoc`); assigning, deleting or popping one is written through."""
@@ -192,26 +201,56 @@ class RawDocs(dict):
     def popitem(self) -> Any:
         raise NotImplementedError("RawDocs: pop a named document instead")
 
+    def __copy__(self) -> Dict[str, Dict[str, Any]]:
+        """A copy is a plain snapshot of the documents (the fake's `copy.deepcopy(col.docs)`): copying the view itself
+        would copy its client and replay every document as a write."""
+        return {doc_id: thaw(doc) for doc_id, doc in self.items()}
+
+    def __deepcopy__(self, memo: Any) -> Dict[str, Dict[str, Any]]:
+        return self.__copy__()
+
 
 FAKE_ONLY_ATTRIBUTES = frozenset({"yield_on_get"})   # interleaves the fake's reads only; real reads interleave on their own
+
+
+class NeverCalled:
+    """A replacement a test installs to prove the code does NOT call a method (a guard, not a fault):
+    `monkeypatch.setattr(db, "transaction", never_called(spy))`. Calling it fails the test at once on both backends
+    (`pytest.fail` raises a `BaseException`, so an adapter's `except Exception` cannot swallow it); `spy` only names it.
+    So a fault mis-declared as a guard can never pass by firing on the fake. On the real backend it is also exempt from
+    the check that an injected fault was reached. Any replacement not declared this way is a fault and must be reached."""
+
+    def __init__(self, fn: Any) -> None:
+        self.fn = fn
+
+    def __call__(self, *a: Any, **k: Any) -> Any:
+        pytest.fail(f"{getattr(self.fn, '__name__', repr(self.fn))} was called, but the test declared it never_called")
+
+
+def never_called(fn: Any) -> NeverCalled:
+    return NeverCalled(fn)
 
 
 class Injected:
     """A method a test replaced on a wrapper (a fault it injects), counting its calls. A replacement the adapter never
     calls would make the test pass on the real backend without its fault ever happening (the fake routes a call through
-    a path the real client does not, e.g. a subcollection of a document reference): such a test fails instead."""
+    a path the real client does not, e.g. a subcollection of a document reference): such a test fails instead. A
+    declared guard (`never_called`) is the reverse: calling it fails, and it is never required to be reached."""
 
     def __init__(self, fn: Any, where: str) -> None:
         self.fn = fn
         self.where = where
         self.calls = 0
+        self.guard = isinstance(fn, NeverCalled)
 
     def __call__(self, *a: Any, **k: Any) -> Any:
         self.calls += 1
+        if self.guard:
+            pytest.fail(f"{self.where} was called, but the test declared it never_called")
         return self.fn(*a, **k)
 
     def check_reached(self) -> None:
-        if not self.calls:
+        if not self.calls and not self.guard:
             pytest.fail(f"the injected fault on {self.where} was never reached on the real backend: inject it where the "
                         "adapter calls it, or mark the test h1_only")
 
@@ -329,10 +368,10 @@ class RealKitBackend:
         self.touched: Set[str] = set()
         self.injections: List[Injected] = []
         self._db: Optional[RealKitDb] = None
-        self._vector_dimension: Optional[int] = None
+        self._vector_dimension: Any = None
 
     def __call__(self, indexes: Any = None, groups: Optional[Dict[str, str]] = None,
-                 vector_dimension: Optional[int] = None) -> RealKitDb:
+                 vector_dimension: Any = None) -> RealKitDb:
         """`EvalDb`'s signature. `indexes` switches the fake's refusal; the real database refuses on its own with the
         indexes of the repository file, so any other index set (`[]`, a hand-made list) cannot be honoured here."""
         if not (indexes is None or (isinstance(indexes, (str, Path)) and Path(indexes).resolve() == INDEXES_FILE)):

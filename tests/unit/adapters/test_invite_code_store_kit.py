@@ -29,7 +29,6 @@ from src.domain.invite_code import InviteCode, InviteType, invite_hint, normalis
 from src.domain.secret_digest import keyed_digest
 from src.domain.user import UserProfile
 from src.services.invite_code_service import InviteCodeService
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 INVITES = "eval_invite_codes_v2"
@@ -47,8 +46,8 @@ class InviteStore:
     """The real invite repository, and the real service with its real neighbours, over one EvalDb with the declared
     indexes, each collection mapped to its index group."""
 
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={
             INVITES: "development_invite_codes_v2", USERS: "development_domain_users_v1",
             ACCOUNTS: "development_domain_accounts_v2", WHITELIST: "development_domain_whitelist_v1"})
         env = SimpleNamespace(domain_invite_codes_collection=INVITES, domain_users_collection=USERS,
@@ -76,8 +75,8 @@ class InviteStore:
 
 
 @pytest.fixture
-def store():
-    return InviteStore()
+def store(kit_db):
+    return InviteStore(kit_db)
 
 
 def invite(code="ABC-DEF-123", **over) -> InviteCode:
@@ -374,6 +373,7 @@ async def test_a_backend_error_propagates(store, monkeypatch, call):
         await call(store.repo)
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_a_backend_error_in_list_propagates(store):
     await store.repo.create(invite())
     store.db.collection(INVITES).fail = RuntimeError("backend down")

@@ -3,6 +3,7 @@ chunks and hint documents are written to InMemoryDriveIndexRepository and to Fir
 evaluating Firestore fake, and every new method answers the same, on order, limits, cursors and filters. The
 reference semantics are the port's docstrings; each case states the one it pins."""
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +15,7 @@ from src.domain.drive_index import DriveChunk, DriveIndexRecord, RecordState, Sc
 from src.domain.drive_index_lean import DriveChunkLean, DriveHintLean, DriveRecordLean
 from src.domain.drive_index_params import INITIAL_BUILD_USD
 
-from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb, eval_transactions, make_eval_repo
+from tests.unit.adapters.firestore_drive_eval_fakes import CHUNKS, HINTS, RECS, STATES, USAGE, make_eval_repo
 
 D = datetime(2026, 5, 1, tzinfo=timezone.utc)
 NOW = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
@@ -68,11 +69,16 @@ class Pair:
                 await repo.write_hints(list(hints), [vec(i) for i, _ in enumerate(hints)])
 
 
+INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
+GROUPS = {RECS: "development_drive_index_records", STATES: "development_drive_sync_state",
+          CHUNKS: "development_drive_index_chunks", HINTS: "development_drive_index_hints",
+          USAGE: "development_drive_model_usage"}
+
+
 @pytest.fixture
-def pair(mock_env_config):
-    db = EvalDb()
-    with eval_transactions():
-        yield Pair(InMemoryDriveIndexRepository(), make_eval_repo(db, mock_env_config))
+def pair(mock_env_config, kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups=GROUPS, vector_dimension=2)
+    return Pair(InMemoryDriveIndexRepository(), make_eval_repo(db, mock_env_config))
 
 
 async def paged(pair, name, page, *args, cursor_of, **kwargs):
@@ -354,6 +360,7 @@ class TestUsage:
 
 
 class TestInitialBuild:
+    @pytest.mark.h1_only("reads the fake's collection map (cols) to show nothing was written")
     async def test_unopened_by_default_and_reading_never_writes(self, pair):
         assert await pair.both("get_initial_build", "u", REALM, SUBJECT) == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
         assert pair.fs._db.cols.get("eval_drive_model_usage") is None or not pair.fs._db.cols[

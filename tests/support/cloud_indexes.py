@@ -8,7 +8,7 @@ order, `CONTAINS` or `VECTOR`; it is what decides whether a wanted index already
 """
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Collection, Dict, List, Optional, Tuple, Union
 
 LIVE_PREFIX, TEST_PREFIX = "development_", "test_"
 
@@ -18,23 +18,34 @@ def rendered_group(group: str) -> Optional[str]:
     return TEST_PREFIX + group[len(LIVE_PREFIX):] if group.startswith(LIVE_PREFIX) else None
 
 
+def dimensions(vector_dimension: Union[None, int, Collection[int]]) -> Optional[Tuple[int, ...]]:
+    """`vector_dimension` as a sorted tuple of dimensions (one int or several), or None."""
+    if vector_dimension is None:
+        return None
+    return (vector_dimension,) if isinstance(vector_dimension, int) else tuple(sorted(set(vector_dimension)))
+
+
 def render_indexes(group: str, indexes: Union[str, Path, List[Dict[str, Any]]],
-                   vector_dimension: Optional[int] = None) -> List[Dict[str, Any]]:
+                   vector_dimension: Union[None, int, Collection[int]] = None) -> List[Dict[str, Any]]:
     """The composites `indexes` (the file or its parsed list) declares on the live group `group`, renamed to its test
-    group; with `vector_dimension`, every vector field at that dimension (a kit's test vectors are short, and Firestore
-    finds a vector only through an index of its own dimension). Empty for a group that is not `development_*` or has none."""
+    group; with `vector_dimension` (one dimension or several), each vector index once per dimension (a kit's test vectors
+    are short, and Firestore finds a vector only through an index of its own dimension). Empty for a group that is not
+    `development_*` or has none."""
     target = rendered_group(group)
     raw = json.loads(Path(indexes).read_text()) if isinstance(indexes, (str, Path)) else indexes
     if target is None:
         return []
-
-    def field(f: Dict[str, Any]) -> Dict[str, Any]:
-        if vector_dimension is None or "vectorConfig" not in f:
-            return f
-        return dict(f, vectorConfig=dict(f["vectorConfig"], dimension=vector_dimension))
-
-    return [dict(index, collectionGroup=target, fields=[field(f) for f in index["fields"]])
-            for index in raw if index.get("collectionGroup") == group and "fields" in index]
+    dims = dimensions(vector_dimension)
+    rendered = []
+    for index in raw:
+        if index.get("collectionGroup") != group or "fields" not in index:
+            continue
+        has_vector = any("vectorConfig" in f for f in index["fields"])
+        for dim in (dims if dims and has_vector else (None,)):
+            fields = [dict(f, vectorConfig=dict(f["vectorConfig"], dimension=dim)) if dim and "vectorConfig" in f else f
+                      for f in index["fields"]]
+            rendered.append(dict(index, collectionGroup=target, fields=fields))
+    return rendered
 
 
 def _mode(field: Dict[str, Any]) -> str:

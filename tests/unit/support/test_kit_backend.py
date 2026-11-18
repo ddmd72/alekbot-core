@@ -123,6 +123,20 @@ def test_a_raw_documents_top_level_field_change_rewrites_the_document():
         doc.setdefault("x", 1)
 
 
+def test_a_copy_of_the_raw_view_or_of_a_raw_document_is_a_plain_snapshot_and_writes_nothing():
+    import copy
+    col = SyncCollection({"u1": {"config": {"tier": "eco"}, "tags": ["a"]}})
+    raw = RawDocs(col)
+    for snapshot in (copy.deepcopy(raw), copy.copy(raw)):
+        assert snapshot == {"u1": {"config": {"tier": "eco"}, "tags": ["a"]}}
+        assert type(snapshot) is dict and type(snapshot["u1"]) is dict and type(snapshot["u1"]["config"]) is dict
+        snapshot["u1"]["config"]["tier"] = "performance"
+    for doc in (copy.deepcopy(raw["u1"]), copy.copy(raw["u1"])):
+        assert type(doc) is dict and type(doc["tags"]) is list
+        doc["tags"].append("b")
+    assert col.writes == [] and col.docs == {"u1": {"config": {"tier": "eco"}, "tags": ["a"]}}
+
+
 # --------------------------------------------------------------------------------------------------- the backend
 
 class Sync:
@@ -345,3 +359,61 @@ def test_a_private_name_of_a_fake_set_on_a_wrapper_is_refused():
     for target in (db, db.collection("eval_sessions")):
         with pytest.raises(AttributeError, match="h1_only"):
             target._check_index = lambda *a: None
+
+
+# --------------------------------------------------------------------------------------------------- guards, several dimensions
+
+def test_a_declared_guard_that_is_never_called_passes_and_one_that_is_called_fails(monkeypatch):
+    from tests.support.kit_backend import never_called
+    backend, db = backend_and_db()
+    spied = []
+    with monkeypatch.context() as m:
+        m.setattr(db, "transaction", never_called(lambda: spied.append(1)))
+    backend.purge_touched()                                   # not reached, and that is the point: no failure
+    with monkeypatch.context() as m:
+        m.setattr(db, "transaction", never_called(lambda: spied.append(1)))
+        with pytest.raises(pytest.fail.Exception, match="declared it never_called"):
+            db.transaction()
+    assert spied == []
+
+
+async def test_a_reached_never_called_fails_on_the_plain_evaldb_too_and_no_except_exception_swallows_it(monkeypatch):
+    from tests.support.kit_backend import never_called
+    db = EvalDb()
+    ran = []
+
+    def failing():
+        ran.append(1)
+        raise RuntimeError("backend down")
+
+    monkeypatch.setattr(db, "transaction", never_called(failing))
+
+    def adapter_that_swallows_errors():
+        try:
+            db.transaction()
+        except Exception:
+            return "swallowed"
+
+    with pytest.raises(pytest.fail.Exception, match="failing was called, but the test declared it never_called"):
+        adapter_that_swallows_errors()
+    assert ran == []
+
+
+def test_an_undeclared_replacement_still_has_to_be_reached(monkeypatch):
+    backend, db = backend_and_db()
+    with pytest.raises(pytest.fail.Exception, match="never reached"):
+        with monkeypatch.context() as m:
+            m.setattr(db, "transaction", lambda: None)
+    with pytest.raises(pytest.fail.Exception, match="never reached"):
+        backend.purge_touched()
+
+
+def test_several_vector_dimensions_render_one_vector_index_each_and_the_rest_once():
+    from tests.support.cloud_indexes import wanted_key
+    plain = dict(VECTOR_INDEX, fields=[{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "at", "order": "DESCENDING"}])
+    rendered = render_indexes("development_task_search_index", [VECTOR_INDEX, plain], vector_dimension={768, 3})
+    assert [[f.get("vectorConfig", {}).get("dimension") for f in i["fields"]] for i in rendered] == \
+        [[None, 3], [None, 768], [None, None]]
+    assert len({wanted_key(i) for i in rendered}) == 3
+    assert render_indexes("development_task_search_index", [VECTOR_INDEX], vector_dimension=2) == \
+        render_indexes("development_task_search_index", [VECTOR_INDEX], vector_dimension={2})

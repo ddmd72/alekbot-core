@@ -31,8 +31,8 @@ CONTEXT_COLLECTION = "eval_user_context"
 
 
 @pytest.fixture
-def store():
-    return FactStore(indexes=INDEXES_FILE)
+def store(kit_db):
+    return FactStore(indexes=INDEXES_FILE, kit_db=kit_db, vector_dimension={3, 768})
 
 
 def plain(doc):
@@ -374,7 +374,10 @@ async def test_search_returns_at_most_limit_nearest(store):
 async def test_search_account_is_the_argument_else_the_context_account_else_the_user_id(store):
     put_raw(store, "own", "own")
     put_raw(store, "foreign", "foreign", account_id=OTHER)
-    query = [1.0, 0.0, 0.0]
+    # Reviewer edit (P12 batch D): the stored facts carry 768-dimensional vectors (put_raw -> embed); the query was
+    # [1, 0, 0], which the old fake compared over three components only. A query of the stored dimension, as Firestore
+    # requires; the assertions (which account's facts are searched) are unchanged.
+    query = embed("own")
 
     async def found(**kw):
         return ids(await store.repo.search_facts(query, "vector", **kw))
@@ -418,6 +421,7 @@ async def test_search_projection_returns_vector_and_context_and_defaults_the_res
     assert got.model_dump(exclude=defaulted) == fact.model_dump(exclude=defaulted)
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_search_backend_error_propagates(store):
     put_raw(store, "own", "own")
     store.db.collection(FACTS).fail = RuntimeError("backend down")
@@ -660,6 +664,7 @@ async def test_refresh_of_an_unchanged_account_writes_the_same_content(store):
     assert {k: v for k, v in second.items() if k != "refreshed_at"} == {k: v for k, v in first.items() if k != "refreshed_at"}
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_refresh_never_raises_and_keeps_the_previous_cache_on_a_failure(store):
     await _seed_account_for_cache(store)
     refresher = _cache_refresher(store)

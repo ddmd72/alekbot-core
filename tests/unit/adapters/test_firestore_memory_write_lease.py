@@ -8,17 +8,12 @@ import pytest
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.config.environment import EnvironmentConfig
 from src.ports.memory_write_lease import MemoryWriteLeasePort
-from tests.support.firestore_eval import EvalDb, EvalDocRef, eval_transactions
+from tests.support.firestore_eval import EvalDocRef
+from tests.support.kit_backend import never_called
 
 ACC = "acc-1"
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
 RUN = timedelta(minutes=16)
-
-
-@pytest.fixture(autouse=True)
-def _evaluating_transactions():
-    with eval_transactions():
-        yield
 
 
 @pytest.fixture
@@ -27,8 +22,8 @@ def env():
 
 
 @pytest.fixture
-def db():
-    return EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture
@@ -55,6 +50,7 @@ class TestAcquire:
         assert await lease.acquire(ACC, "o1", T0, T0 + RUN)
         assert await lease.acquire(ACC, "o2", T0 + RUN, T0 + 2 * RUN) is True
 
+    @pytest.mark.h1_only("reads the fake's transaction stamp (txn_versions) to show nothing was committed")
     async def test_acquire_held_by_another_is_false_and_writes_nothing(self, lease, db, env):
         assert await lease.acquire(ACC, "o1", T0, T0 + RUN)
         before = dict(_docs(db, env)[ACC])
@@ -104,6 +100,7 @@ class TestAcquire:
             await lease.acquire(ACC, "o1", now, until)
         assert _docs(db, env) == {}
 
+    @pytest.mark.h1_only("traces reads and commits through a patched EvalDocRef.get and the fake's commit")
     async def test_two_concurrent_acquires_one_wins(self, lease, db, env, monkeypatch):
         db.collection(env.memory_write_leases_collection).yield_on_get = True
         events = []
@@ -163,6 +160,7 @@ class TestRelease:
         assert _docs(db, env)[ACC]["lease_owner"] == "o2"
         assert await lease.acquire(ACC, "o3", later + timedelta(seconds=1), later + RUN) is False
 
+    @pytest.mark.h1_only("counts reads through a patched EvalDocRef.get to require the re-read after the abort")
     async def test_a_release_racing_a_takeover_never_deletes_the_new_holder(self, lease, db, env, monkeypatch):
         await lease.acquire(ACC, "o1", T0, T0 + RUN)
         db.collection(env.memory_write_leases_collection).yield_on_get = True
@@ -195,7 +193,7 @@ class TestRelease:
         before = {k: dict(v) for k, v in _docs(db, env).items()}
         started = []
         real_transaction = db.transaction
-        monkeypatch.setattr(db, "transaction", lambda: started.append(1) or real_transaction())
+        monkeypatch.setattr(db, "transaction", never_called(lambda: started.append(1) or real_transaction()))
 
         await lease.release(account_id, "o1")
 

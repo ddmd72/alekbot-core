@@ -17,7 +17,7 @@ from tests.unit.adapters.test_whitelist_store_kit import WhitelistStore, seed
 
 @pytest.mark.parametrize("stored, expected", [("OWNER", Role.OWNER), ("MEMBER", Role.MEMBER), ("VIEWER", Role.VIEWER)])
 async def test_a_consumed_invite_writes_the_role_value_the_checks_compare(stored, expected):
-    store = InviteStore()
+    store = InviteStore(EvalDb)
     await store.team("usr-new")
     await store.repo.create(invite(role=stored))
     await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
@@ -30,7 +30,7 @@ async def test_a_consumed_invite_writes_the_role_value_the_checks_compare(stored
 
 
 async def test_an_invited_owner_is_resolved_as_an_owner_by_the_role_checks():
-    store = InviteStore()
+    store = InviteStore(EvalDb)
     await store.team("usr-new")
     await store.repo.create(invite(role="OWNER"))
     await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
@@ -39,7 +39,7 @@ async def test_an_invited_owner_is_resolved_as_an_owner_by_the_role_checks():
 
 
 async def test_an_invite_with_an_unknown_role_is_refused_before_anything_is_written():
-    store = InviteStore()
+    store = InviteStore(EvalDb)
     await store.team("usr-new")
     await store.repo.create(invite(role="ROOT"))
     with pytest.raises(ValueError):

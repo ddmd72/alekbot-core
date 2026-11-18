@@ -20,7 +20,7 @@ from src.domain.long_turn import LongTurnRecord, LongTurnStatus
 from src.domain.turn_clock import STALE_AFTER_S
 from src.ports.long_turn_registry import LongTurnRegistry
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -30,8 +30,8 @@ TITLE = "plan the weekend in Coimbra"
 
 
 class Turns:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={TURNS: "development_long_turns"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={TURNS: "development_long_turns"})
         self.registry: LongTurnRegistry = FirestoreLongTurnRegistry(self.db, TURNS)
 
     @property
@@ -44,9 +44,9 @@ class Turns:
 
 
 @pytest.fixture
-def turns(monkeypatch):
+def turns(monkeypatch, kit_db):
     pin_datetime(monkeypatch, registry_module, T0)
-    return Turns()
+    return Turns(kit_db)
 
 
 def record(turn_id="turn1", user_id="u1", heartbeat_age=5.0, **over) -> LongTurnRecord:
@@ -177,6 +177,7 @@ async def test_a_cancel_racing_a_finish_still_returns_true(turns):
     assert turns.docs["turn1"]["status"] == "done" and turns.docs["turn1"]["cancel_requested"] is True
 
 
+@pytest.mark.h1_only("reads the fake's declared index set and its query log (executed)")
 async def test_index_refusal_is_on_and_list_running_needs_no_composite(turns):
     assert turns.db.declared is not None
     await turns.registry.start(record())
@@ -184,6 +185,7 @@ async def test_index_refusal_is_on_and_list_running_needs_no_composite(turns):
     assert turns.col.executed[-1] == [("where", "user_id", "==", "u1"), ("where", "status", "==", "running")]
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_a_backend_error_in_list_running_propagates(turns):
     await turns.registry.start(record())
     turns.col.fail = RuntimeError("unavailable")
@@ -191,6 +193,7 @@ async def test_a_backend_error_in_list_running_propagates(turns):
         await turns.registry.list_running("u1")
 
 
+@pytest.mark.h1_only("injects the failure by patching EvalDocRef.get")
 @pytest.mark.parametrize("method", ["get", "request_cancel"])
 async def test_a_backend_error_on_a_read_propagates(turns, monkeypatch, method):
     await turns.registry.start(record())

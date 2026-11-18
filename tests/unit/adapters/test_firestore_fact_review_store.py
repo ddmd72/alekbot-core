@@ -24,8 +24,8 @@ AT = NOW + timedelta(hours=1)
 
 
 @pytest.fixture
-def world():
-    return ReviewWorld()
+def world(kit_db):
+    return ReviewWorld(kit_db)
 
 
 def stored(world, question_id):
@@ -155,6 +155,7 @@ async def test_by_message_also_finds_a_closed_question(world):
 
 # ------------------------------------------------------------------------------------------------ indexes
 
+@pytest.mark.h1_only("reads the fake's declared index set and its query log (executed)")
 async def test_each_query_is_served_without_a_composite_index(world):
     """The fake refuses a query no declared index serves (`equality_and_in_without_composite` is the parity scenario
     for these shapes); a control query that does need a composite is refused on the same database."""

@@ -60,7 +60,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Collection, Dict, Iterator, List, Optional, Tuple, Union
 from unittest.mock import patch
 
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
@@ -605,8 +605,8 @@ class EvalQuery:
             if not isinstance(vector, Vector):
                 continue
             v = [float(x) for x in vector]
-            if self.db.vector_dimension is not None and len(v) != self.db.vector_dimension:
-                continue                             # not in an index of this dimension: Firestore does not find it
+            if self.db.vector_dimensions is not None and len(v) != len(query):
+                continue                             # not in the index of the query's dimension: Firestore does not find it
             dot = sum(a * b for a, b in zip(v, query))
             na, nb = math.sqrt(sum(a * a for a in v)), math.sqrt(sum(b * b for b in query))
             distance = 1.0 if na == 0 or nb == 0 else 1.0 - dot / (na * nb)
@@ -825,13 +825,14 @@ def _serves(declared: List[tuple], head: set, tail: List[tuple]) -> bool:
 
 class EvalDb:
     def __init__(self, indexes: Union[None, str, Path, List[dict]] = None,
-                 groups: Optional[Dict[str, str]] = None, vector_dimension: Optional[int] = None) -> None:
+                 groups: Optional[Dict[str, str]] = None,
+                 vector_dimension: Union[None, int, Collection[int]] = None) -> None:
         """`indexes` (a path to `config/firestore.indexes.json` or its parsed list) switches the index refusal on;
         `groups` maps a collection's name here to the collection group the index file declares it under (an unmapped
-        collection is looked up under its own last path segment). `vector_dimension` is the dimension the vector
-        indexes have in this test (the real backend of the kits renders them at it): a vector query of another
-        dimension is refused as Firestore refuses it, and a stored vector of another dimension is not found. Without
-        it no dimension is checked."""
+        collection is looked up under its own last path segment). `vector_dimension` is the dimension (or a set of
+        dimensions) the vector indexes have in this test (the real backend of the kits renders them at each): a vector
+        query of another dimension is refused as Firestore refuses it, and a stored vector of another dimension is not
+        found. Without it no dimension is checked."""
         self.cols: Dict[str, EvalCollection] = {}
         self.commits: List[List[tuple]] = []
         self._clock = 0
@@ -840,7 +841,8 @@ class EvalDb:
         self._raises: Dict[Tuple[str, str], List[BaseException]] = {}
         self.declared = _load_indexes(indexes)
         self.groups = dict(groups or {})
-        self.vector_dimension = vector_dimension
+        self.vector_dimensions: Optional[frozenset] = None if vector_dimension is None else frozenset(
+            (vector_dimension,) if isinstance(vector_dimension, int) else vector_dimension)
 
     def write_option(self, last_update_time: Any = None) -> WriteOption:
         return WriteOption(last_update_time)
@@ -929,8 +931,8 @@ class EvalDb:
         """`FailedPrecondition` naming the missing composite, when the index refusal is on and no declared index serves;
         and, with `vector_dimension`, for a vector query whose query vector has another dimension."""
         for op in ops:
-            if op[0] == "find_nearest" and self.vector_dimension is not None \
-                    and len(list(op[1]["query_vector"])) != self.vector_dimension:
+            if op[0] == "find_nearest" and self.vector_dimensions is not None \
+                    and len(list(op[1]["query_vector"])) not in self.vector_dimensions:
                 raise FailedPrecondition(f"Missing vector index configuration: field {op[1]['vector_field']!r}, "
                                          f"dimension {len(list(op[1]['query_vector']))}")
         if self.declared is None:
