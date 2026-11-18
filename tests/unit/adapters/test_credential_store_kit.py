@@ -177,6 +177,7 @@ async def test_an_update_never_takes_identity_from_its_argument(store):
     assert (doc["kind"], doc["account_id"]) == ("gmail", "acct-1")
 
 
+@pytest.mark.h1_only("counts the fake's commits to show nothing was written")
 async def test_an_update_after_revoke_returns_false_and_writes_nothing(store):
     await store.repo.save(creds())
     stored = await one(store.repo, "user-a", "gmail")
@@ -388,6 +389,7 @@ async def test_list_users_returns_every_user_of_a_kind_once(store):
     lambda repo, cid: repo.list_user_ids("gmail"),
     lambda repo, cid: kinds_of(repo, "user-a"),
 ])
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =) and raise_on_txn_read")
 async def test_a_backend_error_propagates_never_connected_or_not(store, call):
     cid = await store.repo.save(creds())
     store.db.collection(CREDS).fail = RuntimeError("backend down")
