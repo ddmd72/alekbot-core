@@ -119,7 +119,9 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   - **Nothing is silently lost there.** `db.collection(name).docs` is the raw view, written through for documents and top-level fields;
     a nested value is frozen (a nested edit such as `docs["u1"]["config"]["x"] = …` raises: assign the top-level field instead). A
     public attribute set on the database or a collection raises, except `yield_on_get`, which only interleaves the fake's reads: keep
-    a test that sets it only when its assertion holds under real concurrency, else mark it. `collections()`, `recursive_delete()` and an
+    a test that sets it only when its assertion holds under real concurrency, else mark it; and except a replaced method of the real
+    object: a fault injected with `monkeypatch.setattr(<store's collection>, "document", <failing stub>)` runs on the real backend too
+    (one wrapper per path, the one the store holds), so such a test is converted as it is, never marked. `collections()`, `recursive_delete()` and an
     `indexes=` other than `None` or the repository file raise. Building an `EvalDb` anywhere in a kit (import time, any fixture scope)
     fails, and every Firestore client a kit test builds must be on the test database.
   - **`h1_only`.** A test that drives a fake-only hook (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`,
@@ -131,7 +133,8 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     adds its COLLECTION_GROUP single-field override to the cloud index model (Admin API `update_field`).
   - **Converting a kit.** The fixture swap is one `test(mechanical): …` commit (no assertion changed); the `h1_only` marks are a separate
     commit; the PR body gives each kit's passed / skipped / failed counts on the test database. One kit by hand:
-    `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly`.
+    `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly` (never `-p no:logging`: it
+    removes `caplog`, which kits use; `--show-capture=no` trims a failure's captured gRPC debug log instead).
 
 ## Coverage floors and the untested-module list
 
