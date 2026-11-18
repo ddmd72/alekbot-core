@@ -248,6 +248,10 @@ class UserAgentFactory(AgentFactoryPort):
         self._cache: Dict[str, Dict[str, object]] = {}
         self._cache_ttl = 3600
         self._creation_locks: Dict[str, asyncio.Lock] = {}  # Per-user locks
+        # Per-user eviction counter. `_evict_user` runs without the per-user lock (a reset, the TTL sweep), so a build in
+        # progress under the lock cannot see an eviction through the entry (it has not written one yet): the build
+        # compares the counter before and after and drops a build an eviction overtook.
+        self._generations: Dict[str, int] = {}
         self._sweep_task: Optional[asyncio.Task] = None
         self._warmups: Set["asyncio.Task[None]"] = set()  # strong refs: a bare task can be collected mid-run
 
@@ -295,17 +299,10 @@ class UserAgentFactory(AgentFactoryPort):
             self.coordinator.unregister_agent(agent_id)
         return True
 
-    # Per-user eviction counter. `_evict_user` runs without the per-user lock (a reset, the TTL sweep), so a build in
-    # progress under the lock cannot see an eviction through the entry (it has not written one yet): the build compares
-    # the counter before and after and drops a build an eviction overtook. Created on the first eviction.
-    _generations: Optional[Dict[str, int]] = None
-
     def _generation(self, user_id: str) -> int:
-        return (self._generations or {}).get(user_id, 0)
+        return self._generations.get(user_id, 0)
 
     def _bump_generation(self, user_id: str) -> None:
-        if self._generations is None:
-            self._generations = {}
         self._generations[user_id] = self._generations.get(user_id, 0) + 1
 
     async def ensure_agents_for_user(self, user_id: str) -> Dict[str, object]:

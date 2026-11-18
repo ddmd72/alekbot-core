@@ -530,16 +530,15 @@ class AgentCoordinator:
         if descriptor is None:
             return
         if descriptor.eager:
-            await self._restore_eager_agents(user_id)
+            await self._restore_eager_agents(self._agent_factory, user_id)
             return
         await self._ensure_lazy_agent(descriptor.agent_type, context)
 
-    async def _restore_eager_agents(self, user_id: str) -> None:
+    @staticmethod
+    async def _restore_eager_agents(factory: AgentFactoryPort, user_id: str) -> None:
         """Rebuild the user's evicted eager agents via the factory port."""
-        if self._agent_factory is None:
-            return
         try:
-            await self._agent_factory.restore_agents_for_user(user_id)
+            await factory.restore_agents_for_user(user_id)
         except Exception as e:
             logger.error(
                 "❌ Eager agents rebuild failed (user=%s): %s",
