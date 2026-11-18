@@ -19,7 +19,8 @@ deleting or popping a top-level field of one (`RawDoc`), is written through to F
 (`FrozenDict`, `FrozenList`: equal to the plain value, a change raises `TypeError`), so a nested edit that would not reach
 Firestore fails instead of being lost. Nothing is silently ignored: a public attribute set on a collection or the database
 raises (except `yield_on_get`, which only interleaves the fake's reads: keep a test that sets it only when its assertion
-holds under real concurrency), `collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other
+holds under real concurrency; and except a replaced method of the real object, so a fault injected with
+`monkeypatch.setattr(collection, "document", failing)` runs here too), `collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other
 than `None` or `config/firestore.indexes.json` raises, and any other attribute is the real client's, so a fake-only hook
 (`interfere_on_txn_read`, `versions`, a patched `EvalDocRef`) fails here: such a test carries
 `@pytest.mark.h1_only("<why>")` and is skipped in the cloud run.
@@ -193,10 +194,16 @@ FAKE_ONLY_ATTRIBUTES = frozenset({"yield_on_get"})   # interleaves the fake's re
 
 
 class _NoSilentAttributes:
-    """Setting a public attribute raises: on the fake it would steer behaviour, here it would do nothing."""
+    """Setting a public attribute raises (on the fake it would steer behaviour, here it would do nothing), unless it
+    replaces a method of the wrapped real object: a fault a test injects that way (`monkeypatch.setattr(collection,
+    "document", failing)`) runs on the real backend too, because the wrapper is the object the store holds and the one
+    `db.collection(name)` returns again (`RealKitBackend` keeps one per path, as the fake keeps one per name)."""
+
+    def _wrapped(self) -> Any:
+        raise NotImplementedError
 
     def __setattr__(self, attr: str, value: Any) -> None:
-        if attr.startswith("_") or attr in FAKE_ONLY_ATTRIBUTES:
+        if attr.startswith("_") or attr in FAKE_ONLY_ATTRIBUTES or callable(getattr(self._wrapped(), attr, None)):
             object.__setattr__(self, attr, value)
             return
         raise AttributeError(f"{type(self).__name__}.{attr}: a fake-only setting has no effect on the real backend; "
@@ -210,6 +217,9 @@ class RealCollection(_NoSilentAttributes):
         self._backend = backend
         self._path = path
         self._ref = backend.client.collection(path)
+
+    def _wrapped(self) -> Any:
+        return self._ref
 
     @property
     def docs(self) -> RawDocs:
@@ -231,8 +241,11 @@ class RealKitDb(_NoSilentAttributes):
         segments[0] = self._backend.touch(segments[0], self._groups)
         return "/".join(segments)
 
+    def _wrapped(self) -> Any:
+        return self._backend.client
+
     def collection(self, *path: str) -> RealCollection:
-        return RealCollection(self._backend, self._mapped(path))
+        return self._backend.collection_at(self._mapped(path))
 
     def document(self, *path: str) -> Any:
         return self._backend.client.document(self._mapped(path))
@@ -265,6 +278,13 @@ class RealKitBackend:
         self._ensure = ensure
         self._indexes = indexes
         self.touched: Set[str] = set()
+        self._collections: Dict[str, RealCollection] = {}
+
+    def collection_at(self, path: str) -> RealCollection:
+        """One wrapper per real path for the whole test, so a method a test replaces on it is the one every user calls."""
+        if path not in self._collections:
+            self._collections[path] = RealCollection(self, path)
+        return self._collections[path]
 
     def __call__(self, indexes: Any = None, groups: Optional[Dict[str, str]] = None) -> RealKitDb:
         """`EvalDb`'s signature. `indexes` switches the fake's refusal; the real database refuses on its own with the

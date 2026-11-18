@@ -249,3 +249,23 @@ def test_the_client_guard_refuses_another_database_or_project_and_passes_the_tes
         with pytest.raises(pytest.fail.Exception, match="not on the test database"):
             cls(project=project, database=database, credentials=AnonymousCredentials())
     assert cls(project="p", database="kits-test", credentials=AnonymousCredentials())._database == "kits-test"
+
+
+def test_a_fault_injected_on_a_collection_method_reaches_every_user_and_is_undone(monkeypatch):
+    _, db = backend_and_db()
+    held = db.collection("eval_sessions")             # what a store keeps from its constructor
+    assert db.collection("eval_sessions") is held     # one wrapper per path, as the fake keeps one collection per name
+
+    def down(_doc_id):
+        raise RuntimeError("backend down")
+
+    with monkeypatch.context() as m:
+        m.setattr(db.collection("eval_sessions"), "document", down)
+        with pytest.raises(RuntimeError, match="backend down"):
+            held.document("u1:C1")
+        m.setattr(db, "transaction", lambda: "failing txn")
+        assert db.transaction() == "failing txn"
+    assert held.document("u1:C1") == "test_sessions/u1:C1" and db.transaction() == "txn"
+    for target, attr in ((held, "path"), (held, "fail"), (db, "groups")):   # a non-method or unknown name is still refused
+        with pytest.raises(AttributeError, match="h1_only"):
+            setattr(target, attr, None)
