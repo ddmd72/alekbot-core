@@ -123,8 +123,9 @@ def _service(name="svc-main", traffic=("rev-3",)):
             "status": {"traffic": [{"revisionName": r, "percent": 100 // len(traffic)} for r in traffic]}}
 
 
-def _job(name="job-research", image="gcr.io/demo-project/svc-main:latest", updated="2026-10-01T00:00:00Z"):
-    return {"metadata": {"name": name, "creationTimestamp": "2026-01-01T00:00:00Z"},
+def _job(name="job-research", image="gcr.io/demo-project/svc-main:latest", updated="2026-10-01T00:00:00Z",
+         created="2026-01-01T00:00:00Z"):
+    return {"metadata": {"name": name, "creationTimestamp": created},
             "spec": {"template": {"spec": {"template": {"spec": {"containers": [{"image": image}]}}}}},
             "status": {"conditions": [{"type": "Ready", "lastTransitionTime": updated}]}}
 
@@ -206,18 +207,43 @@ def test_older_revision_without_digest_is_a_warning():
     assert any("svc-main/rev-1" in w and "digest unknown" in w for w in safety.warnings)
 
 
-def test_job_tag_protects_the_newest_version_at_or_before_the_job_update():
-    old_but_current = _v("job-ran-this", 50)          # created before the job's update, newest such version
-    protected = ar.collect_protected([], {}, [_job(updated=(NOW - timedelta(days=45)).isoformat())])
-    plans = {PKG: ar.Plan(keep=(), delete=(old_but_current, _v("older", 80)))}
-    safety = ar.check_safety(plans, protected)
-    assert len(safety.violations) == 1 and "job-ran-this" in safety.violations[0]
-    assert any("exact digest is unknown" in w for w in safety.warnings)
+def test_job_tag_takes_the_newest_version_at_the_latest_instant_out_of_the_delete_set():
+    created = (NOW - timedelta(days=60)).isoformat()
+    updated = (NOW - timedelta(days=45)).isoformat()
+    protected = ar.collect_protected([], {}, [_job(created=created, updated=updated)])
+    assert protected.job_times == [(PKG, NOW - timedelta(days=45), "job-research")]    # only the latest instant
+    plans = {PKG: ar.Plan(keep=(), delete=(_v("job-ran-this", 50), _v("older", 80), _v("after-update", 40)))}
+    adjusted, notes = ar.keep_for_jobs(plans, protected)
+    assert _digests(adjusted[PKG].keep) == ["job-ran-this"] and _digests(adjusted[PKG].delete) == ["older", "after-update"]
+    assert notes == ("kept for job job-research: gcr.io/svc-main@sha256:job-ran-this",)
+    safety = ar.check_safety(adjusted, protected)
+    assert safety.violations == () and any("exact digest is unknown" in w for w in safety.warnings)
+
+
+def test_job_without_any_instant_only_warns():
+    job = _job()
+    del job["status"], job["metadata"]["creationTimestamp"]
+    protected = ar.collect_protected([], {}, [job])
+    assert protected.job_times == [] and any("no instant found" in w for w in protected.warnings)
+
+
+def test_policy_names_accepts_list_map_null_and_single_object():
+    assert ar.policy_names(None) == [] and ar.policy_names([]) == [] and ar.policy_names({}) == []
+    assert ar.policy_names([{"name": "projects/p/locations/us/repositories/r/cleanupPolicies/a"}]) == ["a"]
+    assert ar.policy_names({"a": {"action": "DELETE"}, "b": {"name": "projects/x/cleanupPolicies/b2"}}) == ["a", "b2"]
+    assert ar.policy_names({"name": "solo", "action": "KEEP"}) == ["solo"]
 
 
 def test_package_without_versions_is_reported_empty():
     safety = ar.check_safety({PKG: ar.Plan((), ())}, ar.Protected())
-    assert safety.empty_packages == ("us/gcr.io/svc-main",)
+    assert safety.empty_packages == (PKG,)
+
+
+def test_listing_entries_without_a_package_field_are_skipped():
+    entries = [{"version": "sha256:a", "createTime": "2026-11-01T00:00:00Z"},
+               {"package": "", "version": "sha256:b", "createTime": "2026-11-01T00:00:00Z"},
+               {"package": "gcr.io/demo-project/svc-main", "version": "sha256:c", "createTime": "2026-11-01T00:00:00Z"}]
+    assert [v.digest for v in ar.parse_versions(entries, PKG)] == ["sha256:c"]
 
 
 def test_parse_versions_accepts_every_package_spelling_and_skips_other_packages():
@@ -249,7 +275,7 @@ class FakeGcloud:
         self.fail_delete = set(fail_delete)
         self.jobs = list(jobs)
         self.packages = PACKAGES if packages is None else packages
-        self.policies = list(policies)
+        self.policies = policies
         self.policies_error = policies_error
 
     def __call__(self, args: list[str]) -> str:
@@ -267,7 +293,7 @@ class FakeGcloud:
             if args[3] == "list":
                 name = args[4].rsplit("/", 1)[-1]
                 rescan = len(self.commands("run", "services", "list")) > 1
-                versions = self.extra_versions.get(name) or (
+                versions = self.extra_versions[name] if name in self.extra_versions else (
                     self.second_versions if rescan and self.second_versions is not None else self.versions)
                 path = args[4]
                 return json.dumps([{"package": path, "version": v.digest, "createTime": v.created.isoformat(),
@@ -392,16 +418,18 @@ def test_failed_delete_is_counted_the_run_continues_and_the_policy_is_still_set(
     assert any("FAILED" in line for line in lines) and any("1 failed" in line for line in lines)
 
 
-def test_job_tag_image_end_to_end_refuses_deleting_its_version():
-    """A job written as :latest: its last update was 45 days ago, so the newest version before that must survive."""
-    versions = [_v(f"n{i}", 1 + i) for i in range(5)] + [_v("job-ran-this", 50), _v("older", 80)]
-    fake = FakeGcloud(versions, _revisions(), traffic=("rev-6",),
-                      jobs=[_job(updated=(NOW - timedelta(days=45)).isoformat())])
+def test_job_tag_image_end_to_end_proceeds_and_keeps_the_version_at_the_latest_instant():
+    """A job written as :latest, created 60 days ago and updated 45 days ago. Versions older than its creation are no
+    reason to refuse: they are deleted; the one at the latest instant is kept for the job."""
+    versions = [_v(f"n{i}", 1 + i) for i in range(5)] + [_v("job-ran-this", 50), _v("older", 80), _v("oldest", 90)]
+    job = _job(created=(NOW - timedelta(days=60)).isoformat(), updated=(NOW - timedelta(days=45)).isoformat())
+    fake = FakeGcloud(versions, _revisions(), traffic=("rev-6",), jobs=[job])
     lines: list[str] = []
-    assert ar.run(_args(True), fake, NOW, lines.append) == 1
-    assert fake.deletes() == [] and fake.policy_sets() == []
+    assert ar.run(_args(True), fake, NOW, lines.append) == 0
+    deleted = {c[4].split("@")[1] for c in fake.deletes()}
+    assert deleted == {"sha256:older", "sha256:oldest"} and len(fake.policy_sets()) == 1
     text = "\n".join(lines)
-    assert "exact digest is unknown" in text and "job-ran-this" in text
+    assert "kept for job job-research" in text and "job-ran-this" in text and "exact digest is unknown" in text
 
 
 def test_foreign_policy_is_refused_in_dry_run_and_apply_before_any_change():
@@ -431,14 +459,34 @@ def test_unreadable_policies_show_an_error_and_block_apply_only():
     assert fake.deletes() == [] and fake.policy_sets() == []
 
 
-def test_package_with_zero_versions_warns_and_blocks_apply():
+def test_referenced_package_with_zero_versions_warns_and_blocks_apply():
     fake = FakeGcloud([], _revisions())
     lines: list[str] = []
     assert ar.run(_args(False), fake, NOW, lines.append) == 0
-    assert any("no versions listed" in line for line in lines)
+    assert any("no versions listed" in line and "--apply refuses" in line for line in lines)
     fake = FakeGcloud([], _revisions())
     assert ar.run(_args(True), fake, NOW, lambda _: None) == 1
     assert fake.deletes() == [] and fake.policy_sets() == []
+
+
+def test_unreferenced_package_with_zero_versions_only_warns():
+    other = [{"name": "projects/demo-project/locations/us/repositories/gcr.io/packages/svc-orphan"}]
+    fake = FakeGcloud(_backlog(), _revisions(), packages=PACKAGES + other, extra_versions={"svc-orphan": []})
+    lines: list[str] = []
+    assert ar.run(_args(True), fake, NOW, lines.append) == 0
+    assert any("svc-orphan has no versions listed" in line and "refuses" not in line for line in lines)
+    assert len(fake.deletes()) == 4 and len(fake.policy_sets()) == 1
+
+
+def test_policies_as_a_map_and_null_are_read():
+    fake = FakeGcloud(_backlog(), _revisions(), policies={"keep-most-recent": {"action": "KEEP"}})
+    assert ar.run(_args(True), fake, NOW, lambda _: None) == 0
+    fake = FakeGcloud(_backlog(), _revisions(), policies=None)
+    lines: list[str] = []
+    assert ar.run(_args(False), fake, NOW, lines.append) == 0
+    assert any(line.endswith("us/gcr.io: none") for line in lines)
+    fake = FakeGcloud(_backlog(), _revisions(), policies={"hand-made": {"action": "DELETE"}})
+    assert ar.run(_args(True), fake, NOW, lambda _: None) == 1 and fake.policy_sets() == []
 
 
 def test_main_returns_1_on_a_gcloud_error(capsys):

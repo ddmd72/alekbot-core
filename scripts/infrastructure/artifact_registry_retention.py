@@ -10,8 +10,8 @@ The script has two modes:
 
   dry run (default)  Changes nothing. Prints the current cleanup policies of each repository, then for each package how
                      many versions exist, how many would be kept and deleted, the bytes freed and the oldest version kept.
-  --apply            Sets the policy above on each repository (so the registry keeps itself clean from now on), then
-                     deletes the whole backlog at once, version by version.
+  --apply            Cleans the whole backlog at once, version by version (after a re-plan and re-check), and only then
+                     sets the policy above on each repository, so the registry keeps itself clean from now on.
 
 Which repositories and packages: the images of every Cloud Run service and Cloud Run Job in the project and region
 (`--repository LOCATION/REPO` adds a whole repository). Project and region come from `.env` / the environment
@@ -22,9 +22,11 @@ Every package of each target repository is planned, not only the ones Cloud Run 
 Safety, checked before anything changes and again right before the first delete: the images of every revision that
 serves traffic (or carries a traffic tag), of the 3 newest revisions of each service and of every job must not be in the
 delete set. If one is, the script prints it and exits non-zero without changing anything. Older revisions whose image
-will vanish only get a warning line (they lose rollback). A job image written as a tag has no known digest: the tagged
-version and the newest version created at or before the job's last update are protected, with a warning.
---apply also refuses when a repository already has a cleanup policy that is not ours, or a package has no versions.
+will vanish only get a warning line (they lose rollback). A job image written as a tag has no known digest: the version
+carrying the tag is protected, and the newest version created at or before the job's LATEST known instant (last update /
+execution) is taken out of the delete set and printed as "kept for job <name>", with a warning (this is a guess, not a
+refusal). --apply also refuses when a repository already has a cleanup policy that is not ours, or when a package that
+Cloud Run references has no versions (any other empty package is a warning).
 
 --apply order: plan and check, re-plan and re-check, delete only what both plans list, set the policy LAST.
 
@@ -123,7 +125,8 @@ class Protected:
 class Safety:
     violations: tuple[str, ...]
     warnings: tuple[str, ...]
-    empty_packages: tuple[str, ...] = ()
+    empty_packages: tuple[PackageRef, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -252,7 +255,8 @@ def serving_revision_names(service: dict) -> list[str]:
 
 def job_reference_times(job: dict) -> list[datetime]:
     """Instants at which a job's tag may have been resolved: Ready condition transition, latest execution creation, job
-    creation (Cloud Run v1 Job resource; field paths unverified against live output, a missing one is skipped)."""
+    creation (Cloud Run v1 Job resource; field paths unverified against live output, a missing one is skipped). Callers
+    use only the latest of them."""
     status = job.get("status", {})
     raw: list[object] = [job.get("metadata", {}).get("creationTimestamp"),
                          (status.get("latestCreatedExecution") or {}).get("createTime")]
@@ -306,30 +310,42 @@ def collect_protected(services: list[dict], revisions: dict[str, list[dict]], jo
         protect(ref, f"image of job {job_name}")
         if ref is not None and not ref.digest:
             times = job_reference_times(job)
-            for instant in times:
-                protected.job_times.append((ref.package, instant, job_name))
+            if times:
+                protected.job_times.append((ref.package, max(times), job_name))
             protected.warnings.append(
-                f"job {job_name}: its image is the tag {ref.tag or '(none)'}, so the exact digest is unknown; protecting "
-                f"the tagged version and the newest version created at or before its last update"
-                f"{'' if times else ' (no update time found in the job: only the tag protects it)'}")
+                f"job {job_name}: its image is the tag {ref.tag or '(none)'}, so the exact digest is unknown; keeping the "
+                f"tagged version and the newest version created at or before its latest known instant"
+                f"{'' if times else ' (no instant found in the job: only the tag protects it)'}")
     return protected
+
+
+def keep_for_jobs(plans: dict[PackageRef, Plan], protected: Protected
+                  ) -> tuple[dict[PackageRef, Plan], tuple[str, ...]]:
+    """Move, per job whose image is a tag, the newest version created at or before the job's latest instant out of the
+    delete set (a guess at the digest the job runs, never a refusal). Returns the adjusted plans and one note per move."""
+    adjusted = dict(plans)
+    notes: list[str] = []
+    for package, instant, job_name in protected.job_times:
+        plan = adjusted.get(package)
+        if plan is None:
+            continue
+        candidates = [v for v in (*plan.keep, *plan.delete) if v.created <= instant]
+        if not candidates:
+            continue
+        newest = max(candidates, key=lambda v: (v.created, v.digest))
+        if any(newest.digest == d.digest for d in plan.delete):
+            adjusted[package] = Plan(
+                keep=tuple(sorted((*plan.keep, newest), key=lambda v: (v.created, v.digest), reverse=True)),
+                delete=tuple(d for d in plan.delete if d.digest != newest.digest))
+            notes.append(f"kept for job {job_name}: {package.repo}/{package.package}@{newest.digest}")
+    return adjusted, tuple(notes)
 
 
 def check_safety(plans: dict[PackageRef, Plan], protected: Protected) -> Safety:
     """A protected image in a delete set is a violation; an older revision's image in a delete set is a warning."""
     violations: list[str] = []
     warnings: list[str] = list(protected.warnings)
-    empty = [f"{p.location}/{p.repo}/{p.package}" for p, plan in sorted(plans.items()) if not plan.keep and not plan.delete]
-    for package, instant, job_name in protected.job_times:
-        plan = plans.get(package)
-        if plan is None:
-            continue
-        candidates = [v for v in (*plan.keep, *plan.delete) if v.created <= instant]
-        if candidates:
-            newest = max(candidates, key=lambda v: (v.created, v.digest))
-            if any(newest.digest == d.digest for d in plan.delete):
-                violations.append(f"{package.repo}/{package.package}@{newest.digest} would be deleted but it is the "
-                                  f"newest version at or before the last update of job {job_name}")
+    empty = [p for p, plan in sorted(plans.items()) if not plan.keep and not plan.delete]
     for package, plan in sorted(plans.items()):
         for version in plan.delete:
             label = f"{package.repo}/{package.package}@{version.digest}"
@@ -359,7 +375,7 @@ def parse_versions(entries: list[dict], package: PackageRef) -> list[Version]:
     `package` field is compared after normalising its spelling)."""
     versions: list[Version] = []
     for entry in entries:
-        if "package" in entry and parse_package(str(entry["package"]).rstrip("/")) != package:
+        if not entry.get("package") or parse_package(str(entry["package"]).rstrip("/")) != package:
             continue
         tags = entry.get("tags") or []
         if isinstance(tags, str):
@@ -402,6 +418,7 @@ class Discovery:
     revisions: dict[str, list[dict]]
     jobs: list[dict]
     repositories: list[tuple[str, str]] = field(default_factory=list)
+    referenced: frozenset[PackageRef] = frozenset()   # packages Cloud Run (services, revisions, jobs) points at
 
 
 def discover(runner: Runner, project: str, region: str, extra_repositories: list[str]) -> Discovery:
@@ -436,7 +453,7 @@ def discover(runner: Runner, project: str, region: str, extra_repositories: list
             package = parse_package(str(item.get("name", "")))
             if package is not None:
                 packages.add(package)
-    return Discovery(sorted(packages), services, revisions, jobs, sorted(repositories))
+    return Discovery(sorted(packages), services, revisions, jobs, sorted(repositories), frozenset(seen))
 
 
 def list_versions(runner: Runner, project: str, package: PackageRef) -> list[Version]:
@@ -453,20 +470,38 @@ def build_plans(runner: Runner, project: str, discovery: Discovery, now: datetim
 PolicyNames = dict[tuple[str, str], list[str] | None]
 
 
+def policy_names(parsed: object) -> list[str]:
+    """Policy names from `list-cleanup-policies --format=json`: null, a list of policies, or a map keyed by policy id
+    (the name comes from the value's `name`, else from the key); a single policy object is accepted too."""
+    if not parsed:
+        return []
+    if isinstance(parsed, list):
+        items = [("", p) for p in parsed if isinstance(p, dict)]
+    elif isinstance(parsed, dict):
+        if all(isinstance(v, dict) for v in parsed.values()):
+            items = [(str(k), v) for k, v in parsed.items()]
+        else:
+            items = [("", parsed)]
+    else:
+        return []
+    return [str(value.get("name") or key).rsplit("/", 1)[-1] for key, value in items]
+
+
 def read_policies(runner: Runner, project: str, repositories: list[tuple[str, str]],
                   out: Callable[[str], None]) -> PolicyNames:
     """Names of the cleanup policies of each repository (None when they could not be read); prints what it found."""
     result: PolicyNames = {}
     for location, repo in repositories:
         try:
-            policies = run_json(runner, ["artifacts", "repositories", "list-cleanup-policies", repo,
-                                         f"--location={location}", f"--project={project}"])
+            parsed = json.loads(runner(["artifacts", "repositories", "list-cleanup-policies", repo,
+                                        f"--location={location}", f"--project={project}", "--format=json"]) or "null")
         except GcloudError as exc:
             result[(location, repo)] = None
             out(f"cleanup policies of {location}/{repo}: could not be read ({exc})")
             continue
-        result[(location, repo)] = [str(p.get("name", "")).rsplit("/", 1)[-1] for p in policies]
-        out(f"cleanup policies of {location}/{repo}: {json.dumps(policies) if policies else 'none'}")
+        names = policy_names(parsed)
+        result[(location, repo)] = names
+        out(f"cleanup policies of {location}/{repo}: {json.dumps(parsed) if names else 'none'}")
     return result
 
 
@@ -488,15 +523,26 @@ def evaluate(runner: Runner, project: str, region: str, extra: list[str], now: d
              ) -> tuple[Discovery, dict[PackageRef, Plan], Safety]:
     discovery = discover(runner, project, region, extra)
     plans = build_plans(runner, project, discovery, now)
-    safety = check_safety(plans, collect_protected(discovery.services, discovery.revisions, discovery.jobs))
-    return discovery, plans, safety
+    protected = collect_protected(discovery.services, discovery.revisions, discovery.jobs)
+    plans, notes = keep_for_jobs(plans, protected)
+    base = check_safety(plans, protected)
+    return discovery, plans, Safety(base.violations, base.warnings, base.empty_packages, notes)
 
 
-def report_safety(safety: Safety, out: Callable[[str], None]) -> None:
+def blocking_empty(safety: Safety, discovery: Discovery) -> list[PackageRef]:
+    """Empty packages that Cloud Run references: an image it needs is missing, so --apply refuses."""
+    return [p for p in safety.empty_packages if p in discovery.referenced]
+
+
+def report_safety(safety: Safety, discovery: Discovery, out: Callable[[str], None]) -> None:
     for line in safety.warnings:
         out(f"WARNING: {line}")
-    for name in safety.empty_packages:
-        out(f"WARNING: package {name} has no versions listed (wrong name or a listing problem); --apply refuses")
+    for line in safety.notes:
+        out(line)
+    for package in safety.empty_packages:
+        name = f"{package.location}/{package.repo}/{package.package}"
+        out(f"WARNING: package {name} has no versions listed"
+            + ("; Cloud Run references it, --apply refuses" if package in discovery.referenced else ""))
     for line in safety.violations:
         out(f"REFUSED: {line}")
 
@@ -551,7 +597,7 @@ def run(args: argparse.Namespace, runner: Runner, now: datetime, out: Callable[[
         f"mode: {'APPLY' if args.apply else 'dry run (nothing changes)'}")
     policies = read_policies(runner, args.project, discovery.repositories, out)
     print_plans(plans, out)
-    report_safety(safety, out)
+    report_safety(safety, discovery, out)
     foreign = foreign_policies(policies)
     for line in foreign:
         out(f"REFUSED: {line}")
@@ -561,16 +607,16 @@ def run(args: argparse.Namespace, runner: Runner, now: datetime, out: Callable[[
     if not args.apply:
         out("dry run only. Re-run with --apply to clean the backlog and then set the policy.")
         return 0
-    if safety.empty_packages:
-        out("refusing: a package has no versions; nothing was changed")
+    if blocking_empty(safety, discovery):
+        out("refusing: a package Cloud Run references has no versions; nothing was changed")
         return 1
     if any(names is None for names in policies.values()):
         out("refusing: the current cleanup policies of a repository could not be read; nothing was changed")
         return 1
     out("re-checking before deleting")
-    _, replanned, safety2 = evaluate(runner, args.project, args.region, args.repository, now)
-    report_safety(safety2, out)
-    if safety2.violations or safety2.empty_packages:
+    discovery2, replanned, safety2 = evaluate(runner, args.project, args.region, args.repository, now)
+    report_safety(safety2, discovery2, out)
+    if safety2.violations or blocking_empty(safety2, discovery2):
         out("refusing after the re-check; nothing was changed (no version deleted, no policy set)")
         return 1
     final, unprinted = intersect_plans(plans, replanned)
