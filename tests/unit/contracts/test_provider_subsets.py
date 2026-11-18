@@ -1,0 +1,113 @@
+"""The committed provider contracts (contracts/providers/<provider>/openapi.yaml) are sound and current.
+
+Sound: every $ref resolves, every schema is valid Draft 2020-12, the source, retrieval date and transforms are named,
+the file is under the size cap, every ALLOWED entry of the extractor's table is in the file with its reason. Current:
+the Anthropic subset equals a fresh extraction from the installed SDK, so an SDK pin bump goes red until the subset is
+regenerated (`make contract-extract PROVIDER=anthropic`). The OpenAI subset is pinned to a spec commit; a newer spec
+is the weekly spec-drift run's business, not this test's.
+"""
+from pathlib import Path
+
+import jsonschema
+import pytest
+import yaml
+
+from scripts.contracts import extract_subset as es
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CONTRACTS = REPO_ROOT / "contracts" / "providers"
+PROVIDERS = sorted(es.PROVIDERS)
+
+
+def _path(provider: str) -> Path:
+    return CONTRACTS / provider / "openapi.yaml"
+
+
+def _doc(provider: str) -> dict:
+    return yaml.safe_load(_path(provider).read_text(encoding="utf-8"))
+
+
+def _refs(node, out: list) -> list:
+    if isinstance(node, dict):
+        if isinstance(node.get("$ref"), str):
+            out.append(node["$ref"])
+        for value in node.values():
+            _refs(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _refs(value, out)
+    return out
+
+
+def _values(node, key: str, out: list) -> list:
+    if isinstance(node, dict):
+        if key in node:
+            out.append(node[key])
+        for value in node.values():
+            _values(value, key, out)
+    elif isinstance(node, list):
+        for value in node:
+            _values(value, key, out)
+    return out
+
+
+def test_every_table_provider_has_a_committed_subset_and_nothing_else_is_there():
+    assert sorted(p.name for p in CONTRACTS.iterdir() if p.is_dir()) == PROVIDERS
+    for provider in PROVIDERS:
+        assert _path(provider).is_file(), provider
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_the_subset_names_its_source_date_and_transforms(provider):
+    doc = _doc(provider)
+    assert doc["openapi"] == "3.1.0"
+    assert doc["x-source"] and doc["x-retrieved"] and doc["x-transforms"]
+    if es.PROVIDERS[provider].repo:
+        assert es.PROVIDERS[provider].repo in doc["x-source"]   # pinned by a commit in the URL
+    else:
+        assert doc["x-source"].endswith("@" + doc["info"]["version"])
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_the_subset_is_under_the_size_cap(provider):
+    assert _path(provider).stat().st_size < es.MAX_BYTES
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_ref_resolves_and_every_schema_is_valid(provider):
+    doc = _doc(provider)
+    schemas = doc["components"]["schemas"]
+    for ref in _refs(doc, []):
+        assert ref.startswith("#/components/schemas/") and ref.rsplit("/", 1)[-1] in schemas, ref
+    for name, schema in schemas.items():
+        jsonschema.Draft202012Validator.check_schema(schema)
+    for path_item in doc["paths"].values():
+        for op in path_item.values():
+            jsonschema.Draft202012Validator.check_schema(op["requestBody"]["content"]["application/json"]["schema"])
+            for param in op.get("parameters") or []:
+                jsonschema.Draft202012Validator.check_schema(param["schema"])
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_table_operation_is_in_the_subset(provider):
+    doc = _doc(provider)
+    for op in es.PROVIDERS[provider].operations:
+        assert op.method in doc["paths"][op.path], (op.method, op.path)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_allowed_entry_has_a_reason_and_is_in_the_subset(provider):
+    extensions = _values(_doc(provider), "x-alek-extension", [])
+    allowed = [a for op in es.PROVIDERS[provider].operations for a in op.allowed]
+    for a in allowed:
+        assert a.reason.strip() and a.date, a
+        assert es._note(a) in extensions, a
+    assert len(extensions) == len(allowed)
+
+
+@pytest.mark.slow  # pydantic builds the SDK request schema (~0.6 s)
+def test_the_anthropic_subset_is_what_the_installed_sdk_gives():
+    committed = _path("anthropic").read_text(encoding="utf-8")
+    retrieved = yaml.safe_load(committed)["x-retrieved"]
+    fresh = es.render(es.sdk_subset(es.PROVIDERS["anthropic"], retrieved))
+    assert fresh == committed, "the installed SDK differs from the subset: make contract-extract PROVIDER=anthropic"

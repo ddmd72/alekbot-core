@@ -9,6 +9,7 @@ Which commands exist and what they do: the root `CLAUDE.md` "Commands" section. 
 - `tests/unit/` is offline and runs on every PR in CI; `slow` and `timing` tests are skipped unless their switch is set (see "Markers").
 - `tests/integration/offline/` is offline and runs in `make check` and `make ci` (its `slow` tests are skipped there); e2e tests call real services and are not part of the CI gate.
 - Three weekly cloud workflows write artifacts a scheduled routine reads (never Slack, never red for a survivor, a failed scenario or a drift): `Mutation survivors` (`mutation.yml`), `Firestore parity` (`parity.yml`, `main` only, WIF is bound to it) and `Spec drift` (`spec_drift.yml`: re-fetches the providers' published specs and diffs the operations our adapters use against `contracts/spec_drift/`; the script `scripts/contracts/spec_drift.py`, its tests `tests/unit/scripts/test_spec_drift.py`; a baseline is regenerated only by `python -m scripts.contracts.spec_drift --update [--source NAME]`, never edited by hand; read monthly by the provider contract review).
+- Provider request contracts `contracts/providers/<provider>/openapi.yaml` (TEST_COVERAGE_SYSTEMIC_RFC §4a, P17) are written only by `make contract-extract PROVIDER=<p> [REF=<sha>]` (`scripts/contracts/extract_subset.py`, its `PROVIDERS` table: fields, variants, open paths, ALLOWED gaps), never by hand. `tests/unit/contracts/test_provider_subsets.py` checks them; the Anthropic one must equal a fresh extraction from the installed SDK (`slow`), so an SDK pin bump needs a regeneration.
 - Docs-only PRs skip the CI suite but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; the root `CLAUDE.md` "Commands" section and that file's docstring define "docs").
 
 ```
@@ -18,7 +19,7 @@ tests/
   unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
   integration/    — `offline/` (mocked or scripted, no network: adapter wire contracts, sandbox tunnel, flows; run by `make test-integration` under the network guard, part of `make check` and `make ci`; the offline G2 end-to-end test `offline/test_drive_g2_end_to_end.py` runs in its own `make test-g2-offline`). Nothing here calls a real service: a test that writes to Firestore or GCS belongs in `cloud/`
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
-  contracts/      — adapter contract rules (adapter_contracts.py)
+  contracts/      — adapter contract rules (adapter_contracts.py); `openapi_contract.py`: `assert_request` checks a request against `contracts/providers/<provider>/openapi.yaml` (its tests: `tests/unit/contracts/`)
   cloud/          — the cloud gate: real writes to the Firestore test database (parity scenarios, `test_prompt_4level_cloud.py`, the store kits) and, with `TEST_GCS_BUCKET` / `TEST_TASKS_QUEUE` set, the GCS test bucket and the paused Cloud Tasks test queue (`make test-cloud`); never in the CI gate, weekly in the cloud (`Firestore parity`: all three)
 ```
 
