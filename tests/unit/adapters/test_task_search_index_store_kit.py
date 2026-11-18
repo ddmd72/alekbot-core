@@ -214,8 +214,6 @@ async def test_find_nearest_backend_up_answers(store):
     assert await ids(store) == ["t1"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G3-1: every vector query failed, find_nearest answers [] (TasksAgent: 'no tasks')")
 @pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_find_nearest_raises_when_every_query_fails(store):
     """When every field query fails (an outage, a missing index) the caller must get the error, not "no matching
