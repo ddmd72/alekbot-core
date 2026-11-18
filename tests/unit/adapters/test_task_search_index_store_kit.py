@@ -188,6 +188,7 @@ async def test_find_nearest_drops_entries_beyond_the_similarity_floor(store):
     assert await ids(store, limit=10) == ["near"]
 
 
+@pytest.mark.h1_only("reads the fake's query log (executed)")
 async def test_find_nearest_without_vectors_returns_empty_and_asks_the_backend_nothing(store):
     await store.index.upsert(entry("t1"))
     assert await store.index.find_nearest("u1", {}) == []
@@ -231,6 +232,7 @@ async def test_find_nearest_raises_when_every_query_fails(store):
     assert raised is not None, f"every query failed and find_nearest answered {got!r}"
 
 
+@pytest.mark.h1_only("replaces the fake's index refusal (_check_index)")
 async def test_find_nearest_answers_from_the_fields_that_work_when_one_field_query_fails(store):
     await store.index.upsert(entry("t1", content=VEC, context=VEC))
     check_index = store.db._check_index
