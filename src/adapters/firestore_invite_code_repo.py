@@ -1,4 +1,5 @@
 from typing import List, Optional
+from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from ..domain.invite_code import InviteCode, InviteType, invite_hint, normalise_invite_code
 from ..domain.secret_digest import keyed_digest
@@ -79,10 +80,20 @@ class FirestoreInviteCodeRepository(InviteCodeRepository):
 
     @log_execution_time
     async def create(self, invite_code: InviteCode) -> InviteCode:
-        """Create a new invite code."""
-        doc_id = self._doc_id(invite_code.code)
-        await self.collection.document(doc_id).set(self._to_firestore(invite_code))
+        """Create a new invite code; refuse (ValueError) a code that is already stored, keeping the stored invite."""
+        ref = self.collection.document(self._doc_id(invite_code.code))
+        data = self._to_firestore(invite_code)
 
+        @firestore.async_transactional
+        async def _create(transaction) -> bool:
+            if (await ref.get(transaction=transaction)).exists:
+                return False
+            transaction.set(ref, data)
+            return True
+
+        if not await _create(self.db.transaction()):
+            logger.error("Invite code collision: a new code matches a stored invite; refused")
+            raise ValueError("Invite code already exists")
         logger.debug("Created an invite code")
         return invite_code
 
@@ -104,6 +115,22 @@ class FirestoreInviteCodeRepository(InviteCodeRepository):
 
         logger.debug("Updated an invite code")
         return invite_code
+
+    @log_execution_time
+    async def claim(self, invite_code: InviteCode) -> bool:
+        """Write invite_code's use onto the stored invite only while the stored one is unused (one transaction)."""
+        ref = self.collection.document(self._doc_id(invite_code.code))
+
+        @firestore.async_transactional
+        async def _claim(transaction) -> bool:
+            snap = await ref.get(transaction=transaction)
+            if not snap.exists or snap.to_dict().get("used_at") is not None:
+                return False
+            transaction.update(ref, {"used_at": invite_code.used_at, "used_by_user_id": invite_code.used_by_user_id})
+            return True
+
+        claimed: bool = await _claim(self.db.transaction())
+        return claimed
 
     @log_execution_time
     async def list_by_user(self, user_id: str) -> List[InviteCode]:

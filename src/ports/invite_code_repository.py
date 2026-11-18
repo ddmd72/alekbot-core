@@ -21,8 +21,8 @@ class InviteCodeRepository(ABC):
     async def create(self, invite_code: InviteCode) -> InviteCode:
         """Store `invite_code` under its code and return it.
 
-        Idempotency: callers need a new code never to replace another. An existing code is overwritten, which a
-            128-bit random code makes negligible.
+        Idempotency: a new code never replaces another: a code already stored raises ValueError and the stored invite
+            is kept (a 128-bit random code makes a collision negligible).
         """
         pass
 
@@ -38,10 +38,18 @@ class InviteCodeRepository(ABC):
     async def update(self, invite_code: InviteCode) -> InviteCode:
         """Replace the stored invite with `invite_code` (e.g. marked used) and return it.
 
-        Atomicity: a blind overwrite, last writer wins; an absent code is created (observed).
-        Known defect: consumption must be one-shot, but consume_team_invite reads, checks is_valid and writes here
-            with no precondition, so two concurrent consumers of one code both join the account
-            (invite_code_service.py:85-159, firestore_invite_code_repo.py:89).
+        Atomicity: a blind overwrite, last writer wins; an absent code is created (observed). Consumption does not
+            use it: see claim.
+        """
+        pass
+
+    @abstractmethod
+    async def claim(self, invite_code: InviteCode) -> bool:
+        """Mark the stored invite used with invite_code's used_at and used_by_user_id, only while the stored invite is
+        unused. True when this call marked it; False when it is absent or already used (nothing written).
+
+        Atomicity: consumption is one-shot: of concurrent claims of one code exactly one returns True. Every other
+            stored field is kept. Expiry is the caller's (InviteCode.is_valid before the claim).
         """
         pass
 

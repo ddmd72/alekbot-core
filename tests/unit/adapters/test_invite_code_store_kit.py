@@ -137,10 +137,6 @@ async def test_create_through_the_service_stores_a_new_unused_invite(store):
     assert await store.repo.get_by_code(inv.code) == as_read(inv)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: create overwrites an existing code, so a collision rebinds the older invite to the new creator's "
-    "account — src/adapters/firestore_invite_code_repo.py:83 (a 128-bit code since S5 makes a collision negligible; "
-    "P6 T1 L2)"))
 async def test_create_never_replaces_another_invite(store):
     await store.repo.create(invite())
     try:
@@ -148,6 +144,14 @@ async def test_create_never_replaces_another_invite(store):
     except Exception:       # refusing the second create is one way to keep the first; the docstring names no
         pass                # refusal type, so the fix PR picks it and narrows this
     assert (store.docs[key()]["user_id"], store.docs[key()]["account_id"]) == (OWNER, OWNER_ACC)
+
+
+async def test_a_second_create_of_a_stored_code_raises_value_error_and_keeps_the_first(store):
+    await store.repo.create(invite(role="VIEWER"))
+    before = {k: dict(v) for k, v in store.docs.items()}
+    with pytest.raises(ValueError, match="already exists"):
+        await store.repo.create(invite("abc def 123", user_id="usr-intruder", account_id="acc-intruder"))
+    assert store.docs == before
 
 
 # ----------------------------------------------------------------------------------------------- get_by_code
@@ -297,10 +301,6 @@ async def test_update_of_an_absent_code_creates_it(store):
     assert (await store.repo.get_by_code("NEW-NEW-NEW")) == as_read(invite("NEW-NEW-NEW"))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: consume_team_invite reads, checks is_valid and writes with no precondition, so two concurrent "
-    "consumers of one code both join — src/services/invite_code_service.py:86-152, "
-    "src/adapters/firestore_invite_code_repo.py:89 (P6 T1 H3)"))
 async def test_of_two_concurrent_consumers_of_one_code_exactly_one_joins(store):
     await store.team("usr-a", "usr-b")
     await store.repo.create(invite())
@@ -311,6 +311,47 @@ async def test_of_two_concurrent_consumers_of_one_code_exactly_one_joins(store):
     assert len(joined) == 1, f"joined: {joined}"
     assert sum(isinstance(r, Exception) for r in results) == 1
     assert store.docs[key()]["used_by_user_id"] == joined[0]
+
+
+# ----------------------------------------------------------------------------------------------------- claim
+
+async def test_claim_marks_an_unused_invite_used_and_keeps_every_other_field(store):
+    await store.repo.create(invite(type=InviteType.SELF_LINK, platform="slack", role="VIEWER"))
+    before = dict(store.docs[key()])
+    used_at = NOW + timedelta(minutes=5)
+    assert await store.repo.claim(invite(used_at=used_at, used_by_user_id="usr-2")) is True
+    assert store.docs[key()] == {**before, "used_at": used_at, "used_by_user_id": "usr-2"}
+
+
+async def test_claim_of_a_used_invite_is_false_and_writes_nothing(store):
+    await store.repo.create(invite(used_at=NOW, used_by_user_id="usr-1"))
+    before = dict(store.docs[key()])
+    assert await store.repo.claim(invite(used_at=NOW + timedelta(minutes=5), used_by_user_id="usr-2")) is False
+    assert store.docs[key()] == before
+
+
+async def test_claim_of_an_absent_code_is_false_and_creates_nothing(store):
+    assert await store.repo.claim(invite(used_at=NOW, used_by_user_id="usr-2")) is False
+    assert store.docs == {}
+
+
+async def test_of_two_concurrent_claims_of_one_code_exactly_one_is_true(store):
+    await store.repo.create(invite())
+    store.db.collection(INVITES).yield_on_get = True      # both claims read the invite unused before either commits
+    results = await asyncio.gather(store.repo.claim(invite(used_at=NOW, used_by_user_id="usr-a")),
+                                   store.repo.claim(invite(used_at=NOW, used_by_user_id="usr-b")))
+    assert sorted(results) == [False, True]
+    winner = "usr-a" if results[0] else "usr-b"
+    assert store.docs[key()]["used_by_user_id"] == winner
+
+
+async def test_a_backend_error_in_claim_propagates_and_writes_nothing(store, monkeypatch):
+    await store.repo.create(invite())
+    before = {k: dict(v) for k, v in store.docs.items()}
+    monkeypatch.setattr(store.repo.collection, "document", lambda _doc_id: _Down())
+    with pytest.raises(RuntimeError, match="backend down"):
+        await store.repo.claim(invite(used_at=NOW, used_by_user_id="usr-2"))
+    assert store.docs == before
 
 
 # ---------------------------------------------------------------------------------------------- list_by_user
