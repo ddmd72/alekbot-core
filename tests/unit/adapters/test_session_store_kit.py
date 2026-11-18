@@ -409,3 +409,55 @@ async def test_remove_head_keeps_a_message_appended_during_the_cut(store):
     store.db.interfere_on_txn_read(SESS, SID, {"history": stored + [raw(TEXTS[3])]}, after_read=True)
     assert await store.remove_head(SID, head) is True
     assert texts(store) == TEXTS[2:4]
+
+
+# --------------------------------------------------------------------------------------------------- the ceiling (F3)
+
+class AlwaysFails:
+    """The overflow callback of a hand-off that fails every time (a deterministic error)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, owner, session_id, messages):
+        self.calls += 1
+        raise ValueError("the batch is refused every time")
+
+
+def numbered(n):
+    return [f"message {i}" for i in range(n)]
+
+
+async def test_past_the_ceiling_the_oldest_batch_is_cut_without_a_hand_off_and_logged(kit_db, caplog):
+    failing = AlwaysFails()
+    store = make_store(new_db(kit_db), handoffs=failing)          # window 4, batch 2: ceiling 2 x 4 = 8
+    for text in numbered(8):
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+        await settle(store)
+    assert texts(store) == numbered(8) and failing.calls > 0       # at the ceiling, nothing is cut yet
+    assert "🚨" not in caplog.text
+    await store.append_messages_batch(SID, [msg("message 8")], owner_id="u1")
+    await settle(store)
+    assert texts(store) == numbered(9)[2:]                         # the oldest batch of 2 is gone
+    [line] = [r.getMessage() for r in caplog.records if "🚨" in r.getMessage()]
+    assert SID in line and "oldest 2 messages" in line
+
+
+async def test_the_ceiling_follows_the_threshold_resolvers_window(kit_db, caplog):
+    async def resolve(session_id):
+        return (3, 1)                                              # ceiling 2 x 3 = 6
+
+    store = make_store(new_db(kit_db), handoffs=AlwaysFails(), threshold_resolver=resolve)
+    for text in numbered(7):
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+        await settle(store)
+    assert texts(store) == numbered(7)[1:]
+    assert sum("🚨" in r.getMessage() for r in caplog.records) == 1
+
+
+async def test_a_session_whose_hand_offs_succeed_never_reaches_the_ceiling(store, handoffs, caplog):
+    for text in numbered(12):
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+        await settle(store)
+    assert len(texts(store)) <= 4 and "🚨" not in caplog.text
+    assert [m for _, _, batch in handoffs.calls for m in batch] + texts(store) == numbered(12)

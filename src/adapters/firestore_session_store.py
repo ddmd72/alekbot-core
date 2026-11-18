@@ -17,6 +17,14 @@ from ..ports.llm_port import Message, MessagePart, ToolCall
 from ..utils.logger import logger
 
 
+# Safety valve for an overflow hand-off that fails every time (a deterministic error): the batches then stay in the
+# session and it keeps growing until an append fails on Firestore's 1 MiB document limit, and every later turn is lost
+# from history. Past this many windows the oldest batches are cut without a hand-off (lost, logged 🚨). Two windows (140
+# messages live) is about 35 turns of consecutive failed hand-offs, far past a transient outage that the next appends
+# heal, while keeping the document within twice its normal size, well clear of the limit even with long replies.
+OVERFLOW_CEILING_WINDOWS = 2
+
+
 class FirestoreSessionStore(SessionStore):
     """
     Manages session state persistence in Firestore.
@@ -31,7 +39,9 @@ class FirestoreSessionStore(SessionStore):
       transaction. The window is applied only when the document already exists. With an overflow callback the append
       stores every message, and one tracked task after the commit hands each batch past the window to the callback,
       then cuts it with `remove_head` (a second transaction); a failed hand-off is logged and leaves the batch stored.
-      Without a callback the batches are cut inside the append's transaction.
+      Without a callback the batches are cut inside the append's transaction. With one, a history past
+      `OVERFLOW_CEILING_WINDOWS` windows (hand-offs failing every time) has its oldest batches cut inside the append's
+      transaction without a hand-off, logged 🚨 after the commit.
     - `remove_head` reads the document in a transaction and writes back the stored history after the head (`update`).
     - `save_session` is a `set(merge=True)` with no precondition.
     - `get_latest_session_id` needs the composite index (owner_id ASC, last_activity DESC).
@@ -211,11 +221,15 @@ class FirestoreSessionStore(SessionStore):
                         session_id[:8], effective_max_history_length, effective_batch_size,
                     )
 
+            ceiling = OVERFLOW_CEILING_WINDOWS * effective_max_history_length
+            dropped: List[int] = []     # sizes of the batches the valve cut, logged after the commit
+
             @firestore.async_transactional
             async def _batch_append(transaction: firestore.AsyncTransaction) -> Optional[Tuple[str, List[List[Message]]]]:
                 doc = await doc_ref.get(transaction=transaction)
                 nonlocal resolved_owner_id
                 extracted_batches = []
+                dropped.clear()
 
                 if not doc.exists:
                     # If owner_id was not passed, fallback to session_id as owner
@@ -234,6 +248,11 @@ class FirestoreSessionStore(SessionStore):
                     resolved_owner_id = data.get("owner_id") or resolved_owner_id or session_id
                     history = self._deserialize_history(data.get("history", []))
                     history.extend(messages)
+
+                    if self.overflow_callback is not None:
+                        while len(history) > ceiling:
+                            dropped.append(len(history[:effective_batch_size]))
+                            history = history[effective_batch_size:]
 
                     # OVERFLOW: the oldest batches past the window. With a callback they stay stored until their
                     # hand-off succeeded (cut afterwards by remove_head); without one they are cut here.
@@ -273,6 +292,12 @@ class FirestoreSessionStore(SessionStore):
 
             transaction = self.db.transaction()
             result = await _batch_append(transaction)
+            for size in dropped:
+                logger.error(
+                    f"🚨 [SessionStore] {session_id}: the history passed {ceiling} messages "
+                    f"({OVERFLOW_CEILING_WINDOWS} windows) because its overflow hand-offs keep failing; the oldest "
+                    f"{size} messages were cut without a hand-off and are lost to memory"
+                )
 
             if result and self.overflow_callback:
                 owner, batches = result

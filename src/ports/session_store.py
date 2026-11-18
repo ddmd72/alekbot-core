@@ -73,8 +73,9 @@ class SessionStore(ABC):
         The append is stored whole; then each batch is handed to the overflow callback, oldest first, and cut from the
         session only after its hand-off returned (owner decision O2): a hand-off that raises leaves that batch and the
         later ones stored, and the next append over the window hands them off again, so the callback must accept a
-        repeated batch. Without a callback the batches are cut with the append. The first append to a new session is
-        stored whole.
+        repeated batch. Ceiling: a history past a store-defined multiple of the window (hand-offs failing every time)
+        has its oldest batches cut with the append without a hand-off; they are lost to memory and logged.
+        Without a callback the batches are cut with the append. The first append to a new session is stored whole.
         Atomicity: concurrent appends to one session are all kept; the cut is a separate atomic step (remove_head).
         Idempotency: none; a repeated call appends the messages again.
         Expiry: does not apply the 90-day expiry; an append to an idle session keeps its old history.

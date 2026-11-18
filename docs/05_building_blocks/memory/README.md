@@ -428,7 +428,11 @@ transaction that removes exactly those messages if they still start the history,
 kept). If the hand-off raises, that batch and the later ones stay in the session and the next append over the window
 hands them off again; the batch id is `handoff_key` of the messages (`src/domain/consolidation.py`) and the queue
 stores a batch only if its id is absent (`enqueue_batch` is create-if-absent), so a repeat finds the first record and
-leaves it as it is (a run that already took it keeps its status and attempts). `route_overflow`:
+leaves it as it is (a run that already took it keeps its status and attempts). The task runs after the append has
+returned, usually after the reply was sent, when Cloud Run may throttle the instance's CPU: a hand-off or cut that
+stalls or dies there leaves the batch in the session, and the next append over the window hands it off again
+(self-healing, no sweep needed). A hand-off that fails every time is bounded by a ceiling (the failure table below).
+`route_overflow`:
 
 1. `serialize_messages_for_consolidation` (`src/domain/consolidation_serialization.py:20-46`): **user parts** →
    `consolidation_text or text` (`consolidation_text` is legacy, no writer left); **bot parts → `text`, the summary**,
@@ -1507,6 +1511,7 @@ close-out (an abandoned-refusal alert, the expiry errors added to the account's 
 | baseline refresh fails | logged, swallowed (`firestore_repo.py:775-779`) | stored | succeeds | old baseline until the next run |
 | enqueue of the batch fails at overflow | logged `Error in overflow routing … the batch stays in the session` and `Overflow hand-off failed` (session store) | — | not created; **the messages stay in the session** (it holds more than the window until then) | yes: the next append to that session hands the same batch off again (same id) |
 | batch stored but the Cloud Task enqueue fails | logged, the same two lines | — | stored; the messages also stay in the session | the next append hands the batch off again: the stored batch is kept as it is (same id, create-if-absent) and the task is enqueued; until then the hourly sweep finds the batch |
+| an overflow hand-off fails every time (a deterministic error, not an outage) | each append logs `Error in overflow routing` and `Overflow hand-off failed`; once the history passes `OVERFLOW_CEILING_WINDOWS` (2) windows (140 messages live), each append cuts its oldest batches without a hand-off and logs `🚨 [SessionStore] <session>: the history passed … the oldest N messages were cut without a hand-off and are lost to memory` (ERROR) | — | none for the cut batches: **lost to memory** (the old lossy behaviour, only in this case) | no. Without the ceiling the session would grow until an append failed on Firestore's 1 MiB document limit, and from then on every turn of that channel would be lost from history |
 | the cut after a successful hand-off fails | logged `Error cutting the head of <session>` | — | stored | the next append hands the same batch off again: the stored batch is kept as it is (same id, create-if-absent; a run that took it keeps its status and attempts) and the cut is retried. **Accepted residual:** if a run finished and deleted the batch before the repeat, the repeat stores it again and those messages are consolidated a second time (the model should find the facts already written; an update it repeats can add one more version) |
 | the janitor run fails (a query, the counters, a stale write) | logged with its type and stage, one "🚨 Fact lifecycle run failed" (no fact named), the job answers 500; what was staled before the failure is already out of the baseline | the facts staled so far stay stale | — | **no**: the job is not retried by design; the next day's run catches up (§5.5) |
 | a janitor stale write finds the fact changed since the read | counted `stale_conflicts`, skipped | none for that fact | — | the next run |
@@ -1701,7 +1706,7 @@ Log lines, in pipeline order:
 - `❄️ Overflow batch #n for <session>… (extracted=50, remaining=…)`, `🔔 Triggering overflow callback` (session store)
 - `📦 [Overflow] Created batch <batch_id>`, `📬 [Overflow] Consolidation task enqueued`; a failed hand-off (the batch
   stays in the session): `❌ Error in overflow routing … the batch stays in the session` and
-  `❌ [SessionStore] Overflow hand-off failed`
+  `❌ [SessionStore] Overflow hand-off failed`; the ceiling cut (messages lost): `🚨 [SessionStore] … the history passed`
 - `♻️ Reset N stale PROCESSING batches (attempts +1)` (a lost run was counted; the third one logs `CONSOLIDATION_FAILED … error='run lost while processing'`, and `CONSOLIDATION_GAVE_UP` past the revivals) / `♻️ Revived N FAILED batches` (sweep only) / `⏳ Skipped N live PROCESSING batches`
 - `[MemoryWriteLease] busy for account <8>` (INFO, a task found the lease taken), `⏳ [Librarian] lease busy: deferred consolidation for user <8>` or `… less than the lease margin left: deferred …` (INFO, one named deferral task enqueued), `[Librarian] lease busy, no queue to defer to` (WARNING, local runs only), `[Librarian] releasing the memory-write lease failed` (WARNING), `[MemoryWriteLease] release found another owner` (WARNING: a run outlived its lease and was taken over)
 - `📦 [Librarian] Processing batch <batch_id> (<n> messages)`
