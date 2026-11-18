@@ -30,7 +30,7 @@ from google.cloud import firestore, firestore_admin_v1
 
 from src.config.environment import EnvironmentConfig
 from tests.support.cloud_credentials import select_credentials
-from tests.support.cloud_indexes import admin_index, existing_signature, of_group, wanted_signature
+from tests.support.cloud_indexes import admin_index, existing_key, of_group, wanted_key
 from tests.support.firestore_eval import EvalDb
 from tests.support.kit_backend import RealKitBackend, guard_clients
 from tests.support.store_inventory import KITS
@@ -107,17 +107,17 @@ def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]
 
     def _ensure(collection: str, indexes: List[Dict[str, Any]]) -> None:
         parent = f"projects/{cloud.project}/databases/{cloud.database}/collectionGroups/{collection}"
-        have = {existing_signature(i) for i in of_group(admin.list_indexes(parent=parent), collection)}
+        have = {existing_key(i) for i in of_group(admin.list_indexes(parent=parent), collection)}
         for index in indexes:
-            if wanted_signature(index) not in have:
+            if wanted_key(index) not in have:
                 try:
                     admin.create_index(parent=parent, index=admin_index(index))
                 except AlreadyExists:
                     pass
         deadline = time.monotonic() + INDEX_READY_TIMEOUT_S
         while True:
-            states = {existing_signature(i): i.state for i in of_group(admin.list_indexes(parent=parent), collection)}
-            wanted = [states.get(wanted_signature(index)) for index in indexes]
+            states = {existing_key(i): i.state for i in of_group(admin.list_indexes(parent=parent), collection)}
+            wanted = [states.get(wanted_key(index)) for index in indexes]
             if Index.State.NEEDS_REPAIR in wanted:
                 pytest.fail(f"an index of {collection} needs repair")
             if all(state == Index.State.READY for state in wanted):

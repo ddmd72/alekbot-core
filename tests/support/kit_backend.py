@@ -22,7 +22,9 @@ the database raises (except `yield_on_get`, which only interleaves the fake's re
 its assertion holds under real concurrency; and except a replaced method of the real object, so a fault injected with
 `monkeypatch.setattr(collection, "document", failing)` runs here too, and fails if the adapter never calls it),
 `collections()` and `recursive_delete()` (unmapped, database-wide) raise, `indexes=` other than `None` or
-`config/firestore.indexes.json` raises, and any other attribute is the real client's, so a fake-only hook
+`config/firestore.indexes.json` raises, a private name set on a wrapper (a fake's internal such as `_check_index`)
+raises, `kit_db(vector_dimension=n)` renders the vector indexes at dimension n (`EvalDb` checks the same), and any
+other attribute is the real client's, so a fake-only hook
 (`interfere_on_txn_read`, `versions`, a patched `EvalDocRef`) fails here: such a test carries
 `@pytest.mark.h1_only("<why>")` and is skipped in the cloud run.
 """
@@ -224,11 +226,13 @@ class _NoSilentAttributes:
     def _wrapped(self) -> Any:
         raise NotImplementedError
 
+    _OWN: frozenset = frozenset()     # the wrapper's own private attributes; any other private name is a fake's internal
+
     def __setattr__(self, attr: str, value: Any) -> None:
-        if attr.startswith("_") or attr in FAKE_ONLY_ATTRIBUTES:
+        if attr in self._OWN or attr in FAKE_ONLY_ATTRIBUTES:
             object.__setattr__(self, attr, value)
             return
-        own = getattr(self._wrapped(), attr, None)
+        own = None if attr.startswith("_") else getattr(self._wrapped(), attr, None)
         if not callable(own):
             raise AttributeError(f"{type(self).__name__}.{attr}: a fake-only setting has no effect on the real backend; "
                                  "mark the test h1_only")
@@ -250,6 +254,7 @@ class _NoSilentAttributes:
 
 class RealCollection(_NoSilentAttributes):
     """A real `AsyncCollectionReference` plus the kit's raw view `docs`; every other attribute is the reference's."""
+    _OWN = frozenset({"_backend", "_path", "_ref"})
 
     def __init__(self, backend: "RealKitBackend", path: str) -> None:
         self._backend = backend
@@ -269,6 +274,7 @@ class RealCollection(_NoSilentAttributes):
 
 class RealKitDb(_NoSilentAttributes):
     """What `kit_db(...)` returns in the cloud gate: the real `AsyncClient` with the kit's collection names mapped."""
+    _OWN = frozenset({"_backend", "_groups", "_collections"})
 
     def __init__(self, backend: "RealKitBackend", groups: Optional[Dict[str, str]]) -> None:
         self._backend = backend
@@ -323,8 +329,10 @@ class RealKitBackend:
         self.touched: Set[str] = set()
         self.injections: List[Injected] = []
         self._db: Optional[RealKitDb] = None
+        self._vector_dimension: Optional[int] = None
 
-    def __call__(self, indexes: Any = None, groups: Optional[Dict[str, str]] = None) -> RealKitDb:
+    def __call__(self, indexes: Any = None, groups: Optional[Dict[str, str]] = None,
+                 vector_dimension: Optional[int] = None) -> RealKitDb:
         """`EvalDb`'s signature. `indexes` switches the fake's refusal; the real database refuses on its own with the
         indexes of the repository file, so any other index set (`[]`, a hand-made list) cannot be honoured here."""
         if not (indexes is None or (isinstance(indexes, (str, Path)) and Path(indexes).resolve() == INDEXES_FILE)):
@@ -332,6 +340,7 @@ class RealKitBackend:
                              "the real backend: mark the test h1_only")
         if self._db is not None:      # two fakes are independent; two real databases would share every test_* collection
             raise ValueError("one database per test on the real backend: share the db, or mark the test h1_only")
+        self._vector_dimension = vector_dimension      # the vector indexes are rendered at it (EvalDb checks the same)
         self._db = RealKitDb(self, groups)
         return self._db
 
@@ -340,7 +349,7 @@ class RealKitBackend:
         real = real_name(name, groups)
         if real not in self.touched:
             group = live_group(name, groups)
-            wanted = render_indexes(group, self._indexes) if group else []
+            wanted = render_indexes(group, self._indexes, self._vector_dimension) if group else []
             if wanted:
                 self._ensure(real, wanted)
             self.purge(real)
