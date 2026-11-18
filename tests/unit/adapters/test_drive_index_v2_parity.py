@@ -360,6 +360,7 @@ class TestUsage:
 
 
 class TestInitialBuild:
+    @pytest.mark.h1_only("reads the fake's collection map (cols) to show nothing was written")
     async def test_unopened_by_default_and_reading_never_writes(self, pair):
         assert await pair.both("get_initial_build", "u", REALM, SUBJECT) == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
         assert pair.fs._db.cols.get("eval_drive_model_usage") is None or not pair.fs._db.cols[
