@@ -17,10 +17,16 @@ Which repositories and packages: the images of every Cloud Run service and Cloud
 (`--repository LOCATION/REPO` adds a whole repository). Project and region come from `.env` / the environment
 (`GOOGLE_CLOUD_PROJECT`, `REGION`, default us-central1) or `--project` / `--region`.
 
+Every package of each target repository is planned, not only the ones Cloud Run references.
+
 Safety, checked before anything changes and again right before the first delete: the images of every revision that
-serves traffic, of the 3 newest revisions of each service and of every job must not be in the delete set. If one is, the
-script prints it and exits non-zero without changing anything. Older revisions whose image will vanish only get a
-warning line (they lose rollback).
+serves traffic (or carries a traffic tag), of the 3 newest revisions of each service and of every job must not be in the
+delete set. If one is, the script prints it and exits non-zero without changing anything. Older revisions whose image
+will vanish only get a warning line (they lose rollback). A job image written as a tag has no known digest: the tagged
+version and the newest version created at or before the job's last update are protected, with a warning.
+--apply also refuses when a repository already has a cleanup policy that is not ours, or a package has no versions.
+
+--apply order: plan and check, re-plan and re-check, delete only what both plans list, set the policy LAST.
 
 Needs `gcloud` with Artifact Registry admin rights (the owner's). Exit code is non-zero on a refusal or any failed delete.
 
@@ -47,6 +53,9 @@ KEEP_RECENT_VERSIONS = 5
 PROTECTED_RECENT_REVISIONS = 3
 PROGRESS_EVERY = 25
 DEFAULT_REGION = "us-central1"
+POLICY_DELETE_NAME = "delete-old-versions"
+POLICY_KEEP_NAME = "keep-most-recent"
+OUR_POLICY_NAMES = frozenset({POLICY_DELETE_NAME, POLICY_KEEP_NAME})
 
 Runner = Callable[[list[str]], str]
 """Runs one gcloud command (argument list without the leading `gcloud`) and returns stdout; raises GcloudError."""
@@ -106,12 +115,15 @@ class Protected:
     digests: dict[str, str] = field(default_factory=dict)          # digest -> why
     tag_refs: dict[tuple[PackageRef, str], str] = field(default_factory=dict)
     older: dict[str, list[str]] = field(default_factory=dict)      # digest -> ["service/revision", ...]
+    job_times: list[tuple[PackageRef, datetime, str]] = field(default_factory=list)  # (package, instant, job)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class Safety:
     violations: tuple[str, ...]
     warnings: tuple[str, ...]
+    empty_packages: tuple[str, ...] = ()
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -151,10 +163,14 @@ def plan_package(versions: list[Version], now: datetime, retention_days: int = R
     return Plan(keep=tuple(keep), delete=tuple(delete))
 
 
+_GCR_HOSTS = {"gcr.io": "us", "us.gcr.io": "us", "eu.gcr.io": "europe", "asia.gcr.io": "asia"}
+
+
 def location_of_host(host: str) -> str | None:
+    """Artifact Registry location of a registry host (gcr.io is multi-region `us`, eu.gcr.io is `europe`)."""
     if host.endswith("-docker.pkg.dev"):
         return host[: -len("-docker.pkg.dev")]
-    return {"gcr.io": "us", "us.gcr.io": "us", "eu.gcr.io": "eu", "asia.gcr.io": "asia"}.get(host)
+    return _GCR_HOSTS.get(host)
 
 
 def parse_image_ref(ref: str) -> ImageRef | None:
@@ -169,8 +185,8 @@ def parse_image_ref(ref: str) -> ImageRef | None:
     location = location_of_host(host)
     if location is None:
         return None
-    if host.endswith("gcr.io"):
-        repo, rest = "gcr.io", parts[2:]
+    if host in _GCR_HOSTS:
+        repo, rest = host, parts[2:]   # the repository is named like the host: gcr.io, us.gcr.io, eu.gcr.io, asia.gcr.io
     else:
         if len(parts) < 4:
             return None
@@ -181,8 +197,22 @@ def parse_image_ref(ref: str) -> ImageRef | None:
         last, tag = last.split(":", 1)
     elif digest is not None and ":" in last:
         last = last.split(":", 1)[0]
-    package = "/".join(rest[:-1] + [last])
+    package = unquote("/".join(rest[:-1] + [last]))
     return ImageRef(PackageRef(location, repo, package), tag, digest)
+
+
+def parse_package(text: str) -> PackageRef | None:
+    """A package in any of its spellings: `projects/P/locations/L/repositories/R/packages/NAME` (NAME URL-encoded),
+    `LOC-docker.pkg.dev/P/R/NAME` or `gcr.io/P/NAME` (and the regional gcr hosts)."""
+    value = text.strip()
+    if value.startswith("projects/"):
+        head, sep, name = value.partition("/packages/")
+        parts = head.split("/")
+        if not sep or len(parts) < 6 or parts[2] != "locations" or parts[4] != "repositories":
+            return None
+        return PackageRef(parts[3], parts[5], unquote(name))
+    ref = parse_image_ref(value)
+    return ref.package if ref else None
 
 
 def _first_container(spec: dict) -> dict:
@@ -212,12 +242,29 @@ def serving_revision_names(service: dict) -> list[str]:
     status = service.get("status", {})
     names: list[str] = []
     for entry in status.get("traffic", []) or []:
-        if (entry.get("percent") or 0) <= 0:
-            continue
+        if (entry.get("percent") or 0) <= 0 and not entry.get("tag"):
+            continue   # a tagged entry serves its tag's URL even at 0 %
         name = entry.get("revisionName") or (status.get("latestReadyRevisionName") if entry.get("latestRevision") else None)
         if name and name not in names:
             names.append(name)
     return names
+
+
+def job_reference_times(job: dict) -> list[datetime]:
+    """Instants at which a job's tag may have been resolved: Ready condition transition, latest execution creation, job
+    creation (Cloud Run v1 Job resource; field paths unverified against live output, a missing one is skipped)."""
+    status = job.get("status", {})
+    raw: list[object] = [job.get("metadata", {}).get("creationTimestamp"),
+                         (status.get("latestCreatedExecution") or {}).get("createTime")]
+    raw += [c.get("lastTransitionTime") for c in status.get("conditions", []) or [] if c.get("type") == "Ready"]
+    times: list[datetime] = []
+    for value in raw:
+        if value:
+            try:
+                times.append(parse_time(str(value)))
+            except ValueError:
+                continue
+    return times
 
 
 def collect_protected(services: list[dict], revisions: dict[str, list[dict]], jobs: list[dict]) -> Protected:
@@ -247,17 +294,42 @@ def collect_protected(services: list[dict], revisions: dict[str, list[dict]], jo
                 protect(ref, f"one of the {PROTECTED_RECENT_REVISIONS} newest revisions: {name}/{rev_name}")
             elif ref is not None and ref.digest:
                 protected.older.setdefault(ref.digest, []).append(f"{name}/{rev_name}")
+            else:
+                protected.warnings.append(
+                    f"revision {name}/{rev_name}: image digest unknown (no status.imageDigest), "
+                    "cannot tell whether its image will be deleted")
         if not ordered:
             protect(service_image(service), f"current image of service {name}")
     for job in jobs:
-        protect(job_image(job), f"image of job {job.get('metadata', {}).get('name', '?')}")
+        job_name = job.get("metadata", {}).get("name", "?")
+        ref = job_image(job)
+        protect(ref, f"image of job {job_name}")
+        if ref is not None and not ref.digest:
+            times = job_reference_times(job)
+            for instant in times:
+                protected.job_times.append((ref.package, instant, job_name))
+            protected.warnings.append(
+                f"job {job_name}: its image is the tag {ref.tag or '(none)'}, so the exact digest is unknown; protecting "
+                f"the tagged version and the newest version created at or before its last update"
+                f"{'' if times else ' (no update time found in the job: only the tag protects it)'}")
     return protected
 
 
 def check_safety(plans: dict[PackageRef, Plan], protected: Protected) -> Safety:
     """A protected image in a delete set is a violation; an older revision's image in a delete set is a warning."""
     violations: list[str] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(protected.warnings)
+    empty = [f"{p.location}/{p.repo}/{p.package}" for p, plan in sorted(plans.items()) if not plan.keep and not plan.delete]
+    for package, instant, job_name in protected.job_times:
+        plan = plans.get(package)
+        if plan is None:
+            continue
+        candidates = [v for v in (*plan.keep, *plan.delete) if v.created <= instant]
+        if candidates:
+            newest = max(candidates, key=lambda v: (v.created, v.digest))
+            if any(newest.digest == d.digest for d in plan.delete):
+                violations.append(f"{package.repo}/{package.package}@{newest.digest} would be deleted but it is the "
+                                  f"newest version at or before the last update of job {job_name}")
     for package, plan in sorted(plans.items()):
         for version in plan.delete:
             label = f"{package.repo}/{package.package}@{version.digest}"
@@ -269,24 +341,25 @@ def check_safety(plans: dict[PackageRef, Plan], protected: Protected) -> Safety:
                     violations.append(f"{label} (tag {tag}) would be deleted but {why}")
             for revision in protected.older.get(version.digest, []):
                 warnings.append(f"{label}: revision {revision} loses its image (no rollback to it)")
-    return Safety(tuple(violations), tuple(warnings))
+    return Safety(tuple(violations), tuple(warnings), tuple(empty))
 
 
 def cleanup_policy_document() -> list[dict]:
     """The policy set on every repository: DELETE older than the window, KEEP the most recent versions (KEEP wins)."""
     return [
-        {"name": "delete-old-versions", "action": {"type": "Delete"},
-         "condition": {"tagState": "any", "olderThan": f"{RETENTION_DAYS * 86400}s"}},
-        {"name": "keep-most-recent", "action": {"type": "Keep"},
+        {"name": POLICY_DELETE_NAME, "action": {"type": "Delete"},
+         "condition": {"tagState": "any", "olderThan": f"{RETENTION_DAYS}d"}},
+        {"name": POLICY_KEEP_NAME, "action": {"type": "Keep"},
          "mostRecentVersions": {"keepCount": KEEP_RECENT_VERSIONS}},
     ]
 
 
-def parse_versions(entries: list[dict], package_path: str) -> list[Version]:
-    """`gcloud artifacts docker images list --include-tags --format=json` entries of exactly this package."""
+def parse_versions(entries: list[dict], package: PackageRef) -> list[Version]:
+    """`gcloud artifacts docker images list --include-tags --format=json` entries of exactly this package (the
+    `package` field is compared after normalising its spelling)."""
     versions: list[Version] = []
     for entry in entries:
-        if str(entry.get("package", package_path)).rstrip("/") != package_path:
+        if "package" in entry and parse_package(str(entry["package"]).rstrip("/")) != package:
             continue
         tags = entry.get("tags") or []
         if isinstance(tags, str):
@@ -328,13 +401,15 @@ class Discovery:
     services: list[dict]
     revisions: dict[str, list[dict]]
     jobs: list[dict]
+    repositories: list[tuple[str, str]] = field(default_factory=list)
 
 
 def discover(runner: Runner, project: str, region: str, extra_repositories: list[str]) -> Discovery:
+    """Repositories from Cloud Run (services, their revisions, jobs) plus `--repository`; then EVERY package of each."""
     services = run_json(runner, ["run", "services", "list", f"--project={project}", f"--region={region}"])
     jobs = run_json(runner, ["run", "jobs", "list", f"--project={project}", f"--region={region}"])
     revisions: dict[str, list[dict]] = {}
-    packages: set[PackageRef] = set()
+    seen: set[PackageRef] = set()
     for service in services:
         name = service.get("metadata", {}).get("name", "")
         revs = run_json(runner, ["run", "revisions", "list", f"--service={name}", f"--project={project}",
@@ -342,47 +417,63 @@ def discover(runner: Runner, project: str, region: str, extra_repositories: list
         revisions[name] = revs
         for ref in [service_image(service), *[revision_image(r) for r in revs]]:
             if ref:
-                packages.add(ref.package)
+                seen.add(ref.package)
     for job in jobs:
         ref = job_image(job)
         if ref:
-            packages.add(ref.package)
+            seen.add(ref.package)
+    repositories = {(p.location, p.repo) for p in seen}
     for spec in extra_repositories:
         location, _, repo = spec.partition("/")
         if not location or not repo:
             raise ValueError(f"--repository takes LOCATION/REPO, got {spec!r}")
+        repositories.add((location, repo))
+    packages = set(seen)
+    for location, repo in sorted(repositories):
         listing = run_json(runner, ["artifacts", "packages", "list", f"--repository={repo}",
                                     f"--location={location}", f"--project={project}"])
         for item in listing:
-            name = unquote(str(item.get("name", "")).split("/packages/", 1)[-1])
-            if name:
-                packages.add(PackageRef(location, repo, name))
-    return Discovery(sorted(packages), services, revisions, jobs)
+            package = parse_package(str(item.get("name", "")))
+            if package is not None:
+                packages.add(package)
+    return Discovery(sorted(packages), services, revisions, jobs, sorted(repositories))
 
 
 def list_versions(runner: Runner, project: str, package: PackageRef) -> list[Version]:
     path = package.path(project)
     entries = run_json(runner, ["artifacts", "docker", "images", "list", path, "--include-tags",
                                 f"--project={project}"])
-    return parse_versions(entries, path)
+    return parse_versions(entries, package)
 
 
 def build_plans(runner: Runner, project: str, discovery: Discovery, now: datetime) -> dict[PackageRef, Plan]:
     return {p: plan_package(list_versions(runner, project, p), now) for p in discovery.packages}
 
 
-def repositories_of(packages: list[PackageRef]) -> list[tuple[str, str]]:
-    return sorted({(p.location, p.repo) for p in packages})
+PolicyNames = dict[tuple[str, str], list[str] | None]
 
 
-def show_policies(runner: Runner, project: str, repositories: list[tuple[str, str]], out: Callable[[str], None]) -> None:
+def read_policies(runner: Runner, project: str, repositories: list[tuple[str, str]],
+                  out: Callable[[str], None]) -> PolicyNames:
+    """Names of the cleanup policies of each repository (None when they could not be read); prints what it found."""
+    result: PolicyNames = {}
     for location, repo in repositories:
         try:
             policies = run_json(runner, ["artifacts", "repositories", "list-cleanup-policies", repo,
                                          f"--location={location}", f"--project={project}"])
-            out(f"cleanup policies of {location}/{repo}: {json.dumps(policies) if policies else 'none'}")
         except GcloudError as exc:
+            result[(location, repo)] = None
             out(f"cleanup policies of {location}/{repo}: could not be read ({exc})")
+            continue
+        result[(location, repo)] = [str(p.get("name", "")).rsplit("/", 1)[-1] for p in policies]
+        out(f"cleanup policies of {location}/{repo}: {json.dumps(policies) if policies else 'none'}")
+    return result
+
+
+def foreign_policies(policies: PolicyNames) -> list[str]:
+    """One line per policy whose name is not one of ours (setting our policy could replace it)."""
+    return [f"{location}/{repo} already has the cleanup policy {name!r}, which is not ours"
+            for (location, repo), names in sorted(policies.items()) for name in names or [] if name not in OUR_POLICY_NAMES]
 
 
 def print_plans(plans: dict[PackageRef, Plan], out: Callable[[str], None]) -> None:
@@ -404,6 +495,8 @@ def evaluate(runner: Runner, project: str, region: str, extra: list[str], now: d
 def report_safety(safety: Safety, out: Callable[[str], None]) -> None:
     for line in safety.warnings:
         out(f"WARNING: {line}")
+    for name in safety.empty_packages:
+        out(f"WARNING: package {name} has no versions listed (wrong name or a listing problem); --apply refuses")
     for line in safety.violations:
         out(f"REFUSED: {line}")
 
@@ -419,9 +512,24 @@ def apply_policies(runner: Runner, project: str, repositories: list[tuple[str, s
             out(f"cleanup policy set on {location}/{repo}")
 
 
-def delete_versions(runner: Runner, project: str, plans: dict[PackageRef, Plan], out: Callable[[str], None]) -> int:
+def intersect_plans(printed: dict[PackageRef, Plan], replanned: dict[PackageRef, Plan]
+                    ) -> tuple[dict[PackageRef, list[Version]], list[str]]:
+    """Versions to delete = those in BOTH plans. What only the re-plan wants deleted was never printed: it is reported
+    and left alone."""
+    final: dict[PackageRef, list[Version]] = {}
+    unprinted: list[str] = []
+    for package, plan in sorted(replanned.items()):
+        shown = {v.digest for v in printed[package].delete} if package in printed else set()
+        keep_deleting = [v for v in plan.delete if v.digest in shown]
+        final[package] = keep_deleting
+        unprinted += [f"{package.repo}/{package.package}@{v.digest}" for v in plan.delete if v.digest not in shown]
+    return final, unprinted
+
+
+def delete_versions(runner: Runner, project: str, planned: dict[PackageRef, list[Version]],
+                    out: Callable[[str], None]) -> int:
     """Deletes every planned version; returns the number of failures (the run continues past a failure)."""
-    todo = [(package, v) for package, plan in sorted(plans.items()) for v in plan.delete]
+    todo = [(package, v) for package, versions in sorted(planned.items()) for v in versions]
     failed = 0
     for index, (package, version) in enumerate(todo, start=1):
         try:
@@ -439,26 +547,38 @@ def delete_versions(runner: Runner, project: str, plans: dict[PackageRef, Plan],
 
 def run(args: argparse.Namespace, runner: Runner, now: datetime, out: Callable[[str], None] = print) -> int:
     discovery, plans, safety = evaluate(runner, args.project, args.region, args.repository, now)
-    repositories = repositories_of(discovery.packages)
     out(f"policy: DELETE older than {RETENTION_DAYS} days, KEEP the {KEEP_RECENT_VERSIONS} most recent versions; "
         f"mode: {'APPLY' if args.apply else 'dry run (nothing changes)'}")
-    show_policies(runner, args.project, repositories, out)
+    policies = read_policies(runner, args.project, discovery.repositories, out)
     print_plans(plans, out)
     report_safety(safety, out)
-    if safety.violations:
-        out("refusing: a protected image is in the delete set; nothing was changed")
+    foreign = foreign_policies(policies)
+    for line in foreign:
+        out(f"REFUSED: {line}")
+    if safety.violations or foreign:
+        out("refusing; nothing was changed")
         return 1
     if not args.apply:
-        out("dry run only. Re-run with --apply to set the policy and delete the backlog.")
+        out("dry run only. Re-run with --apply to clean the backlog and then set the policy.")
         return 0
-    apply_policies(runner, args.project, repositories, out)
-    out("re-checking before deleting")
-    _, plans, safety = evaluate(runner, args.project, args.region, args.repository, now)
-    report_safety(safety, out)
-    if safety.violations:
-        out("refusing: a protected image is in the delete set after the re-check; no version was deleted")
+    if safety.empty_packages:
+        out("refusing: a package has no versions; nothing was changed")
         return 1
-    failed = delete_versions(runner, args.project, plans, out)
+    if any(names is None for names in policies.values()):
+        out("refusing: the current cleanup policies of a repository could not be read; nothing was changed")
+        return 1
+    out("re-checking before deleting")
+    _, replanned, safety2 = evaluate(runner, args.project, args.region, args.repository, now)
+    report_safety(safety2, out)
+    if safety2.violations or safety2.empty_packages:
+        out("refusing after the re-check; nothing was changed (no version deleted, no policy set)")
+        return 1
+    final, unprinted = intersect_plans(plans, replanned)
+    for line in unprinted:
+        out(f"NOT deleting {line}: the re-plan wants it deleted but the printed plan did not list it")
+    out(f"deleting {sum(len(v) for v in final.values())} versions in {sum(1 for v in final.values() if v)} packages")
+    failed = delete_versions(runner, args.project, final, out)
+    apply_policies(runner, args.project, discovery.repositories, out)
     return 1 if failed else 0
 
 

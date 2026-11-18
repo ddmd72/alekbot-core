@@ -18,7 +18,10 @@ needed only while a deploy is fresh and for a few days after it.
 - The existing backlog is cleaned once, explicitly, by the same script (`--apply`), not left to the policy to drain.
 - Before deleting anything the script refuses (exit non-zero, nothing changed) when an image that serves traffic, belongs
   to one of the 3 newest revisions of a service or is a job's image is in the delete set. Older revisions only get a
-  warning: they lose rollback, by design.
+  warning: they lose rollback, by design. The standing policy itself has no serving check, so the operating rule is:
+  a rollback pinned to an old revision must be unpinned (or redeployed forward) within 14 days / 5 deploys.
+- `--apply` order: plan and check, re-plan and re-check, delete only what both plans list, set the policy last; a
+  refusal at any step changes nothing. It also refuses when a repository already has a cleanup policy that is not ours.
 
 ## Rejected
 
