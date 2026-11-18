@@ -50,8 +50,8 @@ AS_HISTORY_SAME_TEXT: Final[str] = "as_history needs content: the history text, 
 def parse_fact_update(updates: Mapping[str, Any], timezone_name: Optional[str] = None) -> ParsedFactUpdate:
     """Validate `updates` before any embedding or write. Raises ValueError with a message the model can act on.
 
-    Unknown keys are ignored, with a note naming them (`UNKNOWN_KEYS_IGNORED`). A non-dict `metadata` is ignored. Empty `content`, `tags: null` and `tags: []` are
-    refused: an empty field never destroys data. State STALE is refused (only the system marks a fact stale). An
+    Unknown keys are ignored, with a note naming them (`UNKNOWN_KEYS_IGNORED`). A non-dict `metadata` is ignored.
+    Empty `content`, `tags: null` and `tags: []` are refused: an empty field never destroys data. State STALE is refused (only the system marks a fact stale). An
     `expiry` sent with a closing state is dropped, with a note; any other `expiry` must parse (FactExpiryError).
     `timezone_name` (the owner's zone) lets `reported_date` be the consolidator's own conversation stamp. `as_history`
     is a bool, `"true"` or `"false"`, or absent (False), and holds to its shape (`AS_HISTORY_SHAPE_REFUSAL`).
