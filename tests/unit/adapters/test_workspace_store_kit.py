@@ -4,7 +4,10 @@ writes, delete, exact names, isolation, the meta round-trip and the read-backs; 
 tenancy at the prefix boundary, listing contents, legacy objects, write fields, reads of old and vanished versions,
 idempotency of delete, and the stamp a failed delete leaves (P11-G4-1). The `put` generation precondition is held by
 the contract test (create on an existing path, stale overwrite), not by this kit."""
+import logging
+
 import pytest
+from google.api_core.exceptions import ServiceUnavailable
 
 from src.adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
 from src.domain.exceptions import WorkspaceConflict
@@ -164,8 +167,6 @@ async def test_stale_delete_stamps_nothing(fake, store):
     assert "deleted by" not in history and "replaced" in history
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G4-1: a delete that loses to an overwrite leaves its stamp on the replaced version")
 async def test_delete_that_loses_to_an_overwrite_leaves_no_stamp(fake, store):
     """A chat delete and a reminder fire hold the same generation g1. The delete's metadata patch lands on g1; the
     fire's write lands before the delete request, which then meets 412. g1 was replaced, not deleted, yet history
@@ -193,3 +194,40 @@ async def test_delete_that_loses_to_an_overwrite_leaves_no_stamp(fake, store):
     g1_line = next((line for line in history.splitlines() if line.strip().startswith(f"{e1.generation} ")), None)
     require(g1_line is not None, "history lists g1")
     assert "deleted by" not in g1_line
+
+
+async def test_delete_that_loses_to_another_delete_keeps_the_winners_stamp(fake, store):
+    """P11-G4-1, the other side: only the losing delete's own stamp is taken off. A second delete that patched g1
+    after the first and then removed the live object owns the stamp; the first delete fails and leaves it."""
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+
+    def other_delete_lands():
+        blob = fake.client().bucket(BUCKET).blob("u1/" + P)
+        blob.metadata = {"deleted_by": "background:execute_reminder", "delete_id": "d-other"}
+        blob.patch(if_generation_match=e1.generation)
+        fake.client().bucket(BUCKET).blob("u1/" + P).delete(if_generation_match=e1.generation)
+
+    fake.on("delete", other_delete_lands, when="before")
+    with pytest.raises(FileNotFoundError):
+        await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(deleted_by="chat"))
+    [v] = fake.versions(BUCKET, "u1/" + P)
+    assert not v.live
+    assert (v.metadata["deleted_by"], v.metadata["delete_id"]) == ("background:execute_reminder", "d-other")
+
+
+async def test_stamp_that_cannot_be_cleared_still_reports_the_conflict(fake, store, caplog):
+    """P11-G4-1: when taking the stamp off fails, the delete still reports that it lost (and the failure is logged)."""
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+
+    def fire_overwrites_then_patches_fail():
+        blob = fake.client().bucket(BUCKET).blob("u1/" + P)
+        blob.upload_from_string(b"v2", content_type="text/markdown; charset=utf-8", if_generation_match=e1.generation)
+        fake.fail_next("patch", ServiceUnavailable("503"))
+
+    fake.on("delete", fire_overwrites_then_patches_fail, when="before")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(WorkspaceConflict):
+            await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(deleted_by="chat"))
+    assert any("left its stamp" in r.getMessage() for r in caplog.records)
+    g1 = next(v for v in fake.versions(BUCKET, "u1/" + P) if v.generation == e1.generation)
+    assert g1.metadata["deleted_by"] == "chat"      # the stamp stays: only the log says why

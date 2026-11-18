@@ -239,7 +239,10 @@ cached prefix). Nothing is read unless a trigger asks.
 - **Delete = patch, then delete, both under `if_generation_match=g`** (port `delete(user_id, path,
   if_generation_match, meta)`). A metadata patch changes only the metageneration, so the generation precondition
   still holds for the delete. If the delete then fails for a reason other than 412, the live version carries
-  `deleted_*` keys while still live; renderers ignore them on live objects. **The adapter never deletes through a
+  `deleted_*` keys while still live; renderers ignore them on live objects. If the delete fails because a write
+  replaced generation `g` after the patch (412, or 404 when the path is gone) and the delete did not land, the adapter
+  takes its own stamp (`delete_id` equal to ours) off generation `g` again, so the history reads it as replaced, not
+  deleted (P11-G4-1). **The adapter never deletes through a
   generation-addressed blob**: in a versioned bucket that permanently erases the version instead of making the live
   object noncurrent. That includes the blob just patched: `patch()` reloads `blob.generation`, and `Blob.delete()`
   then sends it, so the delete goes through a fresh blob object for the same name. Rollbacks and ordinary deletes
