@@ -1,5 +1,5 @@
 """
-END-TO-END test for 3-level prompt override with REAL Firestore and v4 PromptAssemblyService.
+END-TO-END test for 3-level prompt override with the Firestore TEST database (cloud gate: tests/cloud/conftest.py `client`) and v4 PromptAssemblyService.
 
 Rewritten for v4 (token/blueprint/profile system).
 Validates USER > ACCOUNT > AGENT priority resolution.
@@ -19,11 +19,7 @@ Real: Firestore, TokenRepository, BlueprintRepository, AgentProfileRepository, P
 """
 
 import pytest
-import os
 
-from google.cloud import firestore
-
-from src.config.environment import EnvironmentConfig, Environment
 from src.services.prompt_v3.prompt_assembly_service import PromptAssemblyService
 from src.services.prompt_v3.context_formatter import ContextFormatter
 from src.services.prompt_v3.biographical_formatter import BiographicalFactsFormatter
@@ -139,35 +135,9 @@ _USER_OVERRIDE = {
 # =============================================================================
 
 @pytest.fixture(scope="function")
-async def real_firestore_db():
-    """Real Firestore client connected to test environment."""
-    original_app_env = os.environ.get("APP_ENV")
-    os.environ["APP_ENV"] = "test"
-    env_config = EnvironmentConfig()
-    assert env_config.env == Environment.TEST, "Must run in TEST environment"
-
-    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-    if not project_id:
-        if original_app_env is None:
-            os.environ.pop("APP_ENV", None)
-        else:
-            os.environ["APP_ENV"] = original_app_env
-        pytest.skip("GOOGLE_CLOUD_PROJECT not set — cannot run Firestore integration test")
-
-    db_name = os.getenv("FIRESTORE_DATABASE", "us-production")
-    db = firestore.AsyncClient(project=project_id, database=db_name)
-    yield db
-
-    if original_app_env is None:
-        os.environ.pop("APP_ENV", None)
-    else:
-        os.environ["APP_ENV"] = original_app_env
-
-
-@pytest.fixture(scope="function")
-async def seed_firestore(real_firestore_db):
+async def seed_firestore(client):
     """Upload test tokens, blueprint, and agent profile. Clean up after test."""
-    db = real_firestore_db
+    db = client
 
     # Upload tokens
     for token_id, token_data in _TOKENS.items():
