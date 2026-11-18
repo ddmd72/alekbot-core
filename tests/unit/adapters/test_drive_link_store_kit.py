@@ -19,7 +19,6 @@ from src.domain.secret_digest import keyed_digest
 from src.ports.drive_link_store import DriveLinkStore
 from tests.support.clock_instants import UTC_MIDNIGHT
 from tests.support.drive_link_store import FakeDriveLinkStore
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 LINKS = "eval_drive_links"
@@ -39,8 +38,8 @@ def link(**changes) -> DriveLink:
 class Firestore:
     name = "firestore"
 
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={LINKS: "development_drive_links"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={LINKS: "development_drive_links"})
         self.store: DriveLinkStore = FirestoreDriveLinkStore(self.db, SimpleNamespace(drive_links_collection=LINKS))
 
     def docs(self) -> dict:
@@ -53,7 +52,7 @@ class Firestore:
 class Fake:
     name = "fake"
 
-    def __init__(self) -> None:
+    def __init__(self, kit_db=None) -> None:
         self.store = FakeDriveLinkStore()
 
     def written(self) -> object:
@@ -61,8 +60,8 @@ class Fake:
 
 
 @pytest.fixture(params=[Firestore, Fake], ids=["firestore", "fake"])
-def backend(request):
-    return request.param()
+def backend(request, kit_db):
+    return request.param(kit_db)
 
 
 def test_both_implement_the_port():
@@ -129,8 +128,8 @@ async def test_create_never_overwrites(backend):
     assert (await backend.store.peek(KEY, T0, 1)).item_id == "item-fa0137"
 
 
-async def test_the_stored_document():
-    fs = Firestore()
+async def test_the_stored_document(kit_db):
+    fs = Firestore(kit_db)
     await fs.store.create(link())
     await fs.store.consume(KEY, T0 + timedelta(seconds=7), 1)
     assert fs.docs() == {KEY: {
@@ -141,10 +140,10 @@ async def test_the_stored_document():
     assert RAW_ID not in repr(fs.docs())
 
 
-async def test_the_collection_carries_the_env_prefix(monkeypatch):
+async def test_the_collection_carries_the_env_prefix(monkeypatch, kit_db):
     monkeypatch.setenv("APP_ENV", "development")
     env = EnvironmentConfig()
-    db = EvalDb()
+    db = kit_db()
     await FirestoreDriveLinkStore(db, env).create(link())
     assert env.drive_links_collection == "development_drive_links"
     assert list(db.collection("development_drive_links").docs) == [KEY]
