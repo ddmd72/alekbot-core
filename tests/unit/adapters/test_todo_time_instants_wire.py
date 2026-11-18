@@ -142,30 +142,22 @@ async def test_naive_utc_value_reaches_graph_as_same_utc_instant(monkeypatch):
     assert _instant(body["reminderDateTime"]) == _EXPECT_0800Z
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P16-D10: _dt_payload labels an aware value's wall-clock 'UTC' without converting; owner decision")
 async def test_aware_reminder_denotes_same_instant(monkeypatch):
     body = await _send(monkeypatch, TaskCreate(
         title="x", reminder_datetime=_AT_0900_CET, is_reminder_on=True))
     assert _instant(body["reminderDateTime"]) == _EXPECT_0800Z
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P16-D10: _dt_payload labels an aware value's wall-clock 'UTC' without converting; owner decision")
 async def test_aware_due_denotes_same_instant(monkeypatch):
     body = await _send(monkeypatch, TaskCreate(title="x", due_datetime=_AT_0900_CET))
     assert _instant(body["dueDateTime"]) == _EXPECT_0800Z
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P16-D10: _dt_payload labels an aware value's wall-clock 'UTC' without converting; owner decision")
 async def test_aware_start_denotes_same_instant(monkeypatch):
     body = await _send(monkeypatch, TaskCreate(title="x", start_datetime=_AT_0900_CET))
     assert _instant(body["startDateTime"]) == _EXPECT_0800Z
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P16-D10: _parse_datetime keeps +01:00 and the adapter then drops the offset; owner decision")
 async def test_agent_parsed_offset_string_denotes_same_instant(monkeypatch):
     parsed: Optional[datetime] = TasksAgent._parse_datetime("2026-11-02T09:00:00+01:00")
     body = await _send(monkeypatch, TaskCreate(

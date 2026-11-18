@@ -80,9 +80,15 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
 
 
 def _dt_payload(dt: Optional[datetime]) -> Optional[Dict[str, str]]:
-    """Convert datetime → MS dateTimeTimeZone payload."""
+    """Convert datetime → MS dateTimeTimeZone payload, always labelled UTC.
+
+    An aware value is converted to UTC first, so the payload denotes the same instant; a naive value is read as UTC
+    (the convention of every naive time in this adapter) and sent as it is.
+    """
     if dt is None:
         return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
     return {"dateTime": dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"}
 
 
