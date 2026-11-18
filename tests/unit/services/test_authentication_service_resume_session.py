@@ -20,6 +20,7 @@ from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire
 
 ENV = SimpleNamespace(domain_users_collection="users", domain_whitelist_collection="whitelist", is_production=False)
+OWNER = "owner@example.com"
 
 
 class UsersDuringAReadOutage(FirestoreUserRepository):
@@ -37,11 +38,14 @@ class World:
                                              whitelist_repo=FirestoreWhitelistRepository(self.db, ENV))
 
     async def seed(self, account: bool = True, **user_fields) -> None:
+        # The stored user's email is on the whitelist, which a renewal re-checks (owner decision 2026-11-18), so each
+        # refusal below is reached by its own cause, not by the list.
+        await self.db.collection("whitelist").document("config").set({"allowed_emails": [OWNER], "allowed_domains": []})
         if account:
             await self.accounts.create_account(
                 BillingAccount(account_id="account-a", tier=AccountTier.PRO, iam_policy={"user-a": "owner"}))
         await self.db.collection("users").document("user-a").set(
-            UserProfile(user_id="user-a", **{"account_id": "account-a", **user_fields}).model_dump())
+            UserProfile(user_id="user-a", **{"account_id": "account-a", "email": OWNER, **user_fields}).model_dump())
 
 
 async def test_it_returns_the_stored_user_and_their_stored_account():
@@ -54,28 +58,28 @@ async def test_it_returns_the_stored_user_and_their_stored_account():
 
 async def test_an_absent_user_is_refused():
     w = World()
-    with pytest.raises(AccessDeniedError):
+    with pytest.raises(AccessDeniedError, match="absent or inactive"):
         await w.service.resume_session("user-a")
 
 
 async def test_an_inactive_user_is_refused():
     w = World()
     await w.seed(is_active=False)
-    with pytest.raises(AccessDeniedError):
+    with pytest.raises(AccessDeniedError, match="absent or inactive"):
         await w.service.resume_session("user-a")
 
 
 async def test_a_user_without_an_account_id_is_refused():
     w = World()
     await w.seed(account_id=None)
-    with pytest.raises(AccessDeniedError):
+    with pytest.raises(AccessDeniedError, match="no stored account"):
         await w.service.resume_session("user-a")
 
 
 async def test_a_user_whose_account_is_absent_is_refused():
     w = World()
     await w.seed(account=False)
-    with pytest.raises(AccessDeniedError):
+    with pytest.raises(AccessDeniedError, match="no stored account"):
         await w.service.resume_session("user-a")
 
 

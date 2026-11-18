@@ -21,6 +21,7 @@ from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire, refresh_token, session_service
 
 ENV = SimpleNamespace(domain_users_collection="users", domain_whitelist_collection="whitelist", is_production=False)
+OWNER = "owner@example.com"
 
 
 class UsersDuringAReadOutage(FirestoreUserRepository):
@@ -50,6 +51,10 @@ class World:
         await self.db.collection("users").document("user-a").set(
             UserProfile(user_id="user-a", account_id=user_account, **user_fields).model_dump())
 
+    async def allow(self, email: str) -> None:
+        """Put `email` on the access whitelist, which a renewal re-checks against the stored user's email."""
+        await self.db.collection("whitelist").document("config").set({"allowed_emails": [email], "allowed_domains": []})
+
     async def refresh(self, token: str):
         self.client.set_cookie("localhost", "refresh_token", token)
         return await self.client.post("/auth/refresh")
@@ -61,7 +66,8 @@ def _sets_access_cookie(resp) -> bool:
 
 async def test_the_new_token_carries_the_stored_accounts_tier_and_role():
     w = World()
-    await w.seed(user_account="account-b")
+    await w.seed(user_account="account-b", email=OWNER)
+    await w.allow(OWNER)
     resp = await w.refresh(refresh_token("user-a", "account-b"))
     assert resp.status_code == 200
     claims = session_service().verify_access_token((await resp.get_json())["access_token"])
@@ -72,7 +78,8 @@ async def test_the_new_token_names_the_users_stored_account_not_the_one_in_the_r
     # The user moved to account-b (a team invite) after the refresh token was minted for account-a: the renewal is
     # derived from what is stored, as a sign-in would be.
     w = World()
-    await w.seed(user_account="account-b")
+    await w.seed(user_account="account-b", email=OWNER)
+    await w.allow(OWNER)
     resp = await w.refresh(refresh_token("user-a", "account-a"))
     assert resp.status_code == 200
     claims = session_service().verify_access_token((await resp.get_json())["access_token"])

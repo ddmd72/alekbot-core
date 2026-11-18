@@ -49,8 +49,8 @@ from the Home Screen or Siri therefore began with a failed call or a full Google
 
 - A role change reaches an issued access token only after up to 24h (it was up to 1h). There was
   no revocation before either.
-- Revocation latency: a refresh does not re-check the whitelist (`IMPLEMENTATION_ROADMAP.md`
-  SEC-2), so an email removed from the whitelist keeps access for up to 48h from its last login.
+- Revocation latency: a refresh re-checks the whitelist (since 2026-11-18, `cabinet_oauth_whitelist_gate.md`), so an
+  email removed from the whitelist keeps only its current access token, up to 24h.
 - The Home Screen app has its own cookie jar, separate from Safari's. Each entry point logs in
   once a day on its own.
 

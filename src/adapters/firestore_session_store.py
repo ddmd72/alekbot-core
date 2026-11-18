@@ -368,10 +368,12 @@ class FirestoreSessionStore(SessionStore):
             raise
 
     def _on_overflow_done(self, task: "asyncio.Task") -> None:
-        """Log errors from overflow callback tasks — data loss indicator."""
+        """Log an error that escaped the overflow hand-off task. Nothing is lost: `_hand_off` cuts a batch only after
+        its hand-off succeeded."""
         if not task.cancelled() and task.exception():
             logger.error(
-                "❌ [SessionStore] Overflow callback failed — batch may be lost: %s",
+                "❌ [SessionStore] Overflow hand-off task failed: %s — the batch stays in the session until the next "
+                "append hands it off again",
                 task.exception()
             )
 

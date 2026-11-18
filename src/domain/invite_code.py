@@ -53,6 +53,8 @@ class InviteCode:
     
     used_at: Optional[datetime] = None  # When the code was consumed
     used_by_user_id: Optional[str] = None  # Who consumed the code
+    # When the accept the claim was made for finished (membership and move written); unset, its claimant may resume it.
+    completed_at: Optional[datetime] = None
     
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 

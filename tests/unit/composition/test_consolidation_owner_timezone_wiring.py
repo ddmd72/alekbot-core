@@ -12,9 +12,7 @@ async def test_the_graph_service_reads_the_owner_zone_through_the_graphs_own_rep
     zones = service._owner_zones
     assert zones._account_repo is app.account_repo and zones._user_repo is app.user_repo and service._user_repo is app.user_repo
 
-    account = await app.account_repo.get_account(ACCOUNT_ID)
-    account.iam_policy[USER_ID] = "owner"
-    await app.account_repo.update_account(account)
+    await app.account_repo.set_member_role(ACCOUNT_ID, USER_ID, "owner")
     owner = await app.user_repo.get_user(USER_ID)
     owner.config.timezone = "Europe/Lisbon"
     await app.user_repo.update_user(owner)

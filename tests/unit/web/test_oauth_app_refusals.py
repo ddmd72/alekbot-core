@@ -191,9 +191,11 @@ class TestRefresh:
 
     async def test_valid_refresh_token_is_accepted(self):
         # The positive control: the refusals above are not a route that refuses everything. The refresh token's user
-        # must be stored: /auth/refresh mints from the stored user and account and refuses an absent user (P19-D1b).
+        # must be stored: /auth/refresh mints from the stored user and account and refuses an absent user (P19-D1b),
+        # and its stored email must be on the whitelist, which a renewal re-checks (owner decision 2026-11-18).
         w = World()
         await w.seed()
+        await w.users.update_user(UserProfile(user_id="user-a", account_id="account-a", email=ALLOWED))
         w.client.set_cookie("localhost", "refresh_token", refresh_token())
         resp = await w.client.post("/auth/refresh")
         assert resp.status_code == 200
