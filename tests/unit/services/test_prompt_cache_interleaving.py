@@ -44,12 +44,6 @@ def _service(source: dict) -> tuple[PromptAssemblyService, asyncio.Event, asynci
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="P15-S2: assemble saves a template read before invalidate_cache() after the "
-    "invalidation, so the stale prompt is served for the cache TTL; owner decision",
-)
 async def test_template_read_before_invalidation_is_not_served_afterwards():
     source = {"template": "OLD"}
     service, reached, release = _service(source)

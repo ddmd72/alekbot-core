@@ -45,12 +45,6 @@ def _binding(agent_type: str) -> ChannelBinding:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("old", [_binding("tutor"), None], ids=["old-binding", "unbound"])
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="P15-S2: a get that read the port before bind() overwrites the fresh cache entry "
-    "with the old value for the cache TTL; owner decision",
-)
 async def test_get_started_before_bind_does_not_overwrite_the_new_binding(old):
     port = GatedBindingPort({"C1": old} if old else {})
     service = ChannelBindingService(port)

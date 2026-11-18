@@ -789,7 +789,9 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     the entry under the per-user lock and rebuilds it when an eviction dropped it; the marker is removed.
   - P15-S1b: an admin cache reset during a build in progress is undone by the build's cache write. **Fixed:** every eviction
     advances a per-user generation and the locked build redoes a build an eviction overtook; the marker is removed.
-  - P15-S2: a cache write-back after an invalidation brings back the old value (prompt assembly, channel binding).
+  - P15-S2: a cache write-back after an invalidation brings back the old value (prompt assembly, channel binding). **Fixed:**
+    every invalidation advances a counter (per channel; one for the assembly cache) and a miss writes back only if it did not
+    move while the read awaited; both markers are removed.
   - P15-S3: `$consolidate` overwrites messages appended meanwhile.
   - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient". **Fixed:**
     `route_message` asks the factory port to restore the user's eager agents (`restore_agents_for_user`); the marker is removed.

@@ -67,6 +67,9 @@ class PromptAssemblyService:
         # Performance optimization: Assembly cache (RFC: PROMPT_ASSEMBLY_CACHING_RFC.md)
         self._assembled_cache: Dict[str, Tuple[str, float]] = {}  # (prompt, timestamp)
         self._cache_ttl = cache_ttl
+        # Advanced by every invalidation. A miss saves its template only if no invalidation ran while it assembled:
+        # a template read before the invalidation and saved after it would be served stale for the whole TTL.
+        self._cache_epoch = 0
 
     async def assemble(
         self,
@@ -129,13 +132,17 @@ class PromptAssemblyService:
         else:
             logger.info(f"📦 Cache MISS: {cache_key} - assembling from repositories...")
 
+            epoch = self._cache_epoch
             static_prompt = await self._assemble_static_template(
                 agent_type=agent_type,
                 account_id=account_id,
                 user_id=user_id
             )
 
-            self._save_to_cache(cache_key, static_prompt)
+            if self._cache_epoch == epoch:
+                self._save_to_cache(cache_key, static_prompt)
+            else:
+                logger.info(f"📦 Cache invalidated during assembly, not saved: {cache_key}")
 
         # The blueprint tail travels inside the cached string, so a template and its tail are one value.
         static_prompt, marker, tail_block = static_prompt.partition(_TAIL_MARKER)
@@ -723,6 +730,7 @@ class PromptAssemblyService:
         Future: Can be extended for granular invalidation (by user_id, account_id).
         """
         cache_size = len(self._assembled_cache)
+        self._cache_epoch += 1
         self._assembled_cache.clear()
         logger.info(f"🔥 Cache cleared: {cache_size} entries removed")
 
@@ -731,6 +739,7 @@ class PromptAssemblyService:
         """Drop the one cached static template of this agent / account / user key; every other entry stays.
         Returns whether an entry was dropped."""
         key = self._build_cache_key(agent_type, account_id, user_id)
+        self._cache_epoch += 1  # global: an assembly of another key in flight skips one save, never serves stale
         dropped = self._assembled_cache.pop(key, None) is not None
         if dropped:
             logger.info(f"🔥 Cache entry dropped: {key}")
