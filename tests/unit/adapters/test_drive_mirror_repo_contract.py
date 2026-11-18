@@ -329,6 +329,7 @@ async def test_pinned_keys_paged(adapter, monkeypatch):
 
 # -- the Firestore adapter alone --------------------------------------------------------------------------------------------
 
+@pytest.mark.h1_only("drives the fake collection's query-failure switch (fail =)")
 @pytest.mark.parametrize("error", [ServiceUnavailable("down"), FailedPrecondition("The query requires an index.")])
 async def test_backend_error_is_store_unavailable(adapter, error):
     repo, db = adapter
