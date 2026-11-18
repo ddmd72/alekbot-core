@@ -5,8 +5,10 @@ the owner has not seen: a stored value nobody uses is where "the model produced 
 The check is AST-only over `src/` and the root `*_main.py` entry points; nothing is imported from `src/` but the
 field list cross-check.
 
-What counts as a reader, in a module that imports `FactEntity` or `StoredFact` (the repository that receives the
-dict form is one of them):
+What counts as a reader, in a module that handles facts: it imports `FactEntity`, `StoredFact` or the fact repository
+(`FactRepository`, `FirestoreFactRepository`: they hand out the dict form), or it is one of `FACT_MODULE_STEMS`, the
+services named in a planned reader (the baseline `biographical_context_service`, which will read `user_identity` in
+PR 11 of FACT_PROFILE_RFC and imports none of those types, so the P20-D2 pin flips when its reader lands):
 - `<x>.field` in load context;
 - `<x>["field"]` in load context, and `.get("field")` / `.pop("field")`;
 - `FieldFilter("field", ...)`, `.where("field", ...)`, `.order_by("field")` (a query reads the stored value);
@@ -14,13 +16,15 @@ dict form is one of them):
   `get_fact_vectors(...)`, `_search_by_vector_field(...)`: a vector search reads the stored embedding).
 What does not count: `FactEntity(**data)` and `model_dump()` (the whole document moves, nothing is looked at), a
 `select([...])` projection list, a dict literal key or an attribute/subscript store, and the persistence plumbing
-that re-reads a key only to rewrite it (`if "k" in data and isinstance(data["k"], Vector): data["k"] = list(...)`).
+that re-reads a key only to rewrite it: the argument of an `isinstance(d["k"], ...)` test and the right-hand side of
+`d["k"] = f(d["k"])`. A decision read (`if d["state"] == "current": d["state"] = "stale"`) counts as a reader.
 
 Known limits: an attribute name shared with another class in the same module (`id`, `text`, `state`) counts as a
 reader; the test is a floor for the rare names, not a proof for the common ones. Scripts under `scripts/` read
 documents too (the data audit) but are not product code, so they never count.
 """
 import ast
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -29,24 +33,27 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 ENTITIES = "src/domain/entities.py"
 ENTRY_POINTS = ("main.py", "indexer_main.py", "job_main.py", "relay_main.py", "sandbox_main.py")
-FACT_TYPES = {"FactEntity", "StoredFact"}  # a module importing either handles facts
+FACT_TYPES = {"FactEntity", "StoredFact", "FactRepository", "FirestoreFactRepository"}  # importing any: handles facts
+FACT_MODULE_STEMS = {"biographical_context_service"}  # handles facts without importing the types (see the docstring)
 QUERY_CALLS = {"FieldFilter", "where", "order_by"}
 DICT_READS = {"get", "pop"}
 
 # Written and read by no code, on purpose. One line each: the reason, and the writer (path:line) at the time of writing.
 # The list only shrinks: an entry whose field gained a reader fails `test_allow_list_has_no_stale_entry`.
+# `visibility` is not listed: it is unenforced by owner ruling (memory README:276, :156) and no writer sets user_private
+# but the legacy migration, yet that migration's `data["visibility"] == "private"` test (firestore_repo.py:205) is a
+# decision read, so the scanner finds a reader. Should that migration go, add the entry with the ruling as its reason.
 WRITE_ONLY_BY_DESIGN: dict[str, str] = {
     "last_updated": "audit stamp of every in-place write, 'read by no code' (memory README, fields table); writer src/domain/fact_update_plan.py:52",
     "is_current": "'latest document of its lineage', no src code reads it, only the data audit (memory README §2.3); writer src/domain/fact_lifecycle.py:33",
-    "replaces_fact_id": "history link from a version to the document it replaced, kept for the audit and the lineage trail (memory README §2.4); writer src/domain/fact_update_plan.py:50",
+    "replaces_fact_id": "history link to the replaced document, followed by hand in the console history procedure (memory README:1768) and checked by the data audit (README:1861), §2.4; no src code; writer src/domain/fact_update_plan.py:50",
     "profile_model": "observability stamp of the profiler step (FACT_PROFILE_RFC §2.1: 'code, observability'); writer src/services/fact_profile_service.py:468",
     "profiled_at": "observability stamp of the profiler step (FACT_PROFILE_RFC §2.1: 'code, observability'); writer src/services/fact_profile_service.py:468",
 }
 
-# Fields that look like a defect: written, meant to be read, read by no code. Each has its own strict xfail below;
+# Fields written, meant to be read, read by no code yet. Each has its own strict xfail below, `P20-D<n>: `field` ...`;
 # the one that gets a reader flips its test to XPASS (strict), which forces the pin and this entry out.
 PINNED_DEFECTS: dict[str, str] = {
-    "visibility": "P20-D1",
     "user_identity": "P20-D2",
 }
 
@@ -72,36 +79,36 @@ def fact_fields(source: str) -> list[str]:
     raise AssertionError("class FactEntity not found")
 
 
-def handles_facts(tree: ast.AST) -> bool:
-    return any(
+def handles_facts(tree: ast.AST, stem: str = "") -> bool:
+    return stem in FACT_MODULE_STEMS or any(
         isinstance(n, ast.ImportFrom) and any(a.name in FACT_TYPES for a in n.names) for n in ast.walk(tree)
     )
 
 
 def _plumbing(tree: ast.AST) -> set[int]:
-    """`id()`s of subscript loads that only feed a store of the same key inside the same `if` (a conversion)."""
+    """`id()`s of subscript loads that only feed a rewrite of the same key: an `isinstance(d["k"], ...)` argument and
+    the right-hand side of `d["k"] = f(d["k"])`. Any other read, a comparison included, is a decision and counts."""
     skip: set[int] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        scope = [node.test, *node.body]
-        stored = {
-            k
-            for part in node.body
-            for n in ast.walk(part)
-            if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) and (k := _const_str(n.slice))
-        }
-        for part in scope:
-            for n in ast.walk(part):
+        if isinstance(node, ast.Call) and _dotted_tail(node.func) == "isinstance" and node.args:
+            for n in ast.walk(node.args[0]):
+                if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Load):
+                    skip.add(id(n))
+        elif isinstance(node, ast.Assign):
+            stored = {
+                k for t in node.targets if isinstance(t, ast.Subscript) and isinstance(t.ctx, ast.Store)
+                and (k := _const_str(t.slice))
+            }
+            for n in ast.walk(node.value):
                 if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Load) and _const_str(n.slice) in stored:
                     skip.add(id(n))
     return skip
 
 
-def reads(source: str, fields: set[str]) -> list[tuple[str, int, str]]:
+def reads(source: str, fields: set[str], stem: str = "") -> list[tuple[str, int, str]]:
     """(field, line, kind) of every reader of a field in one module; [] when the module handles no facts."""
     tree = ast.parse(source)
-    if not handles_facts(tree):
+    if not handles_facts(tree, stem):
         return []
     plumbing = _plumbing(tree)
     found: list[tuple[str, int, str]] = []
@@ -137,9 +144,9 @@ def _registry() -> tuple[list[str], dict[str, list[str]]]:
         if rel == ENTITIES:
             continue
         text = path.read_text(encoding="utf-8")
-        if not any(t in text for t in FACT_TYPES):
+        if path.stem not in FACT_MODULE_STEMS and not any(t in text for t in FACT_TYPES):
             continue
-        for field, line, kind in reads(text, set(fields)):
+        for field, line, kind in reads(text, set(fields), path.stem):
             readers[field].append(f"{rel}:{line} ({kind})")
     return fields, readers
 
@@ -175,24 +182,27 @@ def test_allow_list_has_no_stale_entry():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P20-D1: `visibility` (account_shared / user_private) is stored on every fact and enforced by no read path; "
-    "the cabinet and search show every member every fact (memory README: 'never filtered on read')",
-)
-def test_p20_d1_visibility_is_read():
-    assert _registry()[1]["visibility"]
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="P20-D2: `user_identity` is written by the profiler step and read by no code; its reader (the baseline "
-    "identity block) is PR 11 of FACT_PROFILE_RFC",
+    reason="P20-D2: `user_identity` pending FACT_PROFILE PR 11 (reader not built yet; RFC line 112)",
 )
 def test_p20_d2_user_identity_is_read():
     assert _registry()[1]["user_identity"]
 
 
 def test_pinned_defects_match_their_tests():
-    assert PINNED_DEFECTS == {"visibility": "P20-D1", "user_identity": "P20-D2"}
+    """The strict xfail tests of this module name exactly the fields and ids of PINNED_DEFECTS."""
+    import sys
+
+    named = {}
+    for name, fn in vars(sys.modules[__name__]).items():
+        if not (name.startswith("test_") and callable(fn)):
+            continue
+        for mark in getattr(fn, "pytestmark", []):
+            if mark.name == "xfail":
+                assert mark.kwargs.get("strict") is True, f"{name}: an xfail here must be strict"
+                m = re.match(r"(P20-D\d+): `(\w+)`", mark.kwargs.get("reason", ""))
+                assert m, f"{name}: the xfail reason must start 'P20-D<n>: `field`'"
+                named[m.group(2)] = m.group(1)
+    assert named == PINNED_DEFECTS
 
 
 FIELDS = {"text", "state", "tags_vector", "visibility", "stale_since"}
@@ -229,7 +239,6 @@ def test_scanner_counts_readers(source, expected):
         "from x import FactEntity\ndef f(d):\n    return d.model_dump()",
         "from x import FactEntity\ndef f(d):\n    return d.get('other')",
         "from x import FactEntity\ndef f(d):\n    if 'tags_vector' in d and isinstance(d['tags_vector'], V):\n        d['tags_vector'] = list(d['tags_vector'])",
-        "from x import FactEntity\ndef f(d):\n    if 'visibility' not in d:\n        d['visibility'] = 'a'\n    elif d['visibility'] == 'p':\n        d['visibility'] = 'b'",
         "def f(fact):\n    return fact.text",  # a module that handles no facts
         "from x import FactEntity\ndef f(s):\n    return s.build('tags_vector')",  # not a vector call
     ],
@@ -238,16 +247,25 @@ def test_scanner_ignores_non_readers(source):
     assert reads(source, FIELDS) == []
 
 
-def test_conversion_plumbing_is_per_if_not_per_module():
-    src = (
+def test_a_decision_read_counts_but_a_rewrite_of_the_same_key_does_not():
+    decision = (
         "from x import FactEntity\n"
         "def f(d):\n"
-        "    if d['tags_vector']:\n"
-        "        d['tags_vector'] = 1\n"
-        "def g(d):\n"
-        "    return d['tags_vector']\n"
+        "    if d['state'] == 'current':\n"
+        "        d['state'] = 'stale'\n"
     )
-    assert reads(src, FIELDS) == [("tags_vector", 6, "key")]
+    assert reads(decision, FIELDS) == [("state", 3, "key")]
+    rewrite = "from x import FactEntity\ndef f(d):\n    d['state'] = norm(d['state'])\n"
+    assert reads(rewrite, FIELDS) == []
+    other_key = "from x import FactEntity\ndef f(d):\n    d['text'] = d['state']\n"
+    assert reads(other_key, FIELDS) == [("state", 3, "key")]
+
+
+def test_a_module_named_in_the_pin_is_scanned_without_importing_the_types():
+    src = "def f(fact):\n    return fact.user_identity\n"
+    assert reads(src, {"user_identity"}) == []
+    assert reads(src, {"user_identity"}, "biographical_context_service") == [("user_identity", 2, "attribute")]
+    assert reads("from x import FirestoreFactRepository\n" + src, {"user_identity"}) == [("user_identity", 3, "attribute")]
 
 
 def test_fact_fields_reads_the_class_only():
