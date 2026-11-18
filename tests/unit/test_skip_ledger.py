@@ -49,35 +49,58 @@ def test_every_never_line_names_what_would_run_it(ledger):
         assert "needs" in reason or "P22b" in reason or "no CI job" in reason, site
 
 
-def test_a_file_without_a_skip_has_no_line(ledger):
-    assert all(path.startswith("tests/") for path, _, _ in ledger)
-
-
 # --- the scanner and the ledger format, on invented sources ----------------------------------------------------------
 
 SOURCE = '''
 import pytest
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(not HAVE_FFMPEG, reason="x")]
 
+needs_node = pytest.mark.skipif(not HAVE_NODE, reason="n")
+
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="y")
 @pytest.mark.timing
 def test_a():
     pytest.skip("Firestore only")
 
+@needs_node
 def test_b():
     pytest.importorskip("lxml")
-    pytest.mark.skip(reason="r")
+
+@needs_node
+class TestGroup:
+    def test_one(self): pass
+    def test_two(self): pass
 '''
 
 
-def test_the_scanner_finds_each_kind_of_site():
+def test_the_scanner_finds_each_kind_of_site_and_counts_the_tests_behind_it():
     sites = sl.scan_source("tests/x.py", SOURCE)
-    assert sorted(sites) == sorted([
-        ("tests/x.py", "marker", "slow"), ("tests/x.py", "marker", "timing"),
-        ("tests/x.py", "skipif", "not HAVE_FFMPEG"), ("tests/x.py", "skipif", "not HAVE_FFMPEG"),
-        ("tests/x.py", "skip", "'Firestore only'"), ("tests/x.py", "importorskip", "'lxml'"),
-        ("tests/x.py", "mark.skip", "reason='r'"),
-    ])
+    # pytestmark: the module's 4 tests; the decorator on test_a: 1; needs_node: test_b (1) + the class (2 tests)
+    assert sorted(sites) == sorted([("tests/x.py", "marker", "slow"), ("tests/x.py", "marker", "timing")]
+                                   + [("tests/x.py", "skipif", "not HAVE_FFMPEG")] * 5
+                                   + [("tests/x.py", "skipif", "not HAVE_NODE")] * 3
+                                   + [("tests/x.py", "skip", "'Firestore only'"), ("tests/x.py", "importorskip", "'lxml'")])
+
+
+def test_a_class_level_pytestmark_counts_the_tests_of_the_class():
+    source = "import pytest\nclass TestA:\n    pytestmark = pytest.mark.skipif(X, reason='r')\n    def test_a(self): pass\n    def test_b(self): pass\ndef test_c(): pass\n"
+    assert sl.scan_source("tests/x.py", source) == [("tests/x.py", "skipif", "X")] * 2
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("import pytest\n@pytest.mark.skip\ndef test_a(): pass\n", [("mark.skip", "<bare>")]),
+    ("import pytest\n@pytest.mark.skip(reason='r')\ndef test_a(): pass\n", [("mark.skip", "reason='r'")]),
+    ("from pytest import skip\ndef test_a():\n    skip('why')\n", [("skip", "'why'")]),
+    ("import pytest as pt\n@pt.mark.skipif(C, reason='r')\ndef test_a(): pass\n", [("skipif", "C")]),
+    ("import unittest\n@unittest.skip('r')\ndef test_a(): pass\n", [("mark.skip", "'r'")]),
+    ("import unittest\n@unittest.skipIf(C, 'r')\ndef test_a(): pass\n", [("skipif", "C")]),
+    ("import unittest\ndef test_a():\n    raise unittest.SkipTest('r')\n", [("skip", "'r'")]),
+    ("from pytest import mark\n@mark.slow\ndef test_a(): pass\n", [("marker", "slow")]),
+    ("from pytest import mark as m\n@m.skipif(C, reason='r')\ndef test_a(): pass\n", [("skipif", "C")]),
+    ("def skip(x): pass\ndef test_a():\n    skip('not pytest')\n", []),
+])
+def test_the_scanner_resolves_imports_and_bare_forms(source, expected):
+    assert [(kind, condition) for _, kind, condition in sl.scan_source("tests/x.py", source)] == expected
 
 
 def test_a_string_that_mentions_a_skip_is_not_a_site():

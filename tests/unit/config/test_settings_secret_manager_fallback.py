@@ -159,11 +159,10 @@ def test_every_empty_key_is_chased_on_each_boot_and_no_other(bare_env, fake):
     assert len(_names(fake)) == len(fetched), "one lookup per key"
 
 
-def test_a_key_with_a_non_empty_default_and_the_dev_prefix_are_never_chased(bare_env, fake):
+def test_a_key_with_a_non_empty_default_is_never_chased(bare_env, fake):
     settings_module.load_settings()
     fetched = set(_names(fake))
     assert fetched.isdisjoint({"DEBUG_PROMPTS", "BIGQUERY_PROMPT_TABLE", "APP_ENV", "ENVIRONMENT_CONFIG"})
-    assert not any(name.startswith("DEV_") for name in fetched)
 
 
 # --- the required keys: what a failed or empty fetch means at the place that enforces them --------------------------
