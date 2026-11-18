@@ -8,17 +8,11 @@ import pytest
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.config.environment import EnvironmentConfig
 from src.ports.memory_write_lease import MemoryWriteLeasePort
-from tests.support.firestore_eval import EvalDb, EvalDocRef, eval_transactions
+from tests.support.firestore_eval import EvalDocRef
 
 ACC = "acc-1"
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
 RUN = timedelta(minutes=16)
-
-
-@pytest.fixture(autouse=True)
-def _evaluating_transactions():
-    with eval_transactions():
-        yield
 
 
 @pytest.fixture
@@ -27,8 +21,8 @@ def env():
 
 
 @pytest.fixture
-def db():
-    return EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture
