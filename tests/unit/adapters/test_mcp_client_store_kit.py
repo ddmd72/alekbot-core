@@ -395,6 +395,25 @@ async def test_revoking_again_moves_revoked_at_to_now(store):
     assert started <= store.docs(REFRESH)[sha("rt-a")]["revoked_at"] <= datetime.now(timezone.utc)
 
 
+async def test_revoke_says_whether_it_revoked_an_active_token(store):
+    await store.repo.save_refresh_token(refresh())
+    await store.repo.save_refresh_token(refresh("rt-b", revoked_at=PAST))
+    assert await store.repo.revoke_refresh_token(sha("rt-a")) is True
+    assert await store.repo.revoke_refresh_token(sha("rt-a")) is False
+    assert await store.repo.revoke_refresh_token(sha("rt-b")) is False
+    assert await store.repo.revoke_refresh_token(sha("nope")) is False
+    assert set(store.docs(REFRESH)) == {sha("rt-a"), sha("rt-b")}
+
+
+async def test_of_concurrent_revokes_of_one_active_token_exactly_one_says_it_revoked(store):
+    await store.repo.save_refresh_token(refresh())
+    store.db.collection(REFRESH).yield_on_get = True      # both read the token active before either commits
+    results = await asyncio.gather(store.repo.revoke_refresh_token(sha("rt-a")),
+                                   store.repo.revoke_refresh_token(sha("rt-a")))
+    assert sorted(results) == [False, True]
+    assert store.docs(REFRESH)[sha("rt-a")]["revoked_at"] is not None
+
+
 async def test_of_concurrent_exchanges_of_one_refresh_token_exactly_one_succeeds(store):
     await store.repo.save_refresh_token(refresh())
     store.db.collection(REFRESH).yield_on_get = True      # both exchanges read the token before either revokes it
