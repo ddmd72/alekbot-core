@@ -52,6 +52,12 @@ class MemoryStore(EphemeralStore):
     async def set(self, key, value, ttl_s):
         self.data[key] = (value, self.clock() + timedelta(seconds=ttl_s))
 
+    async def set_if_absent(self, key, value, ttl_s):
+        if await self.get(key) is not None:
+            return False
+        await self.set(key, value, ttl_s)
+        return True
+
     async def get(self, key) -> Optional[dict]:
         hit = self.data.get(key)
         return hit[0] if hit and hit[1] > self.clock() else None

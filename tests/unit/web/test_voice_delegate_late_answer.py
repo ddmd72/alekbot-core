@@ -29,6 +29,13 @@ class _MemoryStore(EphemeralStore):
         self.data[key] = value
         self.ttls[key] = ttl_s
 
+    async def set_if_absent(self, key: str, value: dict, ttl_s: int) -> bool:
+        if key in self.data:
+            return False
+        self.data[key] = value
+        self.ttls[key] = ttl_s
+        return True
+
     async def get(self, key: str) -> Optional[dict]:
         return self.data.get(key)
 

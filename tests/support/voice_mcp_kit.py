@@ -42,6 +42,9 @@ class ReadRecordingStore(EphemeralStore):
     async def set(self, key: str, value: Dict[str, Any], ttl_s: int) -> None:
         await self.inner.set(key, value, ttl_s)
 
+    async def set_if_absent(self, key: str, value: Dict[str, Any], ttl_s: int) -> bool:
+        return await self.inner.set_if_absent(key, value, ttl_s)
+
     async def get(self, key: str) -> Optional[Dict[str, Any]]:
         self.reads.append(key)
         return await self.inner.get(key)
