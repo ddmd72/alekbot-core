@@ -2551,7 +2551,7 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   `known_hard` (reported, in no bar); `semantic` cases reach their file only through the card stream and miss
   offline with fake embeddings (RFC Δ45). `--record` re-records the bars; do that only for a deliberate change, and
   review the misses it prints first. `tests/integration/offline/test_drive_g2_end_to_end.py` runs every text-layer G2 case
-  through the real parser with scripted models and bag-of-words embeddings (`make test-integration`).
+  through the real parser with scripted models and bag-of-words embeddings (`make test-g2-offline`).
 - **G3** (does Smart search the drive when it should; owner-run, paid: $1–4 per 3-repeat run with Smart and the
   Sonnet specialist, so a 1-repeat probe first; DRIVE_SPECIALIST_RFC §12).
   `python -m scripts.validation.drive_eval.smart_dry_run [--record] --repeats 3 --max-usd 3` (`--max-usd` is required,
