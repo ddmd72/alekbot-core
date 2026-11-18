@@ -2,9 +2,8 @@
 `FirestoreEphemeralStore` on the evaluating Firestore fake (H1), with the index refusal ON (the store makes no query
 today; the refusal guards a future one). Assertions are on the raw stored documents and on what readers return.
 
-The one-call marker claim is the caller's (`VoiceCallSetupService.claim`, a get-then-set): it is pinned over this
-store in `tests/unit/services/test_voice_call_setup_service_store_pins.py`, because the port promises no conditional
-write.
+The one-call marker claim is `set_if_absent` (`VoiceCallSetupService.claim`): it is also pinned through its caller
+over this store in `tests/unit/services/test_voice_call_setup_service_store_pins.py`.
 
 `store` is the one fixture that selects the backend.
 """
@@ -190,6 +189,66 @@ async def test_late_answer_is_claimed_once_in_either_order(store, order):
         require([event for event, _ in trace[:2]] == ["start", "start"], "the two relay flows overlapped")
     assert [c["output"] for c in claims if c is not None] == ["the garden meeting is on Thursday"]
     assert "voice_delegation_result:t1:call1" not in store.docs
+
+
+# -------------------------------------------------------------------------------------------------- set_if_absent
+
+async def test_set_if_absent_stores_when_the_key_is_absent(store):
+    assert await store.store.set_if_absent(MARKER_KEY, {"in_flight": True, "call_id": "c1"}, ttl_s=300) is True
+    raw = store.docs[MARKER_KEY]
+    assert set(raw) == {"value", "expires_at"}
+    assert raw["value"] == {"in_flight": True, "call_id": "c1"} and raw["expires_at"] == T0 + timedelta(seconds=300)
+
+
+@pytest.mark.parametrize("seconds", [100, 300], ids=["inside_ttl", "at_expiry"])
+async def test_set_if_absent_refuses_a_live_value_and_leaves_it_untouched(store, monkeypatch, seconds):
+    await store.store.set(MARKER_KEY, {"in_flight": True, "call_id": "c1"}, ttl_s=300)
+    at(monkeypatch, seconds)
+    assert await store.store.set_if_absent(MARKER_KEY, {"in_flight": True, "call_id": "c2"}, ttl_s=900) is False
+    assert store.docs[MARKER_KEY]["value"] == {"in_flight": True, "call_id": "c1"}
+    assert store.docs[MARKER_KEY]["expires_at"] == T0 + timedelta(seconds=300)
+
+
+async def test_set_if_absent_replaces_an_expired_value(store, monkeypatch):
+    await store.store.set(MARKER_KEY, {"in_flight": True, "call_id": "c1"}, ttl_s=300)
+    at(monkeypatch, 301)
+    assert await store.store.set_if_absent(MARKER_KEY, {"in_flight": True, "call_id": "c2"}, ttl_s=300) is True
+    assert store.docs[MARKER_KEY]["value"] == {"in_flight": True, "call_id": "c2"}
+    assert store.docs[MARKER_KEY]["expires_at"] == T0 + timedelta(seconds=601)
+
+
+async def test_set_if_absent_then_get_returns_the_claimed_value(store):
+    await store.store.set_if_absent(MARKER_KEY, {"in_flight": True, "call_id": "c1"}, ttl_s=300)
+    assert await store.store.get(MARKER_KEY) == {"in_flight": True, "call_id": "c1"}
+
+
+async def test_two_concurrent_set_if_absent_exactly_one_wins(store):
+    store.col.yield_on_get = True
+    trace = []
+
+    async def claim(call_id):
+        trace.append(("start", call_id))
+        try:
+            return await store.store.set_if_absent(MARKER_KEY, {"in_flight": True, "call_id": call_id}, ttl_s=300)
+        finally:
+            trace.append(("end", call_id))
+
+    results = await asyncio.gather(claim("c1"), claim("c2"))
+    require([event for event, _ in trace[:2]] == ["start", "start"], "both claims overlapped")
+    assert sorted(results) == [False, True]
+    winner = "c1" if results[0] else "c2"
+    assert store.docs[MARKER_KEY]["value"]["call_id"] == winner
+
+
+@pytest.mark.h1_only("injects the failure by patching EvalDocRef.get")
+async def test_a_backend_error_propagates_from_set_if_absent(store, monkeypatch):
+    async def unavailable(self, *args, **kwargs):
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(EvalDocRef, "get", unavailable)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await store.store.set_if_absent(MARKER_KEY, {"in_flight": True}, ttl_s=300)
+    assert store.docs == {}
 
 
 # ------------------------------------------------------------------------------------------- tenancy, legacy

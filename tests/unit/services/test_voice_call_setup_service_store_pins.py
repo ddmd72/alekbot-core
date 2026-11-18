@@ -43,9 +43,6 @@ async def test_a_claim_while_a_live_marker_exists_is_refused(world):
     assert db.collection(TICKETS).docs[MARKER_KEY]["value"]["call_id"] == "c1"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G1-1: two concurrent claims both pass the one-call marker "
-                          "(VoiceCallSetupService.claim; the voice_auth route has the same check-then-set)")
 async def test_two_concurrent_claims_let_exactly_one_call_through(world):
     """Flips when the claim sets the marker only if it is absent or expired, inside one transaction (a port method)."""
     db, setup = world

@@ -198,23 +198,30 @@ def create_voice_webhook_blueprint(
             return _twiml_reject()
 
         marker_key = f"voice_one_call:{profile.user_id}"
+        decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
+        ticket = str(uuid.uuid4())
+        # Short TTL while the callback is only parked: if Twilio never reports the
+        # inbound dial as ended, the caller is locked out for minutes, not an hour.
+        # The marker names this call, so a replaced web call's late release leaves it alone.
+        marker = {"in_flight": True, **call_setup.owner_of(ticket)}
         holder = await ephemeral_store.get(marker_key)
-        if holder is not None and not await _replace_web_call(profile.user_id, holder):
+        if holder is None:
+            # Atomic claim: two dials racing past the read above must not both pass (P11-G1-1).
+            if not await ephemeral_store.set_if_absent(marker_key, marker, ttl_s=_TICKET_TTL_S):
+                logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
+                return _twiml_reject()
+        elif await _replace_web_call(profile.user_id, holder):
+            # Unconditional: after a replaced web call this is the takeover.
+            await ephemeral_store.set(marker_key, marker, ttl_s=_TICKET_TTL_S)
+        else:
             logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
             return _twiml_reject()
 
-        decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
-        ticket = str(uuid.uuid4())
         await ephemeral_store.set(
             ticket_key(digest_key, ticket),
             {"user_id": decision.user_id, "account_id": decision.account_id},
             ttl_s=_TICKET_TTL_S,
         )
-        # Short TTL while the callback is only parked: if Twilio never reports the
-        # inbound dial as ended, the caller is locked out for minutes, not an hour.
-        # Unconditional: after a replaced web call this is the takeover. The marker names
-        # this call, so that web call's late release leaves it alone.
-        await ephemeral_store.set(marker_key, {"in_flight": True, **call_setup.owner_of(ticket)}, ttl_s=_TICKET_TTL_S)
         pending_key = _pending_key(inbound_call_sid)
         await ephemeral_store.set(
             pending_key,
