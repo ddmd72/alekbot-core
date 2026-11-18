@@ -205,7 +205,6 @@ class TestLostReminderEnqueue:
     claimed on the note (`claim_one_time_if_due_at`) before `execute_reminder` is enqueued (`reminders_service.py:151-181`),
     so an enqueue that raises leaves a claimed fire no tick enqueues again."""
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D3)
     async def test_a_lost_reminder_enqueue_is_enqueued_by_the_next_tick(self, monkeypatch):
         """Tick 1 claims the note and its create fails before landing; tick 2 must enqueue the fire.
 

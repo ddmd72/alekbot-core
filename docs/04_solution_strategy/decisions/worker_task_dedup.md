@@ -52,7 +52,9 @@ whatever the trigger.
      `task_type`) go to the adapters attached at wiring time; any other `task_type` is a 400
      (it used to fall through silently to the Slack handler).
    - `execute_reminder` needs nothing more: the fire-time claim is atomic and there is one task per
-     fire, so only a redelivery overlapped, and the task claim now covers it.
+     fire, so only a redelivery overlapped, and the task claim now covers it. The fire's task is named
+     `execute_reminder:<note>@<due>` (dedup key) and its create is retried up to 3 times: the claimed fire is
+     enqueued by no later tick, and a create that landed but answered an error is refused by name, not doubled.
 
 ## Same collection, other marks (S1b)
 
