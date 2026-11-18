@@ -1,7 +1,7 @@
 """FirestoreBlueprintRepository kit (P10): the docstring of `src/ports/prompt_v3/blueprint_repository.py` and of the adapter
-checked on the evaluating Firestore fake (H1). Documents are seeded as raw dicts where a test reads, because `save` and
-`delete` do not write on the production client (P10-D3, P10-D4: the write coroutine is never awaited); the tests that need
-the write are strict xfails.
+checked on the evaluating Firestore fake (H1). Documents are seeded as raw dicts where a test reads, so a read test does
+not depend on `save`; the save and delete tests assert the written documents (P10-D3, P10-D4: the write coroutine was not
+awaited, fixed).
 
 `_adapter(db)` is the one place the adapter is constructed.
 """
@@ -12,8 +12,6 @@ from src.domain.prompt_v3.blueprint import Blueprint
 
 COL = "eval_blueprints"
 ORDER = ["properties", "cognitive_process", "policies"]
-D3 = "P10-D3: FirestoreBlueprintRepository.save calls doc_ref.set(data) without await; on the async client no write happens"
-D4 = "P10-D4: FirestoreBlueprintRepository.delete calls doc_ref.delete() without await; on the async client nothing is deleted"
 
 
 def _adapter(db) -> FirestoreBlueprintRepository:

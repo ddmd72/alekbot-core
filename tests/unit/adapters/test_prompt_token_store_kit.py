@@ -3,9 +3,8 @@ on the evaluating Firestore fake (H1), with the real `RegexSecurityAdapter` as t
 `prompt_assembly_setup.py` wires it (a `CompositeAdapter` of one regex adapter).
 
 The adapter reads two collections (system, user). `get` looks in system first, then user; `save(..., collection=)` picks
-the target. Documents are seeded as raw dicts where a test reads, because `save` and `delete` do not write on the
-production client (P10-D1, P10-D2: the write coroutine is never awaited); the save/delete tests that need the write are
-strict xfails.
+the target. Documents are seeded as raw dicts where a test reads, so a read test does not depend on `save`; the save and
+delete tests assert the written documents (P10-D1, P10-D2: the write coroutine was not awaited, fixed).
 
 `_adapter(db)` is the one place the adapter is constructed.
 """
@@ -19,8 +18,6 @@ from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 SYS, USR = "eval_tokens_system", "eval_tokens_user"
 TWO_SENTENCES = "Answer in two short sentences."
 METRIC = "Use metric units."
-D1 = "P10-D1: FirestoreTokenRepository.save calls doc_ref.set(data) without await; on the async client no write happens"
-D2 = "P10-D2: FirestoreTokenRepository.delete calls doc_ref.delete() without await; on the async client nothing is deleted"
 
 
 def _adapter(db) -> FirestoreTokenRepository:

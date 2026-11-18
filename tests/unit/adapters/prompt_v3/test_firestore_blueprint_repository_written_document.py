@@ -1,9 +1,9 @@
 """The document FirestoreBlueprintRepository writes on save and removes on delete (mutation survivors of the module).
 
-The production adapter calls `doc_ref.set(data)` / `doc_ref.delete()` without `await` (P10-D3, P10-D4, see
-tests/unit/adapters/test_prompt_blueprint_store_kit.py), so on the awaiting `EvalDb` nothing is written. These tests use a
-collection whose document handle applies a write at call time and hands back an awaitable: the write lands whether or not
-the adapter awaits it, so the tests stay valid once the defect is fixed.
+These tests use a collection whose document handle applies a write at call time and hands back an awaitable: the write
+lands whether or not the adapter awaits it. They were written while the adapter did not await `doc_ref.set(data)` /
+`doc_ref.delete()` (P10-D3, P10-D4, fixed; tests/unit/adapters/test_prompt_blueprint_store_kit.py checks the awaited
+writes on `EvalDb`).
 """
 import asyncio
 

@@ -1,9 +1,8 @@
 """FirestoreTokenRepository.save / delete: the timestamps written and the document actually removed.
 
-The repository calls `doc_ref.set(...)` and `doc_ref.delete()` without `await` (P10-D1, P10-D2, pinned as strict xfails in
-tests/unit/adapters/test_prompt_token_store_kit.py). `_EagerWriteDb` applies a write at call time and hands back an
-already-completed future, so the write lands whether or not the adapter awaits it and the tests stay valid once the
-defect is fixed; its reads are awaited like the async client's.
+`_EagerWriteDb` applies a write at call time and hands back an already-completed future, so the write lands whether or
+not the repository awaits it (it did not until P10-D1 and P10-D2 were fixed; tests/unit/adapters/test_prompt_token_store_kit.py
+checks the awaited writes); its reads are awaited like the async client's.
 """
 import asyncio
 
