@@ -14,8 +14,7 @@ from src.domain.drive_note import (
     item_binding_key, next_version, note_after_write, note_doc_id, tagged_ref_key,
 )
 
-from tests.unit.adapters.firestore_drive_eval_fakes import eval_transactions
-from tests.unit.adapters.firestore_drive_note_fakes import NOTES, NoteDb
+from tests.unit.adapters.firestore_drive_note_fakes import NOTES, note_db, on_the_fake, versions_of
 
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
 U, OTHER, D1, D2 = "u", "other", "drive1", "drive2"
@@ -39,14 +38,14 @@ class _Ticks:
 
 
 @pytest.fixture(params=["memory", "firestore"])
-def adapter(request):
+def adapter(request, kit_db):
     if request.param == "memory":
         yield InMemoryDriveNoteRepository(clock=_Ticks()), None
         return
     env = MagicMock()
     env.drive_notes_collection = NOTES
-    db = NoteDb()
-    with eval_transactions():
+    db = note_db(kit_db)
+    with on_the_fake(db):
         yield FirestoreDriveNoteRepository(db, env), db
 
 
@@ -355,7 +354,7 @@ async def test_firestore_stores_the_vector_as_a_vector_and_drops_it_when_cleared
 async def test_firestore_versions_live_under_the_parent(adapter):
     repo, db = _firestore(adapter)
     await first(repo)
-    assert set(db.versions_of("u:n1")) == {"v1"}
+    assert set(versions_of(db, "u:n1")) == {"v1"}
 
 
 async def test_firestore_stub_holds_only_its_fields(adapter):
@@ -365,7 +364,7 @@ async def test_firestore_stub_holds_only_its_fields(adapter):
     stored = db.collection(NOTES).docs["u:n1"]
     assert set(stored) == {"note_id", "user_id", "account_id", "state", "erase_pending", "match_keys", "revision",
                            "updated_at"}
-    assert db.versions_of("u:n1") == {}
+    assert versions_of(db, "u:n1") == {}
 
 
 async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter):
@@ -376,7 +375,7 @@ async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter)
         await repo.write_version(nxt, v, expected_version=n - 1)
         note = await repo.get(U, "n1")
     assert (await repo.erase(U, ["n1"])).erased == 1
-    assert db.versions_of("u:n1") == {}
+    assert versions_of(db, "u:n1") == {}
     assert len(db.commits) == 1 and len(db.commits[0]) == 3              # v1..v3 in a batch, the rest with the stub
 
 
@@ -518,7 +517,7 @@ async def test_firestore_a_contended_first_write_reruns_and_conflicts_writing_no
                side_effect=contended(db, interloper)):
         with pytest.raises(DriveNoteConflict):
             await repo.write_version(note, v1, expected_version=0)
-    assert db.collection(NOTES).docs["u:n1"] == other and db.versions_of("u:n1") == {}
+    assert db.collection(NOTES).docs["u:n1"] == other and versions_of(db, "u:n1") == {}
 
 
 async def test_firestore_exhausted_transaction_retries_are_a_conflict(adapter):
@@ -576,7 +575,7 @@ async def test_firestore_a_long_erase_redoes_its_batches_when_a_write_lands_in_b
 
     db.batch = batch
     assert (await repo.erase(U, ["n1"])).erased == 1
-    assert landed and db.versions_of("u:n1") == {}
+    assert landed and versions_of(db, "u:n1") == {}
     assert (await repo.get(U, "n1")).erase_pending
 
 
