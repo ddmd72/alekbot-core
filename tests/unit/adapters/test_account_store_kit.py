@@ -141,6 +141,7 @@ async def test_increment_returns_the_servers_before_and_after(accounts):
     assert result.daily_cost_limit == 5.0
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.update; on the real client the patch changes nothing")
 async def test_an_increment_whose_write_reports_no_transforms_estimates_from_the_pre_read(accounts, monkeypatch):
     """The write landed; only the returned position is estimated (pre-read + cost) when the server's transform
     results are missing or do not match the transformed paths."""
@@ -157,6 +158,7 @@ async def test_an_increment_whose_write_reports_no_transforms_estimates_from_the
     assert accounts.usage()["daily_cost"] == pytest.approx(1.5)
 
 
+@pytest.mark.h1_only("traces the fake's EvalDocRef reads and writes and sets yield_on_get")
 async def test_concurrent_increments_get_disjoint_slices_and_cross_once(accounts, monkeypatch):
     await accounts.seed(daily_cost=4.0)
     accounts.db.collection(ACCOUNTS).yield_on_get = True     # every caller pre-reads 4.0 before any update lands
@@ -196,6 +198,7 @@ async def test_increment_of_an_absent_account_raises_and_writes_nothing(accounts
     assert accounts.docs == {}
 
 
+@pytest.mark.h1_only("traces the fake's EvalDocRef reads and writes and sets yield_on_get")
 async def test_an_account_deleted_before_the_rotation_transaction_raises(accounts, monkeypatch):
     await accounts.seed(daily_cost=1.0, reset_at=T0 - timedelta(days=1))
     accounts.db.collection(ACCOUNTS).yield_on_get = True
@@ -249,6 +252,7 @@ async def test_update_account_keeps_usage_counted_since_the_callers_read(account
 
 # ----------------------------------------------------------------------------------------------------- errors
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.get")
 @pytest.mark.parametrize("method", ["get_account", "increment_account_usage"])
 async def test_a_backend_error_propagates(accounts, monkeypatch, method):
     await accounts.seed()
