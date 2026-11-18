@@ -16,19 +16,21 @@ def _service(store=None, agent=None):
 @pytest.mark.asyncio
 async def test_claim_refuses_when_a_call_is_in_flight():
     store = AsyncMock()
-    store.get.return_value = {"in_flight": True}
+    store.set_if_absent.return_value = False  # a live marker is there: the store's atomic claim refuses
     service, _, _ = _service(store)
     assert await service.claim("u1", {"call_id": "c1"}, ttl_s=300) is False
+    store.set_if_absent.assert_awaited_once_with("voice_one_call:u1", {"in_flight": True, "call_id": "c1"}, ttl_s=300)
     store.set.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_claim_writes_the_holder_into_the_marker():
     store = AsyncMock()
-    store.get.return_value = None
+    store.set_if_absent.return_value = True  # no live marker: the store's atomic claim stores it
     service, _, _ = _service(store)
     assert await service.claim("u1", {"call_id": "c1"}, ttl_s=300) is True
-    store.set.assert_awaited_once_with("voice_one_call:u1", {"in_flight": True, "call_id": "c1"}, ttl_s=300)
+    store.set_if_absent.assert_awaited_once_with("voice_one_call:u1", {"in_flight": True, "call_id": "c1"}, ttl_s=300)
+    store.set.assert_not_called()  # the claim is the marker's only write
 
 
 @pytest.mark.asyncio

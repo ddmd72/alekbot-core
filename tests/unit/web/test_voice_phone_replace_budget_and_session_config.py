@@ -39,6 +39,13 @@ class TtlStore:
     async def set(self, key, value, ttl_s):
         self.data[key], self.ttls[key] = value, ttl_s
 
+    async def set_if_absent(self, key, value, ttl_s):
+        if key in self.data:
+            return False
+        self.data[key] = value
+        self.ttls[key] = ttl_s
+        return True
+
     async def get(self, key):
         if key == MARKER:
             self.marker_reads += 1

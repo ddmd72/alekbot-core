@@ -83,6 +83,7 @@ async def test_bound_number_mints_ticket_and_parks_callback_without_originating(
     user_repository, ephemeral_store, alert_sink, notification_service, lelik_agent, lelik_agent_factory = deps
     user_repository.get_user_by_platform_id.return_value = MagicMock(user_id="u1", account_id="a1")
     ephemeral_store.get.return_value = None  # no existing one-call marker
+    ephemeral_store.set_if_absent.return_value = True  # so the atomic claim takes it
 
     app = _app(deps)
     client = app.test_client()
@@ -95,8 +96,11 @@ async def test_bound_number_mints_ticket_and_parks_callback_without_originating(
     set_calls = {c.args[0]: (c.args[1], c.kwargs["ttl_s"]) for c in ephemeral_store.set.await_args_list}
     ticket_key = next(key for key in set_calls if key.startswith("voice_ticket:"))
     assert set_calls[ticket_key][0] == {"user_id": "u1", "account_id": "a1"}
-    # Marker at the short TTL while only parked.
-    assert set_calls["voice_one_call:u1"][1] == 300
+    # Marker at the short TTL while only parked, written by the atomic claim (its only write).
+    ephemeral_store.set_if_absent.assert_awaited_once()
+    claim = ephemeral_store.set_if_absent.await_args
+    assert claim.args[0] == "voice_one_call:u1" and claim.kwargs["ttl_s"] == 300
+    assert "voice_one_call:u1" not in set_calls
     pending, _ = set_calls["voice_pending_callback:CAin"]
     # The parked record names the same ticket the stored ticket record is keyed by (sealed, never raw).
     parked_ticket = await open_ticket(_CIPHER, "voice_pending_callback:CAin", pending)

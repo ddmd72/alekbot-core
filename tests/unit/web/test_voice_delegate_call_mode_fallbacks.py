@@ -31,6 +31,12 @@ class _Store(EphemeralStore):
     async def set(self, key, value, ttl_s):
         self.records[key] = value
 
+    async def set_if_absent(self, key, value, ttl_s):
+        if key in self.records:
+            return False
+        self.records[key] = value
+        return True
+
     async def get(self, key):
         self.reads.append(key)
         if self.fail:

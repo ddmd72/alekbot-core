@@ -82,10 +82,10 @@ class VoiceCallSetupService:
         return one_call_marker_key(user_id)
 
     async def claim(self, user_id: str, holder: dict, ttl_s: int) -> bool:
-        if await self._store.get(self._marker_key(user_id)) is not None:
+        """Take the user's one-call marker; False (nothing written) when a live one exists. One atomic store claim."""
+        if not await self._store.set_if_absent(self._marker_key(user_id), {"in_flight": True, **holder}, ttl_s=ttl_s):
             logger.warning(f"voice setup: refused - {user_id} already has a call in flight")
             return False
-        await self._store.set(self._marker_key(user_id), {"in_flight": True, **holder}, ttl_s=ttl_s)
         return True
 
     async def holder(self, user_id: str) -> Optional[dict]:

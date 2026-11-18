@@ -64,9 +64,6 @@ async def test_a_crossing_recorded_through_the_quota_service_is_announced(world)
     assert len(budget_posts(http)) == 1
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G1-4: a deep-research job (job_main) increments usage directly and its daily-limit "
-                          "crossing is never announced")
 async def test_a_deep_research_job_that_crosses_the_limit_is_announced(world):
     """Flips when job_main records through `FirestoreQuotaService(repo, SlackWebhookAdapter(BILLING_SLACK_WEBHOOK_URL))`
     (or posts when its increment crossed)."""

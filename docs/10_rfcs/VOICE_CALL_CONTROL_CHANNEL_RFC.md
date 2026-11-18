@@ -398,9 +398,9 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
    - *Remaining edge*: a web call whose ticket the relay redeemed just before the dial, while `/connect` was still
      attaching the relay (its record lists no adapters yet), has nothing to close and stays live alongside the phone
      call until either ends; a window of about one SFU attach. Neither release removes the other's marker.
-   - *Open point (not changed here)*: the claim itself is check-then-set (`VoiceCallSetupService.claim` and the
-     `/voice/auth` check), so two simultaneous starts can both pass it (P11-G1-1, a strict xfail in
-     `test_voice_call_setup_service_store_pins.py`); the fix is a conditional write in the store port.
+   - *The claim is atomic*: `VoiceCallSetupService.claim` and the `/voice/auth` claim of a free marker use the store
+     port's `set_if_absent` (one Firestore transaction), so two simultaneous starts cannot both pass (P11-G1-1). The
+     takeover of a replaced web call stays an unconditional `set`.
 5. **Not a security change.** The marker is per user and `/web-call` is authenticated; the caller can only end their
    own call.
 

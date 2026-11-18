@@ -25,7 +25,7 @@ from ..ports.ephemeral_store import EphemeralStore
 
 class FirestoreEphemeralStore(EphemeralStore):
     """Collection `{prefix}voice_tickets`, document `{value, expires_at}`; the collection's TTL policy on `expires_at`
-    deletes what nobody reads back. A read deletes an expired document with no precondition; `get_and_delete` is one
+    deletes what nobody reads back. A read deletes an expired document with no precondition; `get_and_delete` and `set_if_absent` are each one
     transaction (an always-aborted one raises the SDK's ValueError). A document without `expires_at` raises KeyError on
     a read (no writer produces one)."""
 
@@ -36,6 +36,23 @@ class FirestoreEphemeralStore(EphemeralStore):
     async def set(self, key: str, value: dict, ttl_s: int) -> None:
         doc = self._db.collection(self._collection).document(key)
         await doc.set({"value": value, "expires_at": datetime.now(timezone.utc) + timedelta(seconds=ttl_s)})
+
+    async def set_if_absent(self, key: str, value: dict, ttl_s: int) -> bool:
+        """Claim `key` in one Firestore transaction: read the document, write it only when it is absent or expired.
+        Two concurrent claims read the same document, so Firestore aborts one; its retry re-reads the winner's live
+        document and returns False. An expired document is overwritten in the same commit."""
+        doc_ref = self._db.collection(self._collection).document(key)
+
+        @firestore.async_transactional
+        async def _transaction(transaction) -> bool:
+            snap = await doc_ref.get(transaction=transaction)
+            now = datetime.now(timezone.utc)
+            if snap.exists and snap.to_dict()["expires_at"] >= now:
+                return False
+            transaction.set(doc_ref, {"value": value, "expires_at": now + timedelta(seconds=ttl_s)})
+            return True
+
+        return await _transaction(self._db.transaction())
 
     async def get(self, key: str) -> Optional[dict]:
         doc = self._db.collection(self._collection).document(key)
