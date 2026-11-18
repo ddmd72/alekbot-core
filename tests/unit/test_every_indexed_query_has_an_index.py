@@ -95,13 +95,7 @@ VECTOR_FIELD_CHOICES: Dict[Tuple[str, str], Tuple[str, ...]] = {
 }
 
 # (file, function, shape) -> the defect label and its place: a query that needs an index nobody declared.
-KNOWN_MISSING: Dict[Tuple[str, str, str], str] = {
-    ("src/adapters/firestore_drive_note_repo.py", "FirestoreDriveNoteRepository.find_nearest",
-     "development_drive_notes: where(user_id ==) where(state ==) where(embedding_space ==) find_nearest(note_vector)"):
-        "P12-D1: src/adapters/firestore_drive_note_repo.py:269 the vector index of the owner notes (user_id, state, "
-        "embedding_space, note_vector) is created by an owner-run script, not declared in config/firestore.indexes.json "
-        "(only a `note_vector` field override with no indexes is), so the test database never gets it",
-}
+KNOWN_MISSING: Dict[Tuple[str, str, str], str] = {}
 
 # ----------------------------------------------------------------------------------------------- the walk
 
