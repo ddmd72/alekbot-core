@@ -702,8 +702,15 @@ def create_user_cabinet_blueprint(
             )
             user = await user_repo.get_user(g.user_id)
             user_tz_name = user.config.timezone if user else "UTC"
-            from zoneinfo import ZoneInfo
-            user_tz = ZoneInfo(user_tz_name)
+            from ..domain.local_time import known_zone
+            try:
+                user_tz = known_zone(user_tz_name)
+            except ValueError:
+                # A read must not fail on a bad stored zone: show the times in UTC and say so.
+                logger.warning("⚠️ [Cabinet] Unknown stored timezone %r for user %s — listing reminders in UTC",
+                               user_tz_name, g.user_id[:8])
+                user_tz_name = "UTC"
+                user_tz = known_zone(user_tz_name)
             return jsonify({
                 "reminders": [
                     {
