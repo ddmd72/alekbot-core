@@ -15,7 +15,7 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from src.domain.companion import CompanionRecord
-from tests.support.firestore_eval import EvalDb, stored_vector
+from tests.support.firestore_eval import stored_vector
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 REC = "eval_companion_records"
@@ -24,13 +24,13 @@ VEC = [1.0, 0.0]
 CREATED = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
 
-def _adapter(db: EvalDb) -> FirestoreCompanionMemoryRepository:
+def _adapter(db) -> FirestoreCompanionMemoryRepository:
     return FirestoreCompanionMemoryRepository(db, SimpleNamespace(companion_records_collection=REC))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={REC: "development_companion_records"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={REC: "development_companion_records"})
         self.repo = _adapter(self.db)
 
     @property
@@ -39,8 +39,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def record(rid="r1", session=SESSION, account="a1", vector=VEC, text="Practises guitar 1 h/day") -> CompanionRecord:
