@@ -179,7 +179,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 
 **Cookies Set:**
 - `access_token` (HttpOnly, 1 hour TTL) - JWT access token
-- `refresh_token` (HttpOnly, 30 days TTL) - JWT refresh token
+- `refresh_token` (HttpOnly, 24 hours TTL; a refresh does not rotate it, so a session lasts at most ~48 h) - JWT refresh token
 
 **Cookies Cleared:**
 - `oauth_state` (CSRF token no longer needed)
@@ -197,7 +197,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
   - Returns `(UserProfile, BillingAccount, oauth_tokens)`
 - **Step 3:** Create JWT session tokens via `session_service`
   - `create_access_token(user, account)` - 1 hour TTL
-  - `create_refresh_token(user, account)` - 30 days TTL
+  - `create_refresh_token(user, account)` - 24 hours TTL (`REFRESH_TOKEN_TTL`, 86400 s)
 - **Step 4:** Set HttpOnly cookies and return JSON response
 
 ---
@@ -220,20 +220,21 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 ```
 
 **Cookies Updated:**
-- `access_token` - New JWT access token (1 hour TTL)
+- `access_token` - New JWT access token (`ACCESS_TOKEN_TTL`, 24 hours by default)
 
 **Error Codes:**
-- `401` - Missing, expired, or invalid refresh token
+- `401` - Missing, expired, or invalid refresh token, or an access token sent as one
+- `401` - The user is absent or inactive, or their account is absent (`{"error": "Session no longer valid"}`)
+- `500` - A store error while loading the user or account (no detail in the body)
 
 **Implementation:**
-- File: [src/web/oauth_app.py:210-284](../../../src/web/oauth_app.py#L210)
+- File: [src/web/oauth_app.py](../../../src/web/oauth_app.py) (`refresh_token_endpoint`)
 - **Step 1:** Extract refresh token from cookie or `Authorization` header
 - **Step 2:** Verify refresh token via `session_service.verify_refresh_token()`
-- **Step 3:** Extract `user_id` and `account_id` from JWT payload
-- **Step 4:** Create new access token (TODO: fetch user/account from DB)
+- **Step 3:** Load the stored user (the token's `sub`) and the user's stored account via
+  `AuthenticationService.resume_session()`; the token's `account_id` is not used
+- **Step 4:** Create new access token from them: role from the account's `iam_policy`, tier from the account, as at sign-in
 - **Step 5:** Update `access_token` cookie
-
-**Note:** Currently trusts refresh token payload. In production, should fetch user/account from database to ensure user is still active.
 
 ---
 
@@ -401,7 +402,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 ### Authentication
 - **JWT (PyJWT)** - Stateless session tokens
   - Access token: 1 hour TTL (short-lived)
-  - Refresh token: 30 days TTL (long-lived)
+  - Refresh token: 24 hours TTL (not rotated on refresh)
 - **HMAC-SHA256** - Token signing algorithm
 - **HttpOnly Cookies** - XSS protection
 - **CSRF State Tokens** - CSRF protection (`secrets.token_urlsafe`)
@@ -430,7 +431,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
    - **Layer:** Infrastructure (configuration)
    - `oauth_redirect_uri` - OAuth callback URL
    - `access_token_ttl` - Access token TTL (3600s)
-   - `refresh_token_ttl` - Refresh token TTL (2592000s = 30 days)
+   - `refresh_token_ttl` - Refresh token TTL (86400s = 24 hours)
    - `oauth_session_secret` - JWT signing key
 
 ---
@@ -482,7 +483,7 @@ response.set_cookie(
 }
 ```
 
-**Refresh Token (30 days):**
+**Refresh Token (24 hours):**
 ```json
 {
   "sub": "user_id",

@@ -212,10 +212,6 @@ class TestRefreshAndMe:
         assert body["user"]["user_id"] == user["user_id"] and body["account"]["account_id"] == user["account_id"]
         assert body["user"]["email"] == ALEX
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="P19-D1: /auth/refresh mints the access token from a stub account with an empty iam_policy "
-                              "(oauth_app.py:300-310), so an owner comes back as `viewer` with a FREE tier; the TODO and "
-                              "decisions/cabinet_session_24h_cap.md 'Known debt' say it must load user and account")
     async def test_a_refreshed_token_keeps_the_owners_role(self, world):
         cookies = await self._signed_in(world)
         require(world.sessions.verify_access_token(cookies["access_token"])["role"] == "owner", "the login token carries the owner role")
@@ -223,9 +219,6 @@ class TestRefreshAndMe:
         resp = await world.client.post("/auth/refresh")
         assert world.sessions.verify_access_token((await resp.get_json())["access_token"])["role"] == "owner"
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="P19-D1b: /auth/refresh never reads the user (oauth_app.py:296-302 TODO), so a deleted user "
-                              "still gets a fresh access token from an unexpired refresh token")
     async def test_a_deleted_user_gets_no_new_access_token(self, world):
         cookies = await self._signed_in(world)
         (user_id,) = list(world.db.collection(USERS).docs)

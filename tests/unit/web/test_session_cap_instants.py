@@ -1,4 +1,6 @@
-"""The Cabinet session's 24 h cap at the instants that matter (P16-D6; `src/services/session_service.py`, `src/web/oauth_app.py`).
+"""The Cabinet session's token lifetimes at the instants that matter (P16-D6; `src/services/session_service.py`,
+`src/web/oauth_app.py`). The session slides: a login's tokens stop at 24 h, a refresh within the refresh token's TTL mints
+an access token with a full TTL from the refresh (`decisions/cabinet_session_24h_cap.md`, owner decision 2026-11-18).
 
 Real session service, real blueprint, real user/account/whitelist repositories on the evaluating Firestore fake; only
 Google (the `AuthPort` boundary) is scripted. Tokens travel as the browser sends them, in the `access_token` and
@@ -147,16 +149,35 @@ class TestLoginTokensStopAtTwentyFourHours:
         assert "access_token" not in await resp.get_json()
 
 
-class TestRefreshDoesNotExtendTheSession:
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="P16-D6: /auth/refresh mints a fresh 24 h access token (oauth_app.py:291), so a token "
-                              "refreshed at 23h59m lives to ~48h; the 24 h cap is not enforced on it; owner decision")
-    async def test_access_token_minted_by_refresh_is_refused_after_the_logins_24_h(self, monkeypatch):
+class TestRefreshSlidesTheSession:
+    async def test_access_token_minted_by_refresh_outlives_the_logins_24_h_until_its_own_ttl(self, monkeypatch):
+        """A refresh at 23h59m mints an access token that works past the login's 24 h (where the login's own token is
+        refused) and stops a full access TTL after the refresh, not later."""
         client = await _world()
-        _, refresh = await _login(client, monkeypatch)
-        _pin(monkeypatch, T0 + timedelta(hours=23, minutes=59))
+        login_access, refresh = await _login(client, monkeypatch)
+        refreshed_at = T0 + timedelta(hours=23, minutes=59)
+        _pin(monkeypatch, refreshed_at)
         resp = await _refresh(client, refresh)
         assert resp.status_code == 200
         renewed = (await resp.get_json())["access_token"]
         _pin(monkeypatch, T0 + timedelta(seconds=DAY + 1))
+        assert await _me(client, login_access) == 401
+        assert await _me(client, renewed) == 200
+        _pin(monkeypatch, refreshed_at + timedelta(seconds=DAY - 1))
+        assert await _me(client, renewed) == 200
+        _pin(monkeypatch, refreshed_at + timedelta(seconds=DAY + 1))
         assert await _me(client, renewed) == 401
+
+    async def test_the_session_cannot_slide_past_the_refresh_tokens_ttl(self, monkeypatch):
+        """The refresh token is not rotated: once it is past its TTL from login, the renewed session cannot be renewed
+        again, so the session ends at most refresh TTL + access TTL after login."""
+        client = await _world()
+        _, refresh = await _login(client, monkeypatch)
+        _pin(monkeypatch, T0 + timedelta(hours=23, minutes=59))
+        first = await _refresh(client, refresh)
+        assert first.status_code == 200
+        assert "refresh_token=" not in " ".join(first.headers.get_all("Set-Cookie"))
+        _pin(monkeypatch, T0 + timedelta(seconds=DAY + 1))
+        resp = await _refresh(client, refresh)
+        assert resp.status_code == 401
+        assert "access_token" not in await resp.get_json()

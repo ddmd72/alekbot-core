@@ -645,7 +645,7 @@ the `returns:` lines of the Consolidation tools other than `search_existing_fact
 - **The inventory's negative tests**, route-level on real repositories over H1: deep-research Svix HMAC, Slack signature, Graph webhook, voice
   OIDC, Cabinet owner and foreign tenant, every `/auth/*` refusal, MCP consent and the SDK app, the relay's ticket.
 - **Known defects as strict xfails:** the open redirect after sign-in (a fix PR follows); the Graph webhook trusting the URL's user id (owner:
-  not fixed); two client errors answered 500 instead of 401/400 (`/auth/refresh` with an access token, `/register` with null `redirect_uris`).
+  not fixed); two client errors answered 500 instead of 401/400 (`/auth/refresh` with an access token, fixed: 401; `/register` with null `redirect_uris`).
 - **F1:** `.coveragerc`'s `\.\.\.` exclude matched a `def` whose signature holds `...` and hid the whole function (1 686 statements in 142
   files). Anchored to a line that is only `...`. Floors re-set to the honest values with the owner's OK (local run; the CI runner's numbers
   re-adjust them): domain 98.1 → 98.0, ports 92.2 → 92.0, services 91.2 → 91.3, adapters 80.6 → 81.8, web 63.1 → 75.2, composition
@@ -757,7 +757,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P16-D4: recurrence drops `fold` (DAILY in the repeated hour returns an instant before the anchor; HOURLY and 15-minute rules lose a real hour on
     the fall-back day).
   - P16-D5: a skipped local wall time is accepted as the earlier offset; an unknown Cabinet zone answers 500.
-  - P16-D6: `/auth/refresh` mints a fresh 24 h access token (the cap from login is not enforced).
+  - P16-D6 (closed, not a defect): `/auth/refresh` mints a fresh 24 h access token. The owner chose a sliding session
+    (`decisions/cabinet_session_24h_cap.md`); the xfail was rewritten to pin that rule (`TestRefreshSlidesTheSession`).
   - P16-D7: the billing summary's Month line mixes months after traffic past 00:00Z on the 1st.
   - P16-D10: To Do sends an aware time's wall-clock digits labelled UTC (due, start, reminder).
   - P16-D11: the automatic To Do reminder is 20:00 UTC. A fix needs a zone input, so its reviewer rewrites that test.

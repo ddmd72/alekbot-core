@@ -246,6 +246,24 @@ class AuthenticationService:
 
         return user, account, tokens
 
+    async def resume_session(self, user_id: str) -> Tuple[UserProfile, BillingAccount]:
+        """
+        The stored user and their account, for renewing a session (`/auth/refresh`): the new access token's role and
+        tier come from what is stored now, as at sign-in, never from the refresh token's payload.
+
+        Raises:
+            AccessDeniedError: the user is absent or inactive, or their account is absent.
+        """
+        user = await self.user_repo.get_user(user_id)
+        if user is None or not user.is_active:
+            logger.warning(f"⛔ Session renewal refused: user {user_id} is absent or inactive")
+            raise AccessDeniedError(f"User {user_id} is absent or inactive")
+        account = await self.account_repo.get_account(user.account_id) if user.account_id else None
+        if account is None:
+            logger.warning(f"⛔ Session renewal refused: user {user_id} has no stored account")
+            raise AccessDeniedError(f"User {user_id} has no stored account")
+        return user, account
+
     async def register_new_user(
         self,
         external_user_id: str,

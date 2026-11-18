@@ -278,9 +278,10 @@ def create_oauth_blueprint(
         - refresh_token: JWT refresh token
 
         Flow:
-        1. Verify refresh token
-        2. Load user and account from database
-        3. Generate new access token
+        1. Verify refresh token (expired, invalid or wrong type: 401)
+        2. Load the stored user and their account (absent or inactive user, absent account: 401)
+        3. Generate a new access token from them (a full access TTL: the session slides,
+           decisions/cabinet_session_24h_cap.md)
         4. Return new token
         """
         # Get refresh token from cookie or header
@@ -294,24 +295,19 @@ def create_oauth_blueprint(
             return jsonify({"error": "Missing refresh token"}), 401
 
         try:
-            # Verify refresh token
             payload = session_service.verify_refresh_token(refresh_token)
+        except jwt.ExpiredSignatureError:
+            logger.warning("⏰ Refresh token expired")
+            return jsonify({"error": "Refresh token expired"}), 401
+        except (jwt.InvalidTokenError, ValueError) as e:
+            # ValueError: a valid token of the wrong type (an access token sent as refresh) is a client error too.
+            logger.warning(f"❌ Invalid refresh token: {e}")
+            return jsonify({"error": "Invalid refresh token"}), 401
 
-            user_id = payload["sub"]
-            account_id = payload["account_id"]
-
-            # TODO: Load user and account from database
-            # For now, we trust the refresh token payload
-            # In production, fetch from database to ensure user is still active
-
-            # Create new access token
-            # Note: This is a simplified version - should load from DB
-            from ..domain.user import UserProfile
-            from ..domain.billing import BillingAccount, AccountTier
-
-            user = UserProfile(user_id=user_id, account_id=account_id)
-            account = BillingAccount(account_id=account_id, tier=AccountTier.FREE)
-
+        user_id = payload["sub"]
+        try:
+            # Role and tier come from the stored user and account, as at sign-in; the payload only names the user.
+            user, account = await auth_service.resume_session(user_id)
             new_access_token = session_service.create_access_token(user, account)
 
             logger.info(f"🔄 Access token refreshed - user: {user_id}")
@@ -335,12 +331,8 @@ def create_oauth_blueprint(
 
             return response
 
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Refresh token expired")
-            return jsonify({"error": "Refresh token expired"}), 401
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"❌ Invalid refresh token: {e}")
-            return jsonify({"error": "Invalid refresh token"}), 401
+        except AccessDeniedError:
+            return jsonify({"error": "Session no longer valid"}), 401
         except Exception as e:
             # Log detail server-side; never leak exception internals to the client.
             logger.error(f"❌ Token refresh failed: {e}")

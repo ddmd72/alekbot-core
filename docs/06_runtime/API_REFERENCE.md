@@ -6,7 +6,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 
 **Auth legend**
 - **JWT** — Cabinet session: `access_token` HttpOnly cookie (web UI) or `Authorization: Bearer <token>`
-  (`src/web/cabinet_auth.py`). Invalid or expired → `401`. The session is capped at 24 h with no silent refresh
+  (`src/web/cabinet_auth.py`). Invalid or expired → `401`. A login gives 24 h; a refresh slides the session
   (`decisions/cabinet_session_24h_cap.md`).
 - **owner** — JWT plus the account-owner check.
 - **OIDC** — Google-signed ID token of an allowed service account (`decisions/worker_oidc_and_docx_sandbox.md`).
@@ -18,7 +18,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 |--------|------|------|-------------|
 | `GET` | `/auth/login` | none | Redirect to Google sign-in |
 | `GET` | `/auth/callback` | none (OAuth state) | Sign-in callback; whitelist gate; sets the session cookies |
-| `POST` | `/auth/refresh` | cookie | New access token within the 24 h cap |
+| `POST` | `/auth/refresh` | cookie | New access token (a full TTL) from the stored user and account |
 | `POST` | `/auth/logout` | cookie | Revoke the refresh token, clear cookies |
 | `GET` | `/auth/me` | JWT | Current user and account |
 | `POST` | `/auth/link-oauth` | JWT | Link another OAuth identity to the user |
