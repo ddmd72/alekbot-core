@@ -274,8 +274,8 @@ class TestRegister:
         assert w.docs(CLIENTS) == {}
 
     async def test_null_redirect_uris_saves_no_client(self):
-        # Refused, but as a 500, not a 400: the SDK model accepts null (`list[AnyUrl] | None`) and the provider's
-        # translation iterates it (mcp_sdk_oauth_provider.py:98, TypeError). P7 report item.
+        # The SDK model accepts null (`list[AnyUrl] | None`); the provider refuses it before saving (the status and
+        # error code are pinned by test_null_redirect_uris_is_400_invalid_client_metadata).
         w = World()
         async with w.http() as http:
             resp = await http.post("/register", json={"redirect_uris": None})

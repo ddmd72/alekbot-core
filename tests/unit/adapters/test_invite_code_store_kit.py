@@ -141,8 +141,8 @@ async def test_create_never_replaces_another_invite(store):
     await store.repo.create(invite())
     try:
         await store.repo.create(invite(user_id="usr-intruder", account_id="acc-intruder"))
-    except Exception:       # refusing the second create is one way to keep the first; the docstring names no
-        pass                # refusal type, so the fix PR picks it and narrows this
+    except ValueError:      # the port's refusal of a stored code; anything else is a failure
+        pass
     assert (store.docs[key()]["user_id"], store.docs[key()]["account_id"]) == (OWNER, OWNER_ACC)
 
 
