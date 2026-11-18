@@ -10,7 +10,6 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 from google.api_core.exceptions import ServiceUnavailable
 
 from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
@@ -82,9 +81,6 @@ async def test_a_handed_off_batch_is_stored_in_the_queue_and_its_task_enqueued()
     assert TEXTS[0] not in repr(chain.db.collection(SESS).docs[SID]["history"])
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-3: an overflow batch is cut from the session before its hand-off and lost when the enqueue fails "
-    "(known loss, docs/05_building_blocks/memory/README.md:1259); fix is the owner's choice"))
 async def test_a_cut_batch_survives_a_failed_enqueue(monkeypatch):
     """Flips (XPASS) when the hand-off retries until the batch is stored, or the messages stay stored until the
     hand-off succeeded. A fix that writes the batch inside the append's transaction leaves no plain queue write for

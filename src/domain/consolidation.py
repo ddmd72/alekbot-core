@@ -1,8 +1,11 @@
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from pydantic import BaseModel, Field
+import hashlib
 import time
 import uuid
+
+from .llm import Message
 
 # The review pass's agent profile (prompt profile id and the `agent_type` its prompt is built for).
 REVIEW_PROFILE_ID = "consolidation_review"
@@ -14,6 +17,15 @@ EMAIL_PROFILE_ID = "consolidation_email"
 def consolidation_agent_id(user_id: str) -> str:
     """The id of a user's consolidation agent: the recipient of every consolidation and review message."""
     return f"consolidation_agent_{user_id}"
+
+
+def handoff_key(session_id: str, messages: Sequence[Message]) -> str:
+    """A stable key of a run of session messages handed off to a queue: the same messages (role, created_at, texts) of
+    the same session give the same key. A batch whose hand-off is repeated (its cut from the session failed, so the next
+    append hands it off again) is then stored under the same id and replaces its first record instead of adding one."""
+    identity = (session_id, [(m.role, m.created_at, [(p.text, p.full_text, p.consolidation_text) for p in m.parts])
+                             for m in messages])
+    return hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()[:24]
 
 
 # Paid attempts per round: a batch whose runs fail (or are lost as zombies) this many times is FAILED.

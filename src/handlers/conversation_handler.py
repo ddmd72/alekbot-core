@@ -1535,8 +1535,9 @@ class ConversationHandler(ConversationHandlerPort):
                         "created_at": msg.created_at,
                     })
 
-                from src.domain.consolidation import ConsolidationBatch
+                from src.domain.consolidation import ConsolidationBatch, handoff_key
                 batch = ConsolidationBatch(
+                    batch_id=f"batch_{handoff_key(session.session_id, old_messages)}",
                     user_id=session.user_id,
                     session_id=session.session_id,
                     messages=serialized
@@ -1551,11 +1552,11 @@ class ConversationHandler(ConversationHandlerPort):
                 )
                 await response_channel.send_status(StatusType.THINKING, thread_id=context.thread_id)
 
-                # Enqueue
+                # Enqueue first, then cut exactly these messages from the stored session: a pair appended since the
+                # load is kept (P15-S3), and a repeat after a failed cut replaces the same batch id.
                 await self.consolidation_queue.enqueue_batch(batch)
-                
-                # Save trimmed session
-                await session_store.save_session(session.session_id, session)
+                if not await session_store.remove_head(session.session_id, old_messages):
+                    logger.warning(f"⚠️ [$consolidate] the batch was no longer at the head of {session.session_id[:16]}")
                 
                 # Process — await keeps HTTP request alive → full CPU on Cloud Run
                 try:

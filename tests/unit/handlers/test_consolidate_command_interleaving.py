@@ -12,7 +12,6 @@ the factory and the channel are fakes that keep what they were given.
 import asyncio
 from typing import Any, List, Optional
 
-import pytest
 
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.llm import Message, MessagePart
@@ -120,9 +119,6 @@ class TestConsolidateCommandInterleaving:
         assert texts[-2:] == [p.parts[0].text for p in PAIR]
         assert "old message 0" not in texts  # the oldest batch left the session
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S3: $consolidate saves the session it loaded before the run, overwriting a pair appended in "
-        "between; owner decision"))
     async def test_a_pair_appended_while_the_command_runs_is_still_in_the_session(self):
         """Collections touched: `development_sessions` (the gate, not `yield_on_get`, orders the steps)."""
         store, queue, handler, context = await _world()

@@ -207,6 +207,13 @@ class InMemorySessions(SessionStore):
     async def save_session(self, session_id: str, state: Session) -> None:
         self.sessions[session_id] = state
 
+    async def remove_head(self, session_id: str, messages: list) -> bool:
+        session = self.sessions.get(session_id)
+        if session is None or session.history[: len(messages)] != list(messages):
+            return False
+        session.history = session.history[len(messages):]
+        return True
+
     async def append_message(self, session_id: str, message: Message, owner_id: Optional[str] = None) -> None:
         self.sessions.setdefault(session_id, Session(session_id=session_id)).add_message(message)
 

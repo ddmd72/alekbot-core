@@ -343,3 +343,67 @@ async def test_latest_session_id_without_the_index_reads_none():
     store = make_store(db=EvalDb(indexes=[]))
     docs(store)["u1:C1"] = {"history": [], "owner_id": "u1", "last_activity": 10.0}
     assert await store.get_latest_session_id("u1") is None
+
+
+# --------------------------------------------------------------------------------------------------- hand-off first (O2)
+
+class FailFirst(Handoffs):
+    """The overflow callback that raises on its first call, as a failed enqueue does, then records like Handoffs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = 0
+
+    async def __call__(self, owner, session_id, messages):
+        if self.failed == 0:
+            self.failed += 1
+            raise ServiceUnavailable("503 UNAVAILABLE the queue write failed")
+        await super().__call__(owner, session_id, messages)
+
+
+async def test_a_failed_hand_off_keeps_the_batch_and_the_next_append_hands_it_off_again(kit_db):
+    handoffs = FailFirst()
+    store = make_store(new_db(kit_db), handoffs=handoffs)
+    await append_each(store, 5)
+    await settle(store)
+    assert texts(store) == TEXTS[:5] and handoffs.failed == 1 and handoffs.calls == []
+    await store.append_messages_batch(SID, [msg(TEXTS[5])], owner_id="u1")
+    await settle(store)
+    assert handoffs.calls == [("u1", SID, TEXTS[:2])]
+    assert texts(store) == TEXTS[2:6]
+
+
+async def test_without_a_callback_the_window_is_cut_with_the_append(kit_db):
+    store = make_store(new_db(kit_db))
+    await append_each(store, 5)
+    assert texts(store) == TEXTS[2:5] and store._pending_tasks == set()
+
+
+async def test_remove_head_cuts_the_stored_head_and_keeps_what_was_appended_after(store):
+    await append_each(store, 3)
+    head = (await store.load_session(SID)).history[:2]
+    await store.append_messages_batch(SID, [msg(TEXTS[3])], owner_id="u1")
+    assert await store.remove_head(SID, head) is True
+    assert texts(store) == TEXTS[2:4]
+    assert await store.remove_head(SID, head) is False              # already cut: the head changed
+    assert texts(store) == TEXTS[2:4]
+
+
+async def test_remove_head_of_messages_that_are_not_the_head_or_of_a_missing_session_cuts_nothing(store):
+    await append_each(store, 3)
+    middle = (await store.load_session(SID)).history[1:3]
+    assert await store.remove_head(SID, middle) is False
+    assert await store.remove_head(SID, []) is False
+    assert await store.remove_head(SID2, middle) is False
+    assert texts(store) == TEXTS[:3] and SID2 not in docs(store)
+
+
+@pytest.mark.h1_only("injects a conflicting commit with interfere_on_txn_read")
+async def test_remove_head_keeps_a_message_appended_during_the_cut(store):
+    await append_each(store, 3)
+    head = (await store.load_session(SID)).history[:2]
+    stored = docs(store)[SID]["history"]
+    # an append commits between the cut's read and its commit: the cut re-runs on the new history
+    store.db.interfere_on_txn_read(SESS, SID, {"history": stored + [raw(TEXTS[3])]}, after_read=True)
+    assert await store.remove_head(SID, head) is True
+    assert texts(store) == TEXTS[2:4]
