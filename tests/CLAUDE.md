@@ -16,10 +16,10 @@ tests/
   conftest.py     — fixtures + the plugin in tests/plugins/ (suite lock)
   plugins/        — pytest plugins: the suite lock, `network_guard.py` (the offline G2 run)
   unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
-  integration/    — mocked or scripted services; the offline G2 end-to-end test is part of the offline gate
+  integration/    — `offline/` (mocked or scripted, no network: adapter wire contracts, sandbox tunnel, flows; the offline G2 end-to-end test `offline/test_drive_g2_end_to_end.py` is part of the offline gate); the rest of the folder calls real services (today `test_sliding_window_e2e.py`, which writes to the live collections: a candidate for retirement or a rewrite onto the cloud gate)
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
-  cloud/          — the cloud gate: real writes to the Firestore test database and, with `TEST_GCS_BUCKET` set, the GCS test bucket (`make test-cloud`); never in the CI gate, weekly in the cloud (`Firestore parity`, Firestore only until P12)
+  cloud/          — the cloud gate: real writes to the Firestore test database (parity scenarios, `test_prompt_4level_cloud.py`) and, with `TEST_GCS_BUCKET` set, the GCS test bucket (`make test-cloud`); never in the CI gate, weekly in the cloud (`Firestore parity`, Firestore only until P12)
 ```
 
 ## The convention

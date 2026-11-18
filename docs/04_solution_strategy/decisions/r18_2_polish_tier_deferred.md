@@ -60,7 +60,7 @@ The pattern is fully durable for future propagation:
 - `tests/contracts/adapter_contracts.py` — 9-rule repository, AI MODIFICATION
   POLICY guards against silent rule changes.
 - `docs/how_to/ADAPTER_WIRE_TESTING.md` — protocol for adding new adapters.
-- `tests/integration/adapters/conftest.py` — `CapturingStub` infrastructure for
+- `tests/integration/offline/adapters/conftest.py` — `CapturingStub` infrastructure for
   HTTP, subprocess, chained-query SDK boundary shapes.
 - `docs/04_solution_strategy/decisions/adapter_contract_pattern_propagation.md`
   — propagation rationale and pattern catalogue.

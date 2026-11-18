@@ -6,7 +6,7 @@
 
 ## Decision
 
-The wire-test pattern in `tests/contracts/adapter_contracts.py` + `tests/integration/adapters/conftest.py` is the canonical shape for adapter-boundary contract testing across the codebase, not LLM-only.
+The wire-test pattern in `tests/contracts/adapter_contracts.py` + `tests/integration/offline/adapters/conftest.py` is the canonical shape for adapter-boundary contract testing across the codebase, not LLM-only.
 
 Same shape applies to non-LLM adapters:
 - **One CapturingStub class per external SDK / subprocess / HTTP boundary** — captures the request payload at the outermost adapter call.
@@ -22,10 +22,10 @@ The mechanism existed but only covered 1 of N adapter seams. Inspection finding 
 ## POC scope (this commit)
 
 `GmailProviderAdapter` is the first non-LLM application:
-- `GmailCapturingStub` in `tests/integration/adapters/conftest.py` — patches `aiohttp.ClientSession` at the adapter's import site; records every GET/POST as a request record `{method, url, headers, params, data}`.
+- `GmailCapturingStub` in `tests/integration/offline/adapters/conftest.py` — patches `aiohttp.ClientSession` at the adapter's import site; records every GET/POST as a request record `{method, url, headers, params, data}`.
 - `GMAIL_AUTHORIZATION_HEADER_PRESENT` — every request carries `Authorization: Bearer <token>`. Broad invariant.
 - `GMAIL_LIST_EMAILS_PAGE_TOKEN_EXCLUDES_QUERY` — when listing resumes via `page_token`, `q=` must be omitted. Narrow, load-bearing — Gmail embeds the original query in `pageToken`; passing `q=` alongside silently overrides the embedded date filter. Was previously enforced only by an inline comment.
-- `tests/integration/adapters/test_gmail_contracts.py` — three tests: positive auth header check, positive pageToken-no-q check, sanity-pair (first page DOES include `q=`).
+- `tests/integration/offline/adapters/test_gmail_contracts.py` — three tests: positive auth header check, positive pageToken-no-q check, sanity-pair (first page DOES include `q=`).
 
 Both rules were verified to catch the regression they describe by injecting bad payloads at the validator level.
 
