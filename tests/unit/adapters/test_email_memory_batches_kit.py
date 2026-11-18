@@ -176,6 +176,7 @@ async def test_another_users_mail_never_returns(world):
     assert ids(await batch(repo, user_id="user-2")) == ["theirs"]
 
 
+@pytest.mark.h1_only("builds its own EvalDb( over a trimmed index file")
 async def test_the_settled_read_needs_the_declared_composite_index(tmp_path):
     declared = json.loads(INDEXES_FILE.read_text())
     target = [{"fieldPath": f, "order": "ASCENDING"} for f in ("user_id", "consolidated_at", "card_state", "indexed_at")]
