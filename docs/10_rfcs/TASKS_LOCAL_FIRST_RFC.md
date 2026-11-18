@@ -471,7 +471,7 @@ class TaskLifecyclePort(ABC):
 
 ## 6. Adapters
 
-### 6.1 `MicrosoftToDoAdapter` (`src/adapters/microsoft_todo_adapter.py`) — NEW
+### 6.1 `MicrosoftToDoAdapter` (`src/adapters/microsoft/todo_adapter.py`) — NEW
 
 Implements `TasksProviderPort` **and** `TaskLifecyclePort`.
 
@@ -867,7 +867,7 @@ WorkerHandler task types:
 | `src/ports/task_search_index.py` | `TaskSearchIndex` ABC |
 | `src/ports/task_config_port.py` | `TaskConfigPort` ABC |
 | `src/ports/task_lifecycle_port.py` | `TaskLifecyclePort` ABC |
-| `src/adapters/microsoft_todo_adapter.py` | Graph API CRUD + subscriptions; implements `TasksProviderPort` + `TaskLifecyclePort` |
+| `src/adapters/microsoft/todo_adapter.py` | Graph API CRUD + subscriptions; implements `TasksProviderPort` + `TaskLifecyclePort` |
 | `src/adapters/firestore_task_search_index.py` | Firestore vector search index; implements `TaskSearchIndex` |
 | `src/adapters/firestore_task_config_repository.py` | Firestore per-user config; implements `TaskConfigPort` |
 | `src/services/task_indexing_service.py` | `TaskIndexingService` — embed+index pipeline |
@@ -925,7 +925,7 @@ in Phase 5. No real users on Google Tasks.
 - `src/composition/service_container.py` — deactivate `GoogleTasksAdapter` (alongside port signature changes)
 
 ### Phase 2 — Adapters ✅ COMPLETED
-- `src/adapters/microsoft_todo_adapter.py` — implements `TasksProviderPort` + `TaskLifecyclePort`; injects `TaskConfigPort`
+- `src/adapters/microsoft/todo_adapter.py` — implements `TasksProviderPort` + `TaskLifecyclePort`; injects `TaskConfigPort`
 - `src/adapters/firestore_task_search_index.py`
 - `src/adapters/firestore_task_config_repository.py`
 - Wire tests for all three adapters
@@ -1001,7 +1001,7 @@ After all implementation phases are complete, update the following arc42 docs.
 |------|-------------|
 | `CLAUDE.md` | `TasksAgent` in Key Mechanisms; `MicrosoftToDoAdapter` + `TaskSearchIndex` in Architecture; `reindex_task_list` in WorkerHandler task types |
 | `docs/08_concepts/DATABASE_SCHEMA.md` | Two new collections in §1.1 table + full schema sections: `{env}_task_search_index` (doc ID: `{user_id}_{task_id}`; fields + embed schemes) and `{env}_task_config` (doc ID: `user_id`; `primary_list_id`, `subscriptions`) |
-| `docs/04_solution_strategy/current_implementation/STRUCTURE.md` | New files: `src/ports/task_search_index.py`, `src/adapters/microsoft_todo_adapter.py`, `src/adapters/firestore_task_search_index.py`; updated `src/domain/task.py` |
+| `docs/04_solution_strategy/current_implementation/STRUCTURE.md` | New files: `src/ports/task_search_index.py`, `src/adapters/microsoft/todo_adapter.py`, `src/adapters/firestore_task_search_index.py`; updated `src/domain/task.py` |
 | `docs/05_building_blocks/multi_agent_system/README.md` | Add `TasksAgent` to specialist agents table: intent `manage_tasks`, tools, dependencies |
 | `docs/05_building_blocks/oauth_multi_tenant/README.md` | Add Microsoft To Do as new OAuth provider: tenant `consumers`, scopes, refresh endpoint, provider key `"microsoft_todo"` |
 | `docs/05_building_blocks/user_cabinet/README.md` | New Tasks Management section with `/api/tasks/status`, `/api/tasks/reindex`, `/api/tasks/lists`, `/api/tasks/disconnect` |
