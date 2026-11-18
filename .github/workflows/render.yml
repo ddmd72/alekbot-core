@@ -13,6 +13,11 @@ on:
     paths:
       - ".github/workflows/render.yml"
       - "tests/support/skip_ledger.py"
+      - "scripts/ci/check_junit_ran.py"
+      - "Dockerfile.sandbox"
+      - "docx_generator/**"
+      - "pdf_generator/**"
+      - "src/adapters/sandbox_engine/**"
   workflow_dispatch:
 
 permissions:
@@ -86,9 +91,9 @@ jobs:
             tests/unit/adapters/sandbox_engine/test_html_render_engine_real.py
             tests/unit/adapters/sandbox_engine/test_html_render_no_network.py
         run: |
+          echo "$TESTS" > render-tests.txt
           python -m pytest -p no:cacheprovider -p tests.plugins.skip_report --asyncio-mode=auto -q -rs \
             -m "not docker" --junitxml=junit-render.xml $TESTS
-          echo "$TESTS" > render-tests.txt
 
       - name: Fail when a render test was skipped or a file ran nothing
         # A skipped render test is the failure this job exists to catch (a missing install must not read as green). Only
