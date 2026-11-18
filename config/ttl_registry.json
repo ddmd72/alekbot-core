@@ -1,5 +1,5 @@
 {
- "_about": "Every document or value that writes `expires_at` or `purge_after` under src/ (tests/support/ttl_registry.py scans for writers; tests/unit/test_ttl_registry.py). deleted_by: ttl-policy (a Firestore TTL policy, in the generated runbook of docs/07_deployment/README.md), janitor, never, unverified (the code says a policy is meant, the runbook lists none), provider, not-stored.",
+ "_about": "Every document or value that writes `expires_at` or `purge_after` under src/ (tests/support/ttl_registry.py scans for writers; tests/unit/test_ttl_registry.py). deleted_by: ttl-policy (a Firestore TTL policy, in the generated runbook of docs/07_deployment/README.md), janitor, never, unverified (the code says a policy is meant, the runbook lists none), provider, not-stored. prefixed:false = the collection-group id carries no environment prefix; runbook_also / runbook_row=merged put two groups in one runbook row.",
  "entries": [
   {
    "id": "facts",
@@ -41,10 +41,11 @@
    "collection": "skill_drafts",
    "field": "expires_at",
    "deleted_by": "ttl-policy",
-   "what_expires": "unsaved skill drafts (30 days)",
+   "what_expires": "unsaved skill drafts (30 days) and their staged file contents",
    "writers": [
     "src/adapters/firestore_skill_repository.py"
-   ]
+   ],
+   "runbook_also": "draft_files"
   },
   {
    "id": "draft_files",
@@ -52,10 +53,12 @@
    "field": "expires_at",
    "deleted_by": "ttl-policy",
    "what_expires": "staged file contents of unsaved skill drafts",
-   "note": "keyed by collection-group across the database, so a draft's file subcollection is never named `files`",
+   "note": "an unprefixed subcollection group (never `files`), keyed by collection-group across the database (firestore_skill_repository.py `_DRAFT_FILES`); its runbook row is merged into skill_drafts",
    "writers": [
     "src/adapters/firestore_skill_repository.py"
-   ]
+   ],
+   "prefixed": false,
+   "runbook_row": "merged"
   },
   {
    "id": "memory_fact_drafts",

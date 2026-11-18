@@ -68,3 +68,19 @@ def scan_tree(root: Path = REPO_ROOT) -> Set[Writer]:
 
 def registered(entries: List[Dict]) -> Set[Writer]:
     return {(path, entry["field"]) for entry in entries for path in entry["writers"]}
+
+
+def ephemeral_store_collections(root: Path = REPO_ROOT) -> Set[str]:
+    """The `EnvironmentConfig` properties handed to every `FirestoreEphemeralStore(...)` under src/ and the root entry points."""
+    found: Set[str] = set()
+    for file in sorted(list((root / "src").rglob("*.py")) + list(root.glob("*.py"))):
+        text = file.read_text(encoding="utf-8")
+        if "FirestoreEphemeralStore(" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if not (isinstance(node, ast.Call) and ast.unparse(node.func).endswith("FirestoreEphemeralStore")):
+                continue
+            arg = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "collection"), None)
+            if isinstance(arg, ast.Attribute):
+                found.add(arg.attr)
+    return found

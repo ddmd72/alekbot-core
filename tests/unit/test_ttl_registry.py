@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from scripts import generate_ttl_runbook as gen
+from src.config.environment import EnvironmentConfig
 from tests.support import ttl_registry as reg
 
 ENTRIES = reg.load()
@@ -50,16 +51,41 @@ def test_a_collection_field_pair_has_one_row():
 
 def test_the_committed_runbook_block_is_the_generated_one():
     text = (ROOT / "docs" / "07_deployment" / "README.md").read_text(encoding="utf-8")
-    assert gen.apply(text, gen.render_block(ENTRIES)) == text, "run python -m scripts.generate_ttl_runbook"
+    assert gen.apply(text, gen.render_block(ENTRIES), gen.render_unverified(ENTRIES)) == text, "run python -m scripts.generate_ttl_runbook"
 
 
 def test_the_generated_block_holds_exactly_the_policy_and_unverified_rows():
-    block = gen.render_block(ENTRIES)
+    block = gen.render_block(ENTRIES) + gen.render_unverified(ENTRIES)
     listed = {e["collection"] for e in ENTRIES if e["collection"] and e["deleted_by"] in ("ttl-policy", "unverified")}
     every = {e["collection"] for e in ENTRIES if e["collection"]}
     for collection in every:
-        assert (f"| `<prefix>{collection}` |" in block) == (collection in listed), collection
+        assert (f"`<prefix>{collection}`" in block or f"`{collection}`" in block) == (collection in listed), collection
     assert listed
+
+
+def test_every_ephemeral_store_collection_is_a_registry_collection_and_back():
+    prefix = EnvironmentConfig().firestore_collection_prefix
+    config = EnvironmentConfig()
+    constructed = {getattr(config, prop).removeprefix(prefix) for prop in reg.ephemeral_store_collections()}
+    writer = "src/adapters/firestore_ephemeral_store.py"
+    registered = {e["collection"] for e in ENTRIES if writer in e["writers"] and e["collection"]}
+    assert constructed == registered
+
+
+def test_draft_files_is_an_unprefixed_subcollection_group():
+    entry = next(e for e in ENTRIES if e["id"] == "draft_files")
+    assert entry["prefixed"] is False
+    source = (ROOT / "src" / "adapters" / "firestore_skill_repository.py").read_text(encoding="utf-8")
+    assert '_DRAFT_FILES = "draft_files"' in source and "draft_ref.collection(_DRAFT_FILES)" in source
+    block = gen.render_block(ENTRIES)
+    assert "| `<prefix>skill_drafts` and `draft_files` |" in block
+    assert "<prefix>draft_files" not in block
+
+
+def test_the_runbook_keeps_its_original_words():
+    block = gen.render_block(ENTRIES)
+    assert "Four collections expire on a different field, **`purge_after`**, which exists only in storage:" in block
+    assert "unsaved skill drafts (30 days) and their staged file contents |" in block
 
 
 # --- the scanner, on invented sources ----------------------------------------------------------------------------------
@@ -80,7 +106,7 @@ def test_the_scanner_tells_a_writer_from_a_reader(source, fields):
 
 def test_the_generator_check_names_drift(tmp_path, monkeypatch):
     readme = tmp_path / "README.md"
-    readme.write_text(f"head\n{gen.BEGIN}\nstale\n{gen.END}\ntail\n")
+    readme.write_text(f"head\n{gen.BEGIN}\nstale\n{gen.END}\n{gen.BEGIN_U}\nold\n{gen.END_U}\ntail\n")
     monkeypatch.setattr(gen, "README", readme)
     assert gen.main(["--check"]) == 1
     assert gen.main([]) == 0
