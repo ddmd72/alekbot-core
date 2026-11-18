@@ -6,7 +6,7 @@ class ConsolidationQueue(ABC):
     """Port for the per-user queue of consolidation batches (one record per batch, id `batch_id`).
 
     Holds for every method:
-    - Tenancy: reads take a user_id and return only that user's batches; writes by batch_id (a random id) are unscoped.
+    - Tenancy: reads take a user_id and return only that user's batches; writes by batch_id are unscoped.
     - Atomicity: no method claims a batch; two concurrent readers get the same batch. Runs of one account are
       serialised by the memory-write lease in ConsolidationService, not here.
     - Legacy: a stored batch is read as a ConsolidationBatch (unknown fields ignored). A batch missing a required field
@@ -15,9 +15,11 @@ class ConsolidationQueue(ABC):
 
     @abstractmethod
     async def enqueue_batch(self, batch: ConsolidationBatch) -> str:
-        """Store the batch under its batch_id (a replace). Returns batch_id.
+        """Store the batch under its batch_id if no batch has that id. Returns batch_id.
 
-        Idempotency: the same batch twice is one record."""
+        Idempotency: create-if-absent. A batch whose id is already stored (a repeated overflow hand-off: the id is
+        `handoff_key` of its messages) is left as it is, status and attempts included, and the call succeeds; a
+        batch already processed and deleted is stored again."""
         pass
 
     @abstractmethod

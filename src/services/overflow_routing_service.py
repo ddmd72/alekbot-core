@@ -56,7 +56,8 @@ class OverflowRoutingService:
     async def route_overflow(self, user_id: str, session_id: str, messages: List[Message]) -> None:
         """Queue one overflow batch and its task. Raises (logged) when the batch or its task could not be queued: the
         session store then keeps the messages and hands them off again at the next append. The batch id is
-        `handoff_key` of the messages, so a repeated hand-off replaces the first record (owner decision O2)."""
+        `handoff_key` of the messages and the queue is create-if-absent, so a repeated hand-off keeps the first record as
+        stored (owner decision O2)."""
         try:
             binding = await self._resolve_binding(session_id)
 
