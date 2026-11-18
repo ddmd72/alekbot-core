@@ -14,7 +14,6 @@ from src.adapters import firestore_memory_fact_draft_repository
 from src.adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
 from src.domain.memory_fact import MemoryFactDraft, ProposedFact
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_memory_fact_drafts"
@@ -23,13 +22,13 @@ GYM = {"text": "Alex changed gyms from FitLife to Iron Temple", "source": "gym"}
 TEA = {"text": "Maria likes tea", "source": "family"}
 
 
-def _adapter(db: EvalDb) -> FirestoreMemoryFactDraftRepository:
+def _adapter(db) -> FirestoreMemoryFactDraftRepository:
     return FirestoreMemoryFactDraftRepository(db, SimpleNamespace(memory_fact_drafts_collection=COL))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE)
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE)
         self.repo = _adapter(self.db)
 
     @property
@@ -38,9 +37,9 @@ class Store:
 
 
 @pytest.fixture
-def store(monkeypatch):
+def store(monkeypatch, kit_db):
     pin_datetime(monkeypatch, firestore_memory_fact_draft_repository, NOW)
-    return Store()
+    return Store(kit_db)
 
 
 def draft(*facts, origin="u1:C1") -> MemoryFactDraft:

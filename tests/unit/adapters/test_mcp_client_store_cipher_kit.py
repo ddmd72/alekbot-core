@@ -28,7 +28,6 @@ from src.domain.secret_digest import keyed_digest
 from src.services.mcp_authorization_service import AuthorizationParams, MCPAuthorizationService
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
-from tests.support.firestore_eval import EvalDb
 
 CLIENTS, CODES, REFRESH = "eval_mcp_clients", "eval_mcp_auth_codes", "eval_mcp_refresh_tokens"
 DIGEST_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f000112233445566778899aabbccddeeff")
@@ -53,8 +52,8 @@ class BrokenCipher(AesGcmTestCipher):
 
 
 class Store:
-    def __init__(self, cipher: Any = None) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db, cipher: Any = None) -> None:
+        self.db = kit_db()
         self.cipher = cipher or AesGcmTestCipher()
         self.repo = FirestoreMCPClientRepository(self.db, ENV, cipher=self.cipher, digest_key=DIGEST_KEY)
         self.service = MCPAuthorizationService(
@@ -82,8 +81,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 def client(client_id: str = "client-a", **over: Any) -> MCPClient:
@@ -175,8 +174,8 @@ async def test_a_public_client_stores_and_reads_no_secret(store):
     assert store.cipher.encrypts == 0 and store.cipher.decrypts == 0
 
 
-async def test_a_cipher_failure_on_save_propagates_and_stores_nothing():
-    broken = Store(BrokenCipher())
+async def test_a_cipher_failure_on_save_propagates_and_stores_nothing(kit_db):
+    broken = Store(kit_db, BrokenCipher())
     with pytest.raises(RuntimeError, match="cipher backend unavailable"):
         await broken.repo.save_client(client())
     assert broken.docs(CLIENTS) == {}

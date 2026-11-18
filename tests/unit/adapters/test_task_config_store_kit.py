@@ -16,7 +16,6 @@ from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
-from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -24,13 +23,13 @@ COL = "eval_task_config"
 EXPIRES = datetime(2026, 11, 3, 8, 30, tzinfo=timezone.utc)
 
 
-def _adapter(db: EvalDb) -> FirestoreTaskConfigRepository:
+def _adapter(db) -> FirestoreTaskConfigRepository:
     return FirestoreTaskConfigRepository(db, SimpleNamespace(task_config_collection=COL))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE)
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE)
         self.repo = _adapter(self.db)
 
     @property
@@ -39,8 +38,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def sub(sub_id="s1", list_id="L1", expires_at=EXPIRES) -> TaskSubscriptionConfig:

@@ -33,7 +33,6 @@ from src.composition.mcp_sdk_oauth_provider import MCPSdkOAuthProvider
 from src.domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
 from src.domain.secret_digest import keyed_digest
 from src.services.mcp_authorization_service import MCPAuthorizationService, MCPInvalidGrant
-from tests.support.firestore_eval import EvalDb
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 
@@ -67,8 +66,8 @@ class MCPStore:
     """The real repository over one EvalDb with the declared indexes (each collection mapped to its index group), and
     the real token endpoint over it."""
 
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={
             CLIENTS: "development_mcp_oauth_clients", CODES: "development_mcp_auth_codes",
             REFRESH: "development_mcp_refresh_tokens"})
         self.repo = FirestoreMCPClientRepository(self.db, SimpleNamespace(
@@ -108,8 +107,8 @@ class MCPStore:
 
 
 @pytest.fixture
-def store():
-    return MCPStore()
+def store(kit_db):
+    return MCPStore(kit_db)
 
 
 def client(client_id="cli-a", **over) -> MCPClient:
