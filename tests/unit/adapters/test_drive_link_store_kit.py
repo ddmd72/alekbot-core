@@ -104,6 +104,7 @@ async def test_peek_never_writes(backend):
     assert (await backend.store.consume(KEY, T0 + timedelta(seconds=3), 1)).reads == 0
 
 
+@pytest.mark.h1_only("the firestore leg drives interfere_on_txn_read; the fake leg does not touch Firestore")
 async def test_two_concurrent_consumes_one_wins(backend):
     await backend.store.create(link())
     if isinstance(backend, Firestore):
