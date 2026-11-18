@@ -5,12 +5,11 @@ Boundary: aiohttp.ClientSession, recorded POST body. The request's {"dateTime", 
 is read the way Graph reads it (a wall-clock in the named zone), so the assertion is about
 the instant the user meant, not about a call.
 
-Defects pinned (strict xfail, owner decision):
-- P16-D10: `_dt_payload` labels any wall-clock "UTC" without converting an aware value.
-- P16-D11: the automatic reminder is 20:00 of whatever zone the value has (UTC), not the user's.
-  `_derive_reminder` is a staticmethod with no zone input and `TasksAgent` has no zone source, so
-  no fix can flip that test without a signature change: the fix's reviewer rewrites it to feed the
-  user's zone through the new input.
+Defects these tests pinned, now fixed:
+- P16-D10: `_dt_payload` labelled any wall-clock "UTC" without converting an aware value.
+- P16-D11 (owner decision O7(b)): the automatic reminder was 20:00 UTC; it is 20:00 user-local the
+  evening before. `_derive_reminder` takes the user's zone (`TasksAgent` gets it as `user_timezone`),
+  and the test feeds that zone through the new input.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -165,11 +164,10 @@ async def test_agent_parsed_offset_string_denotes_same_instant(monkeypatch):
     assert _instant(body["reminderDateTime"]) == _EXPECT_0800Z
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P16-D11: the automatic reminder is 20:00 UTC; a fix must give _derive_reminder the user's zone, and the fix's reviewer rewrites this test to feed that zone through the new input")
 async def test_automatic_reminder_is_evening_before_in_user_zone(monkeypatch):
-    due = TasksAgent._parse_datetime("2026-11-03")  # a date-only due: no zone is seeded
-    reminder, on = TasksAgent._derive_reminder(None, due)
+    due = TasksAgent._parse_datetime("2026-11-03")  # a date-only due: the user's zone comes from the agent
+    reminder, on = TasksAgent._derive_reminder(None, due, _BERLIN)
+    assert on is True
     body = await _send(monkeypatch, TaskCreate(
         title="x", due_datetime=due, reminder_datetime=reminder, is_reminder_on=on))
     expected = datetime(2026, 11, 2, 20, 0, tzinfo=_BERLIN).astimezone(timezone.utc)  # 19:00Z

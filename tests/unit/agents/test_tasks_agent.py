@@ -801,10 +801,12 @@ class TestParseDatetime:
         result = TasksAgent._parse_datetime("2026-04-01T10:00:00Z")
         assert result == datetime(2026, 4, 1, 10, 0, 0)
 
-    def test_invalid_iso_returns_none(self):
+    def test_invalid_iso_raises_value_error(self):
+        """P14-D5: a time the model sent that does not parse is refused (the tool loop returns it as the tool's error),
+        never dropped as if no time had been given."""
         from src.agents.tasks_agent import TasksAgent
-        result = TasksAgent._parse_datetime("not-a-date")
-        assert result is None
+        with pytest.raises(ValueError, match="not-a-date"):
+            TasksAgent._parse_datetime("not-a-date")
 
 
 # =============================================================================
