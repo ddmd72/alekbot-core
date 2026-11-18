@@ -140,6 +140,7 @@ async def test_link_and_unlink_of_a_missing_user_raise_value_error(repo):
     assert len(raised) == 2 and docs(repo) == {}
 
 
+@pytest.mark.h1_only("reads the fake's write log (versions)")
 async def test_unlink_removes_only_that_platform_and_absent_is_a_no_op(repo, monkeypatch):
     await repo.create_user(alex(platform_identities={"slack": "U1", "telegram": "777"}))
     later = datetime(2026, 10, 27, 9, 0, tzinfo=timezone.utc)
