@@ -891,7 +891,8 @@ class ConversationHandler(ConversationHandlerPort):
                     "thread_id": context.thread_id,
                     "metadata": context.metadata,
                     "current_message_parts": message_parts,
-                    "origin_channel_id": channel_id,
+                    # A Telegram turn has no `channel` key: its chat is the response channel's id (P13-D1).
+                    "origin_channel_id": channel_id or getattr(response_channel, "channel_id", None),
                     "origin_platform": getattr(response_channel, "platform", "slack"),
                     "interactive_delivery": True,
                     # Fixed before Smart runs, the same on a failover re-run (drive notes' undo guard): the

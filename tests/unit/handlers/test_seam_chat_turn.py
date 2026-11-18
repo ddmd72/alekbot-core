@@ -12,8 +12,6 @@ Pins P13-D1: a Telegram turn carries `origin_channel_id` None, so its async resu
 import asyncio
 from datetime import timedelta
 
-import pytest
-
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.llm import Message, MessagePart
@@ -81,11 +79,6 @@ async def test_a_page_asked_for_in_a_slack_channel_is_delivered_there(monkeypatc
     assert world.history("u1:C1") == []
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="P13-D1: a Telegram chat turn carries origin_channel_id None, so its async results go to the primary "
-           "channel; fix after the plan (owner)",
-)
 async def test_a_page_asked_for_in_a_telegram_chat_is_delivered_there(monkeypatch):
     """P13-D1. A Telegram message's metadata has no `channel` key (`webhook_adapter.py:283-301`), so
     `conversation_handler.py:651` reads None and `:936` forwards `origin_channel_id` None; `ums.py:119` then needs both
