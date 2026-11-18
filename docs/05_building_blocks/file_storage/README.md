@@ -347,7 +347,9 @@ verify ownership (§2.4).
 
 **Lifecycle (GCS, by prefix):** `email_review/` → delete after **5 days**; everything else
 (uploads, docs, deep_research) → delete after **30 days**. Config:
-`scripts/infra/alek-media-dev-lifecycle.json` (local-only infra artifact).
+`scripts/infra/alek-media-dev-lifecycle.json` (local-only infra artifact). History keeps the keys, so a key can
+outlive its object: `GcsMediaAdapter.fetch` raises `FileNotFoundError` for it (open_file's "not found" answer), and
+`/f/<token>/raw` answers 410 "This file has expired." (an outage stays 503).
 
 ### 3.3 FileConversionService
 

@@ -256,3 +256,25 @@ class TestRawRoute:
         assert resp.status_code == 200
         assert await resp.get_data() == b"0123456789"
         assert resp.headers["Accept-Ranges"] == "bytes"
+
+
+class TestRawExpiredObject:
+    """P11-G4-4: a delivered document the bucket's lifecycle already deleted, behind a token that is still valid.
+    The real GcsMediaAdapter over the GCS fake: the object is gone, so the route says so (410), not "unavailable"."""
+
+    async def test_expired_object_answers_410_not_503(self, tokens, session_service, monkeypatch, caplog):
+        import logging
+
+        from src.adapters.gcs_media_adapter import GcsMediaAdapter
+        from tests.support.gcs_fake import FakeGcs
+
+        fake = FakeGcs(buckets={"media-test": "plain"})
+        fake.install(monkeypatch)
+        app = _app(tokens, GcsMediaAdapter("media-test"), session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        with caplog.at_level(logging.INFO):
+            async with app.test_client() as client:
+                resp = await client.get(f"/f/{token}/raw")
+        assert resp.status_code == 410
+        assert await resp.get_data(as_text=True) == "This file has expired."
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
