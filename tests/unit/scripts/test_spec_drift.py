@@ -329,3 +329,44 @@ def test_every_source_has_a_baseline_matching_its_manifest(source):
 def test_no_baseline_without_a_source():
     names = {s.name for s in sd.SOURCES}
     assert {p.stem for p in sd.BASELINE_DIR.glob("*.json")} == names
+
+
+# ------------------------------------------------------------------------- schema-aware documentation filtering
+def test_normalize_keeps_properties_named_like_documentation_keys():
+    node = {"type": "object", "description": "prose", "properties": {
+        "description": {"type": "string", "description": "a field called description"},
+        "summary": {"type": "array", "title": "T"}, "example": {"type": "integer"},
+    }, "$defs": {"title": {"type": "string", "example": "x"}}}
+    assert sd.normalize(node) == {"type": "object", "properties": {
+        "description": {"type": "string"}, "summary": {"type": "array"}, "example": {"type": "integer"},
+    }, "$defs": {"title": {"type": "string"}}}
+
+
+def test_normalize_keeps_a_discovery_parameter_named_like_documentation_but_not_a_parameters_list():
+    assert sd.normalize({"parameters": {"title": {"type": "string", "description": "d"}}}) == \
+        {"parameters": {"title": {"type": "string"}}}
+    assert sd.normalize({"parameters": [{"name": "q", "description": "d"}]}) == {"parameters": [{"name": "q"}]}
+
+
+def test_check_reports_a_property_named_description_added_but_ignores_a_description_keyword_change(tmp_path):
+    _baseline(tmp_path, OPENAPI, "openapi_fragment.yaml")
+    spec = _spec("openapi_fragment.yaml")
+    request = spec["components"]["schemas"]["CreateWidgetRequest"]
+    request["description"] = "reworded keyword"
+    request["properties"]["size"]["description"] = "reworded too"
+    request["properties"]["description"] = {"type": "string"}
+    result = sd.check(OPENAPI, FakeFetch({OPENAPI.url: yaml.safe_dump(spec).encode()}), tmp_path)
+    assert result.status == "drift"
+    assert [c.line() for c in result.changes] == [
+        '+ components.#/components/schemas/CreateWidgetRequest.properties.description: {"type": "string"}',
+    ]
+
+
+def test_check_reports_a_removed_summary_property(tmp_path):
+    base = _spec("openapi_fragment.yaml")
+    base["components"]["schemas"]["Part"]["properties"]["summary"] = {"type": "string"}
+    sd.update(OPENAPI, FakeFetch({OPENAPI.url: yaml.safe_dump(base).encode()}), tmp_path, "2026-03-01")
+    result = sd.check(OPENAPI, FakeFetch({OPENAPI.url: _raw("openapi_fragment.yaml")}), tmp_path)
+    assert [c.line() for c in result.changes] == [
+        '- components.#/components/schemas/Part.properties.summary: {"type": "string"}',
+    ]
