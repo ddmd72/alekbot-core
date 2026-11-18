@@ -13,11 +13,13 @@ literals directly, never through composition or `load_settings()` (§4 guard 5: 
 suffix). The task target is a reserved `.invalid` host and carries no OIDC identity, so a dispatch could not reach the service.
 Every task the run creates is deleted in the end; names are unique per run (Cloud Tasks blocks a deleted name for about an hour).
 """
+import logging
 import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from google.api_core.exceptions import NotFound
 from google.cloud import tasks_v2
 
 from src.adapters import gcp_task_queue
@@ -63,8 +65,10 @@ def paused_queue(cloud):
     for name in created:
         try:
             client.delete_task(name=name)
-        except Exception:       # already gone: the cleanup must not hide the test's own verdict
+        except NotFound:        # already gone
             pass
+        except Exception as exc:    # the cleanup must not hide the test's own verdict, but a task left behind is named by class
+            logging.getLogger(__name__).warning("cloud test cleanup: a task was not deleted (%s)", type(exc).__name__)
 
 
 def _key(label: str) -> str:
@@ -84,12 +88,15 @@ def _assert_queued_not_dispatched(queue, name: str) -> None:
 
 async def test_a_worker_task_is_stored_on_the_paused_queue_and_not_dispatched(paused_queue):
     name = await paused_queue.adapter.enqueue_worker_task("parity_probe", {"run": RUN_ID}, dedup_key=_key("worker"))
+    if name:
+        paused_queue.created.append(name)      # before any assert: a failed assert must not leave the task behind
     assert name and name.startswith(paused_queue.adapter.queue_path + "/tasks/parity_probe-")
     _assert_queued_not_dispatched(paused_queue, name)
 
 
 async def test_an_agent_task_is_stored_on_the_paused_queue_and_not_dispatched(paused_queue):
     name = await paused_queue.adapter.enqueue_agent_task("probe_agent", "probe", "q", {"run": RUN_ID}, dedup_key=_key("agent"))
+    paused_queue.created.append(name)
     assert name.startswith(paused_queue.adapter.queue_path + "/tasks/agent_execution-")
     _assert_queued_not_dispatched(paused_queue, name)
 
@@ -99,8 +106,9 @@ async def test_a_second_worker_task_with_the_same_dedup_key_is_refused_as_alread
     (ALREADY_EXISTS); `enqueue_worker_task` turns that into `None`, never a raise."""
     key = _key("dedup-worker")
     first = await paused_queue.adapter.enqueue_worker_task("parity_probe", {"run": RUN_ID}, dedup_key=key)
+    if first:
+        paused_queue.created.append(first)
     assert first
-    paused_queue.created.append(first)
     assert await paused_queue.adapter.enqueue_worker_task("parity_probe", {"run": RUN_ID, "again": True}, dedup_key=key) is None
     queued = [t for t in paused_queue.client.list_tasks(parent=paused_queue.adapter.queue_path) if t.name == first]
     assert len(queued) == 1 and queued[0].dispatch_count == 0
