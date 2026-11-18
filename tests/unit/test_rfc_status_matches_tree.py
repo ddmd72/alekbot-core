@@ -34,13 +34,15 @@ RULES: list[tuple[str, str]] = [
     (r"^proposed\b", "proposed"),
     (r"^(partial|partially)\b", "in-progress"),
     (r"^active\b", "active"),
-    (r"^phases?\b.*\bnot built\b", "in-progress"),
+    # ("open" counts only as "still open" or a numbered part, "S4 open": "no owner question is open" is a finished RFC)
+    # an unfinished part beats a finished one: "Implemented; S4 not built" is still in progress
+    (r"^(?!accepted|design agreed).*(\bin progress\b|\bnot (yet )?built\b|\bnever built\b|\bstill open\b|\b[sp]\d\w* open\b|\bpending\b)", "in-progress"),
     (r"^(implemented|done)\b", "implemented"),
     (r"^phases?\b[^;.]*\b(complete|implemented)\b", "implemented"),
 ]
 # `accepted ...` is decided by what the rest of the line says about the build.
-_NOT_BUILT = re.compile(r"\bnot built\b")
-_BUILT = re.compile(r"(?<!not )\bbuilt\b|\bimplemented\b")
+_NOT_BUILT = re.compile(r"\bnot (yet )?built\b|\bnever built\b")
+_BUILT = re.compile(r"(?<!not )(?<!yet )(?<!never )\bbuilt\b|\bimplemented\b")
 _IN_PROGRESS = re.compile(r"in progress")
 # The build verdict of the whole RFC, as opposed to one slice's ("S1 built", "Built: S1"): it follows the accepted clause.
 _VERDICT = re.compile(r"[;,.—-]\s*(built|implemented)\b(?!:)")
@@ -69,28 +71,24 @@ UNTRACKED_PREFIXES = ("scripts/memory/", "docs/superpowers/", "firestore_utils/u
 # Implemented RFCs that cite a path the tree no longer has: `RFC file -> (number of missing paths, reason)`.
 # The number must match exactly (fewer: lower it; more: a new rot, fix the RFC).
 PATH_EXEMPT: dict[str, tuple[int, str]] = {
-    "ACP_V2_SIMPLIFIED_RFC.md": (2, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "AGENT_WORKSPACE_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "DEEP_RESEARCH_RFC.md": (2, "cites files that existed and were deleted or moved since (the OpenAI adapter and webhook of the replaced provider track)"),
-    "DELIBERATE_FACT_MANAGEMENT_RFC.md": (14, "lifecycle parts are superseded by FACT_LIFECYCLE_RFC; the migration scripts, v3 service and their tests were planned under names the code never took or lost"),
-    "DRIVE_FILE_NOTES_RFC.md": (5, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "DRIVE_SPECIALIST_RFC.md": (2, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "EMAIL_INDEX_V2_RFC.md": (2, "cites files that existed and were deleted or moved since (the email-search profile and token under prompts_snapshot)"),
-    "FACT_LIFECYCLE_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "GMAIL_EMAIL_INDEXING_RFC.md": (10, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established; one of the ten (the embedding repair service) existed and was deleted"),
-    "GOOGLE_DRIVE_RFC.md": (2, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "HEXAGONAL_PROMPT_CACHING_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "MCP_INFRASTRUCTURE_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "MULTILINGUAL_SUPPORT_RFC.md": (8, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established (the Slack socket adapter, a German locale and test names of the plan)"),
-    "PROACTIVE_SELF_REMINDERS_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "PROMPT_TOKEN_SNAPSHOT_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "REMOTE_MCP_SERVER_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "SECRETS_AT_REST_RFC.md": (2, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "TASKS_AGENT_RFC.md": (2, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "TASKS_LOCAL_FIRST_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md": (3, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "UNTRUSTED_CONTENT_SANDBOX_RFC.md": (5, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
-    "WIDGET_PLAYWRIGHT_RFC.md": (1, "cites files not in the tree; the history here is shallow, so renamed, deleted or planned-only is not established"),
+    "ACP_V2_SIMPLIFIED_RFC.md": (2, "never built: jira_agent.py and smart_agent.py are planning names that never existed in git"),
+    "DEEP_RESEARCH_RFC.md": (2, "deleted in fd180ae9 'refactor: remove the OpenAI deep-research path' (the adapter and its webhook)"),
+    "DELIBERATE_FACT_MANAGEMENT_RFC.md": (14, "13 planned names never built (v3 migrations, fact_lifecycle_service, enums.py, v3 tests); the zombie firestore_fact_management_adapter.py deleted in 3f78cfba (F1.1); lifecycle parts are superseded by FACT_LIFECYCLE_RFC"),
+    "DRIVE_FILE_NOTES_RFC.md": (5, "never built under these names: the notes skill file and four test files the plan named"),
+    "DRIVE_SPECIALIST_RFC.md": (2, "smart/drive-search/SKILL.md deleted in 3f5cd2b6 'the cut: the 8 drive intents leave Smart'; scripts/validation/drive_eval/smart_dry_run was never committed"),
+    "EMAIL_INDEX_V2_RFC.md": (2, "the email_search profile and its token were deleted in f761986e 'remove the v1 email vectors, v1 vector search, the embedding repair'"),
+    "FACT_LIFECYCLE_RFC.md": (1, "test_fact_management_adapter.py deleted in 9c783b8a 'Facts S2 T4 reviewer decisions on rows A, B and C'"),
+    "GMAIL_EMAIL_INDEXING_RFC.md": (10, "4 deleted (watchdog script f4b5151b, oauth credentials adapter 7d38acb1, embedding repair f761986e, debug_logger 2fd3ec2f); 6 never built under these names (email_agent, gmail_oauth_service, user_agent_factory, three tests)"),
+    "GOOGLE_DRIVE_RFC.md": (2, "media_launch.py and media_relay.py deleted in 205bfd0f 'S5 card F: delete the indexer's in-process media path'"),
+    "HEXAGONAL_PROMPT_CACHING_RFC.md": (1, "src/services/user_agent_factory.py never existed; the factory lives in src/composition/"),
+    "MCP_INFRASTRUCTURE_RFC.md": (1, "scripts/debug/test_mcp_maps.py was never committed to the repository"),
+    "MULTILINGUAL_SUPPORT_RFC.md": (8, "socket_adapter.py deleted in 69b367d2 'voice messages in Slack and Telegram become the user's own turn'; 7 never built under these names (a German locale, add_lang_tokens, base_agent and web_search_agent paths, three tests)"),
+    "PROACTIVE_SELF_REMINDERS_RFC.md": (1, "src/web/cabinet.py never existed; the Cabinet is in other src/web modules"),
+    "PROMPT_TOKEN_SNAPSHOT_RFC.md": (1, "docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md was never committed (the review lived outside the tree)"),
+    "REMOTE_MCP_SERVER_RFC.md": (1, "`config/adapter` is a prose fragment, not a path"),
+    "TASKS_AGENT_RFC.md": (2, "google_oauth_service.py deleted in 3cea1d25 (multi-drive 1a); gmail_oauth_service.py never existed at that path"),
+    "UNTRUSTED_CONTENT_SANDBOX_RFC.md": (5, "deleted with the in-process render and media paths: dac60331 (node_docx_runner, node_puppeteer_runner, pdf_generator/runner.js), 205bfd0f (media_extractor), e80df252 (video_probe)"),
+    "WIDGET_PLAYWRIGHT_RFC.md": (1, "tests/unit/services/test_rich_content_widget.py never existed under that name"),
 }
 
 
@@ -263,6 +261,10 @@ def test_path_exemptions_name_implemented_rfcs_with_a_reason():
         ("Draft, revision 3.21 — Slice 1 live", "draft"),
         ("Proposed (rev 6); U0–U5 built", "proposed"),
         ("Accepted, not built", "accepted"),
+        ("Accepted, not yet built", "accepted"),
+        ("Accepted — never built", "accepted"),
+        ("Phase 1 complete; phase 2 in progress", "in-progress"),
+        ("Implemented; S4 not built", "in-progress"),
         ("Accepted (owner, 2026-11-06) — not built", "accepted"),
         ("Accepted (owner); step 1 built; step 2 not built", "in-progress"),
         ("Accepted (2026-11-09), implementation in progress", "in-progress"),
