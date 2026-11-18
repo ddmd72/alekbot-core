@@ -31,8 +31,7 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
     (status, updated_at) for the stale query. `create_job_if_absent` is a document `create` (AlreadyExists = False).
     `update_job` is a plain document `update`; with `expected_status` it reads the job and writes under a
     `last_update_time` precondition (re-reading when another writer got in between), so a job whose status moved on is
-    left alone; a datetime subclass in `updates` is rewritten as a plain datetime first. Reads rebuild every date field as a naive plain
-    datetime (Firestore returns `DatetimeWithNanoseconds`).
+    left alone. Reads rebuild every date field as a naive plain datetime (Firestore returns `DatetimeWithNanoseconds`).
     """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
@@ -67,28 +66,20 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
         self, job_id: str, updates: Dict[str, Any], expected_status: Optional[str] = None
     ) -> bool:
         """Partial update called after each successful chunk; with `expected_status`, only while the job has it."""
-        # DatetimeWithNanoseconds is a datetime subclass returned by Firestore reads.
-        # Writing it back fails in some SDK versions: '_nanosecond' attribute missing.
-        # Normalize any datetime subclass to a plain datetime before the write.
-        sanitized = {
-            k: datetime(v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond, v.tzinfo)
-            if isinstance(v, datetime) and type(v) is not datetime else v
-            for k, v in updates.items()
-        }
         ref = self.collection.document(job_id)
         if expected_status is None:
-            await ref.update(sanitized)
+            await ref.update(updates)
             logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
             return True
         for _ in range(_CONDITIONAL_UPDATE_ATTEMPTS):
             snap = await ref.get()
             if not snap.exists:
-                await ref.update(sanitized)  # raises the backend's NotFound, as the unconditional write does
+                await ref.update(updates)  # raises the backend's NotFound, as the unconditional write does
             if (snap.to_dict() or {}).get("status") != expected_status:
                 logger.info(f"📋 Job {job_id} is no longer {expected_status}, update skipped")
                 return False
             try:
-                await ref.update(sanitized, option=self.db.write_option(last_update_time=snap.update_time))
+                await ref.update(updates, option=self.db.write_option(last_update_time=snap.update_time))
             except FailedPrecondition:
                 continue  # another writer got in between: read again and re-check the status
             logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")

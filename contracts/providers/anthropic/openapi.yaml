@@ -1,0 +1,1472 @@
+components:
+  schemas:
+    Base64ImageSourceParam:
+      additionalProperties: false
+      properties:
+        data:
+          anyOf:
+          - type: string
+          - format: path
+            type: string
+        media_type:
+          enum:
+          - image/gif
+          - image/jpeg
+          - image/png
+          - image/webp
+          type: string
+        type:
+          const: base64
+          type: string
+      required:
+      - data
+      - media_type
+      - type
+      type: object
+    Base64PDFSourceParam:
+      additionalProperties: false
+      properties:
+        data:
+          anyOf:
+          - type: string
+          - format: path
+            type: string
+        media_type:
+          const: application/pdf
+          type: string
+        type:
+          const: base64
+          type: string
+      required:
+      - data
+      - media_type
+      - type
+      type: object
+    BashCodeExecutionOutputBlockParam:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        type:
+          const: bash_code_execution_output
+          type: string
+      required:
+      - file_id
+      - type
+      type: object
+    BashCodeExecutionResultBlockParam:
+      additionalProperties: false
+      properties:
+        content:
+          items:
+            $ref: '#/components/schemas/BashCodeExecutionOutputBlockParam'
+          type: array
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        stdout:
+          type: string
+        type:
+          const: bash_code_execution_result
+          type: string
+      required:
+      - content
+      - return_code
+      - stderr
+      - stdout
+      - type
+      type: object
+    BashCodeExecutionToolResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/BashCodeExecutionToolResultErrorParam'
+          - $ref: '#/components/schemas/BashCodeExecutionResultBlockParam'
+        tool_use_id:
+          type: string
+        type:
+          const: bash_code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
+    BashCodeExecutionToolResultErrorParam:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - execution_time_exceeded
+          - invalid_tool_input
+          - output_file_too_large
+          - too_many_requests
+          - unavailable
+          type: string
+        type:
+          const: bash_code_execution_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
+    CacheControlEphemeralParam:
+      additionalProperties: false
+      properties:
+        ttl:
+          enum:
+          - 1h
+          - 5m
+          type: string
+        type:
+          const: ephemeral
+          type: string
+      required:
+      - type
+      type: object
+    CitationCharLocationParam:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        document_index:
+          type: integer
+        document_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+        end_char_index:
+          type: integer
+        start_char_index:
+          type: integer
+        type:
+          const: char_location
+          type: string
+      required:
+      - cited_text
+      - document_index
+      - document_title
+      - end_char_index
+      - start_char_index
+      - type
+      type: object
+    CitationContentBlockLocationParam:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        document_index:
+          type: integer
+        document_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+        end_block_index:
+          type: integer
+        start_block_index:
+          type: integer
+        type:
+          const: content_block_location
+          type: string
+      required:
+      - cited_text
+      - document_index
+      - document_title
+      - end_block_index
+      - start_block_index
+      - type
+      type: object
+    CitationPageLocationParam:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        document_index:
+          type: integer
+        document_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+        end_page_number:
+          type: integer
+        start_page_number:
+          type: integer
+        type:
+          const: page_location
+          type: string
+      required:
+      - cited_text
+      - document_index
+      - document_title
+      - end_page_number
+      - start_page_number
+      - type
+      type: object
+    CitationSearchResultLocationParam:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        end_block_index:
+          type: integer
+        search_result_index:
+          type: integer
+        source:
+          type: string
+        start_block_index:
+          type: integer
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+        type:
+          const: search_result_location
+          type: string
+      required:
+      - cited_text
+      - end_block_index
+      - search_result_index
+      - source
+      - start_block_index
+      - title
+      - type
+      type: object
+    CitationWebSearchResultLocationParam:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        encrypted_index:
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+        type:
+          const: web_search_result_location
+          type: string
+        url:
+          type: string
+      required:
+      - cited_text
+      - encrypted_index
+      - title
+      - type
+      - url
+      type: object
+    CitationsConfigParam:
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+      type: object
+    CodeExecutionOutputBlockParam:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        type:
+          const: code_execution_output
+          type: string
+      required:
+      - file_id
+      - type
+      type: object
+    CodeExecutionResultBlockParam:
+      additionalProperties: false
+      properties:
+        content:
+          items:
+            $ref: '#/components/schemas/CodeExecutionOutputBlockParam'
+          type: array
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        stdout:
+          type: string
+        type:
+          const: code_execution_result
+          type: string
+      required:
+      - content
+      - return_code
+      - stderr
+      - stdout
+      - type
+      type: object
+    CodeExecutionToolResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/CodeExecutionToolResultErrorParam'
+          - $ref: '#/components/schemas/CodeExecutionResultBlockParam'
+          - $ref: '#/components/schemas/EncryptedCodeExecutionResultBlockParam'
+        tool_use_id:
+          type: string
+        type:
+          const: code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
+    CodeExecutionToolResultErrorParam:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - execution_time_exceeded
+          - invalid_tool_input
+          - too_many_requests
+          - unavailable
+          type: string
+        type:
+          const: code_execution_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
+    ContentBlockSourceParam:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - type: string
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/TextBlockParam'
+              - $ref: '#/components/schemas/ImageBlockParam'
+            type: array
+        type:
+          const: content
+          type: string
+      required:
+      - content
+      - type
+      type: object
+    DirectCallerParam:
+      additionalProperties: false
+      properties:
+        type:
+          const: direct
+          type: string
+      required:
+      - type
+      type: object
+    DocumentBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        citations:
+          anyOf:
+          - $ref: '#/components/schemas/CitationsConfigParam'
+          - type: 'null'
+        context:
+          anyOf:
+          - type: string
+          - type: 'null'
+        source:
+          anyOf:
+          - $ref: '#/components/schemas/Base64PDFSourceParam'
+          - $ref: '#/components/schemas/PlainTextSourceParam'
+          - $ref: '#/components/schemas/ContentBlockSourceParam'
+          - $ref: '#/components/schemas/URLPDFSourceParam'
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+        type:
+          const: document
+          type: string
+      required:
+      - source
+      - type
+      type: object
+    EncryptedCodeExecutionResultBlockParam:
+      additionalProperties: false
+      properties:
+        content:
+          items:
+            $ref: '#/components/schemas/CodeExecutionOutputBlockParam'
+          type: array
+        encrypted_stdout:
+          type: string
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        type:
+          const: encrypted_code_execution_result
+          type: string
+      required:
+      - content
+      - encrypted_stdout
+      - return_code
+      - stderr
+      - type
+      type: object
+    ImageBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        source:
+          anyOf:
+          - $ref: '#/components/schemas/Base64ImageSourceParam'
+          - $ref: '#/components/schemas/URLImageSourceParam'
+        type:
+          const: image
+          type: string
+      required:
+      - source
+      - type
+      type: object
+    JSONOutputFormatParam:
+      additionalProperties: false
+      properties:
+        schema:
+          type: object
+        type:
+          const: json_schema
+          type: string
+      required:
+      - schema
+      - type
+      type: object
+    MessageCreateParamsStreaming:
+      additionalProperties: false
+      properties:
+        container:
+          anyOf:
+          - type: string
+          - type: 'null'
+        max_tokens:
+          type: integer
+        messages:
+          items:
+            $ref: '#/components/schemas/MessageParam'
+          type: array
+        model:
+          type: string
+        output_config:
+          $ref: '#/components/schemas/OutputConfigParam'
+        stream:
+          const: true
+          type: boolean
+        system:
+          anyOf:
+          - type: string
+          - items:
+              $ref: '#/components/schemas/TextBlockParam'
+            type: array
+        thinking:
+          anyOf:
+          - $ref: '#/components/schemas/ThinkingConfigDisabledParam'
+          - $ref: '#/components/schemas/ThinkingConfigAdaptiveParam'
+          - additionalProperties: false
+            properties:
+              type:
+                const: between_tools
+            required:
+            - type
+            type: object
+            x-alek-extension: Sonnet 5.5 rejects thinking.type=disabled; between_tools is its no-thinking floor (src/adapters/claude_adapter.py
+              _THINKING_OFF), absent from the SDK's ThinkingConfigParam (2026-11-18)
+        tool_choice:
+          anyOf:
+          - $ref: '#/components/schemas/ToolChoiceAutoParam'
+          - $ref: '#/components/schemas/ToolChoiceAnyParam'
+        tools:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/ToolParam'
+            - $ref: '#/components/schemas/WebSearchTool20250305Param'
+            - $ref: '#/components/schemas/WebFetchTool20250910Param'
+            - $ref: '#/components/schemas/WebSearchTool20260209Param'
+            - $ref: '#/components/schemas/WebFetchTool20260209Param'
+          type: array
+      required:
+      - max_tokens
+      - messages
+      - model
+      - stream
+      type: object
+    MessageParam:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - type: string
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/TextBlockParam'
+              - $ref: '#/components/schemas/ImageBlockParam'
+              - $ref: '#/components/schemas/DocumentBlockParam'
+              - $ref: '#/components/schemas/ThinkingBlockParam'
+              - $ref: '#/components/schemas/RedactedThinkingBlockParam'
+              - $ref: '#/components/schemas/ToolUseBlockParam'
+              - $ref: '#/components/schemas/ToolResultBlockParam'
+              - $ref: '#/components/schemas/ServerToolUseBlockParam'
+              - $ref: '#/components/schemas/WebSearchToolResultBlockParam'
+              - $ref: '#/components/schemas/WebFetchToolResultBlockParam'
+              - $ref: '#/components/schemas/CodeExecutionToolResultBlockParam'
+              - $ref: '#/components/schemas/BashCodeExecutionToolResultBlockParam'
+              - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultBlockParam'
+            type: array
+        role:
+          enum:
+          - assistant
+          - system
+          - user
+          type: string
+      required:
+      - content
+      - role
+      type: object
+    OutputConfigParam:
+      additionalProperties: false
+      properties:
+        effort:
+          anyOf:
+          - enum:
+            - high
+            - low
+            - max
+            - medium
+            - xhigh
+            type: string
+          - type: 'null'
+        format:
+          $ref: '#/components/schemas/JSONOutputFormatParam'
+      type: object
+    PlainTextSourceParam:
+      additionalProperties: false
+      properties:
+        data:
+          type: string
+        media_type:
+          const: text/plain
+          type: string
+        type:
+          const: text
+          type: string
+      required:
+      - data
+      - media_type
+      - type
+      type: object
+    RedactedThinkingBlockParam:
+      additionalProperties: false
+      properties:
+        data:
+          type: string
+        type:
+          const: redacted_thinking
+          type: string
+      required:
+      - data
+      - type
+      type: object
+    SearchResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        citations:
+          $ref: '#/components/schemas/CitationsConfigParam'
+        content:
+          items:
+            $ref: '#/components/schemas/TextBlockParam'
+          type: array
+        source:
+          type: string
+        title:
+          type: string
+        type:
+          const: search_result
+          type: string
+      required:
+      - content
+      - source
+      - title
+      - type
+      type: object
+    ServerToolCaller20260120Param:
+      additionalProperties: false
+      properties:
+        tool_id:
+          type: string
+        type:
+          const: code_execution_20260120
+          type: string
+      required:
+      - tool_id
+      - type
+      type: object
+    ServerToolCallerParam:
+      additionalProperties: false
+      properties:
+        tool_id:
+          type: string
+        type:
+          const: code_execution_20250825
+          type: string
+      required:
+      - tool_id
+      - type
+      type: object
+    ServerToolUseBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCallerParam'
+          - $ref: '#/components/schemas/ServerToolCallerParam'
+          - $ref: '#/components/schemas/ServerToolCaller20260120Param'
+        id:
+          type: string
+        input:
+          additionalProperties: true
+          type: object
+        name:
+          enum:
+          - bash_code_execution
+          - code_execution
+          - text_editor_code_execution
+          - tool_search_tool_bm25
+          - tool_search_tool_regex
+          - web_fetch
+          - web_search
+          type: string
+        type:
+          const: server_tool_use
+          type: string
+      required:
+      - id
+      - input
+      - name
+      - type
+      type: object
+    TextBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        citations:
+          anyOf:
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/CitationCharLocationParam'
+              - $ref: '#/components/schemas/CitationPageLocationParam'
+              - $ref: '#/components/schemas/CitationContentBlockLocationParam'
+              - $ref: '#/components/schemas/CitationWebSearchResultLocationParam'
+              - $ref: '#/components/schemas/CitationSearchResultLocationParam'
+            type: array
+          - type: 'null'
+        text:
+          type: string
+        type:
+          const: text
+          type: string
+      required:
+      - text
+      - type
+      type: object
+    TextEditorCodeExecutionCreateResultBlockParam:
+      additionalProperties: false
+      properties:
+        is_file_update:
+          type: boolean
+        type:
+          const: text_editor_code_execution_create_result
+          type: string
+      required:
+      - is_file_update
+      - type
+      type: object
+    TextEditorCodeExecutionStrReplaceResultBlockParam:
+      additionalProperties: false
+      properties:
+        lines:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        new_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        new_start:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        old_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        old_start:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        type:
+          const: text_editor_code_execution_str_replace_result
+          type: string
+      required:
+      - type
+      type: object
+    TextEditorCodeExecutionToolResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultErrorParam'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionViewResultBlockParam'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionCreateResultBlockParam'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionStrReplaceResultBlockParam'
+        tool_use_id:
+          type: string
+        type:
+          const: text_editor_code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
+    TextEditorCodeExecutionToolResultErrorParam:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - execution_time_exceeded
+          - file_not_found
+          - invalid_tool_input
+          - too_many_requests
+          - unavailable
+          type: string
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+        type:
+          const: text_editor_code_execution_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
+    TextEditorCodeExecutionViewResultBlockParam:
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+        file_type:
+          enum:
+          - image
+          - pdf
+          - text
+          type: string
+        num_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        start_line:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        total_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        type:
+          const: text_editor_code_execution_view_result
+          type: string
+      required:
+      - content
+      - file_type
+      - type
+      type: object
+    ThinkingBlockParam:
+      additionalProperties: false
+      properties:
+        signature:
+          type: string
+        thinking:
+          type: string
+        type:
+          const: thinking
+          type: string
+      required:
+      - signature
+      - thinking
+      - type
+      type: object
+    ThinkingConfigAdaptiveParam:
+      additionalProperties: false
+      properties:
+        display:
+          anyOf:
+          - enum:
+            - omitted
+            - summarized
+            type: string
+          - type: 'null'
+        type:
+          const: adaptive
+          type: string
+      required:
+      - type
+      type: object
+    ThinkingConfigDisabledParam:
+      additionalProperties: false
+      properties:
+        type:
+          const: disabled
+          type: string
+      required:
+      - type
+      type: object
+    ToolChoiceAnyParam:
+      additionalProperties: false
+      properties:
+        disable_parallel_tool_use:
+          type: boolean
+        type:
+          const: any
+          type: string
+      required:
+      - type
+      type: object
+    ToolChoiceAutoParam:
+      additionalProperties: false
+      properties:
+        disable_parallel_tool_use:
+          type: boolean
+        type:
+          const: auto
+          type: string
+      required:
+      - type
+      type: object
+    ToolParam:
+      additionalProperties: false
+      properties:
+        allowed_callers:
+          items:
+            enum:
+            - code_execution_20250825
+            - code_execution_20260120
+            - code_execution_20260521
+            - direct
+            type: string
+          type: array
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        defer_loading:
+          type: boolean
+        description:
+          type: string
+        eager_input_streaming:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+        input_examples:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+        input_schema:
+          type: object
+        name:
+          type: string
+        strict:
+          type: boolean
+        type:
+          anyOf:
+          - const: custom
+            type: string
+          - type: 'null'
+      required:
+      - input_schema
+      - name
+      type: object
+    ToolReferenceBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        tool_name:
+          type: string
+        type:
+          const: tool_reference
+          type: string
+      required:
+      - tool_name
+      - type
+      type: object
+    ToolResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        content:
+          anyOf:
+          - type: string
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/TextBlockParam'
+              - $ref: '#/components/schemas/ImageBlockParam'
+              - $ref: '#/components/schemas/SearchResultBlockParam'
+              - $ref: '#/components/schemas/DocumentBlockParam'
+              - $ref: '#/components/schemas/ToolReferenceBlockParam'
+            type: array
+        is_error:
+          type: boolean
+        tool_use_id:
+          type: string
+        type:
+          const: tool_result
+          type: string
+      required:
+      - tool_use_id
+      - type
+      type: object
+    ToolUseBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCallerParam'
+          - $ref: '#/components/schemas/ServerToolCallerParam'
+          - $ref: '#/components/schemas/ServerToolCaller20260120Param'
+        id:
+          type: string
+        input:
+          additionalProperties: true
+          type: object
+        name:
+          type: string
+        type:
+          const: tool_use
+          type: string
+      required:
+      - id
+      - input
+      - name
+      - type
+      type: object
+    URLImageSourceParam:
+      additionalProperties: false
+      properties:
+        type:
+          const: url
+          type: string
+        url:
+          type: string
+      required:
+      - type
+      - url
+      type: object
+    URLPDFSourceParam:
+      additionalProperties: false
+      properties:
+        type:
+          const: url
+          type: string
+        url:
+          type: string
+      required:
+      - type
+      - url
+      type: object
+    UserLocationParam:
+      additionalProperties: false
+      properties:
+        city:
+          anyOf:
+          - type: string
+          - type: 'null'
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+        region:
+          anyOf:
+          - type: string
+          - type: 'null'
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+        type:
+          const: approximate
+          type: string
+      required:
+      - type
+      type: object
+    WebFetchBlockParam:
+      additionalProperties: false
+      properties:
+        content:
+          $ref: '#/components/schemas/DocumentBlockParam'
+        retrieved_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+        type:
+          const: web_fetch_result
+          type: string
+        url:
+          type: string
+      required:
+      - content
+      - type
+      - url
+      type: object
+    WebFetchTool20250910Param:
+      additionalProperties: false
+      properties:
+        allowed_callers:
+          items:
+            enum:
+            - code_execution_20250825
+            - code_execution_20260120
+            - code_execution_20260521
+            - direct
+            type: string
+          type: array
+        allowed_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        blocked_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        citations:
+          anyOf:
+          - $ref: '#/components/schemas/CitationsConfigParam'
+          - type: 'null'
+        defer_loading:
+          type: boolean
+        max_content_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        max_uses:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        name:
+          const: web_fetch
+          type: string
+        strict:
+          type: boolean
+        type:
+          const: web_fetch_20250910
+          type: string
+      required:
+      - name
+      - type
+      type: object
+    WebFetchTool20260209Param:
+      additionalProperties: false
+      properties:
+        allowed_callers:
+          items:
+            enum:
+            - code_execution_20250825
+            - code_execution_20260120
+            - code_execution_20260521
+            - direct
+            type: string
+          type: array
+        allowed_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        blocked_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        citations:
+          anyOf:
+          - $ref: '#/components/schemas/CitationsConfigParam'
+          - type: 'null'
+        defer_loading:
+          type: boolean
+        max_content_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        max_uses:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        name:
+          const: web_fetch
+          type: string
+        strict:
+          type: boolean
+        type:
+          const: web_fetch_20260209
+          type: string
+      required:
+      - name
+      - type
+      type: object
+    WebFetchToolResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCallerParam'
+          - $ref: '#/components/schemas/ServerToolCallerParam'
+          - $ref: '#/components/schemas/ServerToolCaller20260120Param'
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/WebFetchToolResultErrorBlockParam'
+          - $ref: '#/components/schemas/WebFetchBlockParam'
+        tool_use_id:
+          type: string
+        type:
+          const: web_fetch_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
+    WebFetchToolResultErrorBlockParam:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - invalid_tool_input
+          - max_uses_exceeded
+          - too_many_requests
+          - unavailable
+          - unsupported_content_type
+          - url_not_accessible
+          - url_not_allowed
+          - url_not_in_prior_context
+          - url_too_long
+          type: string
+        type:
+          const: web_fetch_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
+    WebSearchResultBlockParam:
+      additionalProperties: false
+      properties:
+        encrypted_content:
+          type: string
+        page_age:
+          anyOf:
+          - type: string
+          - type: 'null'
+        title:
+          type: string
+        type:
+          const: web_search_result
+          type: string
+        url:
+          type: string
+      required:
+      - encrypted_content
+      - title
+      - type
+      - url
+      type: object
+    WebSearchTool20250305Param:
+      additionalProperties: false
+      properties:
+        allowed_callers:
+          items:
+            enum:
+            - code_execution_20250825
+            - code_execution_20260120
+            - code_execution_20260521
+            - direct
+            type: string
+          type: array
+        allowed_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        blocked_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        defer_loading:
+          type: boolean
+        max_uses:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        name:
+          const: web_search
+          type: string
+        strict:
+          type: boolean
+        type:
+          const: web_search_20250305
+          type: string
+        user_location:
+          anyOf:
+          - $ref: '#/components/schemas/UserLocationParam'
+          - type: 'null'
+      required:
+      - name
+      - type
+      type: object
+    WebSearchTool20260209Param:
+      additionalProperties: false
+      properties:
+        allowed_callers:
+          items:
+            enum:
+            - code_execution_20250825
+            - code_execution_20260120
+            - code_execution_20260521
+            - direct
+            type: string
+          type: array
+        allowed_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        blocked_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        defer_loading:
+          type: boolean
+        max_uses:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        name:
+          const: web_search
+          type: string
+        strict:
+          type: boolean
+        type:
+          const: web_search_20260209
+          type: string
+        user_location:
+          anyOf:
+          - $ref: '#/components/schemas/UserLocationParam'
+          - type: 'null'
+      required:
+      - name
+      - type
+      type: object
+    WebSearchToolRequestErrorParam:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - invalid_tool_input
+          - max_uses_exceeded
+          - query_too_long
+          - request_too_large
+          - too_many_requests
+          - unavailable
+          type: string
+        type:
+          const: web_search_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
+    WebSearchToolResultBlockParam:
+      additionalProperties: false
+      properties:
+        cache_control:
+          anyOf:
+          - $ref: '#/components/schemas/CacheControlEphemeralParam'
+          - type: 'null'
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCallerParam'
+          - $ref: '#/components/schemas/ServerToolCallerParam'
+          - $ref: '#/components/schemas/ServerToolCaller20260120Param'
+        content:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/WebSearchResultBlockParam'
+            type: array
+          - $ref: '#/components/schemas/WebSearchToolRequestErrorParam'
+        tool_use_id:
+          type: string
+        type:
+          const: web_search_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
+info:
+  title: anthropic request subset
+  version: 0.121.0
+openapi: 3.1.0
+paths:
+  /v1/messages:
+    post:
+      parameters:
+      - explode: false
+        in: header
+        name: anthropic-beta
+        required: false
+        schema:
+          items:
+            anyOf:
+            - enum:
+              - advisor-tool-2026-03-01
+              - agent-memory-2026-07-22
+              - cache-diagnosis-2026-04-07
+              - code-execution-2025-05-22
+              - computer-use-2024-10-22
+              - computer-use-2025-01-24
+              - context-1m-2025-08-07
+              - context-management-2025-06-27
+              - dev-full-thinking-2025-05-14
+              - dreaming-2026-04-21
+              - extended-cache-ttl-2025-04-11
+              - fallback-credit-2026-06-01
+              - fallback-credit-2026-07-01
+              - fast-mode-2026-02-01
+              - files-api-2025-04-14
+              - interleaved-thinking-2025-05-14
+              - managed-agents-2026-04-01
+              - mcp-client-2025-04-04
+              - mcp-client-2025-11-20
+              - message-batches-2024-09-24
+              - mid-conversation-tool-changes-2026-07-01
+              - model-context-window-exceeded-2025-08-26
+              - output-128k-2025-02-19
+              - output-300k-2026-03-24
+              - pdfs-2024-09-25
+              - prompt-caching-2024-07-31
+              - server-side-fallback-2026-06-01
+              - server-side-fallback-2026-07-01
+              - skills-2025-10-02
+              - thinking-token-count-2026-05-13
+              - token-counting-2024-11-01
+              - token-efficient-tools-2025-02-19
+              - user-profiles-2026-03-24
+              type: string
+            - const: web-search-2025-03-05
+              x-alek-extension: sent with the legacy web_search_20250305 tool on the grounding path of models without dynamic
+                search (src/adapters/claude_adapter.py generate_content beta_headers), absent from the SDK's AnthropicBetaParam
+                literals (2026-11-18)
+          type: array
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageCreateParamsStreaming'
+        required: true
+servers:
+- url: https://api.anthropic.com
+x-retrieved: '2026-11-19'
+x-source: anthropic-sdk-python@0.121.0
+x-transforms:
+- 'prune: only the listed top-level fields and union variants are kept'
+- 'flatten-allOf: an allOf of objects becomes one object (properties and required merged)'
+- 'oneOf-to-anyOf: variants overlap (a message with list content matches two of them)'
+- 'close-objects: additionalProperties false on every object that declares properties, except the open paths'
+- 'open-paths: our own JSON Schemas (the open paths) are free-form objects'
+- 'drop-redundant-literals: a literal next to a plain {type: T} in a union accepts nothing more (model id lists)'
+- 'drop-doc-keys: documentation keys and vendor doc extensions dropped (spec_drift.normalize); property names kept'
+- 'stringify-dates: YAML dates become ISO strings'
+- 'sdk-schema: pydantic TypeAdapter(<request TypedDict>).json_schema(), $defs as components'
+- 'drop-header-aliases: fields the SDK sends as headers (PropertyInfo alias) are not body fields'
+- 'drop-sdk-response-models: union members that are SDK response models (accepted as input for convenience) are dropped; the
+  request types (*Param) are the wire contract'
+- 'header-literals: a header''s allowed values are its SDK type''s Literal values'

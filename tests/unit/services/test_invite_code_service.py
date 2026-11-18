@@ -105,10 +105,11 @@ async def test_consume_team_invite_success(service, mock_invite_repo, mock_user_
     updated_user = mock_user_repo.update_user.call_args[0][0]
     assert updated_user.account_id == "acc-target"
     
-    # Verify Account IAM Updated
-    mock_account_repo.update_account.assert_called_once()
-    updated_account = mock_account_repo.update_account.call_args[0][0]
-    assert updated_account.iam_policy["new-member"] == "member"     # the Role value every access check compares
+    # Verify Account IAM Updated: the one member entry by its field path, never a whole-map rewrite
+    mock_account_repo.set_member_role.assert_called_once_with(
+        "acc-target", "new-member", "member"                        # the Role value every access check compares
+    )
+    mock_account_repo.update_account.assert_not_called()
     
     # Verify Invite Marked Used (one-shot claim, not a blind update)
     mock_invite_repo.claim.assert_called_once()

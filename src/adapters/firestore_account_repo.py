@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
+from google.cloud.firestore_v1.field_path import FieldPath
 
 from ..domain.billing import (
     DEFAULT_DAILY_COST_LIMIT,
@@ -48,11 +49,16 @@ class FirestoreAccountRepository(AccountRepository):
         return account
 
     async def update_account(self, account: BillingAccount) -> BillingAccount:
-        # Every field but usage: the counters are increment_account_usage's, and a whole-document write would undo an
-        # increment that landed since the caller's read.
+        # Every field but usage and iam_policy: the counters are increment_account_usage's and the members
+        # set_member_role's; writing either from the caller's read would undo a change that landed since.
         doc_ref = self.accounts_collection.document(account.account_id)
-        await doc_ref.update(account.model_dump(exclude={"usage"}))
+        await doc_ref.update(account.model_dump(exclude={"usage", "iam_policy"}))
         return account
+
+    async def set_member_role(self, account_id: str, user_id: str, role: str) -> None:
+        # The one map entry by its field path: a whole-map write would drop a member another writer added since its read.
+        # Escaped, so an id with a dot or a backtick stays one key of the map.
+        await self.accounts_collection.document(account_id).update({FieldPath("iam_policy", user_id).to_api_repr(): role})
 
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float

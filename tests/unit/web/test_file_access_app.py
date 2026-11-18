@@ -25,6 +25,7 @@ def tokens():
 @pytest.fixture
 def media():
     m = MagicMock()
+    m.exists = AsyncMock(return_value=True)
     m.generate_signed_url = AsyncMock(return_value=_SIGNED)
     return m
 

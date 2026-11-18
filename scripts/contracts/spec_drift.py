@@ -5,7 +5,7 @@ P18). P17's `contracts/providers/<provider>/openapi.yaml` subsets do not exist y
 own extract: `contracts/spec_drift/<source>.json`, one file per entry of `SOURCES`, written by `--update` and never
 by hand. When P17 lands, the drift run diffs the re-extracted subsets against `contracts/providers/` instead.
 
-What an extract holds, per kind of spec (documentation-only keys are dropped, set-like lists are sorted):
+What an extract holds, per kind of spec (documentation keywords are dropped, but never a schema property of the same name; set-like lists are sorted):
 - `openapi`: each watched operation (`"<method> <path>"`) and every component its `$ref`s reach, transitively;
 - `discovery` (Google): each watched method (by its `id`) and every schema its `$ref`s reach, transitively;
 - `telegram` (the community Bot API spec): each watched method's and type's fields (name, types, required); a type's
@@ -101,6 +101,11 @@ _DOC_KEYS = frozenset({
     "description", "summary", "title", "example", "examples", "externalDocs", "enumDescriptions", "href",
 })
 _DOC_PREFIXES = ("x-oai", "x-stainless")
+# Keywords whose object value maps a NAME to a schema: the keys are names, never documentation (a list-valued
+# OpenAPI `parameters` is not such a map; only an object is).
+_NAME_MAPS = frozenset({
+    "properties", "patternProperties", "$defs", "definitions", "schemas", "parameters", "dependentSchemas",
+})
 # Lists whose order carries no meaning: sorted, so a reordering is not drift.
 _SET_KEYS = frozenset({"required", "enum", "parameterOrder", "scopes", "types", "returns"})
 
@@ -110,14 +115,21 @@ _VALUE_CHARS = 160
 
 
 # --------------------------------------------------------------------------------------------------- normalisation
-def normalize(node: Any) -> Any:
-    """The node without documentation keys, with set-like lists sorted. Pure; returns a new structure."""
+def normalize(node: Any, *, names: bool = False) -> Any:
+    """The node without documentation keywords, with set-like lists sorted. Pure; returns a new structure.
+
+    Schema-aware: in a map whose keys are NAMES (`properties`, `$defs`, `schemas`, a discovery `parameters` object, ...)
+    a key such as `description` or `summary` is a field, not documentation, so it stays; its value is normalised as a
+    schema again. `names` marks the node being walked as such a map."""
     if isinstance(node, dict):
         out: dict[str, Any] = {}
         for key, value in node.items():
+            if names:
+                out[key] = normalize(value)
+                continue
             if key in _DOC_KEYS or key.startswith(_DOC_PREFIXES):
                 continue
-            value = normalize(value)
+            value = normalize(value, names=key in _NAME_MAPS and isinstance(value, dict))
             if key in _SET_KEYS and isinstance(value, list) and all(isinstance(v, (str, int, float)) for v in value):
                 value = sorted(value, key=lambda v: (type(v).__name__, v))
             out[key] = value

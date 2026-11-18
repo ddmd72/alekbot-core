@@ -160,8 +160,8 @@ async def test_update_merges_the_given_fields_and_leaves_the_others(store):
 
 
 async def test_a_datetime_subclass_in_an_update_is_stored_as_the_same_instant(store):
-    """The adapter rewrites a `DatetimeWithNanoseconds` as a plain datetime before the write (the SDK fails on the
-    subclass in some versions). The stored type is not observable: Firestore decodes every timestamp as a
+    """The adapter writes a `DatetimeWithNanoseconds` as given: the SDK encodes the subclass natively (its own
+    `timestamp_pb`). The stored type is not observable: Firestore decodes every timestamp as a
     `DatetimeWithNanoseconds`. What holds is the instant, in UTC, and the job reads back with it."""
     await store.repo.create_job(job())
     stamp = DatetimeWithNanoseconds(2026, 10, 2, 7, 0, 0, 500000, tzinfo=timezone.utc)

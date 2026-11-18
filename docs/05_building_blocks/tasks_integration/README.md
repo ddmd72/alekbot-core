@@ -413,7 +413,7 @@ round trip (§5.1: the list name and the first page of tasks are read concurrent
 |---|---|
 | `list_tasks` | The lookup tool: one page (`_PAGE_SIZE = 20`) of the primary list's tasks, tasks with a due date first (soonest first), then undated tasks (newest first). Optional `page` (from 1), `due_from` / `due_to` (ISO-8601; a date alone is the whole day; undated tasks are left out when either is set; an unreadable date is a tool error), `show_completed` (completed tasks too). The result adds `total`, `page`, `pages` and a `note` that says whether these are all the tasks or which page comes next. Graph's To Do list call documents no `$orderby`/`$top`/date `$filter`, so filter, order and paging run in the agent over the adapter's full fetch. |
 | `search_tasks` | Semantic search via `TaskIndexingService.search()` + `batch_get_tasks()`, for long lists only (more than one page). Returns matching tasks with their `ref` (short_id); a miss returns a `note` saying another wording will not find more. |
-| `create_task` | Create via Graph API, then index. Supports title, body, due_datetime, importance, tags, recurrence. |
+| `create_task` | Create via Graph API, then index. Supports title, body, due_datetime, importance, tags, recurrence. A due, start or reminder time of day without an offset is the user's wall time in their zone, sent as its UTC instant (`wall_time_instant`; a time the clocks skip is the tool's error); a date alone stays that day; `update_task` reads them the same way. |
 | `update_task` | PATCH via Graph API, then re-index. Requires `task_ref` from prior `list_tasks` or `search_tasks` result. |
 | `delete_task` | DELETE via Graph API, then deindex. Requires `task_ref`. |
 

@@ -105,7 +105,9 @@ class TestOverflowTaskTracking:
 
         mock_logger.error.assert_called_once()
         logged_msg = mock_logger.error.call_args[0][0]
-        assert "batch may be lost" in logged_msg
+        # O2: a batch is cut only after its hand-off succeeded, so the log names where the batch is, not a loss.
+        assert "stays in the session" in logged_msg
+        assert "lost" not in logged_msg
 
     async def test_on_overflow_done_silent_on_success(self):
         store, _ = _make_store()

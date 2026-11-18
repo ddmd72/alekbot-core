@@ -73,7 +73,8 @@ async def _world():
     auth = AuthenticationService(registry, users, accounts, whitelist_repo=FirestoreWhitelistRepository(db, env))
     await db.collection(WHITELIST).document("config").set({"allowed_emails": [ALLOWED], "allowed_domains": []})
     await accounts.create_account(BillingAccount(account_id="a1"))
-    await users.create_user(UserProfile(user_id="u1", account_id="a1", external_user_id="google|sub-1"))
+    # The stored email, as registration writes it: a renewal re-checks it against the whitelist.
+    await users.create_user(UserProfile(user_id="u1", account_id="a1", external_user_id="google|sub-1", email=ALLOWED))
     app = Quart("session_cap")
     app.register_blueprint(create_oauth_blueprint(
         auth_service=auth,

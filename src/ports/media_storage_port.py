@@ -59,6 +59,15 @@ class MediaStoragePort(ABC):
         """
 
     @abstractmethod
+    async def exists(self, key: str) -> bool:
+        """
+        Whether an object is stored under `key` now. Delivered objects expire (the bucket's lifecycle deletes them)
+        while links to them live on; the /f/<token> route asks this before it signs a URL.
+
+        Errors: storage errors other than not-found propagate.
+        """
+
+    @abstractmethod
     async def generate_signed_url(self, key: str, ttl_seconds: int) -> str:
         """
         Mint a short-lived GCS V4 signed URL for direct browser download.

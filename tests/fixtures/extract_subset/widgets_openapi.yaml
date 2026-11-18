@@ -1,0 +1,120 @@
+# Invented OpenAPI 3.1 fragment for tests/unit/scripts/test_extract_subset.py (shaped like a provider spec; no real API).
+openapi: 3.1.0
+info:
+  title: Widgets
+  version: 9.9.9
+servers:
+  - url: https://api.widgets.example.com/v2
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      summary: Create a widget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWidget'
+components:
+  schemas:
+    CreateWidget:
+      allOf:
+        - $ref: '#/components/schemas/WidgetBase'
+        - type: object
+          description: The request body.
+          properties:
+            name:
+              type: string
+              description: The widget's name.
+            description:
+              type: string
+              description: A property named like a documentation key.
+            color:
+              $ref: '#/components/schemas/Color'
+            legacy_size:
+              type: integer
+              deprecated: true
+            parts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Part'
+            shape:
+              oneOf:
+                - $ref: '#/components/schemas/Circle'
+                - $ref: '#/components/schemas/Square'
+                - type: 'null'
+            layout:
+              $ref: '#/components/schemas/Layout'
+            since:
+              type: string
+              format: date
+              example: 2026-01-15
+              default: 2026-01-15
+            internal_note:
+              type: string
+          required:
+            - name
+    WidgetBase:
+      type: object
+      properties:
+        model:
+          anyOf:
+            - type: string
+            - type: string
+              enum: [w-2, w-1]
+              x-vendor-enum-notes:
+                w-1: retired
+    Color:
+      type: string
+      enum: [red, blue]
+    Part:
+      oneOf:
+        - $ref: '#/components/schemas/Bolt'
+        - $ref: '#/components/schemas/Gear'
+        - $ref: '#/components/schemas/Spring'
+    Bolt:
+      type: object
+      x-oaiTypeLabel: Bolt
+      properties:
+        type:
+          type: string
+          enum: [bolt]
+        length:
+          type: number
+      required: [type]
+    Gear:
+      type: object
+      properties:
+        type:
+          const: gear
+        teeth:
+          type: integer
+      required: [type, teeth]
+    Spring:
+      type: object
+      properties:
+        type:
+          const: spring
+      required: [type]
+    Circle:
+      type: object
+      properties:
+        type:
+          const: circle
+        radius:
+          type: number
+      required: [type]
+    Square:
+      type: object
+      properties:
+        type:
+          const: square
+        side:
+          type: number
+      required: [type]
+    Layout:
+      type: object
+      properties:
+        rows:
+          $ref: '#/components/schemas/Layout'

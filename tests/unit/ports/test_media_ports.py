@@ -56,8 +56,8 @@ class TestMediaStoragePortContract:
             name for name, method in inspect.getmembers(MediaStoragePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        # store (write) + fetch (server-side read) + generate_signed_url (/f route)
-        assert len(abstract_methods) == 3, f"Expected 3 abstract methods, got {abstract_methods}"
+        # store (write) + fetch (server-side read) + exists (/f checks before signing) + generate_signed_url (/f route)
+        assert len(abstract_methods) == 4, f"Expected 4 abstract methods, got {abstract_methods}"
 
     def test_store_signature(self):
         sig = inspect.signature(MediaStoragePort.store)

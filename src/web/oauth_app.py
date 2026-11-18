@@ -279,7 +279,9 @@ def create_oauth_blueprint(
 
         Flow:
         1. Verify refresh token (expired, invalid or wrong type: 401)
-        2. Load the stored user and their account (absent or inactive user, absent account: 401)
+        2. Load the stored user and their account, and re-check the user's sign-in email against the access
+           whitelist as sign-in does (absent or inactive user, email missing or off the whitelist, absent account:
+           401; `AuthenticationService.resume_session`)
         3. Generate a new access token from them (a full access TTL: the session slides,
            decisions/cabinet_session_24h_cap.md)
         4. Return new token
