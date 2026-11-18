@@ -11,7 +11,7 @@ Covers (per RFC §14):
 - list_tasks: delegates to tasks_provider.list_tasks
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -576,7 +576,7 @@ class TestDeriveReminder:
         from src.agents.tasks_agent import TasksAgent
 
         explicit = datetime(2026, 3, 31, 20, 0)
-        reminder_dt, is_on = TasksAgent._derive_reminder(explicit, None)
+        reminder_dt, is_on = TasksAgent._derive_reminder(explicit, None, timezone.utc)
         assert reminder_dt == explicit
         assert is_on is True
 
@@ -584,14 +584,14 @@ class TestDeriveReminder:
         from src.agents.tasks_agent import TasksAgent
 
         due = datetime(2026, 4, 1, 9, 0)
-        reminder_dt, is_on = TasksAgent._derive_reminder(None, due)
+        reminder_dt, is_on = TasksAgent._derive_reminder(None, due, timezone.utc)
         assert reminder_dt == datetime(2026, 3, 31, 20, 0, 0)
         assert is_on is True
 
     def test_neither_returns_none_false(self):
         from src.agents.tasks_agent import TasksAgent
 
-        reminder_dt, is_on = TasksAgent._derive_reminder(None, None)
+        reminder_dt, is_on = TasksAgent._derive_reminder(None, None, timezone.utc)
         assert reminder_dt is None
         assert is_on is False
 
@@ -801,10 +801,12 @@ class TestParseDatetime:
         result = TasksAgent._parse_datetime("2026-04-01T10:00:00Z")
         assert result == datetime(2026, 4, 1, 10, 0, 0)
 
-    def test_invalid_iso_returns_none(self):
+    def test_invalid_iso_raises_value_error(self):
+        """P14-D5: a time the model sent that does not parse is refused (the tool loop returns it as the tool's error),
+        never dropped as if no time had been given."""
         from src.agents.tasks_agent import TasksAgent
-        result = TasksAgent._parse_datetime("not-a-date")
-        assert result is None
+        with pytest.raises(ValueError, match="not-a-date"):
+            TasksAgent._parse_datetime("not-a-date")
 
 
 # =============================================================================
