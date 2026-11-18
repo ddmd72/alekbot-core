@@ -190,6 +190,9 @@ class Client(Async):
     def document(self, path):
         return f"doc:{path}"
 
+    def batch(self):
+        return "batch"
+
 
 def backend_and_db(groups=None):
     backend = RealKitBackend(Client(), Sync(), lambda *_: None, [SESSIONS_INDEX])
@@ -224,12 +227,16 @@ def test_a_collection_group_is_mapped_when_grouped_or_already_used_and_left_alon
     assert backend.client.groups == ["test_sessions", "eval_notes", "test_kits_eval_notes"]
 
 
+def fresh_backend():
+    return RealKitBackend(Client(), Sync(), lambda *_: None, [SESSIONS_INDEX])
+
+
 def test_an_index_set_the_real_database_cannot_honour_is_refused():
-    backend, _ = backend_and_db()
-    assert backend(indexes=None) and backend(indexes=INDEXES_FILE) and backend(indexes=str(INDEXES_FILE))
+    for indexes in (None, INDEXES_FILE, str(INDEXES_FILE)):
+        assert fresh_backend()(indexes=indexes)
     for indexes in ([], [SESSIONS_INDEX], "elsewhere.json"):
-        with pytest.raises(ValueError, match="h1_only"):
-            backend(indexes=indexes)
+        with pytest.raises(ValueError, match="cannot be honoured"):
+            fresh_backend()(indexes=indexes)
 
 
 # --------------------------------------------------------------------------------------------------- the client guard
@@ -269,3 +276,41 @@ def test_a_fault_injected_on_a_collection_method_reaches_every_user_and_is_undon
     for target, attr in ((held, "path"), (held, "fail"), (db, "groups")):   # a non-method or unknown name is still refused
         with pytest.raises(AttributeError, match="h1_only"):
             setattr(target, attr, None)
+
+
+def test_a_second_database_in_one_test_is_refused():
+    backend, _ = backend_and_db()
+    with pytest.raises(ValueError, match="one database per test"):
+        backend(groups={"eval_sessions": "development_sessions"})
+
+
+def test_a_fault_injected_where_the_adapter_never_calls_fails_on_undo_and_at_the_end(monkeypatch):
+    backend, db = backend_and_db()
+
+    def down(_doc_id):
+        raise RuntimeError("backend down")
+
+    with pytest.raises(pytest.fail.Exception, match="never reached on the real backend"):
+        with monkeypatch.context() as m:
+            m.setattr(db.collection("eval_notes/d/sub"), "document", down)   # the fake routes doc_ref.collection here
+            backend.client.collection("test_kits_eval_notes/d/sub").document("n1")   # the real doc ref's own subcollection
+    with pytest.raises(pytest.fail.Exception, match="never reached on the real backend"):
+        backend.purge_touched()
+
+
+def test_a_replacement_that_is_called_and_then_restored_passes(monkeypatch):
+    backend, db = backend_and_db()
+    real_batch = db.batch
+    calls = []
+
+    def batch_whose_commit_is_counted():
+        calls.append(1)
+        return real_batch()
+
+    monkeypatch.setattr(db, "batch", batch_whose_commit_is_counted)
+    assert db.batch() == "batch" and calls == [1]
+    monkeypatch.setattr(db, "batch", real_batch)          # the restore the skill kit makes inside its test
+    assert db.batch() == "batch" and calls == [1]
+    monkeypatch.undo()
+    backend.purge_touched()
+    assert db.batch() == "batch"
