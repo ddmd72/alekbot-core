@@ -11,12 +11,17 @@ from typing import Dict, List, Set
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-# Regular expressions over source text. `.commits` is the fake's commit log, read (never an assignment of a name of the
-# test's own); `.fail =` is the fake collection's query-failure switch, assigned (never `pytest.fail(` or a comparison). The
+# Regular expressions over source text. `.commits` and `.executed` are the fake's commit and query logs, read (never an
+# assignment of a name of the test's own); `._check_index` is the fake's index refusal; `.fail =` is the fake
+# collection's query-failure switch, assigned (never `pytest.fail(` or a comparison). The
 # switch is not honoured on the real backend: the fake raises it from every query of the collection, and a real query is
 # built from the reference, not from the wrapper; to run a fault on real, replace the method the adapter calls instead.
 HOOKS = tuple(re.escape(h) for h in ("interfere_on_txn_", "raise_on_txn_read", "EvalDocRef", ".versions", ".cols",
-                                     "EvalDb(", "indexes=[]")) + (r"\.commits\b(?!\s*=(?!=))", r"\.fail\s*=(?!=)")
+                                     "EvalDb(", "indexes=[]")) + (
+    r"\.commits\b(?!\s*=(?!=))", r"\.fail\s*=(?!=)",
+    r"\.executed\b(?!\s*=(?!=))",     # the fake's query log, read
+    r"\._check_index\b",               # the fake's index refusal, read or replaced
+)
 # A naive datetime written raw: the real client stores it as UTC, so only the fake returns it naive. Counted only in the marked
 # test's own source (a helper that builds one somewhere would otherwise excuse any test that calls it).
 OWN_HOOKS = (re.escape("tzinfo=None"),)
@@ -158,6 +163,12 @@ async def test_through_a_helper(stores):
     ("pytest.fail('no')", False),
     ("assert col.fail == None", False),
     ("store.failures = 3", False),
+    ("assert store.db.collection(COL).executed == []", True),
+    ("check_index = store.db._check_index", True),
+    ("store.db._check_index = refuse", True),
+    ("self.executed = []", False),
+    ("assert run.executed_at is None", False),
+    ("assert check_index_ok", False),
 ])
 def test_the_commit_log_and_the_fail_switch_count_only_as_themselves(line, hooked):
     source = "import pytest\n\n@pytest.mark.h1_only('fake-only')\nasync def test_x(store):\n    " + line + "\n"
