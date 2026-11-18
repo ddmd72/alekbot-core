@@ -179,7 +179,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 
 **Cookies Set:**
 - `access_token` (HttpOnly, 1 hour TTL) - JWT access token
-- `refresh_token` (HttpOnly, 30 days TTL) - JWT refresh token
+- `refresh_token` (HttpOnly, 24 hours TTL; a refresh does not rotate it, so a session lasts at most ~48 h) - JWT refresh token
 
 **Cookies Cleared:**
 - `oauth_state` (CSRF token no longer needed)
@@ -197,7 +197,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
   - Returns `(UserProfile, BillingAccount, oauth_tokens)`
 - **Step 3:** Create JWT session tokens via `session_service`
   - `create_access_token(user, account)` - 1 hour TTL
-  - `create_refresh_token(user, account)` - 30 days TTL
+  - `create_refresh_token(user, account)` - 24 hours TTL (`REFRESH_TOKEN_TTL`, 86400 s)
 - **Step 4:** Set HttpOnly cookies and return JSON response
 
 ---
@@ -402,7 +402,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 ### Authentication
 - **JWT (PyJWT)** - Stateless session tokens
   - Access token: 1 hour TTL (short-lived)
-  - Refresh token: 30 days TTL (long-lived)
+  - Refresh token: 24 hours TTL (not rotated on refresh)
 - **HMAC-SHA256** - Token signing algorithm
 - **HttpOnly Cookies** - XSS protection
 - **CSRF State Tokens** - CSRF protection (`secrets.token_urlsafe`)
@@ -431,7 +431,7 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
    - **Layer:** Infrastructure (configuration)
    - `oauth_redirect_uri` - OAuth callback URL
    - `access_token_ttl` - Access token TTL (3600s)
-   - `refresh_token_ttl` - Refresh token TTL (2592000s = 30 days)
+   - `refresh_token_ttl` - Refresh token TTL (86400s = 24 hours)
    - `oauth_session_secret` - JWT signing key
 
 ---
@@ -483,7 +483,7 @@ response.set_cookie(
 }
 ```
 
-**Refresh Token (30 days):**
+**Refresh Token (24 hours):**
 ```json
 {
   "sub": "user_id",
