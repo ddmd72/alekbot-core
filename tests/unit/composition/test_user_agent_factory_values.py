@@ -7,6 +7,7 @@ and an explicit Smart thinking effort, so a value dropped on the way to an agent
 back to. Every check reads the attribute that holds the value in the object production uses.
 """
 from typing import AsyncIterator
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -125,6 +126,13 @@ async def test_the_users_timezone_and_smart_thinking_effort_reach_their_agents(u
 
     assert cached["notes_agent"]._user_tz_name == TIMEZONE
     assert cached["smart_agent"]._default_thinking_effort == SMART_EFFORT
+
+
+async def test_the_users_timezone_reaches_the_tasks_agent(user_graph):
+    """The automatic To Do reminder is 20:00 of this zone (P16-D11); a dropped value falls back to UTC."""
+    cached = user_graph.app.agent_factory._cache[USER_ID]
+
+    assert cached["tasks_agent"]._user_tz == ZoneInfo(TIMEZONE)
 
 
 async def test_the_telephony_adapter_holds_the_configured_twilio_credentials(user_graph):

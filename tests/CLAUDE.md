@@ -7,19 +7,19 @@ pytest + pytest-asyncio, `asyncio_mode=auto`. Why these rules: `docs/10_rfcs/TES
 Which commands exist and what they do: the root `CLAUDE.md` "Commands" section. This file keeps the structure of the suite and the rules for writing tests.
 
 - `tests/unit/` is offline and runs on every PR in CI; `slow` and `timing` tests are skipped unless their switch is set (see "Markers").
-- Some integration tests and all e2e tests call real services and are not part of the CI gate.
+- `tests/integration/offline/` is offline and runs in `make check` and `make ci` (its `slow` tests are skipped there); e2e tests call real services and are not part of the CI gate.
 - Three weekly cloud workflows write artifacts a scheduled routine reads (never Slack, never red for a survivor, a failed scenario or a drift): `Mutation survivors` (`mutation.yml`), `Firestore parity` (`parity.yml`, `main` only, WIF is bound to it) and `Spec drift` (`spec_drift.yml`: re-fetches the providers' published specs and diffs the operations our adapters use against `contracts/spec_drift/`; the script `scripts/contracts/spec_drift.py`, its tests `tests/unit/scripts/test_spec_drift.py`; a baseline is regenerated only by `python -m scripts.contracts.spec_drift --update [--source NAME]`, never edited by hand; read monthly by the provider contract review).
 - Docs-only PRs skip the CI suite but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; the root `CLAUDE.md` "Commands" section and that file's docstring define "docs").
 
 ```
 tests/
   conftest.py     — fixtures + the plugin in tests/plugins/ (suite lock)
-  plugins/        — pytest plugins: the suite lock, `network_guard.py` (the offline G2 run)
+  plugins/        — pytest plugins: the suite lock, `network_guard.py` (the offline integration and G2 runs)
   unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
-  integration/    — mocked or scripted services; the offline G2 end-to-end test is part of the offline gate
+  integration/    — `offline/` (mocked or scripted, no network: adapter wire contracts, sandbox tunnel, flows; run by `make test-integration` under the network guard, part of `make check` and `make ci`; the offline G2 end-to-end test `offline/test_drive_g2_end_to_end.py` runs in its own `make test-g2-offline`). Nothing here calls a real service: a test that writes to Firestore or GCS belongs in `cloud/`
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
-  cloud/          — the cloud gate: real writes to the Firestore test database and, with `TEST_GCS_BUCKET` set, the GCS test bucket (`make test-cloud`); never in the CI gate, weekly in the cloud (`Firestore parity`, Firestore only until P12)
+  cloud/          — the cloud gate: real writes to the Firestore test database (parity scenarios, `test_prompt_4level_cloud.py`, the store kits) and, with `TEST_GCS_BUCKET` / `TEST_TASKS_QUEUE` set, the GCS test bucket and the paused Cloud Tasks test queue (`make test-cloud`); never in the CI gate, weekly in the cloud (`Firestore parity`: all three)
 ```
 
 ## The convention
@@ -42,8 +42,8 @@ tests/
 - **Drive fakes** (multi-drive): `tests/support/fake_drive_adapter.py` (a `UserDrivePort` for any kind, registered under
   several kinds in the two-provider tests), `drive_handles.py` (handles), `drive_connection_repo.py` (in-memory
   `DriveConnectionRepository`) and `drive_connections.py` (connection builders). Take these; do not write a per-file drive fake.
-- **No test calls a real LLM**, and no unit test touches the network (below). A test that needs the real service is an
-  integration test and lives in `tests/integration/`.
+- **No test calls a real LLM**, and no unit test touches the network (below). A test that needs a real store writes only to the
+  test database or bucket and lives in `tests/cloud/`; a mocked or scripted cross-component test lives in `tests/integration/offline/`.
 - One test class per service or agent. `@pytest.mark.requirement("REQ-XXX")` for business requirements.
   Arrange-Act-Assert.
 
@@ -75,9 +75,9 @@ stays allowed, so asyncio loops and loopback servers work) and with a tripwire o
 `grpc.secure_channel` and `grpc.aio.secure_channel` unless the target is localhost (Firestore talks through gRPC's
 own sockets, which the socket guard does not see). Since loopback is allowed, the guard also removes every proxy source a client
 could tunnel out through: the proxy variables (`HTTP(S)_PROXY`, `ALL_PROXY`, `GRPC_PROXY`, both cases) and urllib's system-proxy lookup
-(`getproxies_macosx_sysconf`, the Mac's `scutil --proxy`, e.g. a local intercepting proxy; it holds after a test rewrites `os.environ`). The offline G2 test gets the same guard from
-`-p tests.plugins.network_guard` in `make test-g2-offline`. When it fires: use a fake, a loopback server, or move the
-test to `tests/integration/`. Do not disable the guard in a unit test. **Out of scope, by decision:** subprocess
+(`getproxies_macosx_sysconf`, the Mac's `scutil --proxy`, e.g. a local intercepting proxy; it holds after a test rewrites `os.environ`). `tests/integration/offline/` and the offline G2 test get the same guard from
+`-p tests.plugins.network_guard` in `make test-integration` and `make test-g2-offline`. When it fires: use a fake or a loopback server; a test that
+must write to a real store belongs in `tests/cloud/` behind its guards. Do not disable the guard in a unit test. **Out of scope, by decision:** subprocess
 children (drive parser, sandbox engine, ffmpeg).
 
 ## Fake against the real thing: the parity scenarios (P5)
@@ -90,12 +90,16 @@ query for a missing index, so those scenarios skip), and the test database in `t
 is the arbiter. A new kit that leans on a Firestore behaviour H1 has not been checked for adds a scenario here first. The cloud
 run (switched on by `RUN_CLOUD_TESTS=1`, which `make test-cloud` sets; a bare pytest skips it) reads `TEST_FIRESTORE_DATABASE`, `TEST_SA_EMAIL` and `GOOGLE_CLOUD_PROJECT` from the environment or the repo's dotenv file,
 refuses to start unless the database ends in `-test`, is not the live one and the client uses the test service account's
-impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
+impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; the Admin API lists every group's indexes under one group's parent, so `ensure_indexes` filters by the group's name: unfiltered, an index of another group with the same fields counted as present and READY, the likely cause of the scenarios once seen failing after READY). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
 Identity Federation as the test service account and runs `make test-cloud` (artifact `parity`: `parity.xml`, `parity.log`; never red for a failed scenario).
 `tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
-is unchanged. The parity artifact is redacted (four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet). One runner at a time: the workflow runs under a `concurrency` group (no lease document).
+is unchanged. The workflow also passes `TEST_GCS_BUCKET` and `TEST_TASKS_QUEUE` (optional: an empty secret only warns and its tests skip). The parity artifact is redacted (six values are replaced before upload: the three required secrets, the two optional ones and `TEST_WIF_PROVIDER` with the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet). One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
-**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in the unit suite (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow does not pass it yet: P12). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
+**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in the unit suite (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow passes it). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
+
+**The paused queue** (`tests/cloud/test_task_queue_cloud.py`): the real `GcpTaskQueue` enqueues onto the Cloud Tasks queue named by `TEST_TASKS_QUEUE` (optional `TEST_TASKS_LOCATION`, default the deploy region); the test asserts the task exists with dispatch count 0 and that a repeated dedup key is refused as ALREADY_EXISTS (worker task: `None`; agent task: the same name). Guards fail, never skip: the name ends in `-test`, is none of the live `agent-tasks-*` / `alek-bot-tasks-*` / `drive-sync-*` names, and the queue is PAUSED before the first enqueue (the test never pauses a queue). Tasks it creates are deleted at the end; it skips without the variable.
+
+**Every composite query has an index in git** (`tests/unit/test_every_indexed_query_has_an_index.py`, offline, in `make check`): a static walk over `src/adapters/` rebuilds each query and asks H1's index model whether `config/firestore.indexes.json` serves it. A new adapter query that needs a composite and has none fails there; `UNRESOLVED_CALLS`, `UNRESOLVED_SITES`, `DOCUMENTED_UNINDEXED` and `KNOWN_MISSING` (strict xfail `P12-D<n>`) only shrink, each line with its reason. Index deploys stay the owner's: the test never edits the JSON.
 
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
@@ -110,6 +114,39 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   over no fake, or over a mock (`MagicMock()`, a default `patch`, `adapter._client = MagicMock()`: a mock for a configuration argument next to a fake client is fine), a stale allowlist line and a `KITS` key that names no store.
 - **A new store** gets its kit in the same change and one `KITS` line, not an allowlist line (a new line needs the owner's OK).
   A kit that builds its store through a new helper or fake adds its name to `CLIENT_FAKES` or `BUILDERS`, never an edit of the rule.
+- **The same kits on the test database (P12).** A kit builds its store over the `kit_db` fixture (`tests/support/kit_backend.py`):
+  `kit_db(indexes=..., groups=...)` takes `EvalDb`'s arguments and is `EvalDb` in the unit suite. `make test-cloud` collects every kit
+  file of `KITS` again through `tests/cloud/test_kits_cloud.py` (one child per file, from the kit itself) with `kit_db` overridden by the
+  real client behind the cloud guards: a name mapped in `groups` to `development_X` runs on `test_X` with the composites of
+  `config/firestore.indexes.json` for `development_X` created first (any other name runs on `test_kits_<name>`), and every collection a test
+  touches is purged before its first use and after the test. A kit without `kit_db` is one skipped collector.
+  A kit whose store runs vector queries passes its test vectors' dimension, `kit_db(..., vector_dimension=2)`: the vector
+  indexes are rendered at it on the test database (Firestore finds a vector only through an index of its own dimension), and
+  `EvalDb` refuses a query vector of another dimension and does not find a stored one, as Firestore does.
+  - **Nothing is silently lost there.** `db.collection(name).docs` is the raw view, written through for documents and top-level fields;
+    a nested value is frozen (a nested edit such as `docs["u1"]["config"]["x"] = …` raises: assign the top-level field instead). A
+    public attribute set on the database or a collection raises, except `yield_on_get`, which only interleaves the fake's reads: keep
+    a test that sets it only when its assertion holds under real concurrency, else mark it; and except a replaced method of the real
+    object: a fault injected with `monkeypatch.setattr(<store's collection>, "document", <failing stub>)` runs on the real backend too
+    (one wrapper per path, the one the store holds), so such a test is converted as it is, never marked. A replacement the adapter
+    never calls fails the test ("never reached on the real backend"): a fault on a subcollection, or on a document reached through
+    `db.document(path)`, must be injected where the adapter calls it (the real document reference, not `db.collection("a/d/sub")`),
+    or the test is `h1_only`. One database per test: a second `kit_db()` call in a test raises (share the db, or mark it). `collections()`, `recursive_delete()` and an
+    `indexes=` other than `None` or the repository file raise. Building an `EvalDb` anywhere in a kit (import time, any fixture scope)
+    fails, and every Firestore client a kit test builds must be on the test database.
+  - **`h1_only`.** A test that drives a fake-only hook (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`,
+    `txn_versions`, `cols`, `commits`, `executed`, `_check_index`, the collection's `fail =` switch, `EvalDb(`, `indexes=[]`, a naive datetime written raw
+    in the test itself) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
+    `tests/unit/support/test_h1_only_marks.py` checks each mark names a reason and reaches one of those hooks. `h1_only` is forbidden on
+    a test that fails on the real backend: the test database is the arbiter, so the fake is fixed, or an adapter defect is a strict
+    xfail `P12-D<n>`. A missing index is a setup gap, never a mark: `render_indexes` renders composites only, so a kit whose adapter
+    runs a collection-group query with a filter first adds its COLLECTION_GROUP single-field override to the cloud index model
+    (Admin API `update_field`); no converted kit reaches one today (`firestore_drive_index_repo.py`'s `_subdoc_refs` is called
+    from `scripts/` only, not by `test_drive_index_v2_parity.py`).
+  - **Converting a kit.** The fixture swap is one `test(mechanical): …` commit (no assertion changed); the `h1_only` marks are a separate
+    commit; the PR body gives each kit's passed / skipped / failed counts on the test database. One kit by hand:
+    `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly` (never `-p no:logging`: it
+    removes `caplog`, which kits use; `--show-capture=no` trims a failure's captured gRPC debug log instead).
 
 ## Coverage floors and the untested-module list
 

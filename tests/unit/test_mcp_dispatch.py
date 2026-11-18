@@ -1,17 +1,18 @@
-"""main.mcp_owner: which MCP app (or the Quart app) a request path goes to."""
+"""mcp_dispatcher.mcp_owner: which MCP app (or the Quart app) a request path goes to."""
 
 import contextlib
 
 import pytest
 
-import main
+from src.composition import drive_mcp_setup
+from src.web import mcp_dispatcher
 
 
 @pytest.mark.parametrize("path", [
     "/drive-mcp", "/drive-mcp/", "/.well-known/oauth-protected-resource/drive-mcp",
 ])
 def test_drive_paths_go_to_the_drive_app(path):
-    assert main.mcp_owner(path) == "drive"
+    assert mcp_dispatcher.mcp_owner(path) == "drive"
 
 
 @pytest.mark.parametrize("path", [
@@ -19,18 +20,18 @@ def test_drive_paths_go_to_the_drive_app(path):
     "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp",
 ])
 def test_facts_and_authorization_server_paths_go_to_the_facts_app(path):
-    assert main.mcp_owner(path) == "facts"
+    assert mcp_dispatcher.mcp_owner(path) == "facts"
 
 
 @pytest.mark.parametrize("path", ["/mcp/consent", "/cabinet", "/drive-mcpx", "/drive-mcp/sub", "/health"])
 def test_everything_else_goes_to_the_quart_app(path):
-    assert main.mcp_owner(path) is None
+    assert mcp_dispatcher.mcp_owner(path) is None
 
 
 def test_the_drive_prm_wins_over_the_facts_prefix():
     path = "/.well-known/oauth-protected-resource/drive-mcp"
-    assert main._is_mcp_path(path)          # the facts matcher is a prefix match and would take it
-    assert main.mcp_owner(path) == "drive"
+    assert mcp_dispatcher._is_mcp_path(path)          # the facts matcher is a prefix match and would take it
+    assert mcp_dispatcher.mcp_owner(path) == "drive"
 
 
 # --------------------------------------------------------------------------- the dispatcher itself
@@ -66,7 +67,7 @@ def _dispatcher(drive=True):
     async def facts_asgi(scope, receive, send):
         events.append(f"facts served {scope['path']}")
 
-    return events, main.build_mcp_parent_asgi(main_app=quart, facts_mcp=facts, drive_mcp=drv, facts_asgi=facts_asgi)
+    return events, mcp_dispatcher.build_mcp_parent_asgi(main_app=quart, facts_mcp=facts, drive_mcp=drv, facts_asgi=facts_asgi)
 
 
 async def _call(parent, path):
@@ -119,11 +120,11 @@ def test_a_failing_drive_build_leaves_none_and_the_facts_connector_alone(monkeyp
     def boom(**_):
         raise RuntimeError("drive build failed")
 
-    monkeypatch.setattr(main, "build_drive_mcp_app", boom)
-    assert main.build_drive_mcp_or_none(object(), object()) is None
+    monkeypatch.setattr(drive_mcp_setup, "build_drive_mcp_app", boom)
+    assert drive_mcp_setup.build_drive_mcp_or_none(object(), object()) is None
 
 
 def test_a_working_drive_build_is_returned(monkeypatch):
     sentinel = object()
-    monkeypatch.setattr(main, "build_drive_mcp_app", lambda **_: sentinel)
-    assert main.build_drive_mcp_or_none(object(), object()) is sentinel
+    monkeypatch.setattr(drive_mcp_setup, "build_drive_mcp_app", lambda **_: sentinel)
+    assert drive_mcp_setup.build_drive_mcp_or_none(object(), object()) is sentinel

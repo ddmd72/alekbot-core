@@ -14,7 +14,7 @@ from src.domain.email_card_answer import parse_mail_answer
 from src.domain.email_card_build import build_card
 from src.domain.email_card_input import build_card_input
 from src.domain.email_card_lifecycle import CardExpect, CardWriteResult, pending_fields, settled_fields
-from tests.support.firestore_eval import EvalDb, eval_transactions, stored_vector
+from tests.support.firestore_eval import stored_vector
 from tests.unit.domain.email_card_fixtures import BOOKING_BODY, NONCE, PEOPLE, answer_json, mail
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -28,12 +28,11 @@ GATE_FIELDS = ("text", "tags", "category", "metadata")
 
 
 @pytest.fixture
-def world():
-    db = EvalDb(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1",
+def world(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1",
                                                STATE: "development_email_indexing_state"})
     env = SimpleNamespace(domain_email_facts_collection=FACTS, email_indexing_state_collection=STATE)
-    with eval_transactions():
-        yield db, FirestoreIndexedEmailRepository(db, env), FirestoreEmailCardStore(db, env)
+    return db, FirestoreIndexedEmailRepository(db, env), FirestoreEmailCardStore(db, env)
 
 
 def email(email_id, user_id="user-1", **over) -> IndexedEmail:
@@ -106,6 +105,7 @@ async def test_a_missing_document_is_reported_and_never_created(world):
     assert await raw(db, "m404") is None
 
 
+@pytest.mark.h1_only("drives the fake's interfere_on_txn_read hook")
 async def test_a_change_inside_the_transaction_is_retried_then_conflicts(world):
     db, repo, store = world
     await repo.save_batch([email("m1")])

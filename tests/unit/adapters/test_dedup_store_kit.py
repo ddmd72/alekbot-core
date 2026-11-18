@@ -24,7 +24,7 @@ import src.adapters.firestore_dedup_store as dedup_module
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.ports.dedup_store import DedupStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 SHARED = "eval_worker_task_dedup"
@@ -37,8 +37,8 @@ TELEGRAM_KEY = "telegram::1001"
 
 
 class Stores:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup",
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup",
                                                        EVENTS: "development_event_dedup"})
         self.daily: DedupStore = FirestoreDedupStore(self.db, SHARED, ttl_seconds=DAILY_TTL)
         self.webhook: DedupStore = FirestoreDedupStore(self.db, SHARED, ttl_seconds=WEBHOOK_TTL)
@@ -49,9 +49,9 @@ class Stores:
 
 
 @pytest.fixture
-def stores(monkeypatch):
+def stores(monkeypatch, kit_db):
     pin_datetime(monkeypatch, dedup_module, T0)
-    return Stores()
+    return Stores(kit_db)
 
 
 def at(monkeypatch, delta: timedelta) -> None:
@@ -133,6 +133,7 @@ async def test_a_legacy_mark_with_neither_field_is_expired(stores):
     assert stores.docs(EVENTS)[TELEGRAM_KEY]["expires_at"] == T0 + timedelta(seconds=TELEGRAM_TTL)
 
 
+@pytest.mark.h1_only("a naive datetime survives only in the fake")
 async def test_a_naive_expires_at_is_read_as_utc_defensive_branch(stores):
     """A defensive branch, not a contract: the client always returns an aware Timestamp; a naive value exists only
     when a test seeds one into the fake."""
@@ -140,6 +141,7 @@ async def test_a_naive_expires_at_is_read_as_utc_defensive_branch(stores):
     assert await stores.daily.is_duplicate(DAILY_KEY) is True
 
 
+@pytest.mark.h1_only("reads the fake's write log (versions)")
 @pytest.mark.parametrize("key", ["", None])
 async def test_an_empty_key_is_never_marked(stores, key):
     """The adapter's guard, not a port promise: no caller passes an empty key."""
@@ -161,6 +163,7 @@ async def test_release_deletes_and_an_absent_release_is_quiet(stores):
     assert await stores.webhook.try_mark_processed(WEBHOOK_KEY) is True
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.create")
 async def test_a_mark_released_twice_between_create_and_read_gives_way(stores, monkeypatch):
     """Another holder's mark is released right after each of our creates met it: one more create, then give way.
     (Released once and claimed on the retry: test_firestore_dedup_store_reclaim.py.)"""
@@ -181,6 +184,7 @@ async def test_a_mark_released_twice_between_create_and_read_gives_way(stores, m
     assert DAILY_KEY not in stores.docs()
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.create")
 async def test_a_backend_error_propagates_and_marks_nothing(stores, monkeypatch):
     async def unavailable(self, data):
         raise RuntimeError("unavailable")

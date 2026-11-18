@@ -392,7 +392,10 @@ class MCPAuthorizationService:
 
         # Revoke first, then save: a save-first order would let a replayed old token mint again. A link fetch in
         # the gap between the two sees no active token for the grant and is refused (the client asks again).
-        await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
+        # The revoke is the one-exchange claim: a concurrent exchange of the same token that revoked it first wins.
+        if not await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value)):
+            logger.warning(f"MCP refresh token replayed concurrently for user={existing.user_id[:8]}; refused")
+            raise MCPInvalidGrant("refresh token not found or revoked")
         new_refresh = secrets.token_urlsafe(48)
         await self._repo.save_refresh_token(
             MCPRefreshToken(

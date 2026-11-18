@@ -1,7 +1,7 @@
 """FirestoreBlueprintRepository kit (P10): the docstring of `src/ports/prompt_v3/blueprint_repository.py` and of the adapter
-checked on the evaluating Firestore fake (H1). Documents are seeded as raw dicts where a test reads, because `save` and
-`delete` do not write on the production client (P10-D3, P10-D4: the write coroutine is never awaited); the tests that need
-the write are strict xfails.
+checked on the evaluating Firestore fake (H1). Documents are seeded as raw dicts where a test reads, so a read test does
+not depend on `save`; the save and delete tests assert the written documents (P10-D3, P10-D4: the write coroutine was not
+awaited, fixed).
 
 `_adapter(db)` is the one place the adapter is constructed.
 """
@@ -9,21 +9,18 @@ import pytest
 
 from src.adapters.prompt_v3.firestore_blueprint_repository import FirestoreBlueprintRepository
 from src.domain.prompt_v3.blueprint import Blueprint
-from tests.support.firestore_eval import EvalDb
 
 COL = "eval_blueprints"
 ORDER = ["properties", "cognitive_process", "policies"]
-D3 = "P10-D3: FirestoreBlueprintRepository.save calls doc_ref.set(data) without await; on the async client no write happens"
-D4 = "P10-D4: FirestoreBlueprintRepository.delete calls doc_ref.delete() without await; on the async client nothing is deleted"
 
 
-def _adapter(db: EvalDb) -> FirestoreBlueprintRepository:
+def _adapter(db) -> FirestoreBlueprintRepository:
     return FirestoreBlueprintRepository(db=db, collection_name=COL)
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db()
         self.repo = _adapter(self.db)
 
     @property
@@ -36,8 +33,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 async def test_get_returns_every_field_of_a_stored_blueprint(store):
@@ -84,13 +81,11 @@ async def test_saving_an_invalid_blueprint_raises_value_error_and_writes_nothing
     assert store.docs == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D3)
 async def test_save_stores_every_field(store):
     await store.repo.save(Blueprint(id="bp_one", outer_class="Alek extends Agent", class_order=ORDER))
     assert store.docs == {"bp_one": {"blueprint_id": "bp_one", "outer_class": "Alek extends Agent", "class_order": ORDER}}
 
 
-@pytest.mark.xfail(strict=True, reason=D3)
 async def test_a_saved_blueprint_reads_back_equal_and_a_second_save_replaces_it(store):
     first = Blueprint(id="bp_one", outer_class="Alek extends Agent", class_order=ORDER)
     await store.repo.save(first)
@@ -100,7 +95,6 @@ async def test_a_saved_blueprint_reads_back_equal_and_a_second_save_replaces_it(
     assert await store.repo.get("bp_one") == second
 
 
-@pytest.mark.xfail(strict=True, reason=D4)
 async def test_delete_removes_the_blueprint(store):
     store.seed()
     store.seed("bp_two")

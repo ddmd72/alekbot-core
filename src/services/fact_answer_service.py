@@ -18,6 +18,7 @@ question for the review.
 """
 from datetime import datetime, timezone
 import asyncio
+import weakref
 from typing import TYPE_CHECKING, AbstractSet, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..domain.choice_outcome import ChoiceOutcome
@@ -105,6 +106,7 @@ class FactAnswerService(ChoiceHandlerPort):
         self._interactive = interactive
         self._owner_zones = owner_zones
         self._clock = clock
+        self._answer_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
     async def apply(
         self, account_id: str, user_id: str, question_id: str, kind: AnswerKind, source: AnswerSource, at: datetime,
@@ -123,7 +125,8 @@ class FactAnswerService(ChoiceHandlerPort):
         write, or a `FactExpiryError`, is `not_applied` (WARNING, `answers_not_applied`); so is an answer that is not an option of
         the question's kind (`answer_fits`: `happened` on a `still_true` question, `dont_know` on a digest question), refused
         before the fact is read. Only an applied answer closes
-        the question (`close_question`, the owner's close), refreshes the biographical cache once, right after the write
+        the question (`close_question`, the owner's close), under a per-question lock that re-reads the question first, so
+        two deliveries of one click write one answer (the second is `not_open`); refreshes the biographical cache once, right after the write
         and before the close (so it is refreshed even when a later step raises), and is counted by its source; an answer that sets the fact aside (`answer_closes_fact`) also marks the account undigested. Raises
         ValueError for a source that is not the owner's; store errors raise."""
         counter = ANSWER_COUNTERS.get(source)
@@ -146,6 +149,30 @@ class FactAnswerService(ChoiceHandlerPort):
         stored = await self._asked_fact(question, context.accepts)
         if stored is None:
             return AnswerResult.CHANGED
+        async with self._answering(question_id):
+            # Two deliveries of one click read the question open together; the second finds it closed here, so the
+            # answer is written once (P15-D12). The main service runs one instance (decisions/worker_task_dedup.md);
+            # a rolling-deploy overlap can still apply an answer twice (accepted, see decisions/worker_task_dedup.md).
+            current = await self._question(question_id)
+            if current is None or not current.is_open:
+                logger.info(f"[FactAnswer] question {question_id} was answered meanwhile; answer not applied")
+                return AnswerResult.NOT_OPEN
+            return await self._write_answer(question, stored, kind, source, counter, context, zone, now)
+
+    def _answering(self, question_id: str) -> asyncio.Lock:
+        """The lock of the question being answered; the entry goes with its last holder or waiter."""
+        lock = self._answer_locks.get(question_id)
+        if lock is None:
+            lock = self._answer_locks[question_id] = asyncio.Lock()
+        return lock
+
+    async def _write_answer(
+        self, question: FactReviewQuestion, stored: StoredFact, kind: AnswerKind, source: AnswerSource,
+        counter: CounterField, context: FactWriteContext, zone: str, now: datetime,
+    ) -> AnswerResult:
+        """The fact write, the cache refresh, the close and the count of one applied answer (the body of `apply`
+        after its checks), run under the question's answer lock."""
+        account_id, question_id = question.account_id, question.question_id
         try:
             change = answer_updates(kind, stored.fact, question, now, zone, source)
             if change.fields is not None:

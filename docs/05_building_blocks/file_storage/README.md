@@ -308,7 +308,7 @@ Everything else:
 |--------|-----------|-------------|
 | `upload` | `(data, filename, user_id, content_type) -> str` | Upload with Finder-style dedup; returns deduplicated name |
 | `download` | `(filename, user_id) -> bytes` | Download raw bytes |
-| `delete` | `(filename, user_id) -> None` | Remove file |
+| `delete` | `(filename, user_id) -> None` | Remove file; a missing one raises `FileNotFoundError` |
 | `exists` | `(filename, user_id) -> bool` | Check existence (for dedup) |
 | `get_url` | `(filename, user_id) -> str` | Assemble a `storage.googleapis.com` path (legacy; **no live callers** — capability links are minted by FileLinkService, see §2.4) |
 
@@ -324,7 +324,10 @@ returns a public URL — access is via capability token → signed URL (§2.4).
 
 **Location:** `src/adapters/gcs_file_storage_adapter.py`
 
-- **Finder-style dedup:** `report.docx` -> `report (1).docx` -> `report (2).docx`
+- **Finder-style dedup:** `report.docx` -> `report (1).docx` -> `report (2).docx`. The write is conditional
+  (`if_generation_match=0`): a name another upload took between the check and the write (412) moves on to the next
+  free name, never replacing that file; a fresh `upload_id` in the object metadata lets a 412 met by the client's own
+  retry read back as success.
 - **Filename sanitization:** GCS-prohibited chars (`#?[]*\n\r\t`) replaced with underscore; UTF-8 preserved
 - **Lazy client init:** GCS client created on first use, cached
 - **Async/sync separation:** All GCS I/O via `run_in_executor`
@@ -344,7 +347,9 @@ verify ownership (§2.4).
 
 **Lifecycle (GCS, by prefix):** `email_review/` → delete after **5 days**; everything else
 (uploads, docs, deep_research) → delete after **30 days**. Config:
-`scripts/infra/alek-media-dev-lifecycle.json` (local-only infra artifact).
+`scripts/infra/alek-media-dev-lifecycle.json` (local-only infra artifact). History keeps the keys, so a key can
+outlive its object: `GcsMediaAdapter.fetch` raises `FileNotFoundError` for it (open_file's "not found" answer), and
+`/f/<token>/raw` answers 410 "This file has expired." (an outage stays 503).
 
 ### 3.3 FileConversionService
 

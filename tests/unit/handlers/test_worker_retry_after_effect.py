@@ -205,7 +205,6 @@ class TestLostReminderEnqueue:
     claimed on the note (`claim_one_time_if_due_at`) before `execute_reminder` is enqueued (`reminders_service.py:151-181`),
     so an enqueue that raises leaves a claimed fire no tick enqueues again."""
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D3)
     async def test_a_lost_reminder_enqueue_is_enqueued_by_the_next_tick(self, monkeypatch):
         """Tick 1 claims the note and its create fails before landing; tick 2 must enqueue the fire.
 
@@ -475,7 +474,6 @@ class TestReviewQuestionPostedOnce:
     was delivered, without one it was never posted. The post is `:580`, the ref write `:586`, `mark_asked` `:589`. Not a
     duplicate of `test_fact_review_questions.py:554-584`, which crashes `mark_asked`, after the ref is stored."""
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D11)
     async def test_a_question_posted_whose_ref_write_failed_is_not_posted_again(self):
         """The post succeeds and the ref write raises once; the next day's run must not post q1 again nor tell the
         owner it was not delivered.

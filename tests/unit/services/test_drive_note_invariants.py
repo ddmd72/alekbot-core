@@ -113,6 +113,12 @@ class MemoryStore(EphemeralStore):
     async def set(self, key, value, ttl_s):
         self.data[key] = value
 
+    async def set_if_absent(self, key, value, ttl_s):
+        if key in self.data:
+            return False
+        self.data[key] = value
+        return True
+
     async def get(self, key):
         return self.data.get(key)
 

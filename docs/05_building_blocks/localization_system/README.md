@@ -356,7 +356,7 @@ POST /api/user/language
         ▼
 LanguagePreferenceService.set_preference()
         │
-        ├─► UserRepository.update_user()        (stores preferred_language, agent_mirror)
+        ├─► UserRepository.update_user_fields() (stores preferred_language, agent_mirror only)
         │
         ├─► AgentProfileRepository              (writes USER_{user_id} override doc)
         │       .set_override_tokens()           (awaited — Firestore AsyncClient)

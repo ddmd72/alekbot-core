@@ -3,9 +3,8 @@ on the evaluating Firestore fake (H1), with the real `RegexSecurityAdapter` as t
 `prompt_assembly_setup.py` wires it (a `CompositeAdapter` of one regex adapter).
 
 The adapter reads two collections (system, user). `get` looks in system first, then user; `save(..., collection=)` picks
-the target. Documents are seeded as raw dicts where a test reads, because `save` and `delete` do not write on the
-production client (P10-D1, P10-D2: the write coroutine is never awaited); the save/delete tests that need the write are
-strict xfails.
+the target. Documents are seeded as raw dicts where a test reads, so a read test does not depend on `save`; the save and
+delete tests assert the written documents (P10-D1, P10-D2: the write coroutine was not awaited, fixed).
 
 `_adapter(db)` is the one place the adapter is constructed.
 """
@@ -15,23 +14,20 @@ from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepo
 from src.adapters.security.composite_adapter import CompositeAdapter
 from src.adapters.security.regex_adapter import RegexSecurityAdapter
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
-from tests.support.firestore_eval import EvalDb
 
 SYS, USR = "eval_tokens_system", "eval_tokens_user"
 TWO_SENTENCES = "Answer in two short sentences."
 METRIC = "Use metric units."
-D1 = "P10-D1: FirestoreTokenRepository.save calls doc_ref.set(data) without await; on the async client no write happens"
-D2 = "P10-D2: FirestoreTokenRepository.delete calls doc_ref.delete() without await; on the async client nothing is deleted"
 
 
-def _adapter(db: EvalDb) -> FirestoreTokenRepository:
+def _adapter(db) -> FirestoreTokenRepository:
     security = CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case")
     return FirestoreTokenRepository(db=db, system_collection=SYS, user_collection=USR, security_port=security)
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db()
         self.repo = _adapter(self.db)
 
     def docs(self, collection: str) -> dict:
@@ -43,8 +39,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 async def _token(store, token_id="STYLE_SHORT", category="style", class_="properties", content=TWO_SENTENCES, metadata=None) -> Token:
@@ -178,7 +174,6 @@ async def test_save_with_an_unknown_collection_raises_value_error_and_writes_not
     assert store.docs(SYS) == {} and store.docs(USR) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D1)
 async def test_save_lands_in_the_system_collection_by_default_with_every_field(store):
     token = await _token(store, metadata={"version": "2.0", "author": "system"})
     await store.repo.save(token)
@@ -190,27 +185,23 @@ async def test_save_lands_in_the_system_collection_by_default_with_every_field(s
     assert store.docs(USR) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D1)
 async def test_save_to_the_user_collection_lands_there_only(store):
     await store.repo.save(await _token(store, "UNITS_METRIC", "units", "policies", METRIC), collection="user")
     assert list(store.docs(USR)) == ["UNITS_METRIC"] and store.docs(SYS) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D1)
 async def test_a_saved_token_reads_back_with_every_field(store):
     saved = await _token(store, metadata={"version": "2.0", "author": "system", "description": "short"})
     await store.repo.save(saved)
     assert await store.repo.get(TokenId("STYLE_SHORT")) == saved
 
 
-@pytest.mark.xfail(strict=True, reason=D2)
 async def test_delete_removes_the_token_from_the_system_collection(store):
     store.seed(SYS, "A")
     await store.repo.delete(TokenId("A"))
     assert store.docs(SYS) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D2)
 async def test_delete_removes_the_token_from_the_user_collection(store):
     store.seed(USR, "B")
     await store.repo.delete(TokenId("B"))

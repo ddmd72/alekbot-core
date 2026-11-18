@@ -15,3 +15,8 @@ def test_ephemeral_store_declares_atomic_get_and_delete():
     between two concurrent redemptions of the same ticket."""
     assert "get_and_delete" in dir(EphemeralStore)
     assert getattr(EphemeralStore.get_and_delete, "__isabstractmethod__", False)
+
+
+def test_ephemeral_store_declares_atomic_set_if_absent():
+    """The one-call marker claim: a get()-then-set() lets two concurrent calls both pass."""
+    assert getattr(EphemeralStore.set_if_absent, "__isabstractmethod__", False)

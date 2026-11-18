@@ -78,7 +78,7 @@ class LongTurnService:
         try:
             await retry_store_write(
                 lambda: self._sessions.append_messages_batch(
-                    session_id=session_id, owner_id=user_id, messages=messages,
+                    session_id=session_id, owner_id=user_id, messages=messages, raise_on_error=True,
                 ),
                 label="Long-turn mark save",
             )
@@ -103,7 +103,7 @@ class LongTurnService:
         ]
         await retry_store_write(
             lambda: self._sessions.append_messages_batch(
-                session_id=session_id, owner_id=owner_id, messages=messages,
+                session_id=session_id, owner_id=owner_id, messages=messages, raise_on_error=True,
             ),
             label="Late answer save",
         )

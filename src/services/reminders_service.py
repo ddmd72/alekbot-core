@@ -15,8 +15,10 @@ calls ``notify()`` synchronously inside the cron HTTP request. It now:
      A False return means another concurrent cron tick already owns
      this fire — skip silently.
   3. Enqueues an ``execute_reminder`` Cloud Task with the fire-payload
-     ``{note_id, user_id, due_at}``. The actual user-facing delivery
-     runs there (Step #8) — out of band of the cron handler.
+     ``{note_id, user_id, due_at}``, named ``execute_reminder:<note>@<due>``
+     and its create retried (the claimed fire is enqueued by no later tick).
+     The actual user-facing delivery runs there (Step #8) — out of band of
+     the cron handler.
 
 This removes both defects #2 and #3 from the 2026-04-30 incident:
   - Cron HTTP request returns within seconds (no longer blocks on
@@ -27,6 +29,7 @@ This removes both defects #2 and #3 from the 2026-04-30 incident:
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
@@ -43,6 +46,9 @@ if TYPE_CHECKING:
 # Bound on skipping missed occurrences: a week of a 5-minute rule is ~2000 steps.
 # Past it the note is left untouched (logged), like any rule with no next occurrence.
 _MAX_CATCH_UP_STEPS = 5000
+# A claimed fire is enqueued by no later tick, so a failed create is retried (by name: a landed create is not doubled).
+_ENQUEUE_ATTEMPTS = 3
+_ENQUEUE_BACKOFF_S = 0.2
 
 
 class RemindersService:
@@ -173,15 +179,7 @@ class RemindersService:
             # with a 1500s budget, and the Cloud Tasks default of 600s would cut it —
             # then retry the whole thing, which is how one slow provider opened Smart's
             # circuit breaker on 2026-08-15.
-            await self._task_dispatch.enqueue_worker_task(
-                task_type="execute_reminder",
-                payload={
-                    "note_id": note.note_id,
-                    "user_id": note.user_id,
-                    "due_at": note.due.isoformat(),
-                },
-                deadline_seconds=self._dispatch_deadline_s,
-            )
+            await self._enqueue_fire(note)
             enqueued += 1
 
         logger.info(
@@ -193,6 +191,37 @@ class RemindersService:
             "claim_lost": claim_lost,
             "skipped": skipped,
         }, 200
+
+    async def _enqueue_fire(self, note: AgentNote) -> None:
+        """Enqueue the claimed fire's ``execute_reminder``, retrying a failed create.
+
+        The fire is already claimed, so no later tick enqueues it again: a create lost here would lose the
+        reminder. The task is named by (note, due): a retry after a create that landed but answered an error is
+        refused as already existing (a silent no-op in the queue), so the retry never doubles the fire. After the
+        last attempt the error propagates.
+        """
+        due_at = note.due.isoformat()
+        for attempt in range(_ENQUEUE_ATTEMPTS):
+            try:
+                await self._task_dispatch.enqueue_worker_task(
+                    task_type="execute_reminder",
+                    payload={"note_id": note.note_id, "user_id": note.user_id, "due_at": due_at},
+                    deadline_seconds=self._dispatch_deadline_s,
+                    dedup_key=f"execute_reminder:{note.note_id}@{due_at}",
+                )
+                return
+            except Exception as exc:
+                if attempt == _ENQUEUE_ATTEMPTS - 1:
+                    logger.error(
+                        "[Reminders] execute_reminder create failed %d times for %s (due=%s, user=%s): %s",
+                        _ENQUEUE_ATTEMPTS, note.note_id, due_at, note.user_id[:8], exc, exc_info=True,
+                    )
+                    raise
+                logger.warning(
+                    "[Reminders] execute_reminder create failed (attempt %d) for %s, retrying by name: %s",
+                    attempt + 1, note.note_id, exc,
+                )
+                await asyncio.sleep(_ENQUEUE_BACKOFF_S * (2 ** attempt))
 
     def _next_due_after_now(
         self, note: AgentNote, now: datetime, user_tz: str

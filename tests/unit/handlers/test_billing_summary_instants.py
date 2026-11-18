@@ -68,9 +68,6 @@ async def test_month_line_shows_october_when_nothing_ran_after_utc_midnight(monk
     assert "5,000 tok / $0.2500" in _month_line(webhook.posts[0])
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P16-D7: the monthly counter rotates at 00:00Z on the first increment of November, so the "
-                          "'Month' line shows November's first tokens beside October's 'Yesterday'; owner decision")
 async def test_month_line_shows_october_after_one_increment_past_utc_midnight(monkeypatch):
     worker, repo, webhook = _world()
     await _seed_october(repo)

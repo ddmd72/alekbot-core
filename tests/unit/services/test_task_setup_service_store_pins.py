@@ -74,8 +74,6 @@ async def test_setup_keeps_the_primary_list_id(world):
     assert [s["sub_id"] for s in doc["subscriptions"]] == ["sub1"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G3-3: ensure_subscriptions saves a stale config over the list id it just stored")
 async def test_ensure_subscriptions_keeps_the_primary_list_id_it_stored(world):
     """With no stored config, `ensure_subscriptions` stores the list id and then saves the config it read before, whose
     `primary_list_id` is None, over it. Flipping fix (`task_setup_service.py`, after `set_primary_list_id_if_absent`):

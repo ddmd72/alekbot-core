@@ -20,7 +20,7 @@ class SessionService:
     JWT-based session management service.
 
     Provides stateless authentication via JWT tokens:
-    - Access tokens (24 hours — one login lasts a day)
+    - Access tokens (24 hours; /auth/refresh mints a new one, the session slides)
     - Refresh tokens (24 hours, age-capped by the current TTL on verify)
 
     Tokens contain:

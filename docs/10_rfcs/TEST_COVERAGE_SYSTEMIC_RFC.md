@@ -639,12 +639,13 @@ the `returns:` lines of the Consolidation tools other than `search_existing_fact
   tripwires behind them, and sends every one of their 99 routes, plus every route of the MCP SDK app, an anonymous request: refused, nothing
   touched or written. A `PUBLIC` list holds the routes public by design, one reason each. An AST companion ties every `register_blueprint` in
   `main.py`, `indexer_main.py` and `sandbox_main.py`, and `_is_mcp_path`'s literals, to what the probe builds.
-- **`/worker` is held by an AST check** (`tests/unit/test_main_worker_route_gate.py`: the gate is awaited first, its 401 returned unchanged),
-  the owner's choice over moving `/worker` out of `main.py`; tidying `main.py` is an open owner topic.
+- **`/worker` is held by an AST check** (`tests/unit/test_main_worker_route_gate.py`: the gate is awaited first, its 401 returned unchanged).
+  `/worker` now lives in the `main_service` blueprint (`src/web/main_service_routes.py`); the check parses that module and stays, since
+  statement order and async-ness are not visible to a route test (`tests/unit/web/test_main_service_routes.py` drives the route itself).
 - **The inventory's negative tests**, route-level on real repositories over H1: deep-research Svix HMAC, Slack signature, Graph webhook, voice
   OIDC, Cabinet owner and foreign tenant, every `/auth/*` refusal, MCP consent and the SDK app, the relay's ticket.
 - **Known defects as strict xfails:** the open redirect after sign-in (a fix PR follows); the Graph webhook trusting the URL's user id (owner:
-  not fixed); two client errors answered 500 instead of 401/400 (`/auth/refresh` with an access token, `/register` with null `redirect_uris`).
+  not fixed); two client errors answered 500 instead of 401/400 (`/auth/refresh` with an access token, fixed: 401; `/register` with null `redirect_uris`).
 - **F1:** `.coveragerc`'s `\.\.\.` exclude matched a `def` whose signature holds `...` and hid the whole function (1 686 statements in 142
   files). Anchored to a line that is only `...`. Floors re-set to the honest values with the owner's OK (local run; the CI runner's numbers
   re-adjust them): domain 98.1 → 98.0, ports 92.2 → 92.0, services 91.2 → 91.3, adapters 80.6 → 81.8, web 63.1 → 75.2, composition
@@ -735,8 +736,9 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     Closed by the matrix card: all five rows answer 200 through the deployed route, with their outcomes asserted (the Slack notice, the history pair,
     the To Do config, the reindex task, the completed job); `_probe` seeds them (`_seed_rows`, `tests/support/prompt_seed.py` for the notice formatter's
     prompt). Three other rows changed as a consequence of the seed: `daily_email_review`, `start_email_indexing` and `renew_all_task_subscriptions`.
-- **Left for "tidy main.py":** the voice closures; `/worker`, `/health` and `/favicon` as a blueprint (then `test_main_worker_route_gate.py` retires);
-  the MCP dispatcher; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the main.py allowlist entries.
+- **Left for "tidy main.py":** the voice closures; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the
+  main.py allowlist entries. Done: `/worker`, `/health` and `/favicon` are the `main_service` blueprint and the MCP dispatcher is
+  `src/web/mcp_dispatcher.py` (`test_main_worker_route_gate.py` retargeted to the blueprint module, kept).
 
 **Built (P16, 2026-10-27).** The clock suite. Test-only: no `src/` change. Files and deviations:
 - **Harness.** `tests/support/clock_instants.py` (self-test `tests/unit/support/test_clock_instants.py`): the 2026 DST instants, the skipped and
@@ -755,7 +757,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P16-D4: recurrence drops `fold` (DAILY in the repeated hour returns an instant before the anchor; HOURLY and 15-minute rules lose a real hour on
     the fall-back day).
   - P16-D5: a skipped local wall time is accepted as the earlier offset; an unknown Cabinet zone answers 500.
-  - P16-D6: `/auth/refresh` mints a fresh 24 h access token (the cap from login is not enforced).
+  - P16-D6 (closed, not a defect): `/auth/refresh` mints a fresh 24 h access token. The owner chose a sliding session
+    (`decisions/cabinet_session_24h_cap.md`); the xfail was rewritten to pin that rule (`TestRefreshSlidesTheSession`).
   - P16-D7: the billing summary's Month line mixes months after traffic past 00:00Z on the 1st.
   - P16-D10: To Do sends an aware time's wall-clock digits labelled UTC (due, start, reminder).
   - P16-D11: the automatic To Do reminder is 20:00 UTC. A fix needs a zone input, so its reviewer rewrites that test.
@@ -785,15 +788,22 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   Caches and breaker: `tests/unit/services/test_prompt_cache_interleaving.py`, `tests/unit/services/test_channel_binding_interleaving.py`,
   `tests/unit/agents/test_breaker_stale_success_interleaving.py`.
 - **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker):
-  - P15-S1: a lazy agent built while an unlocked eviction runs stays registered and untracked.
-  - P15-S1b: an admin cache reset during a build in progress is undone by the build's cache write.
-  - P15-S2: a cache write-back after an invalidation brings back the old value (prompt assembly, channel binding).
+  - P15-S1: a lazy agent built while an unlocked eviction runs stays registered and untracked. **Fixed:** the lazy build re-reads
+    the entry under the per-user lock and rebuilds it when an eviction dropped it; the marker is removed.
+  - P15-S1b: an admin cache reset during a build in progress is undone by the build's cache write. **Fixed:** every eviction
+    advances a per-user generation and the locked build redoes a build an eviction overtook; the marker is removed.
+  - P15-S2: a cache write-back after an invalidation brings back the old value (prompt assembly, channel binding). **Fixed:**
+    every invalidation advances a counter (per channel; one for the assembly cache) and a miss writes back only if it did not
+    move while the read awaited; both markers are removed.
   - P15-S3: `$consolidate` overwrites messages appended meanwhile.
-  - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient".
-  - P15-S5: a cancelled child in the delegation gather crashes the turn (tool batch and fan-out).
+  - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient". **Fixed:**
+    `route_message` asks the factory port to restore the user's eager agents (`restore_agents_for_user`); the marker is removed.
+  - P15-S5: a cancelled child in the delegation gather crashes the turn (tool batch and fan-out). **Fixed** (owner decision): a
+    child's own `CancelledError` is a failed `ToolResult` unless the gathering task is itself being cancelled; both markers are removed.
   - P15-S6: resolved file text is written into the model's own tool-call args. **Fixed:** `normalize_delegate_context`
     returns a copy, so the coordinator's `file_content` no longer rides in the orchestrator's history; the marker is removed.
-  - P15-S7: a stale success closes a tripped provider breaker.
+  - P15-S7: a stale success closes a tripped provider breaker. **Fixed:** `_call_llm` records a primary success only if the
+    breaker is not OPEN when it lands (it was closed at admission); the marker is removed.
 - **Known limit.** The nested `context` dict of `agent_execution` is not checked per key: producers forward a runtime dict and the consumer passes
   the whole dict to the agent.
 - **Built in part 2** (next note): per-type double runs, retry after a partial effect and the agent instance-state meta-test. Closed since: the three
@@ -881,7 +891,7 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - Voice, billing, notes: P11-G1-1 two concurrent claims both pass the one-call marker (the `voice_auth` route has the same check-then-set); P11-G1-2 two notes created in one millisecond overwrite each other (note id = creation millisecond, plain `set`); P11-G1-3 `update_account` overwrites usage counters incremented since the caller's read; P11-G1-4 a deep-research job increments usage directly and its daily-limit crossing is never announced (`job_main`).
   - Session, email, user: P11-G2-1 re-saving a consolidated email clears `consolidated_at`; P11-G2-2 every vector query failing reads as no match; P11-G2-3 an overflow batch is cut before its hand-off and lost when the enqueue fails (the known loss in the memory map); P11-G2-4 concurrent profile updates lose one (whole-profile write, no precondition); P11-G2-5 the chat-turn save, `LongTurnService.save_late_answer` and `LongTurnService.mark` retry only an exception, but the session store swallows a transient error by default, so the retry never runs (three tests).
   - Small stores: P11-G3-1 every vector query failing answers `[]` ("no tasks"); P11-G3-2 a subscription without `expires_at` reads as an aware now where every caller compares with a naive now; P11-G3-3 `ensure_subscriptions` saves a stale config over the list id it just stored; P11-G3-5 the email-indexing watchdog overwrites a job that completed after its stale query. Not pinned by decision: the companion summary cache is keyed by session only while the companion records are scoped by account; the companion stores are to be reworked with the agent workspace, and the case is tested then.
-  - GCS: P11-G4-1 a workspace delete that loses to an overwrite leaves its stamp on the replaced version; P11-G4-2 two concurrent chat uploads of one name both return it and the later replaces the earlier; P11-G4-3 a delete of a missing upload leaks the SDK `NotFound`; P11-G4-4 a fetch of a missing media key leaks it too; P11-G4-5 an HTML rich-content file is posted as its storage key. The second residual of G4-1 (the workspace RFC's accepted case) is not pinned.
+  - GCS: P11-G4-1 a workspace delete that loses to an overwrite leaves its stamp on the replaced version; P11-G4-2 two concurrent chat uploads of one name both return it and the later replaces the earlier; P11-G4-3 a delete of a missing upload leaks the SDK `NotFound`; P11-G4-4 a fetch of a missing media key leaks it too; P11-G4-5 an HTML rich-content file is posted as its storage key. The second residual of G4-1 (the workspace RFC's accepted case) is not pinned. **Fixed (item 26):** G4-1 the losing delete takes its own stamp off again; G4-2 the upload is conditional and a 412 moves to the next name; G4-3 and G4-4 map `NotFound` to `FileNotFoundError` (`/f/<token>/raw` answers 410); G4-5 the page goes out as a `/f/<token>` link when the owner is known (owner decision O8), else as a file.
   - Cloud Tasks: none.
 - **Not covered.** Legacy document shapes (notes, accounts, sessions, batches, emails, users, NFD file names): left for a read-only data audit. Methods with no caller in `src/` (`GcsFileStorageAdapter.get_url`, `GcpTaskQueue.get_queue_stats` and `purge_queue`, `FirestoreTaskConfigRepository._strip_tz`, the user-id argument of `delete_exclusion`, the session store's `append_message`, `get_latest_session_id`, `delete_session` and `cleanup_expired_sessions`): the docstrings say "no caller" and the kits test no more of them than the contract needs. The fact review store runs only through the review world's suite, the drive index repository through its v2 parity suite. The meta-test does not require the index refusal on a kit's `EvalDb` (it checks the fake, not its options; the Firestore kits turn the refusal on by themselves).
 
@@ -897,9 +907,9 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   file service, consolidation queue, fallback, long-turn, skill or memory-fact service. A stand-in that runs out of steps becomes a failed turn inside the coordinator, so every pin requires `not world.unscripted()`.
 - **Defects pinned as strict xfails (3; the fix removes the marker).**
   - **P13-D1** (`test_seam_chat_turn.py`): a Telegram chat turn carries `origin_channel_id` None (the adapter puts `chat_id`, never `channel`, in the metadata; `conversation_handler.py:651,936`), so its
-    async results (page, PDF, DOCX, image) go to the primary channel when one is set.
+    async results (page, PDF, DOCX, image) go to the primary channel when one is set. **Fixed (item 26):** the turn forwards the response channel's id when the metadata has none.
   - **P13-D2** (`test_seam_background_runs.py`): a background run's document follows the last-active channel at delivery, not the channel the run spoke in (`notify` puts neither `origin_channel_id` nor
-    `origin_platform` into the agent's context, `user_notification_service.py:383-402`), when no primary is set.
+    `origin_platform` into the agent's context, `user_notification_service.py:383-402`), when no primary is set. **Fixed (item 26):** `notify` puts the resolved channel into the context as the origin.
   - **P13-D3** (card F): the daily review's context `thinking_effort` `"medium"` lost to the complexity override's `"high"` (`smart_response_agent.py`), against the accepted
     `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md:117`. **Fixed:** the owner confirmed it a defect; `_resolve_effective` reads the context's `thinking_effort` first, then the
     override's, then the agent default; the marker is removed, and `test_smart_per_call_execution.py` pins the same order on an explicit `execution_override`.

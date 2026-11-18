@@ -134,3 +134,20 @@ class TestSonnet55CacheReadPrice:
 
         cost = calculate_cost("claude-sonnet-5-5", 0, 0, cache_read_tokens=1_000_000)
         assert cost == pytest.approx(0.10)
+
+
+def test_usage_for_month_resolves_the_month_against_the_calendar():
+    """The summary on the 1st asks for the month of yesterday, whether or not the counters have rotated yet."""
+    from datetime import date, datetime, timezone
+    from src.domain.billing import AccountUsageStats
+
+    oct_31 = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
+    nov_1 = datetime(2026, 11, 1, 0, 5, tzinfo=timezone.utc)
+    not_rotated = AccountUsageStats(monthly_tokens=5000, monthly_cost=0.25, monthly_reset_at=oct_31)
+    assert not_rotated.usage_for_month(date(2026, 10, 31)) == (5000, 0.25)
+    assert not_rotated.usage_for_month(date(2026, 11, 1)) == (0, 0.0)
+    rotated = AccountUsageStats(monthly_tokens=7, monthly_cost=0.01, monthly_reset_at=nov_1,
+                                prev_monthly_tokens=5000, prev_monthly_cost=0.25, prev_monthly_month="2026-10")
+    assert rotated.usage_for_month(date(2026, 10, 31)) == (5000, 0.25)
+    assert rotated.usage_for_month(date(2026, 11, 1)) == (7, 0.01)
+    assert rotated.usage_for_month(date(2026, 9, 30)) == (0, 0.0)

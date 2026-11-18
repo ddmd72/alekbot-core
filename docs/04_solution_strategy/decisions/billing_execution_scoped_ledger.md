@@ -114,7 +114,9 @@ scope** — they keep working unchanged.
   service consumes it.
 - The alert needs `BILLING_SLACK_WEBHOOK_URL` (already set — it is the same sink as the
   daily summary). Unset → the crossing is logged as
-  `event=budget_daily_limit_crossed` and nothing is posted.
+  `event=budget_daily_limit_crossed` and nothing is posted. The deep-research job (`job_main._record_billing`) records
+  through the same `FirestoreQuotaService`, so its crossing is announced too; it needs the variable on the job
+  (`alek-research-job-dev`) as well, otherwise it records usage and posts nothing.
 - `check_quota` remains unwired. It is now dead by decision, not by oversight.
 - The dead `meta`/`cost` computation in `_on_agent_success` (a leftover of the
   PromptDebugLogger removal, TD-1) was dropped; `output_text` stays in the signature

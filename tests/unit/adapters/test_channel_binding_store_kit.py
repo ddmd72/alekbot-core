@@ -13,19 +13,18 @@ from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindi
 from src.domain.channel_binding import ChannelBinding
 from src.domain.companion_config import CompanionConfig, CompanionTextMode
 from src.domain.entities import FactDomain
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_channel_bindings"
 
 
-def _adapter(db: EvalDb) -> FirestoreChannelBindingAdapter:
+def _adapter(db) -> FirestoreChannelBindingAdapter:
     return FirestoreChannelBindingAdapter(db, SimpleNamespace(firestore_collection_prefix="eval_"))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE)
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE)
         self.adapter = _adapter(self.db)
 
     @property
@@ -34,8 +33,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 FULL = CompanionConfig(window_threshold=30, batch_size=20, text_mode=CompanionTextMode.FULL, include_biographical=True,

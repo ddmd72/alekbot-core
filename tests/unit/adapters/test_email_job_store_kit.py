@@ -2,9 +2,8 @@
 against `FirestoreEmailJobRepository` on the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on
 the raw stored documents and on what the readers return.
 
-H1 reads return plain aware datetimes where the client returns `DatetimeWithNanoseconds`, so `_to_job`'s normalisation
-never runs on a stored value written through the adapter: the kit reaches it with raw documents whose datetimes are
-`DatetimeWithNanoseconds`, and compares the others as instants.
+Both backends read every stored timestamp back as a `DatetimeWithNanoseconds` of the UTC instant, so `_to_job`'s
+normalisation (naive UTC) runs on every read: raw documents pin it field by field, the other tests compare instants.
 
 The watchdog overwrite (P11-G3-5) is pinned through the real service in
 `tests/unit/services/test_email_indexing_service_store_pins.py`.
@@ -23,7 +22,6 @@ from pydantic import ValidationError
 from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from src.domain.email import IndexingJob
 from tests.support.clock_instants import UTC_MIDNIGHT
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 JOBS = "eval_email_indexing_jobs_v1"
@@ -32,13 +30,13 @@ DATE_FIELDS = ("last_email_date", "backfill_until", "max_email_date", "min_email
                "completed_at")
 
 
-def _adapter(db: EvalDb) -> FirestoreEmailJobRepository:
+def _adapter(db) -> FirestoreEmailJobRepository:
     return FirestoreEmailJobRepository(db, SimpleNamespace(email_indexing_jobs_collection=JOBS))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={JOBS: "development_email_indexing_jobs_v1"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={JOBS: "development_email_indexing_jobs_v1"})
         self.repo = _adapter(self.db)
 
     @property
@@ -47,8 +45,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def job(job_id="j1", user="u1", provider="gmail", status="running", started=T, updated=None, **over) -> IndexingJob:
@@ -69,7 +67,8 @@ def raw(store, job_id="j1", **over) -> None:
 
 
 def naive(value: datetime) -> datetime:
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    """The UTC instant as a naive datetime; a naive value already is one (the port's reads are naive UTC)."""
+    return value if value.tzinfo is None else value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 # -------------------------------------------------------------------------------------- create / get
@@ -83,7 +82,7 @@ async def test_create_stores_every_field_under_the_job_id_and_get_returns_the_sa
         "u1", "gmail", "running", "backfill", "page-2", 150)
     assert doc["errors"] == [{"email_id": "m1", "stage": "embed", "error": "timeout"}]
     got = await store.repo.get_job("j1")
-    # H1 returns aware datetimes (production returns naive): compare the instants
+    # the job was built with aware UTC datetimes, the reader returns naive UTC: compare the instants
     assert got.model_copy(update={f: None for f in DATE_FIELDS}) == created.model_copy(update={f: None for f in DATE_FIELDS})
     assert [naive(getattr(got, f)) for f in ("started_at", "updated_at", "backfill_until", "last_email_date")] == [
         naive(getattr(created, f)) for f in ("started_at", "updated_at", "backfill_until", "last_email_date")]
@@ -162,13 +161,15 @@ async def test_update_merges_the_given_fields_and_leaves_the_others(store):
 
 async def test_a_datetime_subclass_in_an_update_is_stored_as_the_same_instant(store):
     """The adapter rewrites a `DatetimeWithNanoseconds` as a plain datetime before the write (the SDK fails on the
-    subclass in some versions): the document holds a plain datetime with the same instant."""
+    subclass in some versions). The stored type is not observable: Firestore decodes every timestamp as a
+    `DatetimeWithNanoseconds`. What holds is the instant, in UTC, and the job reads back with it."""
     await store.repo.create_job(job())
     stamp = DatetimeWithNanoseconds(2026, 10, 2, 7, 0, 0, 500000, tzinfo=timezone.utc)
     await store.repo.update_job("j1", {"completed_at": stamp, "status": "completed"})
-    assert type(store.docs["j1"]["completed_at"]) is datetime
-    assert store.docs["j1"]["completed_at"] == datetime(2026, 10, 2, 7, 0, 0, 500000, tzinfo=timezone.utc)
+    stored = store.docs["j1"]["completed_at"]
+    assert stored == datetime(2026, 10, 2, 7, 0, 0, 500000, tzinfo=timezone.utc) and stored.utcoffset() == timedelta(0)
     assert store.docs["j1"]["status"] == "completed"
+    assert (await store.repo.get_job("j1")).completed_at == datetime(2026, 10, 2, 7, 0, 0, 500000)
 
 
 async def test_an_update_of_a_missing_job_raises_not_found_and_creates_nothing(store):
@@ -196,6 +197,7 @@ async def test_a_date_field_that_is_not_a_timestamp_raises_attribute_error(store
         await store.repo.get_job("j1")
 
 
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_backend_errors_propagate(store):
     await store.repo.create_job(job())
     store.db.collection(JOBS).fail = ServiceUnavailable("down")

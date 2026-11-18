@@ -24,8 +24,8 @@ AT = NOW + timedelta(hours=1)
 
 
 @pytest.fixture
-def world():
-    return ReviewWorld()
+def world(kit_db):
+    return ReviewWorld(kit_db)
 
 
 def stored(world, question_id):
@@ -38,9 +38,10 @@ def model_fields():
 
 async def a_fully_filled_question(world) -> FactReviewQuestion:
     """Every field of the model set: an archive fallback with a date and noise, sent, replied to, shown to the review,
-    closed by the owner with a digit."""
+    closed by the owner with a digit; its post recorded (`posted_at`) beside its message ref."""
     asked = build_question(
-        QuestionStatus.ASKED, question_id="full", fallback="archive", fallback_date=date(2026, 12, 1), noise=True)
+        QuestionStatus.ASKED, question_id="full", fallback="archive", fallback_date=date(2026, 12, 1), noise=True,
+        posted_at=NOW - timedelta(days=3))
     full = (asked.with_reply("it ended in spring", NOW).offered(NOW + timedelta(minutes=5))
             .closed(ClosedBy.OWNER, AT, AnswerKind.ENDED, "digit"))
     return await world.put_question(full)
@@ -155,6 +156,7 @@ async def test_by_message_also_finds_a_closed_question(world):
 
 # ------------------------------------------------------------------------------------------------ indexes
 
+@pytest.mark.h1_only("reads the fake's declared index set and its query log (executed)")
 async def test_each_query_is_served_without_a_composite_index(world):
     """The fake refuses a query no declared index serves (`equality_and_in_without_composite` is the parity scenario
     for these shapes); a control query that does need a composite is refused on the same database."""

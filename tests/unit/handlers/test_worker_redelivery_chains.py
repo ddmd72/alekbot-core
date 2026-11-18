@@ -437,7 +437,6 @@ class TestInteractiveChoiceTwice:
         shown = click.review.interactive.shown[click.ref]
         assert (shown.chosen_option_id, shown.keep_options) == (option_id(AnswerKind.STILL_TRUE), False)
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D12)
     async def test_the_same_click_delivered_twice_concurrently_applies_the_answer_once(self):
         """Both deliveries read q1 open and the fact stale, then both write: the second `apply_fact_update` is accepted
         (a second owner-trail entry, `current→current`), its close is refused (`fact_answer_service.py:149`), and `apply`

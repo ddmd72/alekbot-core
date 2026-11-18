@@ -42,6 +42,13 @@ def _gone_note_payload(world: RedeliveryWorld) -> dict:
     return world.payload("execute_reminder", note_id="n1", user_id=USER, due_at=T0.isoformat())
 
 
+def _every_enqueue_attempt_fails(world: RedeliveryWorld, monkeypatch) -> None:
+    """The next tick's `execute_reminder` create fails before landing on every attempt the service makes (P15-D3
+    retries it), with no backoff wait, so the tick raises."""
+    monkeypatch.setattr(reminders_service, "_ENQUEUE_BACKOFF_S", 0)
+    world.client.fail_next(times=reminders_service._ENQUEUE_ATTEMPTS, landed=False)
+
+
 async def test_a_success_turn_posts_its_text_once_to_the_stored_primary_channel():
     """Regression: the channel factory keyed wrongly, or the primary channel not read (the last-active one differs)."""
     world = RedeliveryWorld()
@@ -150,11 +157,12 @@ async def test_deliver_with_retry_redelivers_after_a_500_and_a_raise_and_not_aft
     gone = await deliver_with_retry(world.handler, _gone_note_payload(world), "t-200")
     assert gone == [({"status": "note_gone"}, 200)]
 
-    # A tick whose enqueue raises: the raise is redelivered under the same name.
+    # A tick whose enqueue raises (every retried create fails, P15-D3): the raise is redelivered under the same name.
     await world.seed_note(monkeypatch, due=T0, created_at=T0 - timedelta(days=1, seconds=1))
     pin_datetime(monkeypatch, reminders_service, T0 + timedelta(seconds=30))
-    world.client.fail_next(landed=False)
+    _every_enqueue_attempt_fails(world, monkeypatch)
     tick = await deliver_with_retry(world.handler, world.payload("fire_due_reminders"), "t-raise")
+    assert world.client.failed_attempts == reminders_service._ENQUEUE_ATTEMPTS
     assert len(tick) == 2
     assert isinstance(tick[0], DeadlineExceeded)
     assert isinstance(tick[1], tuple) and tick[1][1] == 200
@@ -244,11 +252,12 @@ async def test_deliver_twice_without_names_sends_scheduler_bodies_that_are_never
 
 
 async def test_twice_reports_a_raised_delivery_by_its_exception(monkeypatch):
-    """A tick whose enqueue raises: `raised` holds the exception, `statuses` has None in its place."""
+    """A tick whose enqueue raises (every retried create fails): `raised` holds the exception, `statuses` has None in
+    its place."""
     world = RedeliveryWorld()
     await world.seed_note(monkeypatch, due=T0, created_at=T0 - timedelta(days=1))
     pin_datetime(monkeypatch, reminders_service, T0 + timedelta(seconds=30))
-    world.client.fail_next(landed=False)
+    _every_enqueue_attempt_fails(world, monkeypatch)
 
     twice = await deliver_twice(world.handler, world.payload("fire_due_reminders"), gathered=False, names=None)
 

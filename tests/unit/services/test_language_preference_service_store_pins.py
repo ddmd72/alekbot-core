@@ -1,17 +1,16 @@
-"""P11-G2-4 through two real callers of `UserRepository.update_user`: the chat's language switch
+"""P11-G2-4 through two real callers of a `UserRepository` profile write: the chat's language switch
 (`LanguagePreferenceService.set_preference`) and a Cabinet sign-in refreshing `auth_metadata`
 (`AuthenticationService.handle_oauth_callback`), both over the real `FirestoreUserRepository`, account, whitelist and
 prompt-override repositories on one `EvalDb`. Google (the `AuthPort` boundary) is scripted.
 
-Each caller reads the profile, changes its own fields and writes the whole profile back with no precondition, so when
-both read before either writes, the later write reverts the other's change. A `Rendezvous` right after each caller's
-read forces that interleaving (a query never yields on `EvalDb`); a serial run fails `rv.met`.
+Each caller reads the profile and changes its own fields. They used to write the whole profile back with no
+precondition, so when both read before either wrote, the later write reverted the other's change; now each writes only
+its fields (`update_user_fields`, owner decision O3) and both changes are kept (P11-G2-4 fixed). A `Rendezvous` right
+after each caller's read forces that interleaving (a query never yields on `EvalDb`); a serial run fails `rv.met`.
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-
-import pytest
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -101,12 +100,8 @@ async def test_a_language_switch_then_a_sign_in_keep_both_changes():
     assert "LANG_FIXED_FR" in w.db.collection("overrides").docs["USER_u1"]["tokens"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-4: concurrent profile updates lose one (each caller writes the whole profile it read, no "
-    "precondition); owner decision"))
 async def test_a_language_switch_during_a_sign_in_keeps_both_changes():
-    """Flips when the callers write only the fields they changed (a field-level update), or write under a
-    `last_update_time` precondition and re-read on conflict."""
+    """Holds because the callers write only the fields they changed (a field-level update, owner decision O3)."""
     w = World()
     await w.seed()
     rv = Rendezvous()

@@ -2,7 +2,7 @@
 called in process: the bound, the re-run rules and the wall, with real ffmpeg against a local plain-HTTP loopback server
 (skipped without ffmpeg) or with ffmpeg faked. The in-process extractor and its launcher these tests once shared a
 file with are gone (S5 card F): the runner now runs only in the sandbox's media child, end to end in
-`tests/integration/sandbox/test_media_tunnel_contract.py`."""
+`tests/integration/offline/sandbox/test_media_tunnel_contract.py`."""
 import os
 import time
 from types import SimpleNamespace

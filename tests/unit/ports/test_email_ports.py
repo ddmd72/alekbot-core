@@ -194,7 +194,7 @@ class TestEmailIndexingJobRepository:
 
     def test_abstract_method_count(self):
         assert _abstract_methods(EmailIndexingJobRepository) == {
-            "create_job", "update_job", "get_job", "get_latest_job", "list_jobs",
+            "create_job", "create_job_if_absent", "update_job", "get_job", "get_latest_job", "list_jobs",
             "get_stale_running_jobs",
         }
 

@@ -28,9 +28,8 @@ class IndexedEmailRepository(ABC):
         """Upsert each email (the whole record) under `{user_id}_{email_id}`. Returns the number written.
 
         Atomicity: written in atomic chunks; a failed chunk writes none of its emails.
-        Idempotency: re-saving an email keeps its consolidated_at (P11-G2-1: today it is cleared, so a re-indexed
-        email is consolidated again; the indexing pipeline avoids this by carrying the mark from
-        get_consolidation_marks).
+        Idempotency: re-saving an email sent without consolidated_at keeps the stored one, so a re-indexed email is
+        not consolidated again; an email sent with one writes it.
         """
 
     @abstractmethod

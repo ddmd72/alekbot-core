@@ -47,9 +47,16 @@ class GcsMediaAdapter(MediaStoragePort):
         )
 
     async def fetch(self, key: str) -> bytes:
-        """Read object bytes server-side via the GCS SDK (service-account auth)."""
+        """Read object bytes server-side via the GCS SDK (service-account auth). A missing object (the lifecycle
+        deleted it, or it was never stored) is FileNotFoundError, distinct from a storage outage."""
+        from google.api_core.exceptions import NotFound
+
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(self._fetch_sync, key))
+        try:
+            return await loop.run_in_executor(None, partial(self._fetch_sync, key))
+        except NotFound as e:
+            logger.warning("GcsMediaAdapter: '%s' is not stored (expired or never written)", key)
+            raise FileNotFoundError(key) from e
 
     async def generate_signed_url(self, key: str, ttl_seconds: int) -> str:
         """Mint a short-lived V4 signed URL (IAM signBlob on Cloud Run)."""

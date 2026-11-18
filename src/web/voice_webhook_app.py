@@ -127,12 +127,14 @@ def create_voice_webhook_blueprint(
     web_calls = (WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
                  if media_room is not None else None)
 
-    async def _replace_web_call(user_id: str, holder: dict) -> bool:
-        """The dial met a one-call marker. True when it may go on: the holder is this user's web call, which is ended
-        (RFC §7.5.4). A phone holder (its marker names no web call) is never replaced: False, the dial is refused."""
+    async def _replace_web_call(user_id: str, holder: dict) -> Optional[bool]:
+        """The dial met a one-call marker. None: the dial is refused (a phone holder, whose marker names no web call, is
+        never replaced). Otherwise the holder is this user's web call, which is ended (RFC §7.5.4), and the dial may
+        go on: True when the web call released its marker (the dial then claims it atomically), False when it still
+        holds it (or the wait failed), so the phone call takes the marker over."""
         web_call_id = holder.get("call_id")
         if not isinstance(web_call_id, str) or not web_call_id:
-            return False
+            return None
         logger.info(f"voice auth: phone dial of {user_id} replaces the running web call {web_call_id}")
         # One budget for the close and the wait together: neither may push the answer past Twilio's deadline.
         loop = asyncio.get_running_loop()
@@ -152,11 +154,11 @@ def create_voice_webhook_blueprint(
         except Exception:
             logger.warning(f"voice auth: waiting for web call {web_call_id} to release failed, the phone call "
                            f"takes the marker over", exc_info=True)
-            return True
+            return False
         if not released:
             logger.info(f"voice auth: web call {web_call_id} still holds the marker after {replace_wait_s:.0f}s, "
                         f"the phone call takes it over")
-        return True
+        return released
 
     async def _close_web_call(web_call_id: str, user_id: str) -> None:
         # No record: the web call was hung up and is only finishing, or is still in setup; nothing to close.
@@ -198,36 +200,72 @@ def create_voice_webhook_blueprint(
             return _twiml_reject()
 
         marker_key = f"voice_one_call:{profile.user_id}"
-        holder = await ephemeral_store.get(marker_key)
-        if holder is not None and not await _replace_web_call(profile.user_id, holder):
-            logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
-            return _twiml_reject()
-
         decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
         ticket = str(uuid.uuid4())
-        await ephemeral_store.set(
-            ticket_key(digest_key, ticket),
-            {"user_id": decision.user_id, "account_id": decision.account_id},
-            ttl_s=_TICKET_TTL_S,
-        )
         # Short TTL while the callback is only parked: if Twilio never reports the
         # inbound dial as ended, the caller is locked out for minutes, not an hour.
-        # Unconditional: after a replaced web call this is the takeover. The marker names
-        # this call, so that web call's late release leaves it alone.
-        await ephemeral_store.set(marker_key, {"in_flight": True, **call_setup.owner_of(ticket)}, ttl_s=_TICKET_TTL_S)
+        # The marker names this call, so a replaced web call's late release leaves it alone.
+        marker = {"in_flight": True, **call_setup.owner_of(ticket)}
+        holder = await ephemeral_store.get(marker_key)
+        if holder is None:
+            # Atomic claim: two dials racing past the read above must not both pass (P11-G1-1).
+            if not await ephemeral_store.set_if_absent(marker_key, marker, ttl_s=_TICKET_TTL_S):
+                logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
+                return _twiml_reject()
+        else:
+            released = await _replace_web_call(profile.user_id, holder)
+            if released is None:
+                logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
+                return _twiml_reject()
+            if released:
+                # The web call let go: claim atomically, so a second dial (or a web start) that got there first wins.
+                if not await ephemeral_store.set_if_absent(marker_key, marker, ttl_s=_TICKET_TTL_S):
+                    logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
+                    return _twiml_reject()
+            else:
+                # The holder did not release in time: the takeover is unconditional, unless the marker is by now another
+                # call's (a second dial took it while this one waited): that call stays.
+                try:
+                    current = await ephemeral_store.get(marker_key)
+                except Exception:
+                    logger.warning(f"voice auth: re-reading the marker of {profile.user_id} failed, the phone call "
+                                   f"takes it over", exc_info=True)
+                    current = None
+                if current is not None and current.get("call_id") != holder.get("call_id"):
+                    logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
+                    return _twiml_reject()
+                await ephemeral_store.set(marker_key, marker, ttl_s=_TICKET_TTL_S)
+
+        # The marker is ours: a failure from here on must not leave it (nor the ticket) locking the user out.
         pending_key = _pending_key(inbound_call_sid)
-        await ephemeral_store.set(
-            pending_key,
-            {
-                # The callback needs the ticket back to build its URL: ciphertext bound to this record.
-                "ticket_ct": await cipher.encrypt(ticket, aad=f"voice/{pending_key}"),
-                "user_id": decision.user_id,
-                "account_id": decision.account_id,
-                # The callback always returns to the exact number that dialed in (RFC §4.6).
-                "to_number": caller,
-            },
-            ttl_s=_TICKET_TTL_S,
-        )
+        try:
+            await ephemeral_store.set(
+                ticket_key(digest_key, ticket),
+                {"user_id": decision.user_id, "account_id": decision.account_id},
+                ttl_s=_TICKET_TTL_S,
+            )
+            await ephemeral_store.set(
+                pending_key,
+                {
+                    # The callback needs the ticket back to build its URL: ciphertext bound to this record.
+                    "ticket_ct": await cipher.encrypt(ticket, aad=f"voice/{pending_key}"),
+                    "user_id": decision.user_id,
+                    "account_id": decision.account_id,
+                    # The callback always returns to the exact number that dialed in (RFC §4.6).
+                    "to_number": caller,
+                },
+                ttl_s=_TICKET_TTL_S,
+            )
+        except Exception:
+            logger.error(f"voice auth: parking the callback of {profile.user_id} failed (call {inbound_call_sid}), "
+                         f"releasing the marker and the ticket", exc_info=True)
+            for key in (ticket_key(digest_key, ticket), marker_key):
+                try:
+                    await ephemeral_store.delete(key)
+                except Exception:
+                    logger.error(f"voice auth: releasing {key.split(':')[0]} of {profile.user_id} failed, it "
+                                 f"expires on its own TTL", exc_info=True)
+            return _twiml_reject()
 
         vr = VoiceResponse()
         vr.say("Calling you back.")

@@ -23,8 +23,7 @@ class TaskConfigPort(ABC):
 
         Every subscription's expires_at is naive UTC. A missing primary_list_id or subscriptions reads empty. A
         subscription without sub_id or list_id: no writer produces one; behaviour pending the data audit. A
-        subscription without expires_at reads as naive UTC too (P11-G3-2: today it reads as an aware "now", which
-        every caller's naive comparison rejects with TypeError).
+        subscription without expires_at reads as the current time, naive UTC too (so the renewal renews it).
         """
         ...
 

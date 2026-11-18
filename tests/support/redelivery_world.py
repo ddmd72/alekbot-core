@@ -587,17 +587,17 @@ class RedeliveryWorld:
 
     async def seed_note(self, monkeypatch: Any, *, due: datetime, recurrence: Optional[str] = None,
                         last_fired: Optional[datetime] = None, created_at: datetime) -> str:
-        """Create a note for `u1` through the real adapter; its id is `created_at`'s millisecond, so each note needs its own
-        `created_at`. `last_fired` (a claimed fire) is written on the stored document. Returns the note id."""
+        """Create a note for `u1` through the real adapter, its clock pinned to `created_at` (the note id is `created_at`'s
+        millisecond plus a uuid suffix). `last_fired` (a claimed fire) is written on the stored document. Returns the
+        note id."""
         module: ModuleType = firestore_agent_note_adapter
         pin_datetime(monkeypatch, module, created_at)
-        note_id = str(int(created_at.timestamp() * 1000))
-        if note_id in self.note_docs:
-            raise ValueError(f"a note already has id {note_id}: give each note its own created_at")
         note = await self.notes.create_note(NoteCreate(
             user_id=USER, text="call dad", instruction="Remind the user to call dad.",
             due=due, recurrence=recurrence,
         ))
+        require(note.note_id.startswith(f"{int(created_at.timestamp() * 1000)}-"),
+                "the note id starts with the creation millisecond")
         if last_fired is not None:
             await self.db.collection(self.env.orchestrator_notes_collection).document(note.note_id).update(
                 {"last_fired": last_fired})

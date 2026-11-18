@@ -102,10 +102,10 @@ class UserNotificationService:
         self._platform_media[platform] = media
         self._platform_rich_content[platform] = rich_content
 
-    async def _send_rich_content(self, response_channel, platform: str, content: RichContent) -> None:
-        """Deliver one rich-content item the way a chat turn does. Without a registered service every type goes to the
-        channel's own renderer, which shows only a table: a media type then degrades to its fallback text, so that
-        gap is logged."""
+    async def _send_rich_content(self, response_channel, platform: str, content: RichContent, user_id: str) -> None:
+        """Deliver one rich-content item the way a chat turn does (an html page as `user_id`'s capability link).
+        Without a registered service every type goes to the channel's own renderer, which shows only a table: a media
+        type then degrades to its fallback text, so that gap is logged."""
         service = self._platform_rich_content.get(platform)
         if service is None:
             if content.content_type in MEDIA_CONTENT_TYPES:
@@ -120,7 +120,7 @@ class UserNotificationService:
         if (platform == _SLACK and content.content_type in MEDIA_CONTENT_TYPES
                 and str(getattr(response_channel, "channel_id", "")).startswith("U")):
             await response_channel.send_message("📎")
-        await service.deliver(content, response_channel)
+        await service.deliver(content, response_channel, user_id=user_id)
 
     async def save_channel(self, user_id: str, platform: str, channel_id: str) -> None:
         """
@@ -397,7 +397,7 @@ class UserNotificationService:
         try:
             await self._send_answer_text(response_channel, channel_info, f"{CALL_NOTE_PREFIX}{answer.text}", answer.link_list or [])
             if answer.structured_data:
-                await self._send_rich_content(response_channel, channel_info.platform, answer.structured_data)
+                await self._send_rich_content(response_channel, channel_info.platform, answer.structured_data, user_id)
         except Exception as exc:
             logger.error(f"[Notification] Answer copy failed for {user_id[:8]}: {exc}", exc_info=True)
 
@@ -515,6 +515,10 @@ class UserNotificationService:
                 "session_id": effective_session_id,
                 "thread_id": None,
                 "current_message_parts": [framed],
+                # Where this run spoke: a document it hands to async delivery lands here, not on whatever channel is
+                # last active by the time the document is ready (P13-D2).
+                "origin_channel_id": channel_info.channel_id,
+                "origin_platform": channel_info.platform,
                 **({"thinking_effort": thinking_effort} if thinking_effort else {}),
                 **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),
@@ -597,7 +601,7 @@ class UserNotificationService:
 
             if rich_content:
                 sent = True
-                await self._send_rich_content(response_channel, channel_info.platform, rich_content)
+                await self._send_rich_content(response_channel, channel_info.platform, rich_content, user_id)
 
             return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent, turn_started=True)
 

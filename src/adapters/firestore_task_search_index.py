@@ -171,6 +171,12 @@ class FirestoreTaskSearchIndex(TaskSearchIndex):
             for field, vec in active_vectors.items()
         ]
         results_lists = await asyncio.gather(*tasks_list, return_exceptions=True)
+        failures = [r for r in results_lists if isinstance(r, BaseException)]
+        if failures and len(failures) == len(results_lists):
+            # Every field query failed (an outage, a missing index): the caller must see the error,
+            # not an empty result it would report as "no matching task".
+            logger.error(f"💥 TaskSearchIndex.find_nearest: every field query failed: {failures[0]}")
+            raise failures[0]
 
         docs_by_id: Dict[str, dict] = {}
         scores: Dict[str, float] = {}

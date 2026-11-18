@@ -234,8 +234,6 @@ async def test_a_known_complexity_is_stored_control():
     assert rig.finished()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P14-D2: an unknown complexity is dropped by _parse_complexity and the reminder is stored and reported created")
 async def test_an_unknown_complexity_is_refused_not_dropped():
     """Fix: `create_self_reminder` and `update_self_reminder` return an error when `args.get("complexity")` is set and
     `_parse_complexity` gives None (`notes_agent.py:232-238`, used `:533`, `:586`)."""
@@ -261,8 +259,6 @@ async def test_a_parsable_due_on_update_is_stored_control():
     assert rig.finished()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P14-D3: an unparsable due on update is dropped by _parse_dt and the update is reported done")
 async def test_an_unparsable_due_on_update_is_refused_not_dropped():
     """Fix: `if args.get("due") and due is None: return {"error": ...}` after `notes_agent.py:565`."""
     rig = await Rig([tools(("update_self_reminder", UPDATE_BAD_DUE)), text("Updated.")]).start()

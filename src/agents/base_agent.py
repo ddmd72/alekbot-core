@@ -919,7 +919,10 @@ class BaseAgent(ABC):
           1. **Pre-call check.** If the resilience port reports the primary
              breaker open, raise ``ProviderBreakerOpenError`` (consequence
              of past failures, not a new failure — no ``record_failure``).
-          2. **Try primary.** On success, ``record_success(primary)``.
+          2. **Try primary.** On success, ``record_success(primary)`` — unless the
+             breaker is OPEN by now: other calls tripped it while this one was in
+             flight, and a success admitted before the trip is older evidence than
+             the failures that tripped it, so it must not close the breaker.
           3. **On any FAILOVER_TRIGGER_TYPES.** ``record_failure(primary)``
              unless the error is itself ``ProviderBreakerOpenError`` (already
              accounted for). Then dispatch fallback.
@@ -980,7 +983,14 @@ class BaseAgent(ABC):
             with self._provider_call_scope():
                 response = await llm.generate_content(request=request)
             if resilience and primary_name:
-                resilience.record_success(primary_name)
+                if resilience.is_provider_open(primary_name):
+                    # Admitted while closed (the check above), tripped while in flight: a stale success.
+                    logger.info(
+                        "provider_breaker_stale_success provider=%s agent=%s: the breaker tripped during the call; "
+                        "it stays open", primary_name, self.config.agent_type,
+                    )
+                else:
+                    resilience.record_success(primary_name)
         except failover_tuple as e:
             # Account real failures only. ProviderBreakerOpenError is the
             # consequence of past record_failure calls; counting it again

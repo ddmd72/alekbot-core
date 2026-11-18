@@ -380,3 +380,16 @@ def _check_contract(app: FastMCP) -> None:
         params = tuple(info.parameters.get("properties", {}))
         if expected is None or params != expected:
             raise RuntimeError(f"drive connector tool {info.name} strays from the contract: {params} != {expected}")
+
+
+def build_drive_mcp_or_none(authorization_service, auth_config, tools=None, voice_tokens=None):
+    """The drive connector's app, or None when its build fails: the facts connector must keep running. `tools` None:
+    the app lists no tool (only the auth-seam tests build it so; `main()` always passes the tools). `voice_tokens`
+    None: every voice MCP token is refused (no `VOICE_MCP_SIGNING_KEY`)."""
+    try:
+        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config, tools=tools,
+                                   voice_tokens=voice_tokens)
+    except Exception as drive_err:
+        logger.error(f"❌ Failed to initialize drive MCP connector: {drive_err}", exc_info=True)
+        logger.warning("🤖 Bot will continue without the drive connector")
+        return None

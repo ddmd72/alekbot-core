@@ -17,7 +17,8 @@ async def _consolidate(run, *, with_notifications=True):
     message.parts = [MagicMock(text="hello", consolidation_text=None)]
     session = MagicMock(user_id=_USER, session_id="s1", messages=[message])
     session.extract_oldest_messages = MagicMock(return_value=[message, message, message, message, message])
-    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock())
+    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock(),
+                      remove_head=AsyncMock(return_value=True))
     agent_factory = MagicMock(get_session_store=MagicMock(return_value=store), ensure_agents_for_user=AsyncMock())
     overflow = AsyncMock(return_value=run)
     notifications = MagicMock(notify=AsyncMock()) if with_notifications else None
@@ -90,7 +91,8 @@ async def test_an_error_from_consolidate_now_gets_an_honest_failure_message_and_
     message.parts = [MagicMock(text="hello", consolidation_text=None)]
     session = MagicMock(user_id=_USER, session_id="s1", messages=[message])
     session.extract_oldest_messages = MagicMock(return_value=[message])
-    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock())
+    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock(),
+                      remove_head=AsyncMock(return_value=True))
     agent_factory = MagicMock(get_session_store=MagicMock(return_value=store), ensure_agents_for_user=AsyncMock())
     notifications = MagicMock(notify=AsyncMock())
     handler = ConversationHandler(

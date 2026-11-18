@@ -34,6 +34,8 @@ from src.adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAd
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
+from src.adapters.firestore_quota_service import FirestoreQuotaService
+from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.agents.claude_deep_research_runner_agent import ClaudeDeepResearchRunnerAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.billing import calculate_cost
@@ -79,8 +81,11 @@ async def _record_billing(account_id: str, model: str, result: dict) -> None:
         cache_creation_tokens=cache_write_tokens,
     )
     try:
-        repo = _build_account_repo()
-        await repo.increment_account_usage(account_id=account_id, tokens=total_tokens, cost=cost)
+        # Through the quota service, like the main service: a day's budget crossing caused by this job is announced
+        # once (P11-G1-4). The sink is optional (no BILLING_SLACK_WEBHOOK_URL on the job: no alert, usage still counted).
+        alert_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
+        quota = FirestoreQuotaService(_build_account_repo(), SlackWebhookAdapter(alert_url) if alert_url else None)
+        await quota.record_usage(account_id, model, total_tokens, cost)
         logger.info(
             "[ResearchJob] Billing recorded: account=%s model=%s tokens=%d cache_read=%d cost=$%.4f",
             account_id[:20], model, total_tokens, cache_read_tokens, cost,

@@ -89,6 +89,7 @@ def mock_job_repo():
     m.get_stale_running_jobs.return_value = []
     m.update_job.return_value = None
     m.create_job.return_value = None
+    m.create_job_if_absent.return_value = True
     return m
 
 
@@ -359,7 +360,8 @@ class TestStartIndexingForEligibleUsers:
         assert started == 1
         assert skipped == 0
         assert len(job_ids) == 1
-        mock_job_repo.create_job.assert_called_once()
+        mock_job_repo.create_job_if_absent.assert_called_once()
+        mock_job_repo.create_job.assert_not_called()
 
     async def test_created_job_has_correct_provider_and_mode(self, service, mock_oauth, mock_job_repo):
         mock_oauth.list_user_ids.return_value = [_USER_ID]
@@ -375,7 +377,7 @@ class TestStartIndexingForEligibleUsers:
             user_repo=user_repo, now_utc=_NOW.replace(tzinfo=timezone.utc)
         )
 
-        created_job = mock_job_repo.create_job.call_args[0][0]
+        created_job = mock_job_repo.create_job_if_absent.call_args[0][0]
         assert created_job.provider == "gmail"
         assert created_job.mode == "incremental"
         assert created_job.triggered_by == "scheduler"

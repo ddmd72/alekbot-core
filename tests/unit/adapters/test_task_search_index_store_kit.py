@@ -17,7 +17,7 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from src.domain.task import TaskImportance, TaskSearchEntry, TaskStatus
-from tests.support.firestore_eval import EvalDb, stored_vector
+from tests.support.firestore_eval import stored_vector
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -26,15 +26,15 @@ VEC = [1.0, 0.0]
 INDEXED_AT = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
 
-def _adapter(db: EvalDb) -> FirestoreTaskSearchIndex:
+def _adapter(db) -> FirestoreTaskSearchIndex:
     return FirestoreTaskSearchIndex(db, SimpleNamespace(task_search_index_collection=COL))
 
 
 class Store:
     """The real adapter over one EvalDb with the declared indexes, its collection mapped to its index group."""
 
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={COL: "development_task_search_index"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={COL: "development_task_search_index"}, vector_dimension=2)
         self.index = _adapter(self.db)
 
     @property
@@ -43,8 +43,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def entry(task_id="t1", user_id="u1", content=VEC, context=None, status=TaskStatus.NOT_STARTED, list_id="L1",
@@ -117,6 +117,7 @@ async def test_delete_all_for_user_leaves_other_users_and_a_repeat_is_a_no_op(st
     assert sorted(store.docs) == ["u2_t1"]
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_delete_all_for_user_goes_in_batches_of_500(store):
     for i in range(501):
         raw(store, f"t{i:03d}", "u1")
@@ -187,6 +188,7 @@ async def test_find_nearest_drops_entries_beyond_the_similarity_floor(store):
     assert await ids(store, limit=10) == ["near"]
 
 
+@pytest.mark.h1_only("reads the fake's query log (executed)")
 async def test_find_nearest_without_vectors_returns_empty_and_asks_the_backend_nothing(store):
     await store.index.upsert(entry("t1"))
     assert await store.index.find_nearest("u1", {}) == []
@@ -212,8 +214,7 @@ async def test_find_nearest_backend_up_answers(store):
     assert await ids(store) == ["t1"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G3-1: every vector query failed, find_nearest answers [] (TasksAgent: 'no tasks')")
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_find_nearest_raises_when_every_query_fails(store):
     """When every field query fails (an outage, a missing index) the caller must get the error, not "no matching
     task". Flipping fix: after the gather in `find_nearest`, `if all(isinstance(r, BaseException) for r in results_lists):
@@ -229,6 +230,7 @@ async def test_find_nearest_raises_when_every_query_fails(store):
     assert raised is not None, f"every query failed and find_nearest answered {got!r}"
 
 
+@pytest.mark.h1_only("replaces the fake's index refusal (_check_index)")
 async def test_find_nearest_answers_from_the_fields_that_work_when_one_field_query_fails(store):
     await store.index.upsert(entry("t1", content=VEC, context=VEC))
     check_index = store.db._check_index
@@ -257,6 +259,7 @@ async def test_get_by_short_id_is_scoped_to_the_user_and_an_unparseable_entry_re
     assert await store.index.get_by_short_id("u1", "deadbeef") is None
 
 
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_get_by_short_id_propagates_backend_errors(store):
     await store.index.upsert(entry("t1", short_id="a1b2c3d4"))
     store.db.collection(COL).fail = ServiceUnavailable("down")

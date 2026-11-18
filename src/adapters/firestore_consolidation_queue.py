@@ -1,6 +1,7 @@
 import logging
 import time
 from typing import Any, Dict, List, Optional
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from src.ports.consolidation_queue import ConsolidationQueue
@@ -23,7 +24,7 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
 
     Firestore mechanics (the port states the observable contract): collection
     `EnvironmentConfig.consolidation_queue_collection` (`{prefix}consolidation_queue`), document id = `batch_id`, body
-    `ConsolidationBatch.model_dump()` written with a plain `set`. `get_pending_batches` needs the composite index
+    `ConsolidationBatch.model_dump()` written with `create` (an existing id raises AlreadyExists, taken as success). `get_pending_batches` needs the composite index
     (user_id, status, created_at); a batch without `created_at` is therefore never returned by it, while
     `has_open_batches` and `get_stuck_batch_user_ids` (a `select(["user_id"])` projection) still see it.
     `increment_attempts` is a get then an update; `reset_recoverable_batches` one update per batch, no precondition.
@@ -38,7 +39,11 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
     
     async def enqueue_batch(self, batch: ConsolidationBatch) -> str:
         doc_ref = self.collection.document(batch.batch_id)
-        await doc_ref.set(batch.model_dump())
+        try:
+            await doc_ref.create(batch.model_dump())
+        except AlreadyExists:
+            # A repeated hand-off (same deterministic id): the stored batch keeps its status and attempts.
+            logger.info(f"📦 Batch {batch.batch_id} already queued; kept as stored")
         return batch.batch_id
     
     async def get_pending_batches(self, user_id: str, limit: int = 10) -> List[ConsolidationBatch]:

@@ -3,8 +3,8 @@
 # Script: create_drive_note_vector_index.sh
 # Purpose: Create the vector index on the owner notes' `note_vector` (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §3.5 item 6,
 #          §6.4 step 3): the deleted-files search's meaning fallback, `find_nearest` prefiltered on user_id, state and
-#          embedding_space. `make deploy-indexes` skips vector indexes, so it is created here; it is not declared in
-#          config/firestore.indexes.json (the composites 1-5 are).
+#          embedding_space. `make deploy-indexes` skips vector indexes, so it is created here; it is also declared in
+#          config/firestore.indexes.json (like the other vector indexes), which the deploy skips and the test database reads.
 # Owner-run, once, before the deploy; wait for READY (the status command is printed at the end). A dry run by default:
 # it prints the gcloud command; APPLY=1 creates the index.
 # Usage:   PROJECT_ID=<project> FIRESTORE_DATABASE=<database> [COLLECTION_PREFIX=development_] [APPLY=1] bash ./scripts/infrastructure/create_drive_note_vector_index.sh

@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-09
 **Status:** Live; widened in S1b (2026-10-22), pending deploy
-**Scope:** `/worker` (`main.py`) and `WorkerHandler`: every Cloud Tasks delivery (all `task_type`s,
+**Scope:** `/worker` (`src/web/main_service_routes.py`) and `WorkerHandler`: every Cloud Tasks delivery (all `task_type`s,
 `telegram_update`, queued Slack events). Introduced for `agent_execution` (deep research, documents,
 images, `tell_alek` errands); widened to every delivery in S1b.
 
@@ -52,7 +52,9 @@ whatever the trigger.
      `task_type`) go to the adapters attached at wiring time; any other `task_type` is a 400
      (it used to fall through silently to the Slack handler).
    - `execute_reminder` needs nothing more: the fire-time claim is atomic and there is one task per
-     fire, so only a redelivery overlapped, and the task claim now covers it.
+     fire, so only a redelivery overlapped, and the task claim now covers it. The fire's task is named
+     `execute_reminder:<note>@<due>` (dedup key) and its create is retried up to 3 times: the claimed fire is
+     enqueued by no later tick, and a create that landed but answered an error is refused by name, not doubled.
 
 ## Same collection, other marks (S1b)
 

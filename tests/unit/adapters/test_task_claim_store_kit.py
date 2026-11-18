@@ -21,7 +21,7 @@ from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.ports.task_claim_store import TaskClaimStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.redelivery_world import require
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 SHARED = "eval_worker_task_dedup"
@@ -30,8 +30,8 @@ TASK = "execute_reminder-0f3a"
 
 
 class Shared:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={SHARED: "development_worker_task_dedup"})
         self.claims: TaskClaimStore = FirestoreTaskClaimStore(self.db, SHARED, ttl_seconds=3600)
         self.daily = FirestoreDedupStore(self.db, SHARED, ttl_seconds=172800)
         self.webhook = FirestoreDedupStore(self.db, SHARED, ttl_seconds=259200)
@@ -71,9 +71,9 @@ def io_trace(monkeypatch) -> list:
 
 
 @pytest.fixture
-def shared(monkeypatch):
+def shared(monkeypatch, kit_db):
     at(monkeypatch)
-    return Shared()
+    return Shared(kit_db)
 
 
 async def test_a_claim_without_expires_at_is_expired_and_taken_over_even_when_done(shared):
@@ -117,6 +117,7 @@ async def test_mark_done_restarts_the_window_from_the_finish(shared, monkeypatch
     assert await shared.claims.try_claim(TASK, "a2") is False
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_mark_done_lost_to_a_takeover_changes_nothing(shared, monkeypatch):
     assert await shared.claims.try_claim(TASK, "a1") is True
     shared.col.yield_on_get = True      # both read the a1 claim; the takeover writes first, mark_done's precondition fails
@@ -127,6 +128,7 @@ async def test_mark_done_lost_to_a_takeover_changes_nothing(shared, monkeypatch)
     assert shared.docs[TASK]["attempt"] == "a2" and shared.docs[TASK]["state"] == "running"
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_release_lost_to_a_takeover_keeps_the_new_claim(shared, monkeypatch):
     assert await shared.claims.try_claim(TASK, "a1") is True
     shared.col.yield_on_get = True      # both read the a1 claim; the takeover writes first, release's precondition fails
@@ -157,6 +159,7 @@ async def test_claims_and_marks_share_the_collection_each_on_its_own_expiry(shar
     assert await shared.webhook.is_duplicate(webhook) is True        # the 72 h claim is still live
 
 
+@pytest.mark.h1_only("injects the failure by patching EvalDocRef.create")
 async def test_a_backend_error_in_try_claim_propagates(shared, monkeypatch):
     async def unavailable(self, data):
         raise RuntimeError("unavailable")

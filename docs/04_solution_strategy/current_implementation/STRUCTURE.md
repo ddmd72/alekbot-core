@@ -6,7 +6,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── .dockerignore
 ├── .gitignore
 ├── Dockerfile
-├── main.py             # Main service entry point: telemetry, settings, Firestore client, then the web layer (blueprints, voice, MCP, `/worker`); builds the graph via `composition/application_graph.py`
+├── main.py             # Main service entry point: telemetry, settings, Firestore client, then wires the web layer (blueprints, voice, MCP); `/health`, `/favicon.ico` and `/worker` are in `src/web/main_service_routes.py`, the MCP ASGI dispatcher in `src/web/mcp_dispatcher.py`; builds the graph via `composition/application_graph.py`
 ├── relay_main.py       # Voice-relay entry point — SECOND Cloud Run service (Voice Companion)
 ├── sandbox_main.py     # Untrusted-content sandbox entry point (supervisor + `--serve`), own image Dockerfile.sandbox
 ├── Dockerfile.sandbox  # Render service image (target `render`): explicit COPY allowlist, no secrets

@@ -70,7 +70,7 @@ src/composition/
 src/web/
     mcp_consent_app.py                     # Quart blueprint: /mcp/consent GET/POST
 
-main.py                                     # parent ASGI dispatcher + lifespan chain
+src/web/mcp_dispatcher.py                    # parent ASGI dispatcher + lifespan chain (wired by main.py)
 ```
 
 **Layering rationale (hexagonal):**
@@ -227,7 +227,8 @@ Here's the short version:
    (compares `client_secret` verbatim via `hmac.compare_digest`), validates the code
    (load, expiry, redirect_uri match, PKCE S256), then calls
    `provider.exchange_authorization_code(client, auth_code)`. The shim calls
-   `service.finalize_auth_code(code)` which consumes the code atomically (one-shot enforcement)
+   `service.finalize_auth_code(code)` which consumes the code atomically (one-shot enforcement: the repository reads
+   and deletes it in one Firestore transaction, so of concurrent exchanges of one code exactly one gets tokens)
    and mints an access JWT + refresh token. The SDK returns them to claude.ai.
 7. **Protocol calls:** claude.ai POSTs `/mcp` with `Authorization: Bearer <access_jwt>`.
    The SDK's `BearerAuthBackend` middleware calls `provider.load_access_token(jwt_str)`
@@ -242,7 +243,9 @@ Here's the short version:
 9. **Refresh:** when the access token expires (1h), claude.ai POSTs `/token` with
    `grant_type=refresh_token`. The SDK validates and calls
    `provider.exchange_refresh_token()`. The shim calls `service.rotate_refresh_token(value)`
-   which revokes the old refresh token (by sha256 hash) and mints a fresh pair.
+   which revokes the old refresh token (by sha256 hash) and mints a fresh pair. The revoke is the claim: it runs in
+   one Firestore transaction and reports whether it revoked an active token, so of concurrent exchanges of one
+   refresh token exactly one gets a new pair and the others get `invalid_grant`.
    Before rotating, the service re-checks that the grant's user still exists, has an email and is whitelisted;
    otherwise the presented refresh token is revoked and the grant is refused (`invalid_grant`). A repository
    error fails closed. This applies to both connectors.

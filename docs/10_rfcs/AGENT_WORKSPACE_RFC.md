@@ -239,7 +239,10 @@ cached prefix). Nothing is read unless a trigger asks.
 - **Delete = patch, then delete, both under `if_generation_match=g`** (port `delete(user_id, path,
   if_generation_match, meta)`). A metadata patch changes only the metageneration, so the generation precondition
   still holds for the delete. If the delete then fails for a reason other than 412, the live version carries
-  `deleted_*` keys while still live; renderers ignore them on live objects. **The adapter never deletes through a
+  `deleted_*` keys while still live; renderers ignore them on live objects. If the delete fails because a write
+  replaced generation `g` after the patch (412, or 404 when the path is gone) and the delete did not land, the adapter
+  takes its own stamp (`delete_id` equal to ours) off generation `g` again, so the history reads it as replaced, not
+  deleted (P11-G4-1). **The adapter never deletes through a
   generation-addressed blob**: in a versioned bucket that permanently erases the version instead of making the live
   object noncurrent. That includes the blob just patched: `patch()` reloads `blob.generation`, and `Blob.delete()`
   then sends it, so the delete goes through a fresh blob object for the same name. Rollbacks and ordinary deletes
@@ -855,7 +858,7 @@ from uploads and `workspace:` refs are unavailable (local only).
 | handlers | `handlers/worker_handler.py` | Build the fire key; pass `origin_detail` (+ `fire_key`) to both Smart-bound `notify` calls. |
 | web | `web/user_cabinet_app.py`, `web/static/cabinet.html` | GET returns `workspace_file`; the list shows it read-only. |
 | composition | `service_container.py`, `user_agent_factory.py` | Build order adapter → `FileConversionService(workspace=port)` → `WorkspaceService`; `agent_services()` (`:400`) carries it; Smart gets `workspace_service`, NotesAgent gets `workspace_enabled`. |
-| config | `config/settings.py` | `GCS_WORKSPACE_BUCKET` in `load_settings()`. |
+| config | `src/config/settings.py` | `GCS_WORKSPACE_BUCKET` in `load_settings()`. |
 | deploy | `cloudbuild-dev.yaml`, `requirements.txt` | `GCS_WORKSPACE_BUCKET=GCS_WORKSPACE_BUCKET:latest` in the main service `--set-secrets` (name only); `google-cloud-storage` pinned to the installed 3.9.0 (`requirements.txt:3`). |
 | skills | `skills/smart/skill-creator/SKILL.md` | §11.2 section. |
 | user-facing | `utils/capabilities.py` | Two lines: ask the bot to keep working files for a long task or a recurring job, and to show them; a reminder can carry a workspace file that its run follows. |

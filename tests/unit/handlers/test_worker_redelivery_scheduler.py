@@ -48,7 +48,7 @@ def _payload(task_type: str) -> dict:
 
 async def _seed_one_time_note(graph: Any, monkeypatch: Any) -> str:
     """A one-time note for `u1` due `T0`, created a day earlier through the graph's own note store (its id is the
-    creation millisecond, so the adapter's clock is pinned)."""
+    creation millisecond plus a uuid suffix; the adapter's clock is pinned)."""
     from src.adapters import firestore_agent_note_adapter
     from src.domain.agent_note import NoteCreate
     pin_datetime(monkeypatch, firestore_agent_note_adapter, T0 - timedelta(days=1))
@@ -139,9 +139,6 @@ async def test_the_auto_index_ticked_twice_starts_one_job(prod_graph, monkeypatc
     assert _bodies("email_indexing") == [{"task_type": "email_indexing", "job_id": jobs[0]["job_id"]}]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P15-D6: two concurrent auto-index ticks both pass the running-job guard and start two jobs; "
-                          "owner decision")
 async def test_the_auto_index_ticked_twice_concurrently_starts_one_job(prod_graph, monkeypatch):
     """Two ticks at once both read "no running job" and both create one. Interleaving source: a `Rendezvous` right
     after `get_latest_job` (a query, which never yields; `src/adapters/firestore_email_job_repo.py:74-87`), so both

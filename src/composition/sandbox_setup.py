@@ -21,8 +21,8 @@ Public interface:
 
 Service family (`SANDBOX_SERVICE`): `render` (default) or `light`; any other value refuses start. The family decides the
 caller groups the service accepts and the engines it builds. Render: group RENDER. Light: groups MAIN and INDEXER, both
-for `parse` ops, and INDEXER also for the `media` tunnel ops (one service of its own; the render service's caller map is
-separate).
+for `parse` ops and both for the `media` tunnel ops (INDEXER for drive recordings, S5; MAIN to probe edit-video sources,
+S5b; one service of its own; the render service's caller map is separate).
 
 It does not build the app: the blueprint, gate and recycler are `web/` objects and composition may not import `web/`
 (REQ-ARCH-11); `sandbox_main.build_app` assembles them from the plan. Plain data only. Imports nothing from

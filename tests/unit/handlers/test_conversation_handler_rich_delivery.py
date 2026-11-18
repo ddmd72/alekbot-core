@@ -8,7 +8,7 @@ the correct channel methods.
 Routes:
   with a RichContentService: RichContentService.deliver() routes (real service over fake ports here)
       content_type in MEDIA_CONTENT_TYPES ("file", "widget", ...)
-          → platform upload, or GCS URL → send_message(url)
+          → platform upload, or an html page stored privately → send_message(the user's /f/<token> link)
       other content types ("table", "pdf", ...) → response_channel.send_rich_content()
   without one: every type → response_channel.send_rich_content()
   link_list
@@ -22,6 +22,8 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.messaging import MessageContext, RichContent, SmartResponse
 from src.domain.ui_messages import StatusType
 from src.handlers.conversation_handler import ConversationHandler
+from src.services.file_access_token_service import FileAccessTokenService
+from src.services.file_link_service import FileLinkService
 from src.services.rich_content_service import RichContentService
 
 
@@ -93,15 +95,14 @@ class _FakeMedia:
 
 
 class _FakeStorage:
-    """MediaStoragePort fake: records stored objects, answers a fixed public URL."""
+    """MediaStoragePort fake: records stored objects and answers the object key, as the private bucket does."""
 
-    def __init__(self, url):
-        self.url = url
+    def __init__(self):
         self.stored = []
 
     async def store(self, data, key, content_type):
         self.stored.append((data, key, content_type))
-        return self.url
+        return key
 
 
 def _make_handler(coordinator, rich_content_service=None) -> ConversationHandler:
@@ -180,10 +181,12 @@ class TestRichContentDelivery:
             SmartResponse(text="Your HTML report.", structured_data=rich)
         )
 
-        _GCS_URL = "https://storage.googleapis.com/bucket/report.html"
+        base = "https://alek.example.com"
+        tokens = FileAccessTokenService(secret_key="s" * 40)
         media = _FakeMedia()
-        storage = _FakeStorage(_GCS_URL)
-        rcs = RichContentService(media_port=media, storage_port=storage)
+        storage = _FakeStorage()
+        rcs = RichContentService(media_port=media, storage_port=storage,
+                                 link_service=FileLinkService(token_service=tokens, base_url=base))
 
         handler = _make_handler(coordinator, rich_content_service=rcs)
         channel = _make_channel()
@@ -195,8 +198,11 @@ class TestRichContentDelivery:
             (b"<h1>Report</h1>", "text/html; charset=utf-8")
         ]
         assert media.files == []
-        # GCS URL sent as plain message so Slack unfurls it
-        channel.send_message.assert_awaited_with(_GCS_URL, thread_id=None)
+        # The turn user's /f/<token> link to that object, sent as a plain message so Slack unfurls it (P11-G4-5, O8)
+        [link] = [c.args[0] for c in channel.send_message.await_args_list if c.args[0].startswith(f"{base}/f/")]
+        channel.send_message.assert_awaited_with(link, thread_id=None)
+        access = tokens.verify(link.rsplit("/", 1)[-1])
+        assert access.user_id == _USER_ID and access.key == storage.stored[0][1]
         channel.send_rich_content.assert_not_awaited()
 
     async def test_link_list_only_no_rich_content(self):

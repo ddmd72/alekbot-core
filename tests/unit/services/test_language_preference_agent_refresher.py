@@ -27,6 +27,10 @@ class _Users:
         self.user = user
         return user
 
+    async def update_user_fields(self, user: UserProfile, fields):
+        self.user = user
+        return user
+
 
 class _Accounts:
     async def get_account(self, account_id: str):

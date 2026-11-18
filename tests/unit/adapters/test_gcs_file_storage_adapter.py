@@ -96,7 +96,9 @@ class TestUpload:
         result = await adapter.upload(b"data", "report.docx", "user1", "application/pdf")
 
         assert result == "report.docx"
-        blob.upload_from_string.assert_called_once_with(b"data", content_type="application/pdf")
+        # P11-G4-2: the write is conditional on the name being free, and stamps this upload's id for the read-back.
+        blob.upload_from_string.assert_called_once_with(b"data", content_type="application/pdf", if_generation_match=0)
+        assert set(blob.metadata) == {"upload_id"} and len(blob.metadata["upload_id"]) == 32
 
     async def test_upload_sanitizes_filename(self, adapter, mock_storage_client):
         blob = MagicMock()

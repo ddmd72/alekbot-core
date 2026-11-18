@@ -240,7 +240,8 @@ def _record_blueprint_factories(monkeypatch, boot: Boot) -> None:
 
 
 def _worker_closure(app: quart.Quart) -> Dict[str, Any]:
-    view = app.view_functions["worker"]
+    # reviewer edit, tidy main.py: /worker is served by the `main_service` blueprint (src/web/main_service_routes.py)
+    view = app.view_functions["main_service.worker"]
     return dict(zip(view.__code__.co_freevars, (cell.cell_contents for cell in view.__closure__ or ())))
 
 

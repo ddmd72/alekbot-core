@@ -62,9 +62,8 @@ class MCPClientRepository(ABC):
     async def consume_auth_code(self, code: str) -> Optional[MCPAuthCode]:
         """Delete the code and return it; None when absent or already consumed.
 
-        Atomicity: one-shot (mcp_authorization_service.py:270): of concurrent calls on one code exactly one returns
-            it. Known defect: the adapter reads, then deletes, outside a transaction, so concurrent calls can each
-            return it (firestore_mcp_client_repository.py:133-139).
+        Atomicity: one-shot (mcp_authorization_service.py:finalize_auth_code): of concurrent calls on one code
+            exactly one returns it.
         """
 
     # --- refresh tokens (rotated) ---
@@ -82,13 +81,13 @@ class MCPClientRepository(ABC):
         """
 
     @abstractmethod
-    async def revoke_refresh_token(self, token_hash: str) -> None:
-        """Set revoked_at to now; get_refresh_token then returns it revoked.
+    async def revoke_refresh_token(self, token_hash: str) -> bool:
+        """Set revoked_at to now; get_refresh_token then returns it revoked. True when this call revoked an active
+        token, False when the hash is absent or the token was already revoked.
 
         Idempotency: an absent hash is a no-op; revoking again moves revoked_at to now (observed).
-        Known defect: rotation needs one exchange per token, but get and revoke are separate calls and revoke does
-            not say whether it revoked an active token, so two concurrent exchanges of one refresh token both get
-            new tokens (mcp_authorization_service.py:309-332).
+        Atomicity: rotation allows one exchange per token (mcp_authorization_service.py:rotate_refresh_token): of
+            concurrent calls on one active token exactly one returns True.
         """
 
     @abstractmethod

@@ -110,6 +110,8 @@ class TaskSetupService:
         if not list_id:
             list_id = await self._lifecycle.ensure_primary_list(user_id)
             list_id = await self._task_config.set_primary_list_id_if_absent(user_id, list_id)
+            # `config` was read before the list id was stored: carry it, or the save below erases it.
+            config.primary_list_id = list_id
         if not list_id:
             logger.warning(f"⚠️ No primary_list_id for user {user_id[:8]} — skipping subscriptions")
             return
@@ -309,6 +311,17 @@ class TaskSetupService:
             "reindex_task_list",
             {"user_id": user_id, "list_id": list_id},
         )
+
+    # ------------------------------------------------------------------
+    # owns_subscription
+    # ------------------------------------------------------------------
+
+    async def owns_subscription(self, user_id: str, sub_id: str, list_id: str) -> bool:
+        """True when `user_id`'s stored config holds subscription `sub_id` on list `list_id`. The webhook's binding of
+        a notification to the user of its URL (clientState is one secret shared by every subscription)."""
+        config = await self._task_config.get_config(user_id)
+        sub = self._find_sub(config, sub_id)
+        return sub is not None and sub.list_id == list_id
 
     # ------------------------------------------------------------------
     # Helpers

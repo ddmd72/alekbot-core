@@ -4,8 +4,9 @@ Life of a question: `queued` -> (`claimed`) `pending` -> (`appended`, `posted`) 
 A profile question (kind `place`, `person` or `date`, fact profile RFC §4.7) lives the same life through the same channel;
 what differs is stated in the record (origin `profile`, an `open_point`, fallback `none`, no texts, never a `reply_text`).
 Every move is a method here that returns a new, validated question or raises `QuestionTransitionError`; the store only
-applies the result in its transaction. A `pending` question that has a message ref was delivered (`delivered`), whatever
-happened to the process after the post: it is completed as `asked`, never sent again."""
+applies the result in its transaction. A `pending` question that has a message ref, or a `posted_at` (the post is known
+to have succeeded; the ref write that follows it may have been lost), was delivered (`delivered`), whatever happened to
+the process after the post: it is completed as `asked`, never sent again."""
 from datetime import date, datetime, timedelta
 from enum import Enum
 from types import MappingProxyType
@@ -94,9 +95,9 @@ class ClosedBy(str, Enum):
 OPEN_STATUSES = frozenset({QuestionStatus.QUEUED, QuestionStatus.PENDING, QuestionStatus.ASKED, QuestionStatus.UNANSWERED})
 SENT_STATUSES = frozenset({QuestionStatus.ASKED, QuestionStatus.UNANSWERED})
 _ATTEMPT_FIELDS = (
-    "session_id", "appended_at", "message_ref", "asked_at", "reply_text", "reply_at", "offered_at",
+    "session_id", "appended_at", "posted_at", "message_ref", "asked_at", "reply_text", "reply_at", "offered_at",
 )
-_SENT_FIELDS = ("asked_at", "session_id", "appended_at", "message_ref")
+_SENT_FIELDS = ("asked_at", "session_id", "appended_at")
 _CLOSING_FIELDS = ("closed_at", "closed_by", "answer", "answer_source")
 
 
@@ -129,6 +130,7 @@ class FactReviewQuestion(BaseModel):
     queued_at: AwareDatetime
     session_id: Optional[str] = Field(default=None, min_length=1)
     appended_at: Optional[AwareDatetime] = None
+    posted_at: Optional[AwareDatetime] = None
     asked_at: Optional[AwareDatetime] = None
     message_ref: Optional[MessageRef] = None
     reply_text: Optional[str] = Field(default=None, min_length=1, max_length=MAX_REPLY_CHARS)
@@ -204,11 +206,12 @@ class FactReviewQuestion(BaseModel):
                 raise ValueError("a pending question has a session_id")
             if self.asked_at is not None:
                 raise ValueError("a pending question has not been asked yet")
-            if self.message_ref is not None and self.appended_at is None:
+            if self.delivered and self.appended_at is None:
                 raise ValueError("a posted question was appended first")
         elif self.status in SENT_STATUSES:
-            if any(getattr(self, name) is None for name in _SENT_FIELDS):
-                raise ValueError("an asked or unanswered question has asked_at, session_id, appended_at and a message_ref")
+            if any(getattr(self, name) is None for name in _SENT_FIELDS) or not self.delivered:
+                raise ValueError(
+                    "an asked or unanswered question has asked_at, session_id, appended_at and a message_ref or posted_at")
 
     def _check_reply(self) -> None:
         if self.is_profile and self.reply_text is not None:
@@ -273,8 +276,9 @@ class FactReviewQuestion(BaseModel):
 
     @property
     def delivered(self) -> bool:
-        """The owner was shown the question: it has a message ref (the post succeeded), whatever else was recorded."""
-        return self.message_ref is not None
+        """The owner was shown the question: the post succeeded, recorded as a message ref or as `posted_at` (the ref
+        write that follows the post may have been lost), whatever else was recorded."""
+        return self.message_ref is not None or self.posted_at is not None
 
     @property
     def answerable(self) -> bool:
@@ -307,9 +311,16 @@ class FactReviewQuestion(BaseModel):
         self._require(self.status is QuestionStatus.PENDING and self.appended_at is None, "appended")
         return self._moved(appended_at=at)
 
+    def post_recorded(self, at: datetime) -> Self:
+        """pending, appended -> the post succeeded (before its message ref is known): housekeeping completes the question as
+        asked even when the ref write is lost, instead of retracting and sending it again."""
+        self._require(self.status is QuestionStatus.PENDING and self.appended_at is not None and not self.delivered,
+                      "post_recorded")
+        return self._moved(posted_at=at)
+
     def posted(self, ref: MessageRef) -> Self:
         """The post succeeded and landed at `ref` (once, and only after the frame was appended)."""
-        self._require(self.status is QuestionStatus.PENDING and self.appended_at is not None and not self.delivered, "posted")
+        self._require(self.status is QuestionStatus.PENDING and self.appended_at is not None and self.message_ref is None, "posted")
         return self._moved(message_ref=ref)
 
     def retracted(self) -> Self:

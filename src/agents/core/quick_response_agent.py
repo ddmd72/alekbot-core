@@ -363,9 +363,12 @@ class QuickResponseAgent(BaseAgent):
         current_message_parts: List[MessagePart],
         context_window: int
     ) -> List[Message]:
-        """Load and prepare conversation context."""
-        # Load session and extract history
-        session = await session_store.load_session(session_id)
+        """Load and prepare conversation context. A failed session load answers without history."""
+        try:
+            session = await session_store.load_session(session_id)
+        except Exception as e:
+            logger.warning(f"⚠️ [QuickResponseAgent] session load failed, answering without history: {e}")
+            session = None
         history = session.history[-context_window:] if session and session.history else []
 
         # Apply tiered loading: recent turns use full_text, older turns use summary

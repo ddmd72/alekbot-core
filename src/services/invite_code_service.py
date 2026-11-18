@@ -139,6 +139,13 @@ class InviteCodeService:
         # (lowercase), which every access check compares. Resolved before anything is written.
         iam_role = Role(invite.role.lower()).value
 
+        # Claim the code before anything is written: of concurrent consumers exactly one passes, the others join
+        # nothing. A failure after the claim leaves the code used (the owner issues a new one).
+        invite.mark_used(new_member_user_id)
+        if not await self.repo.claim(invite):
+            logger.warning(f"⛔ [InviteCodeService] Invite already used; {new_member_user_id} not joined")
+            raise ValueError("Invite code expired or already used")
+
         # 3. Update User's Account ID
         # Note: In MVP we overwrite the user's account.
         # If user had their own account with data, that data becomes "orphaned" or inaccessible
@@ -152,8 +159,4 @@ class InviteCodeService:
         account.iam_policy[new_member_user_id] = iam_role
         await self.account_repo.update_account(account)
 
-        # 5. Mark code as used
-        invite.mark_used(new_member_user_id)
-        await self.repo.update(invite)
-        
         logger.info(f"User {new_member_user_id} joined account {invite.account_id} as {invite.role}")

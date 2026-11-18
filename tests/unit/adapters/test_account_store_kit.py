@@ -19,6 +19,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from google.api_core.exceptions import NotFound
 from google.cloud.firestore_v1.types.write import WriteResult
 
 import src.adapters.firestore_account_repo as account_module
@@ -26,7 +27,7 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.domain.billing import AccountTier, AccountUsageStats, BillingAccount
 from src.ports.account_repository import AccountRepository
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -37,8 +38,8 @@ COUNTERS = ("total_tokens", "total_cost", "total_requests", "daily_tokens", "dai
 
 
 class Accounts:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
         self.repo: AccountRepository = FirestoreAccountRepository(self.db, ACCOUNTS)
 
     @property
@@ -59,9 +60,9 @@ class Accounts:
 
 
 @pytest.fixture
-def accounts(monkeypatch):
+def accounts(monkeypatch, kit_db):
     pin_datetime(monkeypatch, account_module, T0)
-    return Accounts()
+    return Accounts(kit_db)
 
 
 def io_trace(monkeypatch) -> list:
@@ -141,6 +142,7 @@ async def test_increment_returns_the_servers_before_and_after(accounts):
     assert result.daily_cost_limit == 5.0
 
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.update; on the real client the patch changes nothing")
 async def test_an_increment_whose_write_reports_no_transforms_estimates_from_the_pre_read(accounts, monkeypatch):
     """The write landed; only the returned position is estimated (pre-read + cost) when the server's transform
     results are missing or do not match the transformed paths."""
@@ -157,6 +159,7 @@ async def test_an_increment_whose_write_reports_no_transforms_estimates_from_the
     assert accounts.usage()["daily_cost"] == pytest.approx(1.5)
 
 
+@pytest.mark.h1_only("traces the fake's EvalDocRef reads and writes and sets yield_on_get")
 async def test_concurrent_increments_get_disjoint_slices_and_cross_once(accounts, monkeypatch):
     await accounts.seed(daily_cost=4.0)
     accounts.db.collection(ACCOUNTS).yield_on_get = True     # every caller pre-reads 4.0 before any update lands
@@ -196,6 +199,7 @@ async def test_increment_of_an_absent_account_raises_and_writes_nothing(accounts
     assert accounts.docs == {}
 
 
+@pytest.mark.h1_only("traces the fake's EvalDocRef reads and writes and sets yield_on_get")
 async def test_an_account_deleted_before_the_rotation_transaction_raises(accounts, monkeypatch):
     await accounts.seed(daily_cost=1.0, reset_at=T0 - timedelta(days=1))
     accounts.db.collection(ACCOUNTS).yield_on_get = True
@@ -232,8 +236,6 @@ async def test_update_account_stores_the_new_iam_policy(accounts):
     assert (await accounts.repo.get_account("a1")).iam_policy == {"u1": "owner", "u2": "member"}
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G1-3: update_account overwrites usage counters incremented since the caller's read")
 async def test_update_account_keeps_usage_counted_since_the_callers_read(accounts):
     """Flips when update_account writes every field but usage (`update(model_dump(exclude={"usage"}))`)."""
     await accounts.seed(daily_cost=1.0)
@@ -247,8 +249,17 @@ async def test_update_account_keeps_usage_counted_since_the_callers_read(account
     assert (accounts.usage()["daily_cost"], accounts.usage()["total_tokens"]) == (pytest.approx(1.5), 100)
 
 
+async def test_update_account_of_an_absent_account_raises_and_writes_nothing(accounts):
+    account = await accounts.seed()
+    del accounts.docs["a1"]
+    with pytest.raises(NotFound):
+        await accounts.repo.update_account(account)
+    assert accounts.docs == {}
+
+
 # ----------------------------------------------------------------------------------------------------- errors
 
+@pytest.mark.h1_only("patches the fake's EvalDocRef.get")
 @pytest.mark.parametrize("method", ["get_account", "increment_account_usage"])
 async def test_a_backend_error_propagates(accounts, monkeypatch, method):
     await accounts.seed()

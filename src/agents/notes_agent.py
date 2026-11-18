@@ -40,6 +40,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate
 from ..domain.exceptions import WorkspaceRefused
+from ..domain.local_time import wall_time_instant
 from ..domain.task_complexity import TaskComplexity
 from ..domain.workspace import (
     BINDING_INSTRUCTION_NOTE,
@@ -143,7 +144,7 @@ _TOOL_DECLARATIONS = [
             "properties": {
                 "note_id": {
                     "type": "string",
-                    "description": "Reminder ID (epoch-ms string from working_memory).",
+                    "description": "Reminder ID, as given in working_memory.",
                 },
                 "text": {
                     "type": "string",
@@ -189,7 +190,7 @@ _TOOL_DECLARATIONS = [
             "properties": {
                 "note_id": {
                     "type": "string",
-                    "description": "Reminder ID (epoch-ms string from working_memory).",
+                    "description": "Reminder ID, as given in working_memory.",
                 },
             },
             "required": ["note_id"],
@@ -210,23 +211,22 @@ def _resolve_tz(timezone_str: Optional[str]) -> ZoneInfo:
 
 
 def _parse_dt(value: Optional[str], user_tz: ZoneInfo) -> Optional[datetime]:
-    """
-    Parse ISO-8601 string to UTC datetime.
-
-    - If the string has timezone info → convert to UTC.
-    - If naive (no tz) → interpret as user's local time, then convert to UTC.
-    """
+    """ISO-8601 → UTC datetime (`wall_time_instant`: a naive time is the user's wall time). None when absent,
+    unreadable, or a local time the clocks skip."""
     if not value:
         return None
     try:
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            # Naive: assume user's local timezone
-            dt = dt.replace(tzinfo=user_tz)
-        return dt.astimezone(timezone.utc)
-    except (ValueError, TypeError):
-        logger.warning("⚠️ [NotesAgent] Could not parse datetime: %r", value)
+        return wall_time_instant(value, user_tz)
+    except (ValueError, TypeError) as exc:
+        logger.warning("⚠️ [NotesAgent] Could not parse datetime %r: %s", value, exc)
         return None
+
+
+def _bad_due(tool: str, value: Any) -> Dict[str, str]:
+    return {"error": (
+        f"{tool}: 'due' {value!r} names no time. Send an ISO-8601 datetime; a local time inside the "
+        "spring clock change does not exist, so pick one after it."
+    )}
 
 
 def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
@@ -236,6 +236,14 @@ def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
         return TaskComplexity(value)
     except ValueError:
         return None
+
+
+def _bad_complexity(tool: str, value: Any) -> Optional[Dict[str, str]]:
+    """A tool error when `complexity` was sent but is not a TaskComplexity value; None when absent or valid."""
+    if not value or _parse_complexity(value) is not None:
+        return None
+    allowed = ", ".join(c.value for c in TaskComplexity)
+    return {"error": f"{tool}: unknown 'complexity' {value!r}; use one of: {allowed}."}
 
 
 _BINDABLE = ("create_self_reminder", "update_self_reminder")
@@ -509,7 +517,12 @@ class NotesAgent(BaseAgent):
         if name == "create_self_reminder":
             due = _parse_dt(args.get("due"), self._user_tz)
             if due is None:
+                if args.get("due"):
+                    return _bad_due(name, args.get("due"))
                 return {"error": "create_self_reminder requires 'due' field (ISO-8601 datetime)."}
+            complexity_error = _bad_complexity(name, args.get("complexity"))
+            if complexity_error:
+                return complexity_error
             try:
                 rule = self._normalize_rule(args.get("recurrence"))
             except ValueError as exc:
@@ -563,6 +576,11 @@ class NotesAgent(BaseAgent):
                 return {"error": "Pass either 'recurrence' or 'clear_recurrence', not both."}
 
             due = _parse_dt(args.get("due"), self._user_tz)
+            if due is None and args.get("due"):
+                return _bad_due(name, args.get("due"))
+            complexity_error = _bad_complexity(name, args.get("complexity"))
+            if complexity_error:
+                return complexity_error
             if rule:
                 # A new rule must own the schedule, so the fire time is snapped onto
                 # it — against the new due when given, otherwise the stored one.

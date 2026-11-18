@@ -64,7 +64,7 @@ S5's classify applied 2026-10-27; P2 revised, "a fact whose date passed becomes 
 1. The owner talks in a chat channel. Every message and every bot reply is appended to that channel's session.
 2. Smart answers from the session's recent messages, the **baseline** (facts in every prompt, §4.1), the Router's
    **prefetch** (facts searched for this message, §4.4) and, when it asks, **`search_memory`** (§4.5).
-3. When a session grows past a threshold, its oldest messages are cut off as a **batch** and queued (§3 steps 2–3).
+3. When a session grows past a threshold, its oldest messages are queued as a **batch** and then cut from it (§3 steps 2–3).
 4. A Cloud Task runs the **ConsolidationAgent**: one model, a tool loop, three passes (Stage 1 conversation → facts,
    Stage 2a cluster review, Stage 2b directive review) and a pass over indexed emails (§3 steps 4–8).
 5. At the end the baseline cache is rebuilt, so the next message sees the new facts (§3 step 9).
@@ -407,8 +407,9 @@ toward the window.
 
 ### Step 2 — the sliding window overflows
 
-When the session holds more than `threshold` messages after an append, the oldest `batch_size` are cut off, repeatedly
-until it is back under the threshold (`firestore_session_store.py:223-231`):
+When the session holds more than `threshold` messages after an append, the oldest `batch_size` form a batch,
+repeatedly until the rest is back under the threshold (`FirestoreSessionStore.append_messages_batch`). The append is
+stored whole; a batch leaves the session only after it was queued (step 3, owner decision O2):
 
 - **Threshold 70, batch 50** in the live environment (`src/domain/settings.py:18-24`; the `is_production` branch sets
   50/30 and is not live, `src/config/settings.py:160-170`). Wired at `src/composition/service_container.py:329-337`.
@@ -421,7 +422,17 @@ until it is back under the threshold (`firestore_session_store.py:223-231`):
 
 ### Step 3 — the batch is queued
 
-The cut batch goes to `OverflowRoutingService.route_overflow` as a background task (`firestore_session_store.py:258-265`):
+One tracked background task after the append's commit (`FirestoreSessionStore._hand_off`) hands each batch, oldest
+first, to `OverflowRoutingService.route_overflow` and then cuts it from the session with `remove_head` (a second
+transaction that removes exactly those messages if they still start the history, so a message appended meanwhile is
+kept). If the hand-off raises, that batch and the later ones stay in the session and the next append over the window
+hands them off again; the batch id is `handoff_key` of the messages (`src/domain/consolidation.py`) and the queue
+stores a batch only if its id is absent (`enqueue_batch` is create-if-absent), so a repeat finds the first record and
+leaves it as it is (a run that already took it keeps its status and attempts). The task runs after the append has
+returned, usually after the reply was sent, when Cloud Run may throttle the instance's CPU: a hand-off or cut that
+stalls or dies there leaves the batch in the session, and the next append over the window hands it off again
+(self-healing, no sweep needed). A hand-off that fails every time is bounded by a ceiling (the failure table below).
+`route_overflow`:
 
 1. `serialize_messages_for_consolidation` (`src/domain/consolidation_serialization.py:20-46`): **user parts** →
    `consolidation_text or text` (`consolidation_text` is legacy, no writer left); **bot parts → `text`, the summary**,
@@ -431,10 +442,11 @@ The cut batch goes to `OverflowRoutingService.route_overflow` as a background ta
    `text == full_text`, so the batch sees the question as sent). The owner's reply is the pair
    `[Reply to memory review q=<id>] <his text>` and the acknowledgement. Stage 1 reads them under the narrowed echo-trap
    exception (step 5).
-2. A `ConsolidationBatch` (`src/domain/consolidation.py:14-28`) is stored in the queue with status `pending`
-   (`overflow_routing_service.py:93-103`).
+2. A `ConsolidationBatch` (`src/domain/consolidation.py`) is stored in the queue with status `pending` under the id
+   `batch_<handoff_key>` (`OverflowRoutingService._route_to_alek`).
 3. A Cloud Task `task_type=consolidation` is enqueued for the user, with a 1800 s dispatch deadline
-   (`src/adapters/gcp_task_queue.py:408-438`).
+   (`src/adapters/gcp_task_queue.py:408-438`). A failure of step 2 or 3 is logged (`Error in overflow routing … the
+   batch stays in the session`) and re-raised, so the session store does not cut the batch.
 
 `/worker` → `WorkerHandler._handle_consolidation` (`src/handlers/worker_handler.py:444-460`) →
 `ConsolidationService.process_user_batches(max_batches=1)` (`consolidation_service.py:110-121`, the loop `_run`, `:141-172`).
@@ -1069,9 +1081,10 @@ naming how many updates were not applied.
 
 ### 5.4 `$consolidate`
 
-`ConversationHandler` (`conversation_handler.py:1526-1618`) cuts the oldest `batch_size` messages of the current
-session (the user's `consolidation_batch_size` override, else 50), queues them, saves the trimmed session, posts a
-"started" note, then calls `ConsolidationService.consolidate_now` (`consolidation_service.py:123-139`, handed over by
+`ConversationHandler` (`conversation_handler.py:1526-1618`) takes the oldest `batch_size` messages of the current
+session (the user's `consolidation_batch_size` override, else 50), posts a "started" note, queues them (id
+`batch_<handoff_key>`, as the overflow does), cuts exactly those messages from the stored session with `remove_head` (a
+pair appended since the command's load is kept), then calls `ConsolidationService.consolidate_now` (`consolidation_service.py:123-139`, handed over by
 the adapter factories as `overflow_callback`). It processes **at most one batch** inside the request, because the chat
 request is a Cloud Task with an 1800 s deadline and two batches at the 16-minute lease bound would exceed it. That is
 the **oldest** pending batch of the user, which after a backlog is not necessarily this command's. If more remain,
@@ -1219,7 +1232,7 @@ memory-write lease (the one consolidation holds, so the two never write at once;
 named task):
 1. *Owner check.* The user must be the account's first owner, and the profile must belong to the account; else a WARNING and
    `not_owner`. Questions, sessions, language and timezone are the owner's; facts are the account's.
-2. *Housekeeping.* A question whose send never finished is completed (it has a message reference: it was posted) or taken
+2. *Housekeeping.* A question whose send never finished is completed (it has a message reference or a recorded post, `posted_at`: it was posted) or taken
    back (it has none: a "not delivered" pair is appended and the question goes back to the front of the queue). An asked
    question sent on an earlier local day becomes `unanswered`: still open, still timing out, no longer the current one.
 3. *Timeouts, in code.* A question sent (`asked`, `unanswered`) 14 days ago is closed by silence. If its fact is still the
@@ -1496,8 +1509,10 @@ close-out (an abandoned-refusal alert, the expiry errors added to the account's 
 | worker crashes mid-batch | batch stays `processing`, the lease is not released, and **no cache refresh happens** (the `finally` of §3 step 9 does not run when the instance dies, so the baseline keeps the replaced version's id and text until the retried run ends) | partial writes stand | the next tasks of that account defer every 120 s (§3 step 3) until the lease expires (at most 16 min after it was taken); the winner then resets the batch (older than 60 s) to `retry_pending` with attempts + 1 and runs it. Without a lease (the sweep) the threshold is 1800 s. A batch that kills its worker three times is `failed` (then the sweep's bounded revivals; 12 runs in all) instead of looping | yes, but only if a task arrives to defer: Cloud Tasks retries the killed request (the queue's retry settings), a new overflow comes, or the hourly sweep |
 | internal error inside a batch (a store or queue error, not an agent failure) | logged `Unhandled error in batch processing` and swallowed; `$consolidate` reports "A batch failed and stays queued" | writes so far stand | stays as it was (`pending`, or `processing` if the error came after the mark: then a zombie later) | the next task continues the chain only if the broken batch is no longer `pending` and another batch waits; otherwise the hourly sweep. **Known residual:** an error after the agent has finished (for example a failed `delete_batch`) leaves the batch `processing`, so it re-runs as a zombie (attempts + 1) although its facts are already written |
 | baseline refresh fails | logged, swallowed (`firestore_repo.py:775-779`) | stored | succeeds | old baseline until the next run |
-| enqueue of the batch fails at overflow | logged `Error in overflow routing` (`overflow_routing_service.py:64-69`) | — | **lost**: the messages were already cut from the session | no |
-| batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
+| enqueue of the batch fails at overflow | logged `Error in overflow routing … the batch stays in the session` and `Overflow hand-off failed` (session store) | — | not created; **the messages stay in the session** (it holds more than the window until then) | yes: the next append to that session hands the same batch off again (same id) |
+| batch stored but the Cloud Task enqueue fails | logged, the same two lines | — | stored; the messages also stay in the session | the next append hands the batch off again: the stored batch is kept as it is (same id, create-if-absent) and the task is enqueued; until then the hourly sweep finds the batch |
+| an overflow hand-off fails every time (a deterministic error, not an outage) | each append logs `Error in overflow routing` and `Overflow hand-off failed`; once the history passes `OVERFLOW_CEILING_WINDOWS` (2) windows (140 messages live), each append cuts its oldest batches without a hand-off and logs `🚨 [SessionStore] <session>: the history passed … the oldest N messages were cut without a hand-off and are lost to memory` (ERROR) | — | none for the cut batches: **lost to memory** (the old lossy behaviour, only in this case) | no. Without the ceiling the session would grow until an append failed on Firestore's 1 MiB document limit, and from then on every turn of that channel would be lost from history |
+| the cut after a successful hand-off fails | logged `Error cutting the head of <session>` | — | stored | the next append hands the same batch off again: the stored batch is kept as it is (same id, create-if-absent; a run that took it keeps its status and attempts) and the cut is retried. **Accepted residual:** if a run finished and deleted the batch before the repeat, the repeat stores it again and those messages are consolidated a second time (the model should find the facts already written; an update it repeats can add one more version) |
 | the janitor run fails (a query, the counters, a stale write) | logged with its type and stage, one "🚨 Fact lifecycle run failed" (no fact named), the job answers 500; what was staled before the failure is already out of the baseline | the facts staled so far stay stale | — | **no**: the job is not retried by design; the next day's run catches up (§5.5) |
 | a janitor stale write finds the fact changed since the read | counted `stale_conflicts`, skipped | none for that fact | — | the next run |
 | the janitor's breaker is tripped | nothing is staled for that account; one 🚨 per account per run, only when a due fact with a decision was held back | none | — | the next run, until a successful review lowers the backlog or the pool is back to 50 or fewer (§5.5) |
@@ -1509,7 +1524,7 @@ close-out (an abandoned-refusal alert, the expiry errors added to the account's 
 | an owner's answer finds the fact changed since the question (a rewritten fact, a different current text) or its write conflicts | `changed` or `conflict`: nothing is written, the owner gets "That fact has changed in the meantime…" (a button keeps its buttons), the question stays open | none | — | the owner may answer again; the review or the timeout handles it otherwise |
 | an owner's answer is refused by the write rules (`not_applied`) | WARNING, `answers_not_applied` counted, the question stays open; a digit reply is left to ordinary conversation | none | — | no |
 | a question cannot be sent (its pair is not stored, or the post fails) | pair not stored: the question goes back to the front of the queue, nothing posted. Post failed: a "not delivered" pair is appended, the question goes back to the front, no more are sent that day, `not_delivered` is counted | none | — | the next day's run |
-| the post succeeded but a mark failed (a crash between the post and `asked`) | housekeeping of the next run completes a pending question that has a message reference as `asked`; it is never sent twice | none | — | — |
+| the post succeeded but a mark failed (a crash between the post and `asked`) | housekeeping of the next run completes a pending question that has a message reference or a recorded post (`posted_at`, written right after the post and before the reference, so a lost reference write is covered too) as `asked`; it is never sent twice | none | — | — |
 | an error in the reply intake | ERROR, `reply_intake_failed` counted (a 🚨 the next morning), the message goes on as ordinary conversation | none | — | no |
 | a Slack click arrives with a bad signature, or the queue is down | 401 with nothing parsed; 503 or 500 when the task is not queued (Slack shows the click as failed) | none | — | the owner clicks again |
 | the digest is not delivered or cannot be read | the claim is released and the marks stay, so the next run tries again; an error is logged and never fails the run | none | — | yes, the next run |
@@ -1689,7 +1704,9 @@ measured. `search_memory` adds one Gemini flash-lite call per search.
 
 Log lines, in pipeline order:
 - `❄️ Overflow batch #n for <session>… (extracted=50, remaining=…)`, `🔔 Triggering overflow callback` (session store)
-- `📦 [Overflow] Created batch <batch_id>`, `📬 [Overflow] Consolidation task enqueued`; loss: `❌ Error in overflow routing`
+- `📦 [Overflow] Created batch <batch_id>`, `📬 [Overflow] Consolidation task enqueued`; a failed hand-off (the batch
+  stays in the session): `❌ Error in overflow routing … the batch stays in the session` and
+  `❌ [SessionStore] Overflow hand-off failed`; the ceiling cut (messages lost): `🚨 [SessionStore] … the history passed`
 - `♻️ Reset N stale PROCESSING batches (attempts +1)` (a lost run was counted; the third one logs `CONSOLIDATION_FAILED … error='run lost while processing'`, and `CONSOLIDATION_GAVE_UP` past the revivals) / `♻️ Revived N FAILED batches` (sweep only) / `⏳ Skipped N live PROCESSING batches`
 - `[MemoryWriteLease] busy for account <8>` (INFO, a task found the lease taken), `⏳ [Librarian] lease busy: deferred consolidation for user <8>` or `… less than the lease margin left: deferred …` (INFO, one named deferral task enqueued), `[Librarian] lease busy, no queue to defer to` (WARNING, local runs only), `[Librarian] releasing the memory-write lease failed` (WARNING), `[MemoryWriteLease] release found another owner` (WARNING: a run outlived its lease and was taken over)
 - `📦 [Librarian] Processing batch <batch_id> (<n> messages)`

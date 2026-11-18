@@ -72,7 +72,8 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
         return TaskSubscriptionConfig(
             sub_id=data["sub_id"],
             list_id=data["list_id"],
-            expires_at=expires_at or datetime.now(timezone.utc),
+            # No stored expiry: read as expiring now (naive UTC, like every stored value), so the renewal renews it.
+            expires_at=expires_at or datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
     def _to_domain(self, data: Dict[str, Any]) -> TaskUserConfig:

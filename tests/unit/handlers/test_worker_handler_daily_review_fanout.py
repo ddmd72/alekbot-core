@@ -140,7 +140,7 @@ async def test_enqueue_passes_dedup_key_and_deadline():
     await worker({}, {})
     dispatch.enqueue_worker_task.assert_awaited_once_with(
         "daily_email_review",
-        {"user_id": "user-1", "account_id": "acc-9"},
+        {"user_id": "user-1", "account_id": "acc-9", "slot_date": "2026-10-22"},
         deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
         dedup_key="daily_review:user-1:2026-10-22",
     )

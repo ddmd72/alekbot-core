@@ -71,7 +71,8 @@ class TestRecordBilling:
 
     def _patch_repo(self):
         repo = MagicMock()
-        repo.increment_account_usage = AsyncMock()
+        # None: no UsageIncrement, so the quota service's budget-alert branch stays out of these billing tests.
+        repo.increment_account_usage = AsyncMock(return_value=None)
         return repo
 
     async def test_records_tokens_and_cache_cost(self):
@@ -87,13 +88,14 @@ class TestRecordBilling:
             await job_main._record_billing("acct-1", "claude-sonnet-4-6", result)
 
         repo.increment_account_usage.assert_awaited_once()
-        kw = repo.increment_account_usage.await_args.kwargs
-        assert kw["account_id"] == "acct-1"
-        assert kw["tokens"] == 100_000  # counter = in+out, unchanged
+        # Recorded through FirestoreQuotaService, which passes (account_id, tokens, cost) positionally.
+        account_id, tokens, cost = repo.increment_account_usage.await_args.args
+        assert account_id == "acct-1"
+        assert tokens == 100_000  # counter = in+out, unchanged
         # Output MUST be priced at the output rate ($15/M), not input ($3/M).
         # input 40k*$3/M=$0.12 + output 60k*$15/M=$0.90 + cache → dominated by output.
         # The old bug priced all 100k as input ($0.30); correct cost is far higher.
-        assert kw["cost"] > 0.90
+        assert cost > 0.90
 
     async def test_output_priced_at_output_rate_not_input(self):
         # Regression for the deep-research mispricing: completion tokens were billed
@@ -105,12 +107,12 @@ class TestRecordBilling:
 
         with patch.object(job_main, "_build_account_repo", return_value=repo):
             await job_main._record_billing("acct-1", "claude-sonnet-4-6", all_output)
-        cost_output = repo.increment_account_usage.await_args.kwargs["cost"]
+        cost_output = repo.increment_account_usage.await_args.args[2]  # (account_id, tokens, cost), positional
 
         repo.increment_account_usage.reset_mock()
         with patch.object(job_main, "_build_account_repo", return_value=repo):
             await job_main._record_billing("acct-1", "claude-sonnet-4-6", all_input)
-        cost_input = repo.increment_account_usage.await_args.kwargs["cost"]
+        cost_input = repo.increment_account_usage.await_args.args[2]  # (account_id, tokens, cost), positional
 
         # claude-sonnet-4-6: output $15/M, input $3/M → 5x ratio.
         assert cost_output == pytest.approx((100_000 / 1_000_000) * 15.0)

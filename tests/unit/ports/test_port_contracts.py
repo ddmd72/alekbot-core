@@ -188,13 +188,17 @@ class TestSessionStoreContract:
         assert hasattr(SessionStore, "get_latest_session_id")
         assert getattr(SessionStore.get_latest_session_id, "__isabstractmethod__", False)
 
+    def test_has_remove_head(self):
+        assert hasattr(SessionStore, "remove_head")
+        assert getattr(SessionStore.remove_head, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 5 abstract methods."""
+        """Port should have exactly 6 abstract methods (remove_head added by owner decision O2)."""
         abstract_methods = {
             name for name, method in inspect.getmembers(SessionStore)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
 
     def test_append_messages_batch_signature(self):
         sig = inspect.signature(SessionStore.append_messages_batch)

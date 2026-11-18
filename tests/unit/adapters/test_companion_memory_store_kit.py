@@ -15,7 +15,7 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from src.domain.companion import CompanionRecord
-from tests.support.firestore_eval import EvalDb, stored_vector
+from tests.support.firestore_eval import stored_vector
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 REC = "eval_companion_records"
@@ -24,13 +24,13 @@ VEC = [1.0, 0.0]
 CREATED = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
 
-def _adapter(db: EvalDb) -> FirestoreCompanionMemoryRepository:
+def _adapter(db) -> FirestoreCompanionMemoryRepository:
     return FirestoreCompanionMemoryRepository(db, SimpleNamespace(companion_records_collection=REC))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={REC: "development_companion_records"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={REC: "development_companion_records"}, vector_dimension=2)
         self.repo = _adapter(self.db)
 
     @property
@@ -39,8 +39,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def record(rid="r1", session=SESSION, account="a1", vector=VEC, text="Practises guitar 1 h/day") -> CompanionRecord:
@@ -75,11 +75,13 @@ async def test_save_batch_writes_each_record_under_its_id_with_a_vector_value_an
     assert isinstance(doc["vector"], Vector) and stored_vector(doc["vector"]) == VEC
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_save_batch_of_nothing_returns_zero_and_writes_nothing(store):
     assert await store.repo.save_batch([]) == 0
     assert store.docs == {} and store.db.commits == []
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_save_batch_goes_in_batches_of_500(store):
     assert await store.repo.save_batch([record(f"r{i:03d}") for i in range(501)]) == 501
     assert len(store.docs) == 501
@@ -132,6 +134,7 @@ async def test_find_nearest_skips_a_record_that_does_not_validate_and_takes_a_mi
     assert sorted(r.id for r in got) == ["fallback-id", "ok"]
 
 
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_find_nearest_propagates_backend_errors(store):
     await store.repo.save_batch([record("r1")])
     store.db.collection(REC).fail = ServiceUnavailable("down")

@@ -94,13 +94,31 @@ async def test_unparsable_resource_is_skipped_and_nothing_is_indexed(resource):
     assert w.queue.tasks == [] and w.indexing.calls == [] and w.touched == []
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="known defect: clientState is one shared secret and the path <user_id> is not tied to the "
-                          "subscription, so a notification for user-a's sub posted to another user's URL is applied "
-                          "to that user (src/web/microsoft_tasks_webhook.py:66-142)")
 async def test_a_notification_sent_to_another_users_url_touches_nothing_of_theirs():
     w = World()
     await w.seed_user_a()
     resp = await w.client.post("/webhook/microsoft-tasks/user-b", json=_notification())
     assert resp.status_code == 202
     assert w.touched_user("user-b") == []
+
+
+async def test_a_notification_for_the_users_subscription_on_another_list_touches_nothing():
+    w = World()
+    await w.seed_user_a()
+    resp = await w.client.post("/webhook/microsoft-tasks/user-a",
+                               json=_notification(resource="me/todo/lists/LB/tasks"))
+    assert resp.status_code == 202
+    assert w.queue.tasks == [] and w.indexing.calls == [] and w.touched == []
+
+
+async def test_a_notification_whose_binding_cannot_be_read_is_acknowledged_and_touches_nothing(monkeypatch):
+    w = World()
+    await w.seed_user_a()
+
+    async def down(user_id):
+        raise RuntimeError("firestore unavailable")
+
+    monkeypatch.setattr(w.config, "get_config", down)
+    resp = await w.client.post("/webhook/microsoft-tasks/user-a", json=_notification())
+    assert resp.status_code == 202                    # Graph must get its 202, or it disables the subscription
+    assert w.queue.tasks == [] and w.indexing.calls == [] and w.touched == []

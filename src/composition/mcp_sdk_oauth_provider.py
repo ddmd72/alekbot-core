@@ -186,6 +186,10 @@ class MCPSdkOAuthProvider(
         return _domain_to_sdk_client(domain)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        # The SDK model accepts `redirect_uris: null` (an empty list it refuses itself, as invalid_client_metadata).
+        if not client_info.redirect_uris:
+            logger.warning("DCR rejected: redirect_uris is required")
+            raise RegistrationError(error="invalid_client_metadata", error_description="redirect_uris is required")
         try:
             await self._service.save_client(_sdk_to_domain_client(client_info))
         except MCPInvalidRedirectURI as e:

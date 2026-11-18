@@ -8,7 +8,7 @@ with no credentials, then asserts the app's refusal AND that nothing behind the 
 route is probed the day it is added; a new blueprint fails the static check below until the probe builds it.
 
 The MCP SDK sub-app main.py dispatches to is probed the same way over ASGI; its dispatched paths must equal the
-literals in main.py's `_is_mcp_path`.
+literals in `_is_mcp_path` (`src/web/mcp_dispatcher.py`, the dispatcher main.py serves).
 """
 import ast
 import json
@@ -39,6 +39,7 @@ from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, worker_oidc_gate
 from src.web.landing_app import create_landing_blueprint
+from src.web.main_service_routes import create_main_service_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.oauth_app import create_oauth_blueprint
@@ -194,6 +195,14 @@ def _telegram(p: Probe):
     return adapter.get_blueprint(), {"url_prefix": "/telegram"}
 
 
+# reviewer edit, tidy main.py: /health, /favicon.ico and /worker moved out of main() into this factory. The gate is
+# main.py's (`build_oidc_gate` over the accepted identities, on Cloud Run); the worker handler is a tripwire.
+def _main_service(p: Probe):
+    gate = build_oidc_gate(SA, on_cloud_run=True, label="P7 probe")
+    return create_main_service_blueprint(p.wire("worker_handler"), gate,
+                                         static_dir=str(ROOT / "src" / "web" / "static")), {}
+
+
 def _indexer(p: Probe):
     gate = worker_oidc_gate(SA, ("https://indexer.example", "https://indexer.example/worker"), on_cloud_run=True)
     return create_indexer_worker_blueprint(p.wire("drive_indexing"), gate), {}
@@ -228,6 +237,7 @@ FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "build_mcp_consent_blueprint": _mcp_consent,
     "slack_adapter.get_blueprint": _slack,
     "telegram_adapter.get_blueprint": _telegram,
+    "create_main_service_blueprint": _main_service,     # reviewer edit, tidy main.py
     "create_indexer_worker_blueprint": _indexer,
     "create_sandbox_blueprint": _sandbox,
     "create_unconfigured_blueprint": _sandbox_unconfigured,
@@ -264,6 +274,9 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
         "Home Screen icon (tutor mode), fetched without the cookie; sizes are an allowlist (test_voice_web_call_mode_icons)",
     ("create_oauth_blueprint", "GET", "/auth/login"): "starts sign-in: only redirects to the provider",
     ("create_oauth_blueprint", "POST", "/auth/logout"): "only clears the caller's own cookies",
+    # reviewer edit, tidy main.py: the two public routes that moved out of main() with /worker
+    ("create_main_service_blueprint", "GET", "/health"): "health check, no data",
+    ("create_main_service_blueprint", "GET", "/favicon.ico"): "the static logo browsers and link-preview bots request",
     ("create_indexer_worker_blueprint", "GET", "/health"): "health check, no data",
     ("create_sandbox_blueprint", "GET", "/health"): "health check, no data",
     ("create_unconfigured_blueprint", "GET", "/health"): "health check, no data",
@@ -398,7 +411,7 @@ def test_every_public_entry_names_a_live_route(tmp_path):
 
 # --------------------------------------------------------------------------- the MCP SDK sub-app
 
-# main.py's `_is_mcp_path` literals (checked below). The protected-resource entry is a prefix.
+# `_is_mcp_path`'s literals (src/web/mcp_dispatcher.py, checked below). The protected-resource entry is a prefix.
 MCP_DISPATCHED = {"/mcp", "/mcp/", "/authorize", "/token", "/register", "/revoke",
                   "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"}
 MCP_PREFIXES = {"/.well-known/oauth-protected-resource"}
@@ -499,7 +512,12 @@ def test_every_registered_blueprint_is_one_the_probe_builds():
 
 
 def test_main_dispatches_exactly_the_probed_mcp_paths():
-    tree = ast.parse((ROOT / "main.py").read_text())
+    # reviewer edit, tidy main.py: the dispatcher moved out of main.py; main.py serves it through `build_shared_asgi`
+    main_tree = ast.parse((ROOT / "main.py").read_text())
+    assert not [n for n in ast.walk(main_tree) if isinstance(n, ast.FunctionDef) and n.name == "_is_mcp_path"]
+    assert any(isinstance(n, ast.ImportFrom) and n.module == "src.web.mcp_dispatcher"
+               and "build_shared_asgi" in {a.name for a in n.names} for n in ast.walk(main_tree))
+    tree = ast.parse((ROOT / "src" / "web" / "mcp_dispatcher.py").read_text())
     [fn] = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_is_mcp_path"]
     literals = {n.value for n in ast.walk(fn) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
     assert literals == MCP_DISPATCHED

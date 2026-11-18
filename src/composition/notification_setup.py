@@ -21,6 +21,7 @@ from ..config.environment import EnvironmentConfig
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.notification_sla import NOTIFICATION_SLA
 from ..ports.html_renderer_port import HtmlRendererPort
+from ..services.file_link_service import FileLinkService
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
 from ..utils.logger import logger
@@ -43,9 +44,10 @@ class Notifications:
 
 def build_notifications(config: dict, db_client: Any, env_config: EnvironmentConfig, *, coordinator: AgentCoordinator,
                         session_store: Any, media_storage: Optional[GcsMediaAdapter],
-                        languages: Languages) -> Notifications:
+                        link_service: Optional[FileLinkService], languages: Languages) -> Notifications:
     """One media adapter and one RichContentService for Slack: the chat handler and the notification service deliver
-    files through the same ones. The renderer lazy-starts Chromium on the first widget request."""
+    files through the same ones; an html page goes to the media bucket and out as a `/f/<token>` link (`link_service`,
+    None without the bucket). The renderer lazy-starts Chromium on the first widget request."""
     state_repo = FirestoreNotificationStateAdapter(db_client=db_client, env_config=env_config)
     bot_token = config["SLACK_BOT_TOKEN"]
     logger.debug(f"Bot token starts with: {bot_token[:10]}...")
@@ -63,7 +65,7 @@ def build_notifications(config: dict, db_client: Any, env_config: EnvironmentCon
         platform=SLACK_PLATFORM,
         media=slack_media,
         rich_content=RichContentService(media_port=slack_media, storage_port=media_storage,
-                                        html_renderer=html_renderer),
+                                        html_renderer=html_renderer, link_service=link_service),
         channel=lambda channel_id: SlackResponseChannel(app_client=app.client, channel_id=channel_id,
                                                         bot_token=bot_token),
     )

@@ -1,7 +1,7 @@
 """
 Wire tests for FirestoreCompanionMemoryRepository's find_nearest parsing logic.
 
-The shared FirestoreCapturingStub (tests/integration/adapters/conftest.py) always returns
+The shared FirestoreCapturingStub (tests/integration/offline/adapters/conftest.py) always returns
 zero docs from find_nearest, so the parsing loop (Vector unwrap, CompanionRecord construction,
 parse-failure handling) has no coverage there. These tests mock at the raw Firestore SDK
 boundary instead, following the same convention as test_firestore_agent_note_adapter.py.

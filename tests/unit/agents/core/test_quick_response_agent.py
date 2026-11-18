@@ -304,7 +304,6 @@ class TestQuickResponseAgentErrorHandling:
         assert response.status == AgentStatus.FAILED
         assert "LLM Error" in response.error
 
-    @pytest.mark.xfail(strict=True, reason="BUG: _load_conversation_context does not handle session errors; propagates to execute() causing FAILED instead of graceful degradation")
     @pytest.mark.asyncio
     async def test_execute_handles_session_error(self, quick_agent, mock_session_store):
         """Should continue without history if session load fails."""

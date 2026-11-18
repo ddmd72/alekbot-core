@@ -136,7 +136,9 @@ Users can enable daily incremental indexing from Cabinet UI > Integrations > Gma
 | `gmail_auto_index` | `False` | Enable/disable daily auto-index |
 | `gmail_auto_index_hour` | `8` | Local hour (0–23) in user's timezone |
 
-**Flow:** Cloud Scheduler fires `start_email_indexing` hourly → `WorkerHandler._handle_start_email_indexing()` iterates all Gmail users → checks `gmail_auto_index=True` and `current_local_hour == gmail_auto_index_hour` → creates incremental job and enqueues first Cloud Task.
+**Flow:** Cloud Scheduler fires `start_email_indexing` hourly → `WorkerHandler._handle_start_email_indexing()` iterates all Gmail users → checks `gmail_auto_index=True` and that the tick falls in the one-hour slot of `gmail_auto_index_hour` on a local date (`domain/auto_index_slot.py`: an hour a spring-forward day skips fires at the next local hour, a repeated hour counts once) → creates incremental job and enqueues first Cloud Task.
+
+The day's start is claimed in the job journal, not by the tick: the job is created under the deterministic id `auto-{user}-{provider}-{local date}` with `create_job_if_absent` (a document `create`), so repeated ticks, the repeated DST hour and two concurrent deliveries start one job per local date (rhythm from stored state, `decisions/worker_task_dedup.md`). A user whose stored timezone is not an IANA zone is skipped with a warning; the other users are still served.
 
 Skips users with a job already running. Uses `OAuthCredentialsPort.list_user_ids("gmail")` for fan-out.
 
@@ -144,7 +146,7 @@ See [../../07_deployment/SCHEDULERS.md](../../07_deployment/SCHEDULERS.md) for s
 
 ### 4.4 Watchdog
 
-`task_type=email_indexing_watchdog` is triggered by Cloud Scheduler (periodic). It scans all jobs in `RUNNING` state older than 2 hours and marks them `FAILED`. This handles Cloud Tasks timeouts and crash-recovery scenarios.
+`task_type=email_indexing_watchdog` is triggered by Cloud Scheduler (periodic). It scans all jobs in `RUNNING` state older than 2 hours and marks them `FAILED`, each write conditional on the job still being `running` (`update_job(..., expected_status="running")`), so a job that completes after the scan stays `COMPLETED`. This handles Cloud Tasks timeouts and crash-recovery scenarios.
 
 ---
 

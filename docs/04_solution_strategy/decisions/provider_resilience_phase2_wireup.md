@@ -7,7 +7,9 @@
 `BaseAgent._call_llm` consumes the resilience port end-to-end:
 
 1. Pre-call: if `is_provider_open(primary)` → raise `ProviderBreakerOpenError` (in `FAILOVER_TRIGGER_TYPES`, routes through fallback path).
-2. On primary success: `record_success(primary)`.
+2. On primary success: `record_success(primary)`, unless the breaker is OPEN by then: other calls tripped it while this
+   one was in flight, and a success admitted before the trip must not close it (P15-S7; logged as
+   `provider_breaker_stale_success`). A success landing after the cooldown (HALF-OPEN) still closes it.
 3. On `FAILOVER_TRIGGER_TYPES`: `record_failure(primary)` (skipped for `ProviderBreakerOpenError` — already past consequence).
 4. Pre-fallback: if no fallback OR `is_provider_open(fallback)` → raise `BothProvidersUnavailableError(primary_cause=e)`.
 5. On fallback success: **NO** `record_success(fallback)` — see asymmetry below.

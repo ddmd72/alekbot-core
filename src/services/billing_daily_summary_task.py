@@ -45,6 +45,9 @@ class BillingDailySummaryTask:
             if prev_tokens == 0 and prev_cost == 0.0:
                 continue
 
+            # The month of "yesterday", like the day: on the 1st the counters may or may not have rotated yet.
+            month_tokens, month_cost = u.usage_for_month(yesterday)
+
             owner_id = next(
                 (uid for uid, role in account.iam_policy.items() if role == "owner"),
                 None,
@@ -55,7 +58,7 @@ class BillingDailySummaryTask:
             lines.append(
                 f"*{name}*\n"
                 f"  Yesterday: {prev_tokens:,} tok / ${prev_cost:.4f}\n"
-                f"  Month:     {u.monthly_tokens:,} tok / ${u.monthly_cost:.4f}\n"
+                f"  Month:     {month_tokens:,} tok / ${month_cost:.4f}\n"
                 f"  Total:     {u.total_tokens:,} tok / ${u.total_cost:.4f}"
             )
             reported += 1

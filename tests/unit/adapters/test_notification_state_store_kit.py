@@ -13,7 +13,6 @@ import src.adapters.firestore_notification_state_adapter as state_module
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.domain.notification import NotificationChannel
 from tests.support.clock_instants import pin_datetime
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 LAST, PRIMARY = "eval_user_notification_state", "eval_user_primary_channel"
@@ -22,10 +21,10 @@ T1 = datetime(2026, 10, 27, 9, 15, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def state(monkeypatch):
+def state(monkeypatch, kit_db):
     pin_datetime(monkeypatch, state_module, T0)
     env = SimpleNamespace(user_notification_state_collection=LAST, firestore_collection_prefix="eval_")
-    return FirestoreNotificationStateAdapter(EvalDb(indexes=INDEXES_FILE), env)
+    return FirestoreNotificationStateAdapter(kit_db(indexes=INDEXES_FILE), env)
 
 
 def docs(state, name=LAST):

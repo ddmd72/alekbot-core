@@ -10,18 +10,17 @@ import pytest
 from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
 from src.domain.prompt_v3.profile_slot import ProfileToken
 from src.domain.prompt_v3.slot import OwnerType
-from tests.support.firestore_eval import EvalDb
 
 PROF, OVR = "eval_profiles", "eval_overrides"
 
 
-def _adapter(db: EvalDb) -> FirestoreAgentProfileRepository:
+def _adapter(db) -> FirestoreAgentProfileRepository:
     return FirestoreAgentProfileRepository(db=db, profiles_collection=PROF, overrides_collection=OVR)
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db()
         self.repo = _adapter(self.db)
 
     def docs(self, collection: str) -> dict:
@@ -29,8 +28,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 def pt(token_id, order=10, locked=False) -> ProfileToken:

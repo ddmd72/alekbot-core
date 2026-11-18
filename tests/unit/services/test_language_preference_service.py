@@ -7,9 +7,12 @@ Covers:
 - LanguageResolver.get_preference(): defaults and stored values
 - LanguageResolver.resolve_ui_language(): 3-level resolution chain (user → account → system)
 """
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
+from src.adapters.firestore_account_repo import FirestoreAccountRepository
+from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.billing import BillingAccount
 from src.domain.language import LanguageCode
 from src.domain.prompt_v3.profile_slot import ProfileToken
@@ -25,6 +28,7 @@ from src.services.language_preference_service import (
     _LANG_ALERTS,
 )
 from src.services.language_resolver import LanguageResolver
+from tests.support.firestore_eval import EvalDb
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -203,26 +207,46 @@ class TestSetPreferenceOverrideTokens:
 # ---------------------------------------------------------------------------
 
 
-class TestSetPreferenceUserPersistence:
-    """set_preference() persists updated config fields to UserRepository."""
+_USERS_ENV = SimpleNamespace(domain_users_collection="users", is_production=False)
 
-    async def test_preferred_language_written_to_user_config(self, service, user_repo):
+
+async def _stored_service(profile_repo, prompt_builder, user: UserProfile):
+    """The service over the real FirestoreUserRepository on the evaluating fake, `user` stored; returns the service
+    and a reader of the stored profile document."""
+    db = EvalDb()
+    accounts = FirestoreAccountRepository(db, "accounts")
+    users = FirestoreUserRepository(db, _USERS_ENV, accounts)
+    await users.create_user(user)
+    service = LanguagePreferenceService(
+        user_repo=users, profile_repo=profile_repo, prompt_builder=prompt_builder,
+        resolver=LanguageResolver(user_repo=users, account_repo=accounts, system_default_language=LanguageCode.EN),
+    )
+    return service, lambda: db.collection("users").docs[_USER_ID]
+
+
+class TestSetPreferenceUserPersistence:
+    """set_preference() persists updated config fields to UserRepository (asserted on the stored profile)."""
+
+    async def test_preferred_language_written_to_user_config(self, profile_repo, prompt_builder):
+        service, stored = await _stored_service(profile_repo, prompt_builder, _make_user())
         await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
 
-        updated_user = user_repo.update_user.await_args[0][0]
-        assert updated_user.config.preferred_language == LanguageCode.EN
+        assert stored()["config"]["preferred_language"] == LanguageCode.EN
 
-    async def test_agent_mirror_written_to_user_config(self, service, user_repo):
+    async def test_agent_mirror_written_to_user_config(self, profile_repo, prompt_builder):
+        service, stored = await _stored_service(
+            profile_repo, prompt_builder, _make_user(preferred_language=LanguageCode.FR, agent_mirror=False))
         await service.set_preference(_USER_ID, preferred_language=None, agent_mirror=True)
 
-        updated_user = user_repo.update_user.await_args[0][0]
-        assert updated_user.config.agent_mirror is True
+        assert stored()["config"]["agent_mirror"] is True
+        assert stored()["config"]["preferred_language"] is None
 
-    async def test_agent_mirror_false_persisted(self, service, user_repo):
+    async def test_agent_mirror_false_persisted(self, profile_repo, prompt_builder):
+        service, stored = await _stored_service(profile_repo, prompt_builder, _make_user())
         await service.set_preference(_USER_ID, preferred_language=LanguageCode.FR, agent_mirror=False)
 
-        updated_user = user_repo.update_user.await_args[0][0]
-        assert updated_user.config.agent_mirror is False
+        assert stored()["config"]["agent_mirror"] is False
+        assert stored()["config"]["preferred_language"] == LanguageCode.FR
 
     async def test_raises_if_user_not_found(self, service, user_repo):
         user_repo.get_user.return_value = None
@@ -231,9 +255,12 @@ class TestSetPreferenceUserPersistence:
             await service.set_preference(_USER_ID, preferred_language=None, agent_mirror=True)
 
     async def test_update_user_called_once(self, service, user_repo):
+        """One write, field-level (owner decision O3): only the two language fields, never the whole profile."""
         await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
 
-        user_repo.update_user.assert_awaited_once()
+        user_repo.update_user_fields.assert_awaited_once()
+        assert set(user_repo.update_user_fields.await_args[0][1]) == {"config.preferred_language", "config.agent_mirror"}
+        user_repo.update_user.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

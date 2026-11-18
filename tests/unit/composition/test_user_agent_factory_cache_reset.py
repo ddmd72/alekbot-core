@@ -30,6 +30,7 @@ def _factory():
     factory._cache = {}
     factory._cache_ttl = 3600
     factory._creation_locks = {}
+    factory._generations = {}
     factory.built = 0
 
     async def fake_create(self_user_id):

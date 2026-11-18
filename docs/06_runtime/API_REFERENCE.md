@@ -6,7 +6,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 
 **Auth legend**
 - **JWT** — Cabinet session: `access_token` HttpOnly cookie (web UI) or `Authorization: Bearer <token>`
-  (`src/web/cabinet_auth.py`). Invalid or expired → `401`. The session is capped at 24 h with no silent refresh
+  (`src/web/cabinet_auth.py`). Invalid or expired → `401`. A login gives 24 h; a refresh slides the session
   (`decisions/cabinet_session_24h_cap.md`).
 - **owner** — JWT plus the account-owner check.
 - **OIDC** — Google-signed ID token of an allowed service account (`decisions/worker_oidc_and_docx_sandbox.md`).
@@ -18,7 +18,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 |--------|------|------|-------------|
 | `GET` | `/auth/login` | none | Redirect to Google sign-in |
 | `GET` | `/auth/callback` | none (OAuth state) | Sign-in callback; whitelist gate; sets the session cookies |
-| `POST` | `/auth/refresh` | cookie | New access token within the 24 h cap |
+| `POST` | `/auth/refresh` | cookie | New access token (a full TTL) from the stored user and account |
 | `POST` | `/auth/logout` | cookie | Revoke the refresh token, clear cookies |
 | `GET` | `/auth/me` | JWT | Current user and account |
 | `POST` | `/auth/link-oauth` | JWT | Link another OAuth identity to the user |
@@ -105,12 +105,12 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/slack/events` | Slack signature | Slack Events API; enqueues a named Cloud Task |
 | `POST` | `/telegram/webhook` | Telegram secret token | Telegram updates; enqueues `telegram_update` |
 | `POST` | `/worker` | OIDC | Cloud Tasks / Scheduler entry; `WorkerHandler` dispatches on `task_type` (`docs/07_deployment/SCHEDULERS.md`) |
-| `POST` | `/webhook/microsoft-tasks/<user_id>` | `clientState` | Graph change notifications (`?validationToken=` is echoed); re-indexes the task, renews the subscription |
+| `POST` | `/webhook/microsoft-tasks/<user_id>` | `clientState` + the subscription stored for `<user_id>` | Graph change notifications (`?validationToken=` is echoed); re-indexes the task, renews the subscription |
 | `GET` | `/health` | none | Liveness probe |
 
 ## Remote MCP server (claude.ai connector)
 
-Routed by the ASGI dispatcher in `main.py` to the `mcp` SDK app: `/mcp` (streamable HTTP, bearer token),
+Routed by the ASGI dispatcher in `src/web/mcp_dispatcher.py` to the `mcp` SDK app: `/mcp` (streamable HTTP, bearer token),
 `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-authorization-server`,
 `/.well-known/oauth-protected-resource…`; the consent page is `GET`/`POST /mcp/consent`
 (`src/web/mcp_consent_app.py`). A second, resource-server-only app serves the drive connector: `/drive-mcp`

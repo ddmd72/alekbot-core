@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.domain.entities import FactState, TemporalClass
-from src.domain.fact_update import ParsedFactUpdate, parse_fact_update
+from src.domain.fact_update import UNKNOWN_KEYS_IGNORED, ParsedFactUpdate, parse_fact_update
 
 
 def refused(updates, *fragments):
@@ -37,7 +37,9 @@ def test_a_datetime_reported_date_is_taken_as_it_is():
 
 
 def test_unknown_keys_are_ignored():
-    assert parse_fact_update({"domain": "work", "foo": "bar", "context_priority": "low"}) == ParsedFactUpdate()
+    """Ignored: nothing is set from them; P14-D1 names them in a note so the call is not reported as a bare update."""
+    assert parse_fact_update({"domain": "work", "foo": "bar", "context_priority": "low"}) == ParsedFactUpdate(
+        notes=(UNKNOWN_KEYS_IGNORED.format(keys="context_priority, domain, foo"),))
 
 
 def test_blank_state_temporal_class_and_reported_date_mean_absent():

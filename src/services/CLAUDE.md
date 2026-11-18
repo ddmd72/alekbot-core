@@ -11,3 +11,7 @@
 - **Parsing goes through the sandbox light service** (`SandboxContentExtractor`, `docs/05_building_blocks/file_conversion/README.md`
   § Parser service); an outage is `ParserUnavailable` (`PARSER_UNAVAILABLE`), never the file's outcome. Never add an
   in-process parser to a deployed composition.
+- **A cache filled after an awaited read and cleared by a sync invalidation guards its write-back with a version counter**
+  read before the await and compared right before the write (no await between them), not an asyncio.Lock: a lock cannot stop
+  a read that began before the invalidation from writing its old value back (`ChannelBindingService._versions`,
+  `PromptAssemblyService._cache_epoch`; P15-S2).

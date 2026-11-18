@@ -18,13 +18,14 @@ the next free id and says what is wrong, where (file and function, not line numb
 - Fix: a token bucket per `user_id` on those routes. `src/utils/rate_limiter.py` holds a token bucket, but no code
   uses it today.
 
-### SEC-2: `/auth/refresh` trusts the refresh token's payload [P2]
+### SEC-2: `/auth/refresh` does not re-check the whitelist [P2]
 
-- `refresh_token_endpoint` (`src/web/oauth_app.py`) builds the new access token from the token's `sub` and
-  `account_id` without loading the user (the code carries a TODO for it). A deleted user, or an email removed from
-  the whitelist, keeps Cabinet access until the refresh token expires (`REFRESH_TOKEN_TTL`, 24 h by default;
-  see `decisions/cabinet_session_24h_cap.md` and `decisions/cabinet_oauth_whitelist_gate.md`).
-- Fix: load the user and re-check the whitelist on refresh; refuse if either fails.
+- `refresh_token_endpoint` (`src/web/oauth_app.py`) loads the stored user and account
+  (`AuthenticationService.resume_session`: an absent or inactive user is refused), but does not read the whitelist. An
+  email removed from the whitelist can still refresh until the refresh token expires (`REFRESH_TOKEN_TTL`, 24 h by
+  default; see `decisions/cabinet_session_24h_cap.md` and `decisions/cabinet_oauth_whitelist_gate.md`).
+- Fix: re-check the whitelist on refresh and refuse on a miss. Open question first: which stored email the check
+  reads (sign-in checks the verified ID-token email, which the user document does not always hold).
 
 ### SEC-3: Error responses carry exception text [P2]
 
@@ -55,9 +56,10 @@ the next free id and says what is wrong, where (file and function, not line numb
 ### R-4: Session writes soft-fail by default
 
 - `FirestoreSessionStore.append_message*` logs a failed write and returns, unless the caller passes
-  `raise_on_error=True` (only `MemoryFactService.confirm` does). A failed write drops that turn from history, and with
-  it from consolidation, while the user sees a normal answer. Deliberate (an append failure must not break the reply),
-  but invisible to the caller.
+  `raise_on_error=True`. The chat-turn save and both long-turn saves pass it, so `retry_store_write` retries a transient
+  error; so do the memory-confirm, fact-review and fact-answer paths. Any other caller's failed write drops that pair from history,
+  and with it from consolidation, while the user sees a normal answer. Deliberate (an append failure must not break the
+  reply): a chat-turn save that fails every retry is logged, not answered with an error.
 
 ### R-5: Most dependencies are unpinned
 

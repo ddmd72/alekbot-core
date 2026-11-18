@@ -30,8 +30,19 @@ class EphemeralStore(ABC):
         """Store `value` under `key` for `ttl_s` seconds, replacing any value (live or expired) and its expiry.
 
         Atomicity: one unconditional write; the last writer wins. It is not a claim: a caller's get-then-set is not
-        atomic, so two callers can both find a key absent and both write it.
+        atomic, so two callers can both find a key absent and both write it. A claim is `set_if_absent`.
         Idempotency: a repeat rewrites the value and restarts the TTL.
+        """
+
+    @abstractmethod
+    async def set_if_absent(self, key: str, value: Dict[str, Any], ttl_s: int) -> bool:
+        """Store `value` under `key` for `ttl_s` seconds only when no live value is there; True when it was stored.
+
+        Atomicity: the check and the write are one step (a claim). Of concurrent callers on one key, exactly one gets
+        True; every other gets False and leaves the winner's value and expiry untouched. This backs the one-call-per-user
+        marker, where a get()-then-set() lets two calls both pass.
+        Expired: an expired value counts as absent and is replaced.
+        Errors: backend errors propagate; contention that never resolves raises.
         """
 
     @abstractmethod

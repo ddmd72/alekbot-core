@@ -48,9 +48,10 @@ class FirestoreAccountRepository(AccountRepository):
         return account
 
     async def update_account(self, account: BillingAccount) -> BillingAccount:
+        # Every field but usage: the counters are increment_account_usage's, and a whole-document write would undo an
+        # increment that landed since the caller's read.
         doc_ref = self.accounts_collection.document(account.account_id)
-        data = account.model_dump()
-        await doc_ref.set(data)
+        await doc_ref.update(account.model_dump(exclude={"usage"}))
         return account
 
     async def increment_account_usage(
@@ -178,7 +179,12 @@ class FirestoreAccountRepository(AccountRepository):
                 })
 
             if monthly_needs_reset:
+                # Snapshot the month that just ended (same reason as the day above: the summary reads it).
+                monthly_reset_at = usage.get("monthly_reset_at")
                 updates.update({
+                    "usage.prev_monthly_tokens": usage.get("monthly_tokens", 0),
+                    "usage.prev_monthly_cost": usage.get("monthly_cost", 0.0),
+                    "usage.prev_monthly_month": monthly_reset_at.strftime("%Y-%m") if monthly_reset_at else None,
                     "usage.monthly_tokens": tokens,
                     "usage.monthly_cost": cost,
                     "usage.monthly_reset_at": now,

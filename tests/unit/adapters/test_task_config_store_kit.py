@@ -16,7 +16,6 @@ from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
-from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -24,13 +23,13 @@ COL = "eval_task_config"
 EXPIRES = datetime(2026, 11, 3, 8, 30, tzinfo=timezone.utc)
 
 
-def _adapter(db: EvalDb) -> FirestoreTaskConfigRepository:
+def _adapter(db) -> FirestoreTaskConfigRepository:
     return FirestoreTaskConfigRepository(db, SimpleNamespace(task_config_collection=COL))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE)
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE)
         self.repo = _adapter(self.db)
 
     @property
@@ -39,8 +38,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def sub(sub_id="s1", list_id="L1", expires_at=EXPIRES) -> TaskSubscriptionConfig:
@@ -130,6 +129,7 @@ async def test_set_primary_returns_the_stored_value_and_leaves_the_document_unch
     assert store.docs["u1"] == {"primary_list_id": "L1", "subscriptions": []}
 
 
+@pytest.mark.h1_only("interfere_on_txn_read: a commit between the transaction's read and its write exists only on the fake")
 async def test_set_primary_when_another_caller_commits_first_returns_that_callers_value(store):
     """The first commit wins: the list id written between this caller's read and its commit is returned and kept."""
     store.docs["u1"] = {"primary_list_id": None, "subscriptions": []}
@@ -146,9 +146,6 @@ async def test_set_primary_is_per_user(store):
 
 # ----------------------------------------------------------------------------------------------- P11-G3-2
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G3-2: a subscription without expires_at reads as an aware now, every caller compares with a naive now "
-    "(a code defect whatever the stored data holds: the fallback exists only for this case)"))
 async def test_a_subscription_without_expires_at_reads_naive(store):
     """Every expires_at the store returns is naive UTC, whatever the stored document lacks. Flipping fix
     (`firestore_task_config_repository.py` `_sub_from_dict`): `expires_at or datetime.now(timezone.utc).replace(tzinfo=None)`;
