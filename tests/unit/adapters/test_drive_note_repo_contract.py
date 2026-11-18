@@ -602,6 +602,8 @@ async def test_a_conflict_partway_through_an_erase_all_erases_the_rest(adapter):
         repo._erase_one = flaky
         result = await repo.erase(U, ["n1", "n2", "n3", "missing"])
     else:
+        from src.adapters import firestore_drive_note_repo
+        installed = firestore_drive_note_repo.firestore.async_transactional   # the client's, or the fake's pass-through
         calls = []
 
         def second_gives_up(fn):          # the stub transaction of n2 (the 2nd note) exhausts its retries
@@ -609,7 +611,7 @@ async def test_a_conflict_partway_through_an_erase_all_erases_the_rest(adapter):
                 calls.append(1)
                 if len(calls) == 2:
                     raise ValueError("Failed to commit transaction in 5 attempts.") from Aborted("contention")
-                return await fn(transaction)
+                return await installed(fn)(transaction)   # the others run as the installed decorator runs them
             return run
 
         with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional",
