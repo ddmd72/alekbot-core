@@ -105,6 +105,7 @@ async def test_a_missing_document_is_reported_and_never_created(world):
     assert await raw(db, "m404") is None
 
 
+@pytest.mark.h1_only("drives the fake's interfere_on_txn_read hook")
 async def test_a_change_inside_the_transaction_is_retried_then_conflicts(world):
     db, repo, store = world
     await repo.save_batch([email("m1")])
