@@ -166,4 +166,4 @@ cannot represent; `search_v2_eval` reports it as skipped under `--embeddings lex
 "accepted losses" and excluded from the "v1-passing cases lost" bar. `bars.json` pins the gold files' SHA-256, so a
 live v1 run needs its bars re-recorded after these flags were added.
 `requires_enrichment: true` (G2 gold, either validator): the case is found only through recorded enrichment (profile and
-passage hints), which `tests/integration/test_drive_g2_end_to_end.py` does not load; that test skips it and names it.
+passage hints), which `tests/integration/offline/test_drive_g2_end_to_end.py` does not load; that test skips it and names it.

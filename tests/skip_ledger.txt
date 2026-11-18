@@ -11,11 +11,10 @@ tests/contracts/user_drive_contract.py :: skip :: 'a drive without search' :: x1
 tests/contracts/user_drive_contract.py :: skip :: 'a read-only drive by design' :: x1  # param: a case of a backend-parametrised or contract test that does not apply here; the other cases run in check
 tests/contracts/user_drive_contract.py :: skip :: 'one drive serves every handle' :: x2  # param: a case of a backend-parametrised or contract test that does not apply here; the other cases run in check
 tests/contracts/user_drive_contract.py :: skip :: 'this drive does not enforce a path limit' :: x1  # param: a case of a backend-parametrised or contract test that does not apply here; the other cases run in check
-tests/integration/sandbox/test_media_tunnel_contract.py :: marker :: slow  # manual: integration test over real or scripted services: `make test-integration`, no CI job
-tests/integration/sandbox/test_media_tunnel_contract.py :: skip :: 'this ffmpeg reads the duration exactly' :: x1  # manual: integration test over real or scripted services: `make test-integration`, no CI job
-tests/integration/sandbox/test_media_tunnel_contract.py :: skipif :: not HAVE_FFMPEG :: x12  # manual: integration test over real or scripted services: `make test-integration`, no CI job
-tests/integration/sandbox/test_media_tunnel_contract.py :: skipif :: os.geteuid() == 0 or sys.platform not in ('linux', 'darwin') :: x12  # manual: integration test over real or scripted services: `make test-integration`, no CI job
-tests/integration/test_prompt_4level_e2e.py :: skip :: 'GOOGLE_CLOUD_PROJECT not set — cannot run Firestore integration test' :: x1  # manual: integration test over real or scripted services: `make test-integration`, no CI job
+tests/integration/offline/sandbox/test_media_tunnel_contract.py :: marker :: slow  # manual: integration test over real or scripted services: `make test-integration`, no CI job
+tests/integration/offline/sandbox/test_media_tunnel_contract.py :: skip :: 'this ffmpeg reads the duration exactly' :: x1  # manual: integration test over real or scripted services: `make test-integration`, no CI job
+tests/integration/offline/sandbox/test_media_tunnel_contract.py :: skipif :: not HAVE_FFMPEG :: x12  # manual: integration test over real or scripted services: `make test-integration`, no CI job
+tests/integration/offline/sandbox/test_media_tunnel_contract.py :: skipif :: os.geteuid() == 0 or sys.platform not in ('linux', 'darwin') :: x12  # manual: integration test over real or scripted services: `make test-integration`, no CI job
 tests/performance/test_firestore_latency.py :: marker :: performance  # manual: manual benchmark against real Firestore (tests/performance), no make target or job
 tests/unit/adapters/sandbox_client/test_docx_runner_contract.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/adapters/sandbox_client/test_docx_runner_contract.py :: skipif :: not _HAS_NODE or os.geteuid() == 0 or sys.platform not in ('linux', 'darwin') :: x4  # never: needs docx_generator/node_modules (npm ci); no CI job installs it (P22b: the post-merge npm ci / image job)

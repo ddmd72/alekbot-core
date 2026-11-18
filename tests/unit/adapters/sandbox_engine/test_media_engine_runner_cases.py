@@ -8,7 +8,7 @@ segment in a loop, so only seconds of audio are ever encoded. Slow (each run sta
 the ones whose outcome is set by a CPU limit against decode speed are `timing` (T-R33).
 
 The drop / reconnect cases are about the transport and run end to end in
-`tests/integration/sandbox/test_media_tunnel_contract.py`."""
+`tests/integration/offline/sandbox/test_media_tunnel_contract.py`."""
 import asyncio
 import itertools
 import os

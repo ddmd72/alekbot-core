@@ -63,10 +63,10 @@ make check-types       # mypy (lenient) on src/adapters — informational, print
 make format            # ruff format — a convenience, not enforced; the codebase is not mass-reformatted
 make test-affected     # pytest --testmon: the unit tests testmon selects by executed Python lines
 make test-unit         # the whole unit/architecture suite, xdist, without `slow` and `timing` tests
-make check             # lint + typecheck + the unit suite without `slow` tests + the offline G2 test
+make check             # lint + typecheck + the unit suite without `slow` tests + the offline integration tests + the offline G2 test
 make ci                # make check + `slow` tests (RUN_SLOW_TESTS=1) + coverage gates per file and per layer; CI runs exactly this
 make test-timing       # `timing` tests only (RUN_TIMING_TESTS=1); CI runs it after a merge to `main`, never on a PR
-make test-integration  # integration tests (some call real services)
+make test-integration  # tests/integration/offline (mocked or scripted) under the network guard, without `slow` tests and the G2 case
 make test-e2e-all      # e2e tests of all agents (call real services)
 make test-cloud        # Firestore/GCS parity scenarios on the test database/bucket (RUN_CLOUD_TESTS=1; env in tests/CLAUDE.md)
 make deploy            # build + deploy to Cloud Run (single live environment)

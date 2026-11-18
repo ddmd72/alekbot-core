@@ -15,7 +15,7 @@ from src.domain.email import IndexedEmail
 from tests.contracts.adapter_contracts import (
     FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID,
 )
-from tests.integration.adapters.conftest import FirestoreCapturingStub
+from tests.integration.offline.adapters.conftest import FirestoreCapturingStub
 
 
 def _env_config_stub():
