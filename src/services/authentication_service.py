@@ -255,8 +255,11 @@ class AuthenticationService:
     async def resume_session(self, user_id: str) -> Tuple[UserProfile, BillingAccount]:
         """
         The stored user and their account, for renewing a session (`/auth/refresh`): the new access token's role and
-        tier come from what is stored now, as at sign-in, never from the refresh token's payload. The stored email is
-        checked against the whitelist as at sign-in, so an email taken off the list stops renewing.
+        tier come from what is stored now, as at sign-in, never from the refresh token's payload. The email of the
+        last sign-in is checked against the whitelist as sign-in checks it, so an email taken off the list stops
+        renewing. That email is `auth_metadata["email"]`, which every Google sign-in or link rewrites after the gate
+        passed (`user.email` is set once at registration and is empty or stale for some users); `user.email` only
+        when the user has no sign-in record. Nothing is written.
 
         Raises:
             AccessDeniedError: the user is absent or inactive, their email is missing or not on the whitelist, or
@@ -266,7 +269,7 @@ class AuthenticationService:
         if user is None or not user.is_active:
             logger.warning(f"⛔ Session renewal refused: user {user_id} is absent or inactive")
             raise AccessDeniedError(f"User {user_id} is absent or inactive")
-        email = (user.email or "").lower().strip()
+        email = ((user.auth_metadata or {}).get("email") or user.email or "").lower().strip()
         if not email or not await self._whitelisted(email):
             logger.warning(f"⛔ Session renewal refused: user {user_id} has no email on the whitelist")
             raise AccessDeniedError(f"User {user_id} has no email on the whitelist")

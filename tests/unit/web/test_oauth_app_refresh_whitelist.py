@@ -88,3 +88,39 @@ async def test_a_whitelisted_user_whose_account_is_absent_is_still_refused():
     allow(w, emails=[CLARA])
     with pytest.raises(AccessDeniedError, match="no stored account"):
         await w.service.resume_session("user-a")
+
+
+async def test_an_empty_stored_email_renews_by_the_sign_in_email_on_the_list():
+    """`user.email` is empty for some users; the email the last sign-in passed the gate with is the one checked."""
+    w = World()
+    await w.seed(email=None, auth_metadata={"email": CLARA, "email_verified": True})
+    allow(w, emails=[CLARA])
+    resp = await w.refresh(refresh_token("user-a", "account-a"))
+    assert resp.status_code == 200
+    assert _sets_access_cookie(resp)
+
+
+async def test_a_sign_in_email_removed_from_the_list_gets_401_with_an_empty_stored_email():
+    w = World()
+    await w.seed(email=None, auth_metadata={"email": CLARA, "email_verified": True})
+    allow(w, emails=["hanna@example.org"])
+    resp = await w.refresh(refresh_token("user-a", "account-a"))
+    assert resp.status_code == 401
+    assert not _sets_access_cookie(resp)
+
+
+async def test_the_sign_in_email_wins_over_a_stale_stored_email():
+    """The stored email is still listed, the email the user now signs in with is not: the renewal is refused."""
+    w = World()
+    await w.seed(email="hanna@example.org", auth_metadata={"email": CLARA})
+    allow(w, emails=["hanna@example.org"])
+    resp = await w.refresh(refresh_token("user-a", "account-a"))
+    assert resp.status_code == 401
+
+
+async def test_a_sign_in_record_without_an_email_falls_back_to_the_stored_email():
+    w = World()
+    await w.seed(email=CLARA, auth_metadata={"name": "Clara"})
+    allow(w, emails=[CLARA])
+    resp = await w.refresh(refresh_token("user-a", "account-a"))
+    assert resp.status_code == 200

@@ -300,4 +300,4 @@ the next free id and says what is wrong, where (file and function, not line numb
 | TD-4 | `update_fact` overwrote fact text in place | Facts S2, 2026-10-23 (history starts at the S2 deploy) | `decisions/fact_versions_one_writer.md` |
 | TD-7 | Cost priced by the agent's default model, not the model that ran | 2026-07-30 | `decisions/billing_per_model_pricing.md` |
 | TD-8 | `anthropic` unpinned | pinned 2026-08-11 (the wider sweep is R-5) | `requirements.txt` |
-| SEC-2 | `/auth/refresh` did not re-check the whitelist | 2026-11-18 (the stored `user.email`, as the chat path) | `decisions/cabinet_oauth_whitelist_gate.md` |
+| SEC-2 | `/auth/refresh` did not re-check the whitelist | 2026-11-18 (the last sign-in's email, else `user.email`) | `decisions/cabinet_oauth_whitelist_gate.md` |
