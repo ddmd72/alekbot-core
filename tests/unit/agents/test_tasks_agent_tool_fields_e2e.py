@@ -306,8 +306,6 @@ async def test_a_parsable_due_creates_the_task_control(monkeypatch):
     assert rig.finished()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P14-D5: an unparsable due_datetime is dropped by _parse_datetime and the task is created without it")
 async def test_an_unparsable_due_is_refused_not_dropped(monkeypatch):
     """Fix: `_parse_datetime` raises `ValueError` on a non-empty unparsable value (`tasks_agent.py:712-720`); it is raised
     inside `_execute_tool`, before the POST, and the loop turns it into `{"error": ...}` (`:422-426`)."""

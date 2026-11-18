@@ -726,7 +726,10 @@ class TasksAgent(BaseAgent):
         bounds: Dict[str, Optional[datetime]] = {}
         for key in ("due_from", "due_to"):
             raw = args.get(key)
-            bounds[key] = self._parse_datetime(raw) if raw else None
+            try:
+                bounds[key] = self._parse_datetime(raw) if raw else None
+            except ValueError:
+                bounds[key] = None
             if raw and bounds[key] is None:
                 return {"error": f"{key} is not an ISO-8601 date or date-time: {raw!r}"}
         start, stop = _as_utc(bounds["due_from"]), _as_utc(bounds["due_to"])
@@ -894,10 +897,15 @@ class TasksAgent(BaseAgent):
 
     @staticmethod
     def _parse_datetime(value: Any) -> Optional[datetime]:
+        """An ISO-8601 date or date-time; None when no string is given.
+
+        A non-empty string that does not parse raises ValueError: a time the model sent is never dropped silently
+        (the tool loop turns the raise into the tool's error, before anything is written to Graph).
+        """
         if not value or not isinstance(value, str):
             return None
         try:
             return datetime.fromisoformat(value.rstrip("Z"))
-        except ValueError:
-            logger.warning(f"📋 TasksAgent: could not parse datetime '{value}', ignoring")
-            return None
+        except ValueError as exc:
+            logger.warning(f"📋 TasksAgent: could not parse datetime '{value}'")
+            raise ValueError(f"not an ISO-8601 date or date-time: {value!r}") from exc
