@@ -4,16 +4,22 @@ non-empty reason and references one of `HOOKS` in its own body or in a module-le
 (transitively). A test that fails on the real backend for any other reason is fixed on the fake's side or pinned as a
 strict xfail `P12-D<n>`, never marked; a missing index is a setup gap, never a mark."""
 import ast
+import re
 from pathlib import Path
 from typing import Dict, List, Set
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-HOOKS = ("interfere_on_txn_", "raise_on_txn_read", "EvalDocRef", ".versions", ".cols", "EvalDb(", "indexes=[]")
+# Regular expressions over source text. `.commits` is the fake's commit log, read (never an assignment of a name of the
+# test's own); `.fail =` is the fake collection's query-failure switch, assigned (never `pytest.fail(` or a comparison). The
+# switch is not honoured on the real backend: the fake raises it from every query of the collection, and a real query is
+# built from the reference, not from the wrapper; to run a fault on real, replace the method the adapter calls instead.
+HOOKS = tuple(re.escape(h) for h in ("interfere_on_txn_", "raise_on_txn_read", "EvalDocRef", ".versions", ".cols",
+                                     "EvalDb(", "indexes=[]")) + (r"\.commits\b(?!\s*=(?!=))", r"\.fail\s*=(?!=)")
 # A naive datetime written raw: the real client stores it as UTC, so only the fake returns it naive. Counted only in the marked
 # test's own source (a helper that builds one somewhere would otherwise excuse any test that calls it).
-OWN_HOOKS = ("tzinfo=None",)
+OWN_HOOKS = (re.escape("tzinfo=None"),)
 SKIP = {Path(__file__).resolve(), (REPO / "tests" / "support" / "kit_backend.py").resolve()}
 
 
@@ -62,7 +68,7 @@ def problems(source: str) -> List[str]:
                 seen.add(name)
                 if name in defs and defs[name] is not current:
                     todo.append(defs[name])
-        if not (any(hook in text for hook in HOOKS) or any(hook in own for hook in OWN_HOOKS)):
+        if not (any(re.search(hook, text) for hook in HOOKS) or any(re.search(hook, own) for hook in OWN_HOOKS)):
             found.append(f"{node.name}: h1_only on a test that drives none of the fake-only hooks {HOOKS + OWN_HOOKS}")
     return found
 
@@ -142,3 +148,17 @@ async def test_through_a_helper(stores):
 '''
     assert problems(source) == [
         "test_through_a_helper: h1_only on a test that drives none of the fake-only hooks " + str(HOOKS + OWN_HOOKS)]
+
+
+@pytest.mark.parametrize("line,hooked", [
+    ("assert store.docs == {} and store.db.commits == []", True),
+    ("store.db.collection(EXCL).fail = ServiceUnavailable('down')", True),
+    ("self.commits = []", False),
+    ("assert store.db.commits_seen == 2", False),
+    ("pytest.fail('no')", False),
+    ("assert col.fail == None", False),
+    ("store.failures = 3", False),
+])
+def test_the_commit_log_and_the_fail_switch_count_only_as_themselves(line, hooked):
+    source = "import pytest\n\n@pytest.mark.h1_only('fake-only')\nasync def test_x(store):\n    " + line + "\n"
+    assert (problems(source) == []) is hooked
