@@ -3,7 +3,7 @@ name: Render
 # Post-merge real-render gate (TEST_COVERAGE_SYSTEMIC_RFC P22b). ci.yml never installs node modules or a browser, so the
 # DOCX / PDF / HTML render tests skip there (tests/skip_ledger.txt, gate `never`). This workflow installs them on a plain
 # GitHub-hosted runner (no custom image), runs exactly those tests and fails when one of them skips. It also builds both
-# targets of Dockerfile.sandbox (never pushed). No secrets, no registry login, no cloud credentials, no Slack.
+# targets of Dockerfile.sandbox (loaded locally, never pushed) and runs the `docker`-marked tests against them. No secrets, no registry login, no cloud credentials, no Slack.
 
 on:
   push:
@@ -107,24 +107,75 @@ jobs:
         run: python scripts/ci/skip_report_summary.py skip-report-render.json >> "$GITHUB_STEP_SUMMARY"
 
   sandbox-image:
-    name: build Dockerfile.sandbox (${{ matrix.target }})
+    name: build and test Dockerfile.sandbox (${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        target: [render, light]
+        include:
+          # target -> the env var the `docker`-marked tests read, and the test files that read it.
+          - target: render
+            image_env: SANDBOX_TEST_IMAGE
+            tests: >-
+              tests/unit/test_dockerfile_sandbox.py
+              tests/unit/adapters/sandbox_engine/test_child_launcher.py
+              tests/unit/adapters/sandbox_engine/test_docx_render_engine_limits.py
+          - target: light
+            image_env: SANDBOX_TEST_LIGHT_IMAGE
+            tests: tests/unit/test_sandbox_light_image.py
+    env:
+      IMAGE_TAG: sandbox-${{ matrix.target }}:ci
+      SKIP_REPORT_PATH: skip-report-image.json
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build (not pushed)
+      - name: Build (loaded locally, never pushed)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.sandbox
           target: ${{ matrix.target }}
+          load: true
           push: false
+          tags: ${{ env.IMAGE_TAG }}
           cache-from: type=gha,scope=sandbox-${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=sandbox-${{ matrix.target }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: docker-marked tests against the built image
+        # The tests start the image with `docker run` as the runner user (the runner's docker daemon is the only one).
+        env:
+          SANDBOX_IMAGE_ENV: ${{ matrix.image_env }}
+          TESTS: ${{ matrix.tests }}
+        run: |
+          export "$SANDBOX_IMAGE_ENV=$IMAGE_TAG"
+          python -m pytest -p no:cacheprovider -p tests.plugins.skip_report --asyncio-mode=auto -q -rs -m docker $TESTS
+
+      - name: Fail when a docker test was skipped
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, sys
+          report = json.load(open("skip-report-image.json"))
+          print("outcomes:", report["outcomes"])
+          skipped = report["skipped_by_reason"]
+          for reason, info in skipped.items():
+              print(f"::error title=docker test skipped::{reason}: {info['count']} test(s), e.g. {info['tests'][0]}")
+          if skipped or report["outcomes"].get("passed", 0) == 0:
+              sys.exit(1)
+          PY
+
+      - name: Skip report as a step summary
+        if: always()
+        continue-on-error: true
+        run: python scripts/ci/skip_report_summary.py skip-report-image.json >> "$GITHUB_STEP_SUMMARY"
