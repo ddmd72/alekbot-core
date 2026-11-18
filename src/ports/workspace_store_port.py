@@ -50,8 +50,8 @@ class WorkspaceStorePort(ABC):
         """Stamp `meta` (deleted_by, deleted_fire, renamed_to, a fresh delete_id; absent keys cleared) on the live
         version, then make it noncurrent (still restorable; never erased).
         Atomicity: stamp, then make noncurrent: two steps, each conditional on the generation. A delete that raises
-        leaves no deleted_* stamp on a version another write makes noncurrent (P11-G4-1: not yet true when that
-        write lands between the two steps). A delete that fails for another reason may leave the stamp on the
+        leaves no deleted_* stamp on a version another write makes noncurrent (when that write lands between the
+        two steps, the stamp is taken off again; a failure to take it off is logged). A delete that fails for another reason may leave the stamp on the
         still-live version (§5.3 residual; renderers ignore it on live objects).
         Idempotency: a client retry of a delete that landed is success (its delete_id is read back); a second call
         raises FileNotFoundError.
