@@ -65,9 +65,6 @@ async def test_the_mark_pair_and_the_record_are_stored(world):
     assert world.db.collection(TURNS).docs["slack:Ev1"]["status"] == "running"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-5: LongTurnService.save_late_answer retries only an exception, but the session store swallows a "
-    "transient error by default, so the late-answer pair is dropped and the retry never runs"))
 async def test_a_transient_error_in_the_late_answer_save_is_retried(world):
     """Flips with `raise_on_error=True` on the append in `LongTurnService.save_late_answer`."""
     world.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE transient"))
@@ -76,9 +73,6 @@ async def test_a_transient_error_in_the_late_answer_save_is_retried(world):
     assert SID in world.db.collection(SESS).docs
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-5: LongTurnService.mark retries only an exception, but the session store swallows a transient error "
-    "by default, so the mark pair is dropped and the retry never runs"))
 async def test_a_transient_error_in_the_mark_save_is_retried(world):
     """Flips with `raise_on_error=True` on the append in `LongTurnService.mark`."""
     world.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE transient"))

@@ -51,9 +51,6 @@ async def test_the_turn_history_save_stores_the_pair(world):
     assert world.db.collection(SESS).docs[SID]["owner_id"] == "u1"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-5: the chat-turn history save retries only an exception, but the session store swallows a transient "
-    "error by default, so the turn's pair is dropped and the retry never runs"))
 async def test_a_transient_error_in_the_turn_history_save_is_retried(world):
     """Flips with `raise_on_error=True` on the append in `ConversationHandler._save_history_with_retry`."""
     world.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE transient"))

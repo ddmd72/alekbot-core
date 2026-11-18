@@ -55,9 +55,10 @@ the next free id and says what is wrong, where (file and function, not line numb
 ### R-4: Session writes soft-fail by default
 
 - `FirestoreSessionStore.append_message*` logs a failed write and returns, unless the caller passes
-  `raise_on_error=True` (only `MemoryFactService.confirm` does). A failed write drops that turn from history, and with
-  it from consolidation, while the user sees a normal answer. Deliberate (an append failure must not break the reply),
-  but invisible to the caller.
+  `raise_on_error=True`. The chat-turn save and both long-turn saves pass it, so `retry_store_write` retries a transient
+  error; so do the memory-confirm, fact-review and fact-answer paths. Any other caller's failed write drops that pair from history,
+  and with it from consolidation, while the user sees a normal answer. Deliberate (an append failure must not break the
+  reply): a chat-turn save that fails every retry is logged, not answered with an error.
 
 ### R-5: Most dependencies are unpinned
 

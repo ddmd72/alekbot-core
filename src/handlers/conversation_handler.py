@@ -1035,14 +1035,19 @@ class ConversationHandler(ConversationHandlerPort):
             # session store); a companion-type binding (companion_config set) flips
             # write_session=True and writes under mode.write_session_id instead.
             if mode.write_session:
-                await self._save_history_with_retry(
-                    session_store=session_store,
-                    session_id=mode.write_session_id or context.session_id,
-                    user_parts=clean_message_parts,
-                    history_text=history_text,
-                    response_text=response_text,
-                    owner_id=context.user_id,
-                )
+                try:
+                    await self._save_history_with_retry(
+                        session_store=session_store,
+                        session_id=mode.write_session_id or context.session_id,
+                        user_parts=clean_message_parts,
+                        history_text=history_text,
+                        response_text=response_text,
+                        owner_id=context.user_id,
+                    )
+                except Exception as e:
+                    # The answer is already delivered: a lost history pair is logged, never an error reply.
+                    logger.error(f"❌ [ConversationHandler] history save failed for {context.session_id[:16]}: {e}",
+                                 exc_info=True)
 
             logger.info(f"🏁 END ConversationHandler.handle_message ({time.time() - start_time:.2f}s)")
 
@@ -1428,7 +1433,7 @@ class ConversationHandler(ConversationHandlerPort):
             Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
         ]
         await retry_store_write(
-            lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id),
+            lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id, raise_on_error=True),
             label="History save", max_attempts=max_attempts,
         )
 

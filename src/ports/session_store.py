@@ -67,8 +67,8 @@ class SessionStore(ABC):
         Expiry: does not apply the 90-day expiry; an append to an idle session keeps its old history.
         Errors: by default a failed append is logged and swallowed (nothing stored, no exception), so it must not
         crash the response pipeline; with `raise_on_error=True` it is logged and re-raised. A caller that retries
-        (retry_store_write) or must know whether the messages were stored passes raise_on_error=True (P11-G2-5:
-        the chat-turn and long-turn saves retry without it, so their retry never runs).
+        (retry_store_write) or must know whether the messages were stored passes raise_on_error=True (the chat-turn
+        and long-turn saves do, so their retry runs).
         """
         raise NotImplementedError
 
