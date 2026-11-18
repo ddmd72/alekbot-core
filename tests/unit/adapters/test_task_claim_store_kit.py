@@ -117,6 +117,7 @@ async def test_mark_done_restarts_the_window_from_the_finish(shared, monkeypatch
     assert await shared.claims.try_claim(TASK, "a2") is False
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_mark_done_lost_to_a_takeover_changes_nothing(shared, monkeypatch):
     assert await shared.claims.try_claim(TASK, "a1") is True
     shared.col.yield_on_get = True      # both read the a1 claim; the takeover writes first, mark_done's precondition fails
@@ -127,6 +128,7 @@ async def test_mark_done_lost_to_a_takeover_changes_nothing(shared, monkeypatch)
     assert shared.docs[TASK]["attempt"] == "a2" and shared.docs[TASK]["state"] == "running"
 
 
+@pytest.mark.h1_only("requires the forced interleaving from a trace of patched EvalDocRef methods")
 async def test_release_lost_to_a_takeover_keeps_the_new_claim(shared, monkeypatch):
     assert await shared.claims.try_claim(TASK, "a1") is True
     shared.col.yield_on_get = True      # both read the a1 claim; the takeover writes first, release's precondition fails
@@ -157,6 +159,7 @@ async def test_claims_and_marks_share_the_collection_each_on_its_own_expiry(shar
     assert await shared.webhook.is_duplicate(webhook) is True        # the 72 h claim is still live
 
 
+@pytest.mark.h1_only("injects the failure by patching EvalDocRef.create")
 async def test_a_backend_error_in_try_claim_propagates(shared, monkeypatch):
     async def unavailable(self, data):
         raise RuntimeError("unavailable")
