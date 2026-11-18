@@ -57,19 +57,20 @@ class Chain:
 
 
 class FailOnce:
-    """The next plain `set` on the queue collection raises once, as a transient Firestore error does."""
+    """The next `create` on the queue collection (the batch write, create-if-absent) raises once, as a transient
+    Firestore error does."""
 
     def __init__(self, monkeypatch) -> None:
         self.raised = 0
-        original = EvalDocRef.set
+        original = EvalDocRef.create
 
-        async def set_(ref, data, merge=False):
+        async def create_(ref, data):
             if ref.col.name == QUEUE and self.raised == 0:
                 self.raised += 1
                 raise ServiceUnavailable("503 UNAVAILABLE the queue write failed")
-            return await original(ref, data, merge)
+            return await original(ref, data)
 
-        monkeypatch.setattr(EvalDocRef, "set", set_)
+        monkeypatch.setattr(EvalDocRef, "create", create_)
 
 
 async def test_a_handed_off_batch_is_stored_in_the_queue_and_its_task_enqueued():
@@ -83,10 +84,10 @@ async def test_a_handed_off_batch_is_stored_in_the_queue_and_its_task_enqueued()
 
 
 async def test_a_cut_batch_survives_a_failed_enqueue(monkeypatch):
-    """Flips (XPASS) when the hand-off retries until the batch is stored, or the messages stay stored until the
-    hand-off succeeded. A fix that writes the batch inside the append's transaction leaves no plain queue write for
-    the fault to hit: the first `require` then reports FAILED, and that fix's reviewer moves the fault or retires the
-    pin. The `require` stays strict on purpose: relaxed, a setup whose fault never fires would XPASS."""
+    """Holds because the messages stay stored until their hand-off succeeded (owner decision O2). The fault sits on
+    the queue's batch write, a `create` since the queue became create-if-absent (it was a plain `set`); a change that
+    writes the batch another way leaves the fault unhit, the first `require` then reports FAILED, and that change's
+    reviewer moves the fault. The `require` stays strict on purpose: relaxed, a setup whose fault never fires would pass."""
     chain = Chain()
     fault = FailOnce(monkeypatch)
     await chain.five_appends()

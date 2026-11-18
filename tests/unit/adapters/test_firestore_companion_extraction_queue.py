@@ -90,13 +90,16 @@ class TestEnqueueBatch:
         from src.domain.companion_extraction import CompanionExtractionBatch
 
         queue, _collection, _query, doc_ref = _make_queue()
+        doc_ref.create = AsyncMock(return_value=None)
         batch = CompanionExtractionBatch(
             session_id="slack:C1", account_id="acc-1", companion_type="tutor",
             created_by_user_id="user-1", messages=[],
         )
         batch_id = await queue.enqueue_batch(batch)
         assert batch_id == batch.batch_id
-        doc_ref.set.assert_called_once()
+        # Create-if-absent (review F2): the whole batch is written with `create`, never a replacing `set`.
+        doc_ref.create.assert_called_once_with(batch.model_dump())
+        doc_ref.set.assert_not_called()
 
 
 # =============================================================================
