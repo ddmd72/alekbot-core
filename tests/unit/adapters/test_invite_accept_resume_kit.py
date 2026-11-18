@@ -1,0 +1,98 @@
+"""A team-invite accept that a failed write interrupted is finished by the same user's retry with the same code.
+
+The accept claims the code, then writes the membership, then moves the user into the account. A failure between those
+writes used to strand the user: the code was used, so the retry was refused, while the user had been moved without a
+membership (or held neither). Now any single failure leaves a state the claimant's retry completes, and nobody else
+can take the claimed code.
+
+The real `InviteCodeService` over the real Firestore repositories on the evaluating fake, as the invite kit builds them;
+a failed write is a repository method that raises once, before it writes.
+"""
+from datetime import timedelta
+
+import pytest
+
+from tests.unit.adapters.test_invite_code_store_kit import NOW, OWNER, OWNER_ACC, invite, key, store  # noqa: F401
+
+
+def fail_once(monkeypatch, repo, method: str) -> None:
+    real = getattr(repo, method)
+    calls = []
+
+    async def failing(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise RuntimeError("backend down")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(repo, method, failing)
+
+
+async def members(store) -> dict:
+    return (await store.accounts.get_account(OWNER_ACC)).iam_policy
+
+
+async def test_a_failed_move_of_the_user_is_finished_by_the_retry(store, monkeypatch):
+    await store.team("usr-new")
+    await store.repo.create(invite(role="VIEWER"))
+    fail_once(monkeypatch, store.users, "update_user")
+    with pytest.raises(RuntimeError, match="backend down"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert store.docs[key()]["used_by_user_id"] == "usr-new"
+    assert await store.account_of("usr-new") == "acc-usr-new"          # not moved without its membership
+
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == OWNER_ACC
+    assert await members(store) == {OWNER: "OWNER", "usr-new": "viewer"}
+
+
+async def test_a_failed_membership_write_is_finished_by_the_retry(store, monkeypatch):
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    fail_once(monkeypatch, store.accounts, "set_member_role")
+    with pytest.raises(RuntimeError, match="backend down"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == "acc-usr-new"
+    assert "usr-new" not in await members(store)
+
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == OWNER_ACC
+    assert await members(store) == {OWNER: "OWNER", "usr-new": "member"}
+
+
+async def test_a_code_claimed_by_an_interrupted_accept_is_refused_to_anyone_else(store, monkeypatch):
+    await store.team("usr-new", "usr-late")
+    await store.repo.create(invite())
+    fail_once(monkeypatch, store.users, "update_user")
+    with pytest.raises(RuntimeError):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+
+    with pytest.raises(ValueError, match="expired or already used"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-late")
+    assert await store.account_of("usr-late") == "acc-usr-late"
+    assert "usr-late" not in await members(store)
+    assert store.docs[key()]["used_by_user_id"] == "usr-new"
+
+
+async def test_the_claimants_retry_finishes_even_after_the_code_expired(store, monkeypatch):
+    """The claim was made while the code was valid: the retry completes that accept, it is not a new one."""
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    fail_once(monkeypatch, store.users, "update_user")
+    with pytest.raises(RuntimeError):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    store.docs[key()] = {**store.docs[key()], "expires_at": NOW - timedelta(seconds=1)}
+
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == OWNER_ACC
+    assert await members(store) == {OWNER: "OWNER", "usr-new": "member"}
+
+
+async def test_a_completed_accept_retried_is_refused_as_a_used_code_and_changes_nothing(store):
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    before = (dict(store.docs[key()]), await members(store))
+    with pytest.raises(ValueError, match="expired or already used"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert (dict(store.docs[key()]), await members(store)) == before
