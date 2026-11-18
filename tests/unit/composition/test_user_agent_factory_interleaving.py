@@ -94,6 +94,7 @@ def _factory(registry: Optional[AgentRegistry] = None) -> UserAgentFactory:
     factory._cache = {}
     factory._cache_ttl = 3600
     factory._creation_locks = {}
+    factory._generations = {}
     factory.build_gate = None
 
     async def fake_create(user_id: str) -> Dict[str, object]:
