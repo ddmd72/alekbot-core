@@ -19,7 +19,7 @@ reach a private storage object:
     GET /f/<token>/raw
       Same-origin byte stream backing the video landing page's buttons —
       proxies MediaStoragePort.fetch() (the same server-side read open_file
-      uses). Needed because client JS can't fetch() the GCS signed URL
+      uses). An object the bucket's lifecycle already deleted answers 410. Needed because client JS can't fetch() the GCS signed URL
       directly: the bucket is private with no CORS configured for browser
       reads, only for top-level navigation/redirect.
 
@@ -116,6 +116,10 @@ def create_file_access_blueprint(
 
         try:
             data = await media_storage.fetch(access.key)
+        except FileNotFoundError:
+            # The token outlived the object (the bucket's lifecycle deleted it): gone, not an outage.
+            logger.info("[FileAccess] raw: %s is no longer stored", access.key)
+            return Response("This file has expired.", status=410)
         except Exception as e:  # noqa: BLE001
             logger.error("[FileAccess] raw fetch failed for %s: %s", access.key, e, exc_info=True)
             return Response("File temporarily unavailable.", status=503)

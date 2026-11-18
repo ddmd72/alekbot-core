@@ -46,7 +46,7 @@ class MediaStoragePort(ABC):
         Read a stored object's bytes server-side (service-account credentials).
 
         Used by agents to re-read a previously delivered file without going
-        through an external URL fetch. Raises on missing object.
+        through an external URL fetch.
 
         Args:
             key: Object key as returned by store().
@@ -54,8 +54,8 @@ class MediaStoragePort(ABC):
         Returns:
             Raw object bytes.
 
-        Errors: FileNotFoundError when the key does not exist (delivered objects expire)
-        (P11-G4-4: today the SDK's NotFound leaks); other storage errors propagate.
+        Errors: FileNotFoundError when the key does not exist (delivered objects expire);
+        other storage errors propagate.
         """
 
     @abstractmethod

@@ -9,8 +9,8 @@ Coverage:
 
   _handle_file()
     - missing 'content' field → returns None
-    - .html + storage_port → returns GCS URL
-    - .html without storage_port → falls through to utf-8 upload, returns None
+    - .html + storage_port + link service + user → stored privately, returns the user's /f/<token> link
+    - .html without storage_port, link service or user → falls through to utf-8 upload, returns None, nothing stored
     - .md / .txt → utf-8 encoded, uploaded as file, returns None
     - .xlsx → csv_to_xlsx conversion, uploaded
     - .docx → markdown_to_docx conversion, uploaded
@@ -28,7 +28,7 @@ Coverage:
     - calls media_port.upload_file with given args
 
   _store_html()
-    - stores bytes + returns URL
+    - stores bytes + returns the user's /f/<token> link for the stored key
     - GCS exception → returns None
 """
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -37,6 +37,8 @@ import pytest
 
 from src.domain.messaging import RichContent
 from src.ports.html_renderer_port import HtmlRenderError
+from src.services.file_access_token_service import FileAccessTokenService
+from src.services.file_link_service import FileLinkService
 from src.services.rich_content_service import RichContentService
 
 
@@ -45,16 +47,37 @@ from src.services.rich_content_service import RichContentService
 # ---------------------------------------------------------------------------
 
 _CHANNEL = "C-test"
+_USER = "u-test"
+_BASE = "https://alek.example.com"
+_TOKENS = FileAccessTokenService(secret_key="s" * 40)
 
 
-def _make_service(*, with_storage=True, with_renderer=True):
+class _PrivateBucket:
+    """MediaStoragePort fake answering as the private media bucket does: store() returns the object key, not a URL."""
+
+    def __init__(self):
+        self.objects = {}
+
+    async def store(self, data, key, content_type):
+        self.objects[key] = (data, content_type)
+        return key
+
+
+def _linked_key(link):
+    """The object key a `/f/<token>` link grants, after checking the link is the test user's."""
+    assert isinstance(link, str) and link.startswith(f"{_BASE}/f/")
+    access = _TOKENS.verify(link.rsplit("/", 1)[-1])
+    assert access.user_id == _USER and not access.gated
+    return access.key
+
+
+def _make_service(*, with_storage=True, with_renderer=True, with_links=True):
     media_port = MagicMock()
     media_port.upload_file = AsyncMock()
     media_port.upload_image = AsyncMock()
 
-    storage_port = MagicMock() if with_storage else None
-    if storage_port:
-        storage_port.store = AsyncMock(return_value="https://gcs.example.com/file.html")
+    storage_port = _PrivateBucket() if with_storage else None
+    link_service = FileLinkService(token_service=_TOKENS, base_url=_BASE) if with_links else None
 
     html_renderer = MagicMock() if with_renderer else None
     if html_renderer:
@@ -64,6 +87,7 @@ def _make_service(*, with_storage=True, with_renderer=True):
         media_port=media_port,
         storage_port=storage_port,
         html_renderer=html_renderer,
+        link_service=link_service,
     )
     return svc, media_port, storage_port, html_renderer
 
@@ -79,10 +103,11 @@ def _rich(content_type, data):
 class TestProcess:
 
     async def test_file_type_returns_handle_file_result(self):
-        svc, _, storage, _ = _make_service()
+        svc, media, storage, _ = _make_service()
         content = _rich("file", {"filename": "page.html", "content": "<html/>"})
-        result = await svc.process(content, _CHANNEL)
-        assert result == "https://gcs.example.com/file.html"
+        result = await svc.process(content, _CHANNEL, _USER)
+        assert list(storage.objects) == [_linked_key(result)]
+        media.upload_file.assert_not_called()
 
     async def test_widget_type_returns_none(self):
         svc, media, _, renderer = _make_service()
@@ -112,11 +137,29 @@ class TestHandleFile:
         media.upload_file.assert_not_called()
 
     async def test_html_with_storage_returns_url(self):
-        svc, _, storage, _ = _make_service()
+        svc, media, storage, _ = _make_service()
+        content = _rich("file", {"filename": "page.html", "content": "<html>hi</html>"})
+        result = await svc._handle_file(content, _CHANNEL, _USER)
+        key = _linked_key(result)
+        assert key.startswith("html/") and key.endswith("-page.html")
+        assert storage.objects == {key: (b"<html>hi</html>", "text/html; charset=utf-8")}
+        media.upload_file.assert_not_called()
+
+    async def test_html_with_storage_but_no_user_uploads_as_file_and_stores_nothing(self):
+        svc, media, storage, _ = _make_service()
         content = _rich("file", {"filename": "page.html", "content": "<html>hi</html>"})
         result = await svc._handle_file(content, _CHANNEL)
-        assert result == "https://gcs.example.com/file.html"
-        storage.store.assert_called_once()
+        assert result is None and storage.objects == {}
+        media.upload_file.assert_called_once_with(
+            file_bytes=b"<html>hi</html>", filename="page.html", title="page.html", channel_id=_CHANNEL)
+
+    async def test_html_with_storage_but_no_link_service_uploads_as_file_and_stores_nothing(self):
+        svc, media, storage, _ = _make_service(with_links=False)
+        content = _rich("file", {"filename": "page.html", "content": "<html>hi</html>"})
+        result = await svc._handle_file(content, _CHANNEL, _USER)
+        assert result is None and storage.objects == {}
+        media.upload_file.assert_called_once_with(
+            file_bytes=b"<html>hi</html>", filename="page.html", title="page.html", channel_id=_CHANNEL)
 
     async def test_html_without_storage_uploads_as_file(self):
         svc, media, _, _ = _make_service(with_storage=False)
@@ -250,18 +293,17 @@ class TestStoreHtml:
 
     async def test_stores_and_returns_url(self):
         svc, _, storage, _ = _make_service()
-        url = await svc._store_html("<html>test</html>", "page.html")
-        assert url == "https://gcs.example.com/file.html"
-        storage.store.assert_called_once()
-        call_kwargs = storage.store.call_args.kwargs
-        assert call_kwargs["content_type"] == "text/html; charset=utf-8"
-        assert call_kwargs["data"] == "<html>test</html>".encode("utf-8")
+        url = await svc._store_html("<html>test</html>", "page.html", _USER)
+        key = _linked_key(url)
+        assert key.startswith("html/") and key.endswith("-page.html")
+        assert storage.objects == {key: ("<html>test</html>".encode("utf-8"), "text/html; charset=utf-8")}
 
     async def test_gcs_exception_returns_none(self):
         svc, _, storage, _ = _make_service()
         storage.store = AsyncMock(side_effect=Exception("GCS down"))
-        url = await svc._store_html("<html/>", "page.html")
+        url = await svc._store_html("<html/>", "page.html", _USER)
         assert url is None
+        storage.store.assert_awaited_once()  # the upload was attempted: this is the failure path, not the no-link one
 
 
 # ==============================================================================

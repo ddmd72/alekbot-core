@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
+from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.messaging import RichContent, SmartResponse
 from src.domain.notification import NotificationChannel
@@ -11,8 +12,11 @@ from src.domain.notification_kind import NotificationKind
 from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.ports.notification_state_port import NotificationStatePort
+from src.services.file_access_token_service import FileAccessTokenService
+from src.services.file_link_service import FileLinkService
 from src.services.rich_content_service import RichContentService
 from src.services.user_notification_service import UserNotificationService
+from tests.support.gcs_fake import FakeGcs
 from tests.unit.services.test_rich_content_deliver import FILE, FakeMedia
 
 
@@ -102,3 +106,38 @@ async def test_telegram_chat_id_is_used_as_it_is():
     svc, channel, media = _build(platform="telegram", stored="12345")
     await svc.notify_answer_copy("u1", "a1", _answer())
     assert media.files[0][3] == "12345"
+
+
+def _linking(monkeypatch, svc, media):
+    """Slack's kit as production builds it: the media bucket and the `/f/<token>` link service (P11-G4-5, O8)."""
+    fake = FakeGcs(buckets={"media-test": "plain"})
+    fake.install(monkeypatch)
+    tokens = FileAccessTokenService(secret_key="s" * 40)
+    svc.register_platform("slack", media=media, rich_content=RichContentService(
+        media_port=media, storage_port=GcsMediaAdapter("media-test"),
+        link_service=FileLinkService(token_service=tokens, base_url="https://alek.example.com")))
+    return tokens
+
+
+def _page_answer(text):
+    return SmartResponse(text=text, structured_data=RichContent(
+        content_type="file", data={"filename": "rome_trip.html", "title": "Rome trip", "content": "<h1>Rome</h1>"},
+        fallback_text="FALLBACK rome_trip.html"))
+
+
+async def test_notify_sends_an_html_page_as_the_users_capability_link(monkeypatch):
+    svc, channel, media = _build(answer=_page_answer("Your trip page."))
+    tokens = _linking(monkeypatch, svc, media)
+    result = await svc.notify("u1", "a1", "alert", kind=NotificationKind.REMINDER)
+    assert result.delivered and media.files == [] and channel.rich == []
+    [link] = [t for t in channel.texts if t.startswith("https://alek.example.com/f/")]
+    access = tokens.verify(link.rsplit("/", 1)[-1])
+    assert access.user_id == "u1" and access.key.startswith("html/")
+
+
+async def test_answer_copy_sends_an_html_page_as_the_users_capability_link(monkeypatch):
+    svc, channel, media = _build()
+    tokens = _linking(monkeypatch, svc, media)
+    await svc.notify_answer_copy("u1", "a1", _page_answer("Here is the page."))
+    [link] = [t for t in channel.texts if t.startswith("https://alek.example.com/f/")]
+    assert tokens.verify(link.rsplit("/", 1)[-1]).user_id == "u1" and media.files == []

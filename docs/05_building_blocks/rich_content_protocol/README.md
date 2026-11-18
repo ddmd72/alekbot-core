@@ -61,6 +61,7 @@ ConversationHandler._deliver_rich_content()
   │     → RichContentService.process(content, channel_id)
   │
   │          file path:
+  │          ├─ "file" (.html), owner known, Slack → media bucket (html/<uuid>-name) → `/f/<token>` link (returned)
   │          ├─ "file" (.md/.html/.txt)  → encode UTF-8 → PlatformMediaPort.upload_file()
   │          ├─ "file" (.xlsx)           → CSV → openpyxl → PlatformMediaPort.upload_file()
   │          ├─ "file" (.docx)           → Markdown → python-docx → PlatformMediaPort.upload_file()
@@ -81,8 +82,12 @@ PlatformMediaPort
 **Key distinction — upload vs URL:**
 - `upload_file()` / `upload_image()` — binary bytes posted directly to platform API.
   Returns `None`. No intermediate URL.
-- GCS-based types (`map_image`, `weather_image`) — generate a public GCS URL, return it
-  as a string. `ConversationHandler` then sends the URL as a message; platform unfurls it.
+- An `.html` file on Slack is stored in the private media bucket and returned as a `/f/<token>` capability link
+  (`FileLinkService`, the one delivery path of every stored file); `deliver` sends it as a message. The link names its
+  owner, so it needs the user id: `ConversationHandler` (rich content and the `html_gcs_link` item) and
+  `UserNotificationService` pass it; a caller without one, or a failed private store, gets the page uploaded as a file, as on Telegram (an
+  `html_gcs_link` item then posts nothing). The storage key never reaches the user.
+- GCS-based types (`map_image`, `weather_image`, deferred) would return a link the same way.
 - `widget` uses direct `upload_image()` (no GCS, no URL). Image appears inline.
 
 ---
@@ -91,7 +96,7 @@ PlatformMediaPort
 
 | Type | Handler | LLM generates | Server action | Delivery method |
 |---|---|---|---|---|
-| `file` (.md / .html / .txt) | `RichContentService` | Full text string | Encode UTF-8 | Direct upload |
+| `file` (.md / .html / .txt) | `RichContentService` | Full text string | Encode UTF-8 | Direct upload (.html on Slack with the owner known: `/f/<token>` link) |
 | `file` (.xlsx) | `RichContentService` | CSV string | `openpyxl` → bytes | Direct upload |
 | `file` (.docx) | `RichContentService` | Markdown string | `python-docx` → bytes | Direct upload |
 | `widget` | `RichContentService` + `HtmlRendererPort` | Self-contained HTML | Playwright → PNG | Direct upload (inline image) |
@@ -187,7 +192,7 @@ and a background notification (`notify`, `notify_answer_copy`) deliver rich cont
 **Slack** (`src/composition/application_graph.py` → `slack_adapter_factory.py`):
 ```
 SlackMediaAdapter(app.client)
-  → RichContentService(media_port, storage_port=graph's GcsMediaAdapter, html_renderer)
+  → RichContentService(media_port, storage_port=graph's GcsMediaAdapter, html_renderer, link_service=graph's FileLinkService)
   → ConversationHandler(..., rich_content_service)  and  notification_service (platform "slack")
   → SlackAdapter
 ```

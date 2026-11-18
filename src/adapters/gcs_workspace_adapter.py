@@ -6,7 +6,8 @@ user's prefix. Every put stamps `origin`, `fire`, a fresh `write_id` (and `resto
 scratch/ (the 7-day lifecycle rule counts from it). Every mutation carries a generation precondition. A delete is a
 metadata patch (who deleted it, where it went, a fresh `delete_id`) and then a delete of the LIVE object, both under
 `if_generation_match`, the delete through a fresh blob (after patch() the SDK blob knows its generation and would
-send it): a generation-addressed delete would erase that version permanently. A 412 on a request the client retried is read back (`write_id` / `delete_id`) before it is reported as a conflict. A file-level prefix list
+send it): a generation-addressed delete would erase that version permanently. When the patch lands but a write replaces
+the version before the delete, the stamp is taken off that version again (it was replaced, not deleted). A 412 on a request the client retried is read back (`write_id` / `delete_id`) before it is reported as a conflict. A file-level prefix list
 keeps only the exact name. Sync SDK calls run in the default executor (gcs_media_adapter precedent).
 """
 import asyncio
@@ -16,7 +17,7 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional
 
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import GoogleAPIError, NotFound, PreconditionFailed
 
 from ..domain.exceptions import WorkspaceConflict
 from ..domain.workspace import (
@@ -153,8 +154,10 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
         # The LIVE object. A delete must never carry a generation: in a versioned bucket that erases the version.
         blob = bucket.blob(key)
         blob.metadata = metadata
+        stamped = False
         try:
             blob.patch(if_generation_match=if_generation_match)  # bumps the metageneration only
+            stamped = True
             # A FRESH blob: patch() reloaded blob.generation and Blob.delete() sends generation=self.generation —
             # that would erase the version (google-cloud-storage 3.9.0, blob.py ~851-861).
             bucket.blob(key).delete(if_generation_match=if_generation_match)
@@ -162,9 +165,24 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
             if self._delete_landed(key, delete_id):
                 logger.info("[Workspace] %s on a retried delete that had landed: %s", type(e).__name__, path)
                 return
+            if stamped:
+                self._clear_stamp(key, if_generation_match, delete_id, path)
             if isinstance(e, NotFound):
                 raise FileNotFoundError(path) from e
             raise WorkspaceConflict(path) from e
+
+    def _clear_stamp(self, key: str, generation: int, delete_id: str, path: str) -> None:
+        """The patch landed on `generation` but the delete did not (a write replaced it in between): take our stamp off
+        that version, so its history reads "replaced", not "deleted" (P11-G4-1). Only our own stamp: a concurrent
+        delete that patched after us owns the keys now. A failure here is logged; the caller still reports the loss."""
+        try:
+            version = self._bucket().get_blob(key, generation=generation)
+            if version is None or (version.metadata or {}).get("delete_id") != delete_id:
+                return
+            version.metadata = {"deleted_by": None, "delete_id": None, "deleted_fire": None, "renamed_to": None}
+            version.patch()  # the loaded blob carries its generation: this patches that version, live or noncurrent
+        except GoogleAPIError as e:
+            logger.warning("[Workspace] a lost delete left its stamp on %s generation %s: %s", path, generation, e)
 
     def _delete_landed(self, key: str, delete_id: str) -> bool:
         """No live object, and the newest noncurrent version carries our delete_id (§5.3)."""

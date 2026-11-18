@@ -33,7 +33,7 @@ class FileStoragePort(ABC):
         Finder-style (`a.png`, `a (1).png`, `a (2).png`).
         Tenancy: uniqueness is per user; another user's names never count.
         Atomicity: never replaces an existing object; two concurrent uploads of one name return
-        two names (P11-G4-2: not yet true, both return it and the later write replaces the earlier).
+        two names.
         Idempotency: uploading the same bytes again stores a new name.
         Errors: storage errors propagate; a name is returned only when the bytes are stored.
         """
@@ -60,8 +60,7 @@ class FileStoragePort(ABC):
     @abstractmethod
     async def delete(self, filename: str, user_id: str) -> None:
         """Remove `{user_id}/files/<filename>`.
-        Errors: FileNotFoundError when absent (P11-G4-3: today the SDK's NotFound leaks); other storage
-        errors propagate."""
+        Errors: FileNotFoundError when absent; other storage errors propagate."""
 
     @abstractmethod
     async def exists(self, filename: str, user_id: str) -> bool:

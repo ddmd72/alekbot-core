@@ -152,7 +152,6 @@ async def test_signed_url_with_an_unknown_signer_is_a_runtime_error(monkeypatch,
     assert fake.signed_urls == []
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="P11-G4-4: fetch of a missing key leaks the SDK NotFound")
 async def test_fetch_of_a_missing_key_is_file_not_found(store):
     """Delivered documents expire (email_review/ after 5 days, the rest after 30) while history keeps their keys, so
     `open_file` on last week's review takes the generic "fetch failed" branch with an ERROR instead of "expired".

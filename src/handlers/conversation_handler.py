@@ -197,13 +197,15 @@ class ConversationHandler(ConversationHandlerPort):
         content,
         response_channel: ResponseChannel,
         thread_id: Optional[str],
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Route rich content to the appropriate delivery path (RichContentService.deliver owns the
         routing; without the service every type goes to ResponseChannel.send_rich_content).
+        `user_id` is the owner an html page's `/f/<token>` link is minted for.
         """
         if self._rich_content_service:
-            await self._rich_content_service.deliver(content, response_channel, thread_id)
+            await self._rich_content_service.deliver(content, response_channel, thread_id, user_id=user_id)
         else:
             await response_channel.send_rich_content(content, thread_id=thread_id)
 
@@ -223,6 +225,7 @@ class ConversationHandler(ConversationHandlerPort):
                 url = await self._rich_content_service._store_html(
                     item.data["html"],
                     item.data.get("filename", "content.html"),
+                    user_id,
                 )
                 if url:
                     link_text = item.data.get("link_text", "View details")
@@ -235,7 +238,7 @@ class ConversationHandler(ConversationHandlerPort):
                 data=item.data["data"],
                 fallback_text=item.data.get("fallback", ""),
             )
-            await self._deliver_rich_content(content, response_channel, thread_id)
+            await self._deliver_rich_content(content, response_channel, thread_id, user_id)
         elif item.type == "message":
             await response_channel.send_message(item.data["text"], thread_id)
         elif item.type == "file_upload":
@@ -891,7 +894,8 @@ class ConversationHandler(ConversationHandlerPort):
                     "thread_id": context.thread_id,
                     "metadata": context.metadata,
                     "current_message_parts": message_parts,
-                    "origin_channel_id": channel_id,
+                    # A Telegram turn has no `channel` key: its chat is the response channel's id (P13-D1).
+                    "origin_channel_id": channel_id or getattr(response_channel, "channel_id", None),
                     "origin_platform": getattr(response_channel, "platform", "slack"),
                     "interactive_delivery": True,
                     # Fixed before Smart runs, the same on a failover re-run (drive notes' undo guard): the
@@ -989,7 +993,7 @@ class ConversationHandler(ConversationHandlerPort):
                     self._ui_string(context, UIMessage.RESPONSE_READY),
                 )
                 await self._deliver_rich_content(
-                    structured_data, response_channel, thread_id_for_reply
+                    structured_data, response_channel, thread_id_for_reply, context.user_id
                 )
 
                 # History fallback for rich-only responses
@@ -1015,7 +1019,7 @@ class ConversationHandler(ConversationHandlerPort):
 
                 if structured_data:
                     await self._deliver_rich_content(
-                        structured_data, response_channel, thread_id_for_reply
+                        structured_data, response_channel, thread_id_for_reply, context.user_id
                     )
 
             history_text, response_text = await self._prepare_history_texts(
@@ -1287,7 +1291,7 @@ class ConversationHandler(ConversationHandlerPort):
                 await response_channel.send_late_answer(
                     shown, prefix, origin, link_list=link_list or None, link=link)
                 if structured:
-                    await self._deliver_rich_content(structured, response_channel, None)
+                    await self._deliver_rich_content(structured, response_channel, None, context.user_id)
                 for item in response.delivery_items:
                     await self._deliver_item(item, response_channel, None, user_id=context.user_id)
             except Exception as e:
