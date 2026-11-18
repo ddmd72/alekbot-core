@@ -12,8 +12,6 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-import pytest
-
 from src.domain.agent import AgentResponse
 from src.domain.document_open import Prefetched
 from src.domain.llm import ToolCall
@@ -89,9 +87,6 @@ class TestGatheredBatch:
         assert started.is_set()
         assert [r.result_str for r in results] == ["first answer", "second answer"]
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S5: a tool call that raises CancelledError on its own passes isinstance(result, Exception) and is "
-        "returned as the batch's result instead of a failed ToolResult; owner decision"))
     async def test_a_child_that_raises_cancelled_error_becomes_a_failed_tool_result(self, monkeypatch):
         """`_execute_tool_calls` (delegation_engine.py:640-690) gathers with `return_exceptions=True` and converts only
         `isinstance(result, Exception)` (:680); a `CancelledError` (a `BaseException`) is appended as the result."""
@@ -144,9 +139,6 @@ class TestFanout:
         assert raised is None and merged is not None and not merged.failed
         assert "web answer about the weather in Springfield" in merged.result_str and "maps answer" in merged.result_str
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S5: a fan-out secondary that raises CancelledError reaches _merge_fanout_results as a non-Exception, "
-        "whose response.status raises and wipes the primary's result; owner decision"))
     async def test_a_secondary_that_raises_cancelled_error_keeps_the_primary_answer(self):
         """`_dispatch_with_fanout` (delegation_engine.py:833-862) gathers primary + secondaries with
         `return_exceptions=True`; `_merge_fanout_results` (:864-935) skips only `isinstance(response, Exception)` and

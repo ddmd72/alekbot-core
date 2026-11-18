@@ -102,6 +102,28 @@ class DelegationResult:
     async_dispatches: List[str] = field(default_factory=list)
 
 
+_CHILD_CANCELLED = "the specialist was cancelled"
+
+
+def _gathered_failure(result: BaseException) -> str:
+    """The error text of a gathered child (a tool call, a fan-out leg) that ended in `result`.
+
+    A child's own `CancelledError` (a cancel or timeout inside the specialist, not of this turn) is a failure of that
+    child like any exception: it must not crash the batch or wipe the siblings' answers. When the task running the
+    gather is itself being cancelled (`cancelling()`: the turn was cancelled), the cancel propagates; so does any other
+    `BaseException` (KeyboardInterrupt, SystemExit)."""
+    if isinstance(result, asyncio.CancelledError):
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            logger.info("[DelegationEngine] Turn cancelled while its tool calls ran; propagating the cancel")
+            raise result
+        return _CHILD_CANCELLED
+    if not isinstance(result, Exception):
+        logger.error("[DelegationEngine] Tool call raised %s; propagating", type(result).__name__)
+        raise result
+    return str(result)
+
+
 # ------------------------------------------------------------------ #
 # Result formatting                                                    #
 # ------------------------------------------------------------------ #
@@ -919,11 +941,12 @@ class DelegationEngine:
 
         results: List[ToolResult] = []
         for tc, result in zip(tool_calls, parallel_results):
-            if isinstance(result, Exception):
-                logger.error("❌ [DelegationEngine] Tool call failed: %s", result)
+            if isinstance(result, BaseException):
+                error = _gathered_failure(result)
+                logger.error("❌ [DelegationEngine] Tool call failed: %s", error)
                 results.append(ToolResult(
                     name=tc.name,
-                    result_str=f"AGENT ERROR: {result}",
+                    result_str=f"AGENT ERROR: {error}",
                     failed=True,
                 ))
             else:
@@ -1129,12 +1152,13 @@ class DelegationEngine:
             is_primary = idx == 0
             label = _fanout_label(intent, primary=is_primary)
 
-            if isinstance(response, Exception):
+            if isinstance(response, BaseException):
+                error = _gathered_failure(response)
                 logger.warning(
-                    "[DelegationEngine] Fan-out '%s' failed: %s", intent, response,
+                    "[DelegationEngine] Fan-out '%s' failed: %s", intent, error,
                 )
                 if is_primary:
-                    sections.append(f"[{label}]\nAGENT ERROR: {response}")
+                    sections.append(f"[{label}]\nAGENT ERROR: {error}")
                     primary_failed = True
                 continue
 

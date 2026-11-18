@@ -795,7 +795,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P15-S3: `$consolidate` overwrites messages appended meanwhile.
   - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient". **Fixed:**
     `route_message` asks the factory port to restore the user's eager agents (`restore_agents_for_user`); the marker is removed.
-  - P15-S5: a cancelled child in the delegation gather crashes the turn (tool batch and fan-out).
+  - P15-S5: a cancelled child in the delegation gather crashes the turn (tool batch and fan-out). **Fixed** (owner decision): a
+    child's own `CancelledError` is a failed `ToolResult` unless the gathering task is itself being cancelled; both markers are removed.
   - P15-S6: resolved file text is written into the model's own tool-call args. **Fixed:** `normalize_delegate_context`
     returns a copy, so the coordinator's `file_content` no longer rides in the orchestrator's history; the marker is removed.
   - P15-S7: a stale success closes a tripped provider breaker.
