@@ -104,7 +104,7 @@ async def test_handle_oauth_callback_existing_user(auth_service, mock_auth_regis
     )
 
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=existing_user)
-    mock_user_repo.update_user = AsyncMock(return_value=existing_user)
+    mock_user_repo.update_user_fields = AsyncMock(return_value=existing_user)
 
     # Mock account
     mock_account = BillingAccount(account_id="account-1", tier=AccountTier.FREE, iam_policy={"user-1": "owner"})
@@ -120,10 +120,14 @@ async def test_handle_oauth_callback_existing_user(auth_service, mock_auth_regis
     assert account.account_id == "account-1"
     assert tokens.access_token == "test-access"
 
-    mock_user_repo.update_user.assert_called_once()
-    (updated_arg,), _ = mock_user_repo.update_user.call_args
+    # Field-level refresh (owner decision O3): only auth_metadata is written, never the whole profile.
+    mock_user_repo.update_user_fields.assert_called_once()
+    (updated_arg, fields), _ = mock_user_repo.update_user_fields.call_args
     assert updated_arg.user_id == "user-1"
     assert updated_arg.email == "test@example.com"
+    assert tuple(fields) == ("auth_metadata",)
+    assert (updated_arg.auth_metadata["email"], updated_arg.auth_metadata["name"]) == ("test@example.com", "Test User")
+    mock_user_repo.update_user.assert_not_called()
 
 
 @pytest.mark.asyncio

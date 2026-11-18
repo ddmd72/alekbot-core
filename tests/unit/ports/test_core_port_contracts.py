@@ -1025,6 +1025,9 @@ class TestUserRepositoryContract:
     def test_has_update_user(self):
         assert getattr(UserRepository.update_user, "__isabstractmethod__", False)
 
+    def test_has_update_user_fields(self):
+        assert getattr(UserRepository.update_user_fields, "__isabstractmethod__", False)
+
     def test_has_delete_user(self):
         assert getattr(UserRepository.delete_user, "__isabstractmethod__", False)
 
@@ -1037,12 +1040,12 @@ class TestUserRepositoryContract:
         assert not getattr(UserRepository.remove_platform_id, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 10 abstract methods (aliases excluded)."""
+        """Port should have exactly 11 abstract methods (aliases excluded; update_user_fields added by owner decision O3)."""
         abstract_methods = {
             name for name, method in inspect.getmembers(UserRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 10, f"Expected 10 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 11, f"Expected 11 abstract methods, got {abstract_methods}"
 
 
 class TestUserRepositoryMockImplementation:

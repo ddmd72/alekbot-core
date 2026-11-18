@@ -325,7 +325,7 @@ async def test_a_failing_hand_off_leaves_the_append_stored(store, handoffs):
     store.overflow_callback = broken
     await append_each(store, 5)
     await settle(store)
-    assert texts(store) == TEXTS[2:5]
+    assert texts(store) == TEXTS[:5]        # the append is stored, and the batch whose hand-off failed stays (O2)
 
 
 # --------------------------------------------------------------------------------------------------- latest session id
