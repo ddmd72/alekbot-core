@@ -4,6 +4,8 @@ lease shared with consolidation, one router, one set of question texts and one o
 
 Each check reads the attribute that holds the dependency in the object `/worker` uses.
 """
+import weakref
+
 import pytest
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
@@ -131,9 +133,15 @@ async def test_the_answer_services_whole_constructor_is_the_graphs_objects(prod_
     }
     held = vars(answer)
     # Fact profile §4.7 (5d): `_profile_answers` is built for the answer service, checked below like `_fact_updates`.
-    assert set(held) == set(expected) | {"_fact_updates", "_profile_answers"}
+    # P15-D12: `_answer_locks` is the service's own per-question lock map, not a dependency; checked below.
+    assert set(held) == set(expected) | {"_fact_updates", "_profile_answers", "_answer_locks"}
     for name, value in expected.items():
         assert held[name] is value, name
+
+    # Built by the service itself, empty at start: no graph object is passed in for it.
+    locks = answer._answer_locks
+    assert type(locks) is weakref.WeakValueDictionary and len(locks) == 0
+    assert all(locks is not value for value in expected.values())
 
     updates = answer._fact_updates
     assert isinstance(updates, FactManagementAdapter)
