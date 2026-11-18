@@ -24,7 +24,7 @@ from src.domain.document_extraction import PARSER, READER
 from src.services.drive_search_service import DriveSearchService
 from tests.unit.services.drive_content_fakes import FakeExtractor, FakeTriage
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "drive_eval"
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 SPACE = "bag-of-words/256"
 
 

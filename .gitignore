@@ -248,3 +248,4 @@ firestore_utils/uploads/
 tmp/
 docx_generator/node_modules/
 .codegraph/
+skip-report.json

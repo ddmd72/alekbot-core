@@ -85,7 +85,7 @@ class ContractRule:
         ...
 ```
 
-**`tests/integration/adapters/`** — integration tests using real adapters + stubs.
+**`tests/integration/offline/adapters/`** — integration tests using real adapters + stubs.
 
 `conftest.py` provides three `CapturingStub` classes:
 - `ClaudeCapturingStub` — installs on `adapter.client.messages.stream`
@@ -116,17 +116,17 @@ FORCE_TOOL_USE_SENDS_CORRECT_MODE.validate("claude", stub.captured_kwargs)
 1. Define a `ContractRule` constant in `tests/contracts/adapter_contracts.py`.
 2. Provide per-provider validators (skip providers where the feature is not applicable).
 3. Import the rule in the relevant unit wire test and call `.validate()` after `generate_content()`.
-4. Add an integration test in `tests/integration/adapters/` that covers all applicable providers.
+4. Add an integration test in `tests/integration/offline/adapters/` that covers all applicable providers.
 
 ## Adding a New Adapter
 
 When a new LLM adapter is added, **mandatory checklist:**
 
 - [ ] Identify the SDK method that receives the final API call arguments
-- [ ] Add a `CapturingStub` class in `tests/integration/adapters/conftest.py`
+- [ ] Add a `CapturingStub` class in `tests/integration/offline/adapters/conftest.py`
 - [ ] Create `tests/unit/adapters/test_{provider}_adapter.py` with wire tests
 - [ ] Add a validator for the new provider to each applicable `ContractRule`
-- [ ] Add the provider to each integration test in `tests/integration/adapters/`
+- [ ] Add the provider to each integration test in `tests/integration/offline/adapters/`
 
 ## What NOT to Do
 
