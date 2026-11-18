@@ -22,6 +22,8 @@ HOOKS = tuple(re.escape(h) for h in ("interfere_on_txn_", "raise_on_txn_read", "
     r"\.executed\b(?!\s*=(?!=))",     # the fake's query log, read
     r"\._check_index\b",               # the fake's index refusal, read or replaced
     r"\.txn_versions\b",               # the fake's per-document transaction stamps, read
+    r"\.transactions\[",               # the drive fake's transaction log (and each one's `raw` writes), read
+    r"\bcontended\(",                  # the drive-note fake's buffered stand-in for `async_transactional`
 )
 # A naive datetime written raw: the real client stores it as UTC, so only the fake returns it naive. Counted only in the marked
 # test's own source (a helper that builds one somewhere would otherwise excuse any test that calls it).
@@ -172,6 +174,10 @@ async def test_through_a_helper(stores):
     ("assert check_index_ok", False),
     ("stamp = db.collection(COL).txn_versions[ACC]", True),
     ("assert run.txn_versions_seen == 1", False),
+    ("parent = db.transactions[-1].raw", True),
+    ("assert store.transactions_seen == 1", False),
+    ("stand_in = contended(db, interloper)", True),
+    ("assert uncontended(db)", False),
 ])
 def test_the_commit_log_and_the_fail_switch_count_only_as_themselves(line, hooked):
     source = "import pytest\n\n@pytest.mark.h1_only('fake-only')\nasync def test_x(store):\n    " + line + "\n"
