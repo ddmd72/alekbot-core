@@ -17,7 +17,6 @@ from src.adapters import firestore_short_link_repository
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.domain.short_link import ShortLink
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_short_links"
@@ -25,13 +24,13 @@ NOW = UTC_MIDNIGHT.utc
 TARGET = "https://example.com/f/birth-certificate"
 
 
-def _adapter(db: EvalDb) -> FirestoreShortLinkRepository:
+def _adapter(db) -> FirestoreShortLinkRepository:
     return FirestoreShortLinkRepository(db, SimpleNamespace(firestore_collection_prefix="eval_"))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE)
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE)
         self.repo = _adapter(self.db)
 
     @property
@@ -40,9 +39,9 @@ class Store:
 
 
 @pytest.fixture
-def store(monkeypatch):
+def store(monkeypatch, kit_db):
     pin_datetime(monkeypatch, firestore_short_link_repository, NOW)
-    return Store()
+    return Store(kit_db)
 
 
 def link(code="ab3xk9", target=TARGET, expires_at=NOW + timedelta(days=30)) -> ShortLink:

@@ -13,7 +13,6 @@ import pytest
 
 from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
 from src.domain.whitelist import WhitelistEntry
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 WHITELIST = "eval_domain_whitelist_v1"
@@ -22,8 +21,8 @@ WHITELIST = "eval_domain_whitelist_v1"
 class WhitelistStore:
     """The real repository over one EvalDb with the declared indexes, its collection mapped to its index group."""
 
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={WHITELIST: "development_domain_whitelist_v1"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={WHITELIST: "development_domain_whitelist_v1"})
         self.repo = FirestoreWhitelistRepository(self.db, SimpleNamespace(domain_whitelist_collection=WHITELIST))
 
     @property
@@ -32,8 +31,8 @@ class WhitelistStore:
 
 
 @pytest.fixture
-def store():
-    return WhitelistStore()
+def store(kit_db):
+    return WhitelistStore(kit_db)
 
 
 def seed(store, emails=None, domains=None, doc_id="config", **extra):

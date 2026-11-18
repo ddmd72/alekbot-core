@@ -9,7 +9,6 @@ import pytest
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
 from src.config.environment import EnvironmentConfig
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
-from tests.support.firestore_eval import EvalDb
 
 DAY = date(2026, 10, 24)
 RUN_AT = datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc)
@@ -29,8 +28,8 @@ def env():
 
 
 @pytest.fixture
-def db():
-    return EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture

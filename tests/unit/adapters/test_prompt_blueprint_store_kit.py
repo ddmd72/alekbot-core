@@ -9,7 +9,6 @@ import pytest
 
 from src.adapters.prompt_v3.firestore_blueprint_repository import FirestoreBlueprintRepository
 from src.domain.prompt_v3.blueprint import Blueprint
-from tests.support.firestore_eval import EvalDb
 
 COL = "eval_blueprints"
 ORDER = ["properties", "cognitive_process", "policies"]
@@ -17,13 +16,13 @@ D3 = "P10-D3: FirestoreBlueprintRepository.save calls doc_ref.set(data) without 
 D4 = "P10-D4: FirestoreBlueprintRepository.delete calls doc_ref.delete() without await; on the async client nothing is deleted"
 
 
-def _adapter(db: EvalDb) -> FirestoreBlueprintRepository:
+def _adapter(db) -> FirestoreBlueprintRepository:
     return FirestoreBlueprintRepository(db=db, collection_name=COL)
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db()
         self.repo = _adapter(self.db)
 
     @property
@@ -36,8 +35,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 async def test_get_returns_every_field_of_a_stored_blueprint(store):
