@@ -855,7 +855,7 @@ from uploads and `workspace:` refs are unavailable (local only).
 | handlers | `handlers/worker_handler.py` | Build the fire key; pass `origin_detail` (+ `fire_key`) to both Smart-bound `notify` calls. |
 | web | `web/user_cabinet_app.py`, `web/static/cabinet.html` | GET returns `workspace_file`; the list shows it read-only. |
 | composition | `service_container.py`, `user_agent_factory.py` | Build order adapter → `FileConversionService(workspace=port)` → `WorkspaceService`; `agent_services()` (`:400`) carries it; Smart gets `workspace_service`, NotesAgent gets `workspace_enabled`. |
-| config | `config/settings.py` | `GCS_WORKSPACE_BUCKET` in `load_settings()`. |
+| config | `src/config/settings.py` | `GCS_WORKSPACE_BUCKET` in `load_settings()`. |
 | deploy | `cloudbuild-dev.yaml`, `requirements.txt` | `GCS_WORKSPACE_BUCKET=GCS_WORKSPACE_BUCKET:latest` in the main service `--set-secrets` (name only); `google-cloud-storage` pinned to the installed 3.9.0 (`requirements.txt:3`). |
 | skills | `skills/smart/skill-creator/SKILL.md` | §11.2 section. |
 | user-facing | `utils/capabilities.py` | Two lines: ask the bot to keep working files for a long task or a recurring job, and to show them; a reminder can carry a workspace file that its run follows. |
