@@ -9,6 +9,7 @@ import pytest
 
 from src.ports.iam_port import Role
 from tests.unit.adapters.test_invite_code_store_kit import OWNER, OWNER_ACC, InviteStore, invite, key
+from tests.support.firestore_eval import EvalDb
 from tests.unit.adapters.test_whitelist_store_kit import WhitelistStore, seed
 
 
@@ -51,7 +52,7 @@ async def test_an_invite_with_an_unknown_role_is_refused_before_anything_is_writ
 # -------------------------------------------------------------------------------------------------- whitelist
 
 async def test_a_mixed_case_stored_email_matches_the_lowercased_email():
-    store = WhitelistStore()
+    store = WhitelistStore(EvalDb)
     seed(store, emails=["Clara@Example.COM"], domains=[])
     entry = await store.repo.get_whitelist()
     assert entry.allowed_emails == {"clara@example.com"}
@@ -59,7 +60,7 @@ async def test_a_mixed_case_stored_email_matches_the_lowercased_email():
 
 
 async def test_a_mixed_case_stored_domain_matches_the_lowercased_email():
-    store = WhitelistStore()
+    store = WhitelistStore(EvalDb)
     seed(store, emails=[], domains=["Example.ORG"])
     entry = await store.repo.get_whitelist()
     assert entry.allowed_domains == {"example.org"}
@@ -67,7 +68,7 @@ async def test_a_mixed_case_stored_domain_matches_the_lowercased_email():
 
 
 async def test_whitespace_around_entries_is_stripped_and_blank_ones_are_dropped():
-    store = WhitelistStore()
+    store = WhitelistStore(EvalDb)
     seed(store, emails=["  clara@example.com\n", "   "], domains=["\texample.org ", ""])
     entry = await store.repo.get_whitelist()
     assert entry.allowed_emails == {"clara@example.com"}
@@ -76,7 +77,7 @@ async def test_whitespace_around_entries_is_stripped_and_blank_ones_are_dropped(
 
 
 async def test_the_stored_document_is_not_rewritten_by_a_read():
-    store = WhitelistStore()
+    store = WhitelistStore(EvalDb)
     seed(store, emails=["Clara@Example.com "], domains=[" Example.ORG"])
     await store.repo.get_whitelist()
     assert store.docs["config"] == {"allowed_emails": ["Clara@Example.com "], "allowed_domains": [" Example.ORG"]}

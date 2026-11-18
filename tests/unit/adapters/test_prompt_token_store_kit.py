@@ -15,7 +15,6 @@ from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepo
 from src.adapters.security.composite_adapter import CompositeAdapter
 from src.adapters.security.regex_adapter import RegexSecurityAdapter
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
-from tests.support.firestore_eval import EvalDb
 
 SYS, USR = "eval_tokens_system", "eval_tokens_user"
 TWO_SENTENCES = "Answer in two short sentences."
@@ -24,14 +23,14 @@ D1 = "P10-D1: FirestoreTokenRepository.save calls doc_ref.set(data) without awai
 D2 = "P10-D2: FirestoreTokenRepository.delete calls doc_ref.delete() without await; on the async client nothing is deleted"
 
 
-def _adapter(db: EvalDb) -> FirestoreTokenRepository:
+def _adapter(db) -> FirestoreTokenRepository:
     security = CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case")
     return FirestoreTokenRepository(db=db, system_collection=SYS, user_collection=USR, security_port=security)
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db()
         self.repo = _adapter(self.db)
 
     def docs(self, collection: str) -> dict:
@@ -43,8 +42,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 async def _token(store, token_id="STYLE_SHORT", category="style", class_="properties", content=TWO_SENTENCES, metadata=None) -> Token:

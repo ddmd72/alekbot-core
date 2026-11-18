@@ -17,7 +17,6 @@ from src.domain.invite_code import InviteCode, InviteType, normalise_invite_code
 from src.domain.secret_digest import keyed_digest
 from src.domain.user import UserProfile
 from src.services.invite_code_service import InviteCodeService
-from tests.support.firestore_eval import EvalDb
 
 INVITES, USERS, ACCOUNTS, WHITELIST = "eval_invite_codes_v2", "eval_users", "eval_accounts", "eval_whitelist"
 DIGEST_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f000112233445566778899aabbccddeeff")
@@ -28,8 +27,8 @@ CODE = "ABCDE-FGHIJ-KLMNO-PQRST-UVWXYZ"          # synthetic
 
 
 class World:
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db()
         env = SimpleNamespace(domain_invite_codes_collection=INVITES, domain_users_collection=USERS,
                               domain_whitelist_collection=WHITELIST, is_production=False)
         self.repo = FirestoreInviteCodeRepository(self.db, env, digest_key=DIGEST_KEY)
@@ -50,8 +49,8 @@ class World:
 
 
 @pytest.fixture
-def world():
-    return World()
+def world(kit_db):
+    return World(kit_db)
 
 
 def _invite(code=CODE) -> InviteCode:

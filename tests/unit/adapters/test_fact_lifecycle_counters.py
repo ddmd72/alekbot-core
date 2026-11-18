@@ -9,7 +9,6 @@ from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycl
 from src.config.environment import EnvironmentConfig
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
-from tests.support.firestore_eval import EvalDb
 
 DAY = date(2026, 10, 23)
 NEXT_DAY = date(2026, 10, 24)
@@ -22,8 +21,8 @@ def env():
 
 
 @pytest.fixture
-def db():
-    return EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture
