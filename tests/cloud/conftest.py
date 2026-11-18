@@ -91,10 +91,21 @@ def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]
     on the test database and wait until all are READY. Created once and kept: the collection ids are fixed names."""
     admin = firestore_admin_v1.FirestoreAdminClient(credentials=cloud.credentials)
     done: Set[str] = set()
+    failed: Set[str] = set()
 
     def ensure(collection: str, indexes: List[Dict[str, Any]]) -> None:
         if collection in done:
             return
+        if collection in failed:       # every later test of the group fails at once, not after another 15-minute wait
+            pytest.fail(f"the indexes of {collection} already failed in this module")
+        try:
+            _ensure(collection, indexes)
+        except BaseException:
+            failed.add(collection)
+            raise
+        done.add(collection)
+
+    def _ensure(collection: str, indexes: List[Dict[str, Any]]) -> None:
         parent = f"projects/{cloud.project}/databases/{cloud.database}/collectionGroups/{collection}"
         have = {existing_signature(i) for i in of_group(admin.list_indexes(parent=parent), collection)}
         for index in indexes:
@@ -110,7 +121,6 @@ def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]
             if Index.State.NEEDS_REPAIR in wanted:
                 pytest.fail(f"an index of {collection} needs repair")
             if all(state == Index.State.READY for state in wanted):
-                done.add(collection)
                 return
             if time.monotonic() > deadline:
                 pytest.fail(f"the indexes of {collection} were not READY within {INDEX_READY_TIMEOUT_S // 60} minutes")
@@ -145,7 +155,13 @@ class KitModule(pytest.Module):
         self.kit_file = kit_file
 
     def _getobj(self) -> Any:
-        return importlib.import_module(self.kit_file[:-len(".py")].replace("/", "."))
+        _refuse_fakes(self.config)
+        module = importlib.import_module(self.kit_file[:-len(".py")].replace("/", "."))
+        built = sorted(name for name, value in vars(module).items() if isinstance(value, _fake_classes()))
+        if built:
+            raise self.CollectError(f"{self.kit_file} holds an evaluating fake at module level ({', '.join(built)}): "
+                                    "build it per test over kit_db")
+        return module
 
     def collect(self) -> Any:
         if not _on_the_seam(REPO_ROOT / self.kit_file):
@@ -176,19 +192,53 @@ def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
             item.add_marker(pytest.mark.skip(reason=f"h1_only: {mark.args[0] if mark.args else 'fake-only hook'}"))
 
 
-@pytest.fixture(autouse=True)
-def _cloud_kits_build_no_fake(request: Any, monkeypatch: Any) -> None:
-    """A kit test here that still builds an evaluating fake would pass on the fake and prove nothing: it fails."""
-    if request.node.getparent(KitModule) is None:
-        return
+def _fake_classes() -> tuple:
     from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb as DriveEvalDb
+    return (EvalDb, DriveEvalDb)
+
+
+def _refuse_fakes(config: Any) -> None:
+    """From the first kit import to the end of the session, building an evaluating fake fails: at import time, in a
+    module- or session-scoped fixture and in a test alike. A kit test here that ran on the fake would prove nothing."""
+    if getattr(config, "_kit_fakes_refused", False):
+        return
+    config._kit_fakes_refused = True
 
     def refuse(*_a: Any, **_k: Any) -> None:
-        pytest.fail("this kit test builds an evaluating fake in the cloud run: build the store over kit_db, "
+        pytest.fail("a kit builds an evaluating fake in the cloud run: build the store over kit_db, "
                     "or mark the test h1_only with the reason")
 
-    for fake in (EvalDb, DriveEvalDb):
-        monkeypatch.setattr(fake, "__init__", refuse)
+    def restore(fake: Any, original: Any) -> None:
+        if original is None:
+            del fake.__init__
+        else:
+            fake.__init__ = original
+
+    for fake in _fake_classes():
+        original = fake.__dict__.get("__init__")
+        fake.__init__ = refuse
+        config.add_cleanup(lambda fake=fake, original=original: restore(fake, original))
+
+
+@pytest.fixture(autouse=True)
+def _cloud_kits_reach_only_the_test_database(request: Any, monkeypatch: Any) -> None:
+    """The unit network guard does not cover a kit here; instead every Firestore client a kit test constructs must point at
+    the test database and project, or the test fails before the client is used."""
+    if request.node.getparent(KitModule) is None:
+        return
+    cloud = request.getfixturevalue("cloud")
+    from google.cloud.firestore_v1.async_client import AsyncClient
+    from google.cloud.firestore_v1.client import Client
+
+    for cls in (Client, AsyncClient):
+        original = cls.__init__
+
+        def checked(self: Any, *a: Any, _original: Any = original, **k: Any) -> None:
+            _original(self, *a, **k)
+            if self._database != cloud.database or self.project != cloud.project:
+                pytest.fail("guard: a kit test constructed a Firestore client that is not on the test database and project")
+
+        monkeypatch.setattr(cls, "__init__", checked)
 
 
 @pytest.fixture
