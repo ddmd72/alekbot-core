@@ -17,7 +17,6 @@ from src.composition.connector_registry import ConnectorRegistry
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
-from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import delete_kind, has_kind, kinds_of, one
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -38,8 +37,8 @@ class BrokenCipher(AesGcmTestCipher):
 
 
 class Store:
-    def __init__(self, cipher: Any = None, db: Any = None) -> None:
-        self.db = db or EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_credentials"})
+    def __init__(self, kit_db: Any, cipher: Any = None, db: Any = None) -> None:
+        self.db = db or kit_db(indexes=INDEXES_FILE, groups={CREDS: "development_credentials"})
         self.cipher = cipher or AesGcmTestCipher()
         self.repo = FirestoreCredentialStore(self.db, ENV, cipher=self.cipher)
 
@@ -49,8 +48,8 @@ class Store:
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 def creds(user_id="user-a", kind="gmail", *, realm="google", subject="sub-a", label="user@example.com",
@@ -204,49 +203,49 @@ async def test_a_ciphertext_moved_to_another_record_does_not_decrypt(store):
         await one(store.repo, "user-b", "gmail")
 
 
-async def test_a_decrypt_failure_propagates_and_is_never_not_connected():
-    db = EvalDb()
-    await Store(db=db).repo.save(creds())
-    broken = Store(cipher=BrokenCipher(), db=db)
+async def test_a_decrypt_failure_propagates_and_is_never_not_connected(kit_db):
+    db = kit_db()
+    await Store(kit_db, db=db).repo.save(creds())
+    broken = Store(kit_db, cipher=BrokenCipher(), db=db)
     with pytest.raises(RuntimeError):
         await one(broken.repo, "user-a", "gmail")
     assert await has_kind(broken.repo, "user-a", "gmail") is True
     assert len(broken.docs) == 1
 
 
-async def test_an_encrypt_failure_on_save_writes_nothing():
-    store = Store(cipher=BrokenCipher())
+async def test_an_encrypt_failure_on_save_writes_nothing(kit_db):
+    store = Store(kit_db, cipher=BrokenCipher())
     with pytest.raises(RuntimeError):
         await store.repo.save(creds())
     assert store.docs == {}
 
 
-async def test_an_encrypt_failure_on_update_keeps_the_record():
-    db = EvalDb()
-    good = Store(db=db)
+async def test_an_encrypt_failure_on_update_keeps_the_record(kit_db):
+    db = kit_db()
+    good = Store(kit_db, db=db)
     cid = await good.repo.save(creds())
     before = {k: dict(v) for k, v in good.docs.items()}
     with pytest.raises(RuntimeError):
-        await Store(cipher=BrokenCipher(), db=db).repo.update(creds(credential_id=cid, access_token="at-x"))
+        await Store(kit_db, cipher=BrokenCipher(), db=db).repo.update(creds(credential_id=cid, access_token="at-x"))
     assert good.docs == before
 
 
-async def test_another_key_cannot_open_a_record():
-    db = EvalDb()
-    await Store(db=db).repo.save(creds())
+async def test_another_key_cannot_open_a_record(kit_db):
+    db = kit_db()
+    await Store(kit_db, db=db).repo.save(creds())
     with pytest.raises(InvalidTag):
-        await one(Store(db=db).repo, "user-a", "gmail")
+        await one(Store(kit_db, db=db).repo, "user-a", "gmail")
 
 
 # ------------------------------------------------------------------ plaintext-only readers, tenancy
 
-async def test_is_connected_and_listings_make_no_cipher_call():
-    db = EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_credentials"})
-    writer = Store(db=db)
+async def test_is_connected_and_listings_make_no_cipher_call(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={CREDS: "development_credentials"})
+    writer = Store(kit_db, db=db)
     await writer.repo.save(creds("user-a", "gmail"))
     await writer.repo.save(creds("user-a", "microsoft_todo", realm="microsoft"))
     await writer.repo.save(creds("user-b", "gmail", subject="sub-b"))
-    reader = Store(cipher=BrokenCipher(), db=db)
+    reader = Store(kit_db, cipher=BrokenCipher(), db=db)
     assert await has_kind(reader.repo, "user-a", "gmail") is True
     assert await has_kind(reader.repo, "user-b", "microsoft_todo") is False
     assert sorted(await kinds_of(reader.repo, "user-a")) == ["gmail", "microsoft_todo"]
