@@ -163,9 +163,6 @@ class TestLazyBuildAfterAnUnlockedEviction:
         assert agent is not None
         assert agent.agent_id in factory._cache[USER]["_lazy_agent_ids"]
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S1: create_agent_on_demand reads the cache entry before the per-user lock; an eviction while it "
-        "waits leaves the lazy agent registered but tracked only by the detached entry; owner decision"))
     async def test_a_lazy_agent_built_after_an_eviction_is_tracked_or_not_registered(self, lazy_type):
         """`create_agent_on_demand` reads `self._cache[user]` (user_agent_factory.py:701) and only then waits at the
         per-user lock (:717); `invalidate_user_cache` -> `_evict_user` (:281-309) takes no lock. The waiter then builds
@@ -210,9 +207,6 @@ class TestResetDuringABuild:
         assert factory._cache[USER]["_user_context"].user_profile.version == 1
         assert self._registered_versions(factory) == {1}
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S1b: invalidate_user_cache during an eager build in progress is lost; the build caches the entry "
-        "read before the reset; owner decision"))
     async def test_no_entry_built_from_the_profile_read_before_a_reset_is_cached_after_it(self):
         """`ensure_agents_for_user` holds the per-user lock while `_create_and_cache_agents` awaits (the profile read,
         user_agent_factory.py:335/668-672) and writes the entry at the end (:666); `_evict_user` (:297) is unlocked and
