@@ -22,7 +22,7 @@ from src.domain.agent_note import NoteCreate, NoteUpdate
 from src.domain.task_complexity import TaskComplexity
 from src.ports.agent_note_port import AgentNotePort
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -35,8 +35,8 @@ DENTIST = dict(text="dentist", instruction="Remind Alex of the appointment with 
 
 
 class Notes:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={NOTES: "development_orchestrator_notes"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={NOTES: "development_orchestrator_notes"})
         self.port: AgentNotePort = FirestoreAgentNoteAdapter(
             self.db, SimpleNamespace(orchestrator_notes_collection=NOTES))
 
@@ -54,9 +54,9 @@ class Notes:
 
 
 @pytest.fixture
-def notes(monkeypatch):
+def notes(monkeypatch, kit_db):
     pin_datetime(monkeypatch, note_module, T0)
-    return Notes()
+    return Notes(kit_db)
 
 
 def at(monkeypatch, delta: timedelta) -> None:
