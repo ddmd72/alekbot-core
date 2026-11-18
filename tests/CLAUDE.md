@@ -121,11 +121,14 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     public attribute set on the database or a collection raises, except `yield_on_get`, which only interleaves the fake's reads: keep
     a test that sets it only when its assertion holds under real concurrency, else mark it; and except a replaced method of the real
     object: a fault injected with `monkeypatch.setattr(<store's collection>, "document", <failing stub>)` runs on the real backend too
-    (one wrapper per path, the one the store holds), so such a test is converted as it is, never marked. `collections()`, `recursive_delete()` and an
+    (one wrapper per path, the one the store holds), so such a test is converted as it is, never marked. A replacement the adapter
+    never calls fails the test ("never reached on the real backend"): a fault on a subcollection, or on a document reached through
+    `db.document(path)`, must be injected where the adapter calls it (the real document reference, not `db.collection("a/d/sub")`),
+    or the test is `h1_only`. One database per test: a second `kit_db()` call in a test raises (share the db, or mark it). `collections()`, `recursive_delete()` and an
     `indexes=` other than `None` or the repository file raise. Building an `EvalDb` anywhere in a kit (import time, any fixture scope)
     fails, and every Firestore client a kit test builds must be on the test database.
   - **`h1_only`.** A test that drives a fake-only hook (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`,
-    `cols`, `EvalDb(`, `indexes=[]`, a naive datetime written raw) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
+    `cols`, `commits`, the collection's `fail =` switch, `EvalDb(`, `indexes=[]`, a naive datetime written raw in the test itself) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
     `tests/unit/support/test_h1_only_marks.py` checks each mark names a reason and reaches one of those hooks. `h1_only` is forbidden on
     a test that fails on the real backend: the test database is the arbiter, so the fake is fixed, or an adapter defect is a strict
     xfail `P12-D<n>`. A missing index is a setup gap, never a mark: `render_indexes` renders composites only, so a kit whose adapter
