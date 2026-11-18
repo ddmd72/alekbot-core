@@ -56,6 +56,7 @@ async def test_get_returns_the_ids(lists):
     assert [p.entry_id for p in got.people] == [1, 2] and got.next_entry_id == 3
 
 
+@pytest.mark.h1_only("drives interfere_on_txn_read")
 async def test_a_change_inside_the_transaction_is_retried_with_no_duplicate_id(db, lists):
     await lists.replace(ACC, HOUSEHOLD, "owner_script")
     stored = dict(docs(db)[ACC])
