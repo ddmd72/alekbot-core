@@ -651,10 +651,11 @@ class TasksAgent(BaseAgent):
             list_id, task_id = await self._indexing.resolve_short_id(user_id, args["task_ref"])
             parsed_due = self._parse_datetime(args.get("due_datetime"))
             parsed_reminder = self._parse_datetime(args.get("reminder_datetime"))
-            # Auto-reminder: task had no due_date, a new due_datetime is set, no explicit reminder.
+            # Auto-reminder: task had no due_date, a new due_datetime is set, no explicit reminder,
+            # and the reminder was not explicitly turned off.
             reminder_dt = parsed_reminder
             is_reminder_on: Optional[bool] = args.get("is_reminder_on")
-            if parsed_due is not None and parsed_reminder is None:
+            if parsed_due is not None and parsed_reminder is None and is_reminder_on is not False:
                 current = await self._tasks.get_task(user_id, list_id, task_id)
                 if current.due_datetime is None:
                     reminder_dt, is_reminder_on = self._derive_reminder(None, parsed_due)

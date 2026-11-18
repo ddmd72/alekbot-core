@@ -278,8 +278,6 @@ async def test_a_new_due_turns_the_reminder_on_the_evening_before_control(monkey
     assert rig.finished()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P14-D4: the auto-reminder branch overwrites an explicit is_reminder_on=false")
 async def test_an_explicit_reminder_off_survives_a_new_due(monkeypatch):
     """Fix: `and is_reminder_on is not False` on the auto-reminder condition (`tasks_agent.py:528`)."""
     rig = await Rig([tools(("update_task", UPDATE_NEW_DUE_REMINDER_OFF)), text("Updated.")], monkeypatch).start()
