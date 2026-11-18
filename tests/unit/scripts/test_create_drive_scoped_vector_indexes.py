@@ -14,6 +14,7 @@ def _run(tmp_path, **env_extra):
     (tmp_path / "gcloud").write_text(_STUB)
     (tmp_path / "gcloud").chmod(0o755)
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "STUB_DIR": str(tmp_path), "PROJECT_ID": "p",
+           "FIRESTORE_DATABASE": "test-db",
            **env_extra}
     proc = subprocess.run(["bash", str(_SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
     calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
@@ -32,7 +33,7 @@ def test_apply_creates_the_chunk_and_the_hint_index_under_connection_id_and_item
     chunk, hint = calls
     for call, collection, vector in ((chunk, "development_drive_index_chunks", "vector"),
                                      (hint, "development_drive_index_hints", "hint_vector")):
-        assert f"--collection-group={collection}" in call and "--database=us-production" in call
+        assert f"--collection-group={collection}" in call and "--database=test-db" in call
         assert call.index("field-path=connection_id") < call.index("field-path=item_id") < call.index(
             '"dimension":"768"') < call.index(f",field-path={vector} ")
 

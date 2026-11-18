@@ -24,7 +24,8 @@ def _run(tmp_path, *answers):
     (tmp_path / "gcloud").write_text(_STUB)
     (tmp_path / "gcloud").chmod(0o755)
     (tmp_path / "answers").write_text("\n".join(answers) + "\n")
-    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "STUB_DIR": str(tmp_path), "PROJECT_ID": "p"}
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "STUB_DIR": str(tmp_path), "PROJECT_ID": "p",
+           "FIRESTORE_DATABASE": "test-db"}
     proc = subprocess.run(["bash", str(_SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
     calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
     return proc, calls

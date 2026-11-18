@@ -12,6 +12,7 @@ def _calls(tmp_path, **env_extra):
     (tmp_path / "gcloud").write_text(_STUB)
     (tmp_path / "gcloud").chmod(0o755)
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "STUB_DIR": str(tmp_path), "PROJECT_ID": "p",
+           "FIRESTORE_DATABASE": "test-db",
            **env_extra}
     proc = subprocess.run(["bash", str(_SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr
@@ -21,6 +22,7 @@ def _calls(tmp_path, **env_extra):
 def test_six_indexes_two_of_them_on_the_chunk_vector(tmp_path):
     calls = _calls(tmp_path)
     assert len(calls) == 6   # + the two Search v2 hint vector indexes (§25.2.5)
+    assert all("--database=test-db" in c for c in calls)   # the database comes from FIRESTORE_DATABASE
     chunk_calls = [c for c in calls if "--collection-group=development_drive_index_chunks" in c]
     assert len(chunk_calls) == 2
     assert all("field-path=vector" in c and '"dimension":"768"' in c for c in chunk_calls)

@@ -27,7 +27,8 @@ def test_the_collection_and_the_project_come_from_the_environment():
     text = _text()
     assert 'COLLECTION="${COLLECTION_PREFIX-development_}drive_notes"' in text
     assert 'PROJECT_ID="${PROJECT_ID:?set PROJECT_ID' in text
-    assert 'DATABASE_ID="us-production"' in text and "set -euo pipefail" in text
+    assert 'DATABASE_ID="${FIRESTORE_DATABASE:?' in text and "set -euo pipefail" in text   # explicit, no live default
+    assert "us-production" not in text
 
 
 def test_the_find_nearest_prefilter_is_the_scripts():
@@ -47,7 +48,7 @@ def _run(tmp_path, apply):
     fake = tmp_path / "gcloud"
     fake.write_text(f'#!/bin/bash\necho "$@" >> "{log}"\n')
     fake.chmod(0o755)
-    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}", "PROJECT_ID": "test-project"}
+    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}", "PROJECT_ID": "test-project", "FIRESTORE_DATABASE": "test-db"}
     if apply:
         env["APPLY"] = "1"
     out = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, check=True).stdout
@@ -58,9 +59,11 @@ def test_a_dry_run_by_default_prints_and_creates_nothing(tmp_path):
     out, calls = _run(tmp_path, apply=False)
     assert calls == "" and "dry run" in out
     assert "gcloud firestore indexes composite create --project=test-project" in out
+    assert "--database=test-db" in out
 
 
 def test_apply_creates_the_index(tmp_path):
     out, calls = _run(tmp_path, apply=True)
     assert calls.count("firestore indexes composite create") == 1
     assert "--collection-group=development_drive_notes" in calls and "field-path=note_vector" in calls
+    assert "--database=test-db" in calls

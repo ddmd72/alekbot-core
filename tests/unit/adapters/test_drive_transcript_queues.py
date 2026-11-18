@@ -378,7 +378,7 @@ def test_the_deploy_tool_sends_gcloud_its_collection_group_scope(monkeypatch):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump([i for i in _raw() if i.get("collectionGroup") == LIVE["windows"] and "fields" in i], f)
         path = f.name
-    module.deploy_indexes(path, "p")
+    module.deploy_indexes(path, "p", "test-db")
     assert sent and "--query-scope=collection-group" in sent[0]
 
 
