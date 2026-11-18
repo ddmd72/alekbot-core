@@ -18,7 +18,7 @@ import src.adapters.firestore_ephemeral_store as ephemeral_module
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.ports.ephemeral_store import EphemeralStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -30,8 +30,8 @@ TICKET = {"user_id": "u1", "account_id": "a1", "call_kind": "phone"}
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={TICKETS: "development_voice_tickets"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={TICKETS: "development_voice_tickets"})
         self.store: EphemeralStore = FirestoreEphemeralStore(self.db, TICKETS)
 
     @property
@@ -44,9 +44,9 @@ class Store:
 
 
 @pytest.fixture
-def store(monkeypatch):
+def store(monkeypatch, kit_db):
     pin_datetime(monkeypatch, ephemeral_module, T0)
-    return Store()
+    return Store(kit_db)
 
 
 def at(monkeypatch, seconds: float) -> None:
