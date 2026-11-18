@@ -298,9 +298,6 @@ async def test_legacy_code_missing_a_required_field_raises(store, field):
         await store.repo.consume_auth_code("code-a")
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: consume_auth_code reads, then deletes, outside a transaction, so concurrent calls can each return "
-    "the code — src/adapters/firestore_mcp_client_repository.py:133-139 (P6 T1 H1)"))
 async def test_of_concurrent_consumers_of_one_code_exactly_one_gets_it(store):
     await store.repo.save_auth_code(auth_code())
     store.db.collection(CODES).yield_on_get = True        # both read the code before either deletes it
@@ -398,10 +395,6 @@ async def test_revoking_again_moves_revoked_at_to_now(store):
     assert started <= store.docs(REFRESH)[sha("rt-a")]["revoked_at"] <= datetime.now(timezone.utc)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: get and revoke are separate calls and revoke does not say whether it revoked an active token, so "
-    "two concurrent exchanges of one refresh token both get new tokens — src/services/mcp_authorization_service.py:"
-    "309-332, src/adapters/firestore_mcp_client_repository.py:179-184 (P6 T1 H2)"))
 async def test_of_concurrent_exchanges_of_one_refresh_token_exactly_one_succeeds(store):
     await store.repo.save_refresh_token(refresh())
     store.db.collection(REFRESH).yield_on_get = True      # both exchanges read the token before either revokes it
