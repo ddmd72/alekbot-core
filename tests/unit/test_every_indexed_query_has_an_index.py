@@ -34,8 +34,10 @@ from google.api_core.exceptions import FailedPrecondition
 
 from src.config.environment import Environment, EnvironmentConfig
 from src.adapters.firestore_repo import _NEAREST_VECTOR_FIELDS
+from src.adapters.firestore_repo import _VECTOR_FIELDS as _FACT_VECTOR_FIELDS
 from src.adapters.firestore_task_search_index import _VECTOR_FIELDS
-from tests.support.firestore_eval import EvalDb, _required_index, _serves
+from src.domain.drive_enrichment import EnrichJob
+from tests.support.firestore_eval import EvalDb, _ARRAY_OPS, _EQUALITY_OPS, _RANGE_OPS, _required_index, _serves
 
 _ENV = EnvironmentConfig()
 _ENV.env = Environment.DEVELOPMENT
@@ -46,18 +48,15 @@ INDEXES = ROOT / "config" / "firestore.indexes.json"
 
 # --------------------------------------------------------------------------------------- the explicit lists
 
-# (file, function) -> why the walk cannot follow a `where` / `order_by` / `find_nearest` call of that function.
-UNRESOLVED_CALLS: Dict[Tuple[str, str], str] = {}
+# (file, function, call text) -> why the walk cannot follow that `where` / `order_by` / `find_nearest` call.
+UNRESOLVED_CALLS: Dict[Tuple[str, str, str], str] = {}
 
 # (file, function) -> why a consumed query that needs a composite cannot be matched (a field or collection name that is
 # not a literal on any path the walk takes).
 UNRESOLVED_SITES: Dict[Tuple[str, str], str] = {
     ("src/adapters/firestore_drive_index_repo.py", "FirestoreDriveIndexRepository.unread_count_queries"):
-        "the filters come from data tables of (field, operator, value) triples; every operator in them is `==`, so the "
-        "queries are equality-only plus `kind in`, which single-field indexes serve",
-    ("src/adapters/firestore_drive_index_repo.py", "FirestoreDriveIndexRepository.enrich_queue"):
-        "the state field is `f'{job}_state'` over the EnrichJob enum, so the field name is not a literal; one composite "
-        "per job is declared in config/firestore.indexes.json",
+        "the filters come from data tables of (field, operator, value) triples; a test pins that every operator in "
+        "them is `==`, so the queries are equality-only plus `kind in`, which single-field indexes serve",
     ("src/adapters/firestore_drive_index_repo.py", "FirestoreDriveIndexRepository._subdoc_refs"):
         "a collection-group purge helper: the group and the equality field are arguments chosen by the caller",
 }
@@ -76,9 +75,19 @@ CONSTRUCTOR_ARGUMENTS: Dict[Tuple[str, str], str] = {
     ("src/adapters/firestore_session_store.py", "collection_prefix"): _ENV.sessions_collection,
 }
 
+# (file, function) -> the names a filter field written as an f-string can take: each is checked.
+FIELD_CHOICES: Dict[Tuple[str, str], Tuple[str, ...]] = {
+    ("src/adapters/firestore_drive_index_repo.py", "FirestoreDriveIndexRepository.enrich_queue"):
+        tuple(f"{job.value}_state" for job in EnrichJob),
+}
+
+# (file, function) -> why a query is handed to a call the walk cannot enter (a transaction read, an SDK helper): such a
+# query is recorded and checked, but nobody followed what the callee does with it.
+OPAQUE_CONSUMPTIONS: Dict[Tuple[str, str], str] = {}
+
 # (file, function) -> the vector fields a `find_nearest` whose field is a runtime value can take: each is checked.
 VECTOR_FIELD_CHOICES: Dict[Tuple[str, str], Tuple[str, ...]] = {
-    ("src/adapters/firestore_repo.py", "FirestoreFactRepository.search_facts"): ("vector", "metadata_vector", "tags_vector"),
+    ("src/adapters/firestore_repo.py", "FirestoreFactRepository.search_facts"): tuple(_FACT_VECTOR_FIELDS),   # the adapter's own write-side list
     ("src/adapters/firestore_repo.py", "FirestoreFactRepository.nearest_fact_ids"): tuple(_NEAREST_VECTOR_FIELDS),
     ("src/adapters/firestore_task_search_index.py", "FirestoreTaskSearchIndex.find_nearest._query_one"): tuple(_VECTOR_FIELDS),
 }
@@ -99,6 +108,7 @@ _SHAPING = {"select", "limit", "limit_to_last", "offset", "start_at", "start_aft
 _CONSUMING = {"stream", "get", "count", "sum", "avg", "explain", "on_snapshot"}
 _ENV_BASE = re.compile(r"(^|\.)_?(env_config|env|environment)$")
 _MAX_DEPTH = 8
+_TRANSPARENT = {"zip", "enumerate", "list", "tuple", "sorted", "reversed", "len", "set", "frozenset", "bool", "any", "all", "iter"}
 
 
 class Unresolved(str):
@@ -252,6 +262,9 @@ class Project:
         self.sites: Dict[Tuple[str, str, Tuple[Any, ...]], Site] = {}
         self.covered: Set[Tuple[str, int, int]] = set()
         self.calls: Dict[Tuple[str, int, int], str] = {}     # every builder call -> its function
+        self.call_text: Dict[Tuple[str, int, int], str] = {}
+        self.filter_calls: Dict[Tuple[str, int, int], str] = {}   # every FieldFilter(...) call -> its function
+        self.opaque: Set[Tuple[str, str]] = set()
         self.walker = Walker(self)
 
     def add(self, rel: str, source: str, namespace: Dict[str, Any]) -> Module:
@@ -269,6 +282,10 @@ class Project:
                     inner = scope + [child.name]
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr in _BUILDERS:
                     self.calls[(module.rel, child.lineno, child.col_offset)] = ".".join(scope) or "<module>"
+                    parts = [ast.unparse(a) for a in child.args] + [f"{k.arg}={ast.unparse(k.value)}" for k in child.keywords]
+                    self.call_text[(module.rel, child.lineno, child.col_offset)] = f"{child.func.attr}({', '.join(parts)})"
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "FieldFilter":
+                    self.filter_calls[(module.rel, child.lineno, child.col_offset)] = ".".join(scope) or "<module>"
                 visit(child, inner)
         visit(module.tree, [])
 
@@ -338,7 +355,10 @@ class Walker:
     def consume(self, value: Any, frame: Frame) -> None:
         for item in _alts(value):
             if isinstance(item, Q):
-                self.project.record(item, frame.qualname.split(".<")[0] if False else self._owner(item, frame))
+                owner = self._owner(item, frame)
+                self.project.record(item, owner)
+                if item.ops:
+                    self.project.opaque.add((item.ops[-1].node[0], owner))
             elif isinstance(item, (Seq, tuple)) and not isinstance(item, Alt):
                 for sub in item:
                     self.consume(sub, frame)
@@ -588,6 +608,10 @@ class Walker:
                 return self.inline(local, node, frame, skip_self=False)
             if func.id in frame.module.funcs:
                 return self.inline(Fn(frame.module.funcs[func.id], frame.module, None), node, frame, skip_self=False)
+            if func.id in _TRANSPARENT:     # a builtin that only reads its arguments: a query in it is not consumed by it
+                for arg in [*node.args, *[k.value for k in node.keywords]]:
+                    self.ev(arg, frame)
+                return None
         else:
             self.ev(func, frame)
         return self.generic(node, frame)
@@ -603,13 +627,18 @@ class Walker:
         field = args[0] if args else self.ev(kw.get("field_path"), frame)
         op = args[1] if len(args) > 1 else self.ev(kw.get("op_string"), frame)
         value_node = node.args[2] if len(node.args) > 2 else kw.get("value")
-        if not isinstance(field, str):
+        choices: Tuple[str, ...] = ()
+        if not isinstance(field, str) or isinstance(field, Unresolved):
+            where = (frame.module.rel, getattr(node, "lineno", -1), getattr(node, "col_offset", -1))
+            choices = FIELD_CHOICES.get((frame.module.rel, self.project.filter_calls.get(where, "")), ())
             field = Unresolved("<" + ast.unparse(node.args[0] if node.args else kw.get("field_path", node)) + ">")
         if not isinstance(op, str):
             op = Unresolved("?")
         none_value = isinstance(value_node, ast.Constant) and value_node.value is None
         if none_value and op in ("==", "!="):
             op = "IS_NULL" if op == "==" else "IS_NOT_NULL"
+        if choices:
+            return _alt(FF(choice, op) for choice in choices)
         return FF(field, op)
 
     def query_call(self, name: str, node: ast.Call, bases: List[Any], frame: Frame) -> Any:
@@ -690,19 +719,53 @@ def _real_sources() -> Tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
 # --------------------------------------------------------------------------------------------- the verdict
 
 def _tuples(site: Site) -> List[tuple]:
-    """The query as H1 records it. A filter on the document id (`__name__`) is left out: with equality filters and no
-    ordering the built-in single-field indexes serve it (the mirror's `pinned_keys` practice, Δ237 in
-    `test_firestore_indexes_mirror.py`), a rule the H1 model does not know; an ascending `order_by(__name__)` is the
-    implicit order of that merge and is left out for the same reason."""
+    """The query as H1 records it, with the one rule H1 does not know, pinned to its evidence
+    (`_single_field_served` in `test_firestore_indexes_mirror.py`, Δ237): when every other filter is an equality, an `in`
+    or an array filter and no field is ordered, the built-in single-field indexes serve a range filter on the document id
+    (`__name__`), so that filter is left out. An ascending `order_by(__name__)` that is the last ordering is the implicit
+    tie-break and is left out. Anything else (another range, another ordering) goes to H1 with the `__name__` in it."""
+    others = [o for o in site.ops if o.kind == "where" and o.field != "__name__"]
+    orders = [o for o in site.ops if o.kind == "order_by"]
+    drop_filter = all(o.arg in _EQUALITY_OPS + _ARRAY_OPS for o in others) and all(o.field == "__name__" for o in orders)
+    last_order = orders[-1] if orders else None
     out: List[tuple] = []
     for op in site.ops:
-        if op.kind == "where" and op.field != "__name__":
+        if op.kind == "where":
+            if op.field == "__name__" and drop_filter:
+                continue
             out.append(("where", op.field, op.arg, None))
-        elif op.kind == "order_by" and not (op.field == "__name__" and op.arg == "ASCENDING"):
+        elif op.kind == "order_by":
+            if op is last_order and op.field == "__name__" and op.arg == "ASCENDING":
+                continue
             out.append(("order_by", op.field, op.arg))
         elif op.kind == "find_nearest":
             out.append(("find_nearest", {"vector_field": op.field}))
     return out
+
+
+def _exempt_fields() -> Set[Tuple[str, str]]:
+    """(collection group, field) with a field override `"indexes": []`: the automatic single-field indexes are off, so a
+    query on that field is served by a composite or not at all."""
+    return {(i["collectionGroup"], i["fieldPath"]) for i in json.loads(INDEXES.read_text())
+            if "fields" not in i and i.get("indexes") == []}
+
+
+EXEMPT = _exempt_fields()
+
+
+def _exempt_served(site: Site, tuples: List[tuple]) -> Optional[bool]:
+    """None when no filtered or ordered field of the site is exempt; otherwise whether a declared composite carries all
+    its fields: equality / array fields as the head, the orderings and range fields as the tail."""
+    group = site.coll.name.rsplit("/", 1)[-1]
+    if not any((group, t[1]) in EXEMPT for t in tuples if t[0] in ("where", "order_by")):
+        return None
+    wheres = [t for t in tuples if t[0] == "where"]
+    orders = [(t[1], t[2]) for t in tuples if t[0] == "order_by"]
+    head = {(f, "CONTAINS" if op in _ARRAY_OPS else "EQ") for _, f, op, _ in wheres if op in _EQUALITY_OPS + _ARRAY_OPS}
+    ranges = sorted({f for _, f, op, _ in wheres if op in _RANGE_OPS} - {f for f, _ in orders})
+    tail = orders + [(f, "ASCENDING") for f in ranges]
+    declared = EvalDb(indexes=INDEXES).declared or []
+    return any(g == group and sc == "COLLECTION" and _serves(fields, head, tail) for g, sc, fields in declared)
 
 
 def _aggregate_served(site: Site, tuples: List[tuple]) -> bool:
@@ -724,13 +787,16 @@ def classify(site: Site) -> str:
     required = _required_index(tuples)
     if any(op.kind == "where" and op.arg == "?" for op in site.ops):
         return "unresolved"       # a filter the walk could not read (a composite Or / And filter, a filter passed in)
-    if required is None and not site.coll.group and not aggregate:
+    exempt = _exempt_served(site, tuples) if required is None and not site.coll.group and not aggregate else None
+    if required is None and not site.coll.group and not aggregate and exempt is None:
         return "none"
     names = [op.field for op in site.ops] + [op.arg for op in site.ops if op.kind == "where" or op.arg in ("?",)]
     if isinstance(site.coll.name, Unresolved) or any(isinstance(n, Unresolved) for n in names):
         return "unresolved"
     if aggregate:
         return "served" if _aggregate_served(site, tuples) else "missing"
+    if exempt is not None:
+        return "served" if exempt else "missing"
     try:
         EvalDb(indexes=INDEXES)._check_index(site.coll.name, site.coll.group, tuples)
     except FailedPrecondition:
@@ -765,14 +831,37 @@ def test_the_walk_finds_the_queries_of_the_adapters():
 
 def test_every_builder_call_ends_in_a_consumed_query_or_is_listed():
     """A `where` / `order_by` / `find_nearest` the walk could not follow is a query nobody checked: list it with a reason."""
-    seen = {(loc[0], fn) for loc, fn in UNCOVERED.items()}
+    seen = {(loc[0], fn, PROJECT.call_text[loc]) for loc, fn in UNCOVERED.items()}
     assert seen == set(UNRESOLVED_CALLS), (
         f"not followed and not listed: {sorted(seen - set(UNRESOLVED_CALLS))}; listed but followed (delete the line): "
         f"{sorted(set(UNRESOLVED_CALLS) - seen)}")
 
 
+def test_queries_handed_to_calls_the_walk_cannot_enter_are_listed():
+    """A query passed to a call the walk does not follow (a transaction read, an SDK helper) is checked as it stands, but
+    what the callee adds to it is not seen: each such function is listed with a reason, and the list has no stale line."""
+    assert PROJECT.opaque == set(OPAQUE_CONSUMPTIONS), (
+        f"handed to an opaque call, not listed: {sorted(PROJECT.opaque - set(OPAQUE_CONSUMPTIONS))}; "
+        f"listed but not opaque (delete the line): {sorted(set(OPAQUE_CONSUMPTIONS) - PROJECT.opaque)}")
+
+
+def test_the_filter_tables_of_unread_count_queries_are_equality_only():
+    """`unread_count_queries` builds its filters from (field, operator, value) tables the walk cannot read; the queries
+    are equality-only (plus `kind in`) exactly while every operator in those tables is `==`."""
+    module = next(m for m in PROJECT.modules if m.rel == "src/adapters/firestore_drive_index_repo.py")
+    node = module.method("FirestoreDriveIndexRepository", "unread_count_queries").node
+    triples = [t for t in ast.walk(node) if isinstance(t, ast.Tuple) and len(t.elts) == 3
+               and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in t.elts[:2])]
+    assert triples and {t.elts[1].value for t in triples} == {"=="}
+
+
+def test_the_enrich_queue_is_checked_for_every_job():
+    fields = {op.field for s in SITES if s.function.endswith("enrich_queue") for op in s.ops if op.kind == "where"}
+    assert {f"{job.value}_state" for job in EnrichJob} <= fields
+
+
 def test_every_listed_reason_is_a_sentence():
-    for table in (UNRESOLVED_CALLS, UNRESOLVED_SITES, DOCUMENTED_UNINDEXED, KNOWN_MISSING):
+    for table in (UNRESOLVED_CALLS, UNRESOLVED_SITES, DOCUMENTED_UNINDEXED, KNOWN_MISSING, OPAQUE_CONSUMPTIONS):
         assert all(len(reason) > 20 for reason in table.values())
 
 
@@ -888,3 +977,61 @@ def test_walk_leaves_a_builder_of_an_unreachable_query_uncovered():
         return query.where(filter=FieldFilter("a", "==", 1))
 ''')
     assert [loc for loc in project.calls if loc not in project.covered]
+
+
+def test_walk_requires_a_composite_for_a_field_with_its_single_field_index_off():
+    """`development_domain_email_facts_v1.name_keys` carries a field override `"indexes": []`: equality + array-contains
+    would merge single-field indexes on any other field, but not on that one."""
+    assert ("development_domain_email_facts_v1", "name_keys") in EXEMPT
+    project = _snippet('''
+    async def read(self, user_id, key):
+        await self._col.where(filter=FieldFilter("user_id", "==", user_id)).where(filter=FieldFilter("name_keys", "array_contains", key)).get()
+''', name="development_domain_email_facts_v1")
+    assert list(_verdicts(project).values()) == ["missing"]
+    control = _snippet('''
+    async def read(self, user_id, key):
+        await self._col.where(filter=FieldFilter("user_id", "==", user_id)).where(filter=FieldFilter("source", "==", key)).get()
+''', name="development_domain_email_facts_v1")
+    assert list(_verdicts(control).values()) == ["none"]
+
+
+def test_walk_keeps_a_document_id_filter_unless_every_other_filter_is_an_equality():
+    served = _snippet('''
+    async def read(self, user_id, after):
+        await self._col.where(filter=FieldFilter("user_id", "==", user_id)).where(filter=FieldFilter(FieldPath.document_id(), ">", after)).get()
+''')
+    assert _verdicts(served) and set(_verdicts(served).values()) == {"none"}
+    for body in (
+        'await self._col.where(filter=FieldFilter("size", ">", 1)).where(filter=FieldFilter(FieldPath.document_id(), ">", a)).get()',
+        'await self._col.where(filter=FieldFilter(FieldPath.document_id(), ">", a)).order_by("created_at").get()',
+    ):
+        project = _snippet("    async def read(self, a):\n        " + body + "\n")
+        site = next(iter(project.sites.values()))
+        assert any(t[1] == "__name__" for t in _tuples(site)), body
+        assert classify(site) == "missing", body
+
+
+def test_walk_keeps_an_ascending_document_id_ordering_unless_it_is_the_last():
+    project = _snippet('''
+    async def read(self, a):
+        await self._col.where(filter=FieldFilter("a", "==", 1)).order_by(FieldPath.document_id()).order_by("created_at").get()
+''')
+    site = next(iter(project.sites.values()))
+    assert ("order_by", "__name__", "ASCENDING") in _tuples(site)
+
+
+def test_walk_records_a_query_handed_to_a_call_it_cannot_enter():
+    project = _snippet('''
+    async def read(self, tx):
+        await tx.get(self._col.where(filter=FieldFilter("a", "==", 1)).order_by("b"))
+''')
+    assert project.opaque == {("src/adapters/snippet.py", "Repo.read")}
+
+
+def test_an_unfollowed_call_is_listed_by_its_text():
+    project = _snippet('''
+    async def read(self, query):
+        return query.where(filter=FieldFilter("a", "==", 1))
+''')
+    loc = next(l for l in project.calls if l not in project.covered)
+    assert project.call_text[loc] == "where(filter=FieldFilter('a', '==', 1))"
