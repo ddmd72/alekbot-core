@@ -93,9 +93,9 @@ async def test_team_invite_consumption(invite_service, mock_user_repo, mock_acco
     updated_joiner = mock_user_repo.update_user.call_args[0][0]
     assert updated_joiner.account_id == "acc-owner"
     
-    # Account IAM policy updated
-    updated_account = mock_account_repo.update_account.call_args[0][0]
-    assert updated_account.iam_policy["joiner"] == "MEMBER"
+    # Account IAM policy updated (the one member entry, written by its field path)
+    _, member, role = mock_account_repo.set_member_role.call_args.args
+    assert (member, role) == ("joiner", "MEMBER")
     
     # Code marked used
     stored_invite = await invite_service.repo.get_by_code(code.code)
