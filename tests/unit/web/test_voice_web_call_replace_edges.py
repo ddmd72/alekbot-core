@@ -20,22 +20,23 @@ async def _start(w):
 async def test_a_call_that_ends_between_the_refused_claim_and_the_holder_read_is_claimed_with_its_owner():
     w = World()
     await w.live_web_call()
-    store_get = w.store.get
-    marker_reads = []
+    store_claim = w.store.set_if_absent
+    marker_claims = []
 
-    async def get(key):
-        value = await store_get(key)
+    async def set_if_absent(key, value, ttl_s):
+        claimed = await store_claim(key, value, ttl_s)
         if key == MARKER:
-            marker_reads.append(value)
-            if len(marker_reads) == 1:  # the claim's read sees the running call; it ends right after
+            marker_claims.append(claimed)
+            if len(marker_claims) == 1:  # the claim is refused by the running call; it ends right after
                 w.store.data.pop(MARKER, None)
-        return value
+        return claimed
 
-    w.store.get = get
+    w.store.set_if_absent = set_if_absent
 
     resp, body = await _start(w)
 
     assert resp.status_code == 201
+    assert marker_claims == [False, True]  # refused while the call ran, claimed once it had ended
     assert w.room.closed == []  # nothing left to replace
     ticket = await open_ticket(CIPHER, f"voice_web_call:{body['call_id']}", w.store.data[f"voice_web_call:{body['call_id']}"])
     assert w.store.data[MARKER] == {"in_flight": True, "call_id": body["call_id"],
