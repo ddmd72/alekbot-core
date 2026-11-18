@@ -40,6 +40,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate
 from ..domain.exceptions import WorkspaceRefused
+from ..domain.local_time import wall_time_instant
 from ..domain.task_complexity import TaskComplexity
 from ..domain.workspace import (
     BINDING_INSTRUCTION_NOTE,
@@ -210,22 +211,14 @@ def _resolve_tz(timezone_str: Optional[str]) -> ZoneInfo:
 
 
 def _parse_dt(value: Optional[str], user_tz: ZoneInfo) -> Optional[datetime]:
-    """
-    Parse ISO-8601 string to UTC datetime.
-
-    - If the string has timezone info → convert to UTC.
-    - If naive (no tz) → interpret as user's local time, then convert to UTC.
-    """
+    """ISO-8601 → UTC datetime (`wall_time_instant`: a naive time is the user's wall time). None when absent,
+    unreadable, or a local time the clocks skip."""
     if not value:
         return None
     try:
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            # Naive: assume user's local timezone
-            dt = dt.replace(tzinfo=user_tz)
-        return dt.astimezone(timezone.utc)
-    except (ValueError, TypeError):
-        logger.warning("⚠️ [NotesAgent] Could not parse datetime: %r", value)
+        return wall_time_instant(value, user_tz)
+    except (ValueError, TypeError) as exc:
+        logger.warning("⚠️ [NotesAgent] Could not parse datetime %r: %s", value, exc)
         return None
 
 

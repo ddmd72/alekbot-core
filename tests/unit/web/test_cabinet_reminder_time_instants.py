@@ -90,7 +90,6 @@ def _wall(value: datetime) -> str:
 
 class TestSkippedSpringTime:
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D5.format("a skipped time is stored (:696)"))
     @pytest.mark.parametrize("zone", ZONES)
     async def test_create_refuses_a_skipped_wall_time(self, zone):
         w = await World().with_user(zone)
@@ -98,7 +97,6 @@ class TestSkippedSpringTime:
         assert resp.status_code == 400, f"status {resp.status_code}, stored {[f'{d:%m-%dT%H:%MZ}' for d in w.stored_dues()]}"
         assert w.stored_dues() == []
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D5.format("a skipped time is stored (:742)"))
     @pytest.mark.parametrize("zone", ZONES)
     async def test_update_refuses_a_skipped_wall_time(self, zone):
         w = await World().with_user(zone)
@@ -135,16 +133,12 @@ class TestRepeatedFallTime:
 
 class TestUnknownStoredZone:
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason=D5.format("an unknown stored zone raises ZoneInfoNotFoundError (:693) → 500"))
     async def test_create_answers_400(self):
         w = await World().with_user(UNKNOWN_ZONE)
         resp = await w.create(_wall(REPEATED_HOUR[ZONES[0]].wall))
         assert w.stored_dues() == []
         assert resp.status_code == 400, f"status {resp.status_code}"
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason=D5.format("an unknown stored zone raises ZoneInfoNotFoundError (:735) → 500"))
     async def test_update_answers_400(self):
         w = await World().with_user(UNKNOWN_ZONE)
         note_id = await w.existing_note()

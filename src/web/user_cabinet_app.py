@@ -741,7 +741,7 @@ def create_user_cabinet_blueprint(
         if not agent_note_port:
             return jsonify({"error": "Reminders not configured"}), 501
         from ..domain.agent_note import NoteCreate
-        from zoneinfo import ZoneInfo
+        from ..domain.local_time import known_zone, wall_time_instant
         try:
             body = await request.get_json(force=True) or {}
             text = (body.get("text") or "").strip()
@@ -751,12 +751,8 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": "text, instruction, and due are required"}), 400
 
             user = await user_repo.get_user(g.user_id)
-            user_tz = ZoneInfo(user.config.timezone if user else "UTC")
-            due = datetime.fromisoformat(due_raw)
-            if due.tzinfo is None:
-                due = due.replace(tzinfo=user_tz)
-            from datetime import timezone as tz
-            due_utc = due.astimezone(tz.utc)
+            user_tz = known_zone(user.config.timezone if user else "UTC")
+            due_utc = wall_time_instant(due_raw, user_tz)
 
             recurrence = _normalize_rule(body.get("recurrence"))
             if recurrence:
@@ -788,21 +784,15 @@ def create_user_cabinet_blueprint(
         if not agent_note_port:
             return jsonify({"error": "Reminders not configured"}), 501
         from ..domain.agent_note import NoteUpdate
-        from zoneinfo import ZoneInfo
+        from ..domain.local_time import known_zone, wall_time_instant
         try:
             body = await request.get_json(force=True) or {}
-
-            user = await user_repo.get_user(g.user_id)
-            user_tz = ZoneInfo(user.config.timezone if user else "UTC")
 
             due_utc = None
             due_raw = body.get("due")
             if due_raw:
-                due = datetime.fromisoformat(due_raw)
-                if due.tzinfo is None:
-                    due = due.replace(tzinfo=user_tz)
-                from datetime import timezone as tz
-                due_utc = due.astimezone(tz.utc)
+                user = await user_repo.get_user(g.user_id)
+                due_utc = wall_time_instant(due_raw, known_zone(user.config.timezone if user else "UTC"))
 
             recurrence = _normalize_rule(body.get("recurrence"))
             # An explicitly empty recurrence means "stop repeating" — None alone
