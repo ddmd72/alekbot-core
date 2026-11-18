@@ -142,3 +142,33 @@ async def test_stuck_users_are_distinct_and_include_a_gave_up_batch(queue):
 
 async def test_no_batches_no_stuck_users(queue):
     assert await queue.get_stuck_batch_user_ids() == []
+
+
+# --------------------------------------------------------------------------------------------------- create-if-absent
+
+async def test_a_repeated_enqueue_keeps_a_picked_up_batch_as_stored(queue):
+    """A re-delivered overflow batch (same id) must not reset a batch a run already took: status, attempts and the
+    PROCESSING stamp stay, and the call still returns the id."""
+    await put(queue, "b1", 1.0)
+    await queue.update_batch_status("b1", BatchStatus.PROCESSING)
+    assert await queue.increment_attempts("b1") == 1
+    before = dict(docs(queue)["b1"])
+    assert await queue.enqueue_batch(ConsolidationBatch(batch_id="b1", user_id="u1", session_id="u1:C1",
+                                                        messages=MESSAGES, created_at=9.0)) == "b1"
+    assert docs(queue)["b1"] == before
+    assert before["status"] == "processing" and before["attempts"] == 1
+
+
+async def test_a_repeated_enqueue_keeps_a_failed_batch_failed(queue):
+    await put(queue, "b1", 1.0)
+    await queue.update_batch_status("b1", BatchStatus.FAILED, error="agent failed")
+    await put(queue, "b1", 9.0)
+    assert docs(queue)["b1"]["status"] == "failed" and docs(queue)["b1"]["created_at"] == 1.0
+    assert ids(await queue.get_pending_batches("u1")) == []
+
+
+async def test_an_enqueue_after_the_batch_was_deleted_stores_it_again(queue):
+    await put(queue, "b1", 1.0)
+    await queue.delete_batch("b1")
+    await put(queue, "b1", 2.0)
+    assert ids(await queue.get_pending_batches("u1")) == ["b1"]

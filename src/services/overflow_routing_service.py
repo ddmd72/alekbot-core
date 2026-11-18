@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import List, Optional, TYPE_CHECKING
 
 from ..domain.companion_extraction import CompanionExtractionBatch
-from ..domain.consolidation import ConsolidationBatch
+from ..domain.consolidation import ConsolidationBatch, handoff_key
 from ..domain.consolidation_serialization import serialize_messages_for_consolidation
 from ..domain.llm import Message
 from ..ports.companion_extraction_queue import CompanionExtractionQueue
@@ -54,6 +54,10 @@ class OverflowRoutingService:
         self._task_queue = task_queue
 
     async def route_overflow(self, user_id: str, session_id: str, messages: List[Message]) -> None:
+        """Queue one overflow batch and its task. Raises (logged) when the batch or its task could not be queued: the
+        session store then keeps the messages and hands them off again at the next append. The batch id is
+        `handoff_key` of the messages and the queue is create-if-absent, so a repeated hand-off keeps the first record as
+        stored (owner decision O2)."""
         try:
             binding = await self._resolve_binding(session_id)
 
@@ -64,9 +68,10 @@ class OverflowRoutingService:
         except Exception as e:
             logger.error(
                 f"❌ Error in overflow routing for user={user_id[:8]} "
-                f"session={session_id[:16]}: {e}",
+                f"session={session_id[:16]}: {e} — the batch stays in the session",
                 exc_info=True,
             )
+            raise
 
     async def _resolve_binding(self, session_id: str):
         """Look up the channel binding for this overflow's session, failing OPEN.
@@ -92,7 +97,8 @@ class OverflowRoutingService:
 
     async def _route_to_alek(self, user_id: str, session_id: str, messages: List[Message]) -> None:
         serialized = serialize_messages_for_consolidation(messages)
-        batch = ConsolidationBatch(user_id=user_id, session_id=session_id, messages=serialized)
+        batch = ConsolidationBatch(batch_id=f"batch_{handoff_key(session_id, messages)}", user_id=user_id,
+                                   session_id=session_id, messages=serialized)
 
         if self._consolidation_queue:
             batch_id = await self._consolidation_queue.enqueue_batch(batch)
@@ -120,6 +126,7 @@ class OverflowRoutingService:
         text_mode = binding.companion_config.text_mode
         serialized = serialize_messages_for_consolidation(messages, text_mode=text_mode)
         batch = CompanionExtractionBatch(
+            batch_id=f"cbatch_{handoff_key(session_id, messages)}",
             session_id=session_id,
             account_id=account_id,
             companion_type=binding.agent_type,

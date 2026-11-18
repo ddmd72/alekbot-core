@@ -88,7 +88,8 @@ async def test_without_a_service_the_consolidate_command_still_only_enqueues():
     message = MagicMock(role="user", created_at="2026-01-01T00:00:00")
     message.parts = [MagicMock(text="hello", consolidation_text=None)]
     session.extract_oldest_messages = MagicMock(return_value=[message])
-    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock())
+    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock(),
+                      remove_head=AsyncMock(return_value=True))
     agent_factory = MagicMock(get_session_store=MagicMock(return_value=store), ensure_agents_for_user=AsyncMock())
     handler = ConversationHandler(
         coordinator=MagicMock(), agent_factory=agent_factory,

@@ -123,7 +123,8 @@ class LanguagePreferenceService:
 
         user.config.preferred_language = preferred_language
         user.config.agent_mirror = agent_mirror
-        await self._user_repo.update_user(user)
+        # Field-level: a concurrent change of another field (a sign-in refreshing auth_metadata) is kept.
+        await self._user_repo.update_user_fields(user, ("config.preferred_language", "config.agent_mirror"))
 
         # Update prompt override: swap language token atomically.
         if agent_mirror:

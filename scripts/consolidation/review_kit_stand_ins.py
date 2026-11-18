@@ -142,6 +142,9 @@ class NoAppendSessions(SessionStore):
     async def save_session(self, session_id: str, state: SessionState) -> None:
         raise LiveEffectRefused("the dry-run kit does not save sessions")
 
+    async def remove_head(self, session_id: str, messages: List[Message]) -> bool:
+        raise LiveEffectRefused("the dry-run kit does not cut sessions")
+
     async def append_message(self, session_id: str, message: Message, owner_id: Optional[str] = None) -> None:
         self.appended.append((session_id, [message]))
 

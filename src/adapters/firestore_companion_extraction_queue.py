@@ -7,6 +7,7 @@ session_id in place of user_id throughout.
 import logging
 import time
 from typing import Any, Dict, List, Optional
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
@@ -26,8 +27,9 @@ _ZOMBIE_THRESHOLD_SECONDS = 1800
 
 class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
     """Firestore mechanics (the port states the observable contract): collection
-    `EnvironmentConfig.companion_extraction_queue_collection`, document id = `batch_id` (`cbatch_<12 hex>`), body
-    `CompanionExtractionBatch.model_dump()` written with a plain `set`. `get_pending_batches` needs the composite index
+    `EnvironmentConfig.companion_extraction_queue_collection`, document id = `batch_id` (`cbatch_<24 hex>` from the
+    overflow, `cbatch_<12 hex>` by default), body `CompanionExtractionBatch.model_dump()` written with `create` (an
+    existing id raises AlreadyExists, taken as success). `get_pending_batches` needs the composite index
     (session_id, status, created_at); `get_stuck_session_ids` is a `select(["session_id"])` projection;
     `increment_attempts` is a get then an update; `reset_recoverable_batches` one update per batch, no precondition."""
 
@@ -40,7 +42,11 @@ class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
 
     async def enqueue_batch(self, batch: CompanionExtractionBatch) -> str:
         doc_ref = self.collection.document(batch.batch_id)
-        await doc_ref.set(batch.model_dump())
+        try:
+            await doc_ref.create(batch.model_dump())
+        except AlreadyExists:
+            # A repeated hand-off (same deterministic id): the stored batch keeps its status and attempts.
+            logger.info(f"📦 Batch {batch.batch_id} already queued; kept as stored")
         return batch.batch_id
 
     async def get_pending_batches(

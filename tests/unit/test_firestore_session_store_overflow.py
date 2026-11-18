@@ -8,6 +8,10 @@ from src.ports.llm_port import Message, MessagePart
 async def test_session_store_overflow_logic():
     """
     Verify that FirestoreSessionStore extracts messages and triggers callback on overflow.
+
+    Owner decision O2: the append stores every message, the batch is handed to the callback, and only then is it cut
+    (`remove_head`, a second transaction). The mocked document is written through (`stored`), so the cut reads what
+    the append wrote and the final assertions are on the stored history after the cut.
     """
     mock_db = MagicMock()
     mock_doc = MagicMock()
@@ -16,17 +20,16 @@ async def test_session_store_overflow_logic():
     existing_history = [
         {"role": "user", "parts": [{"text": f"msg {i}"}]} for i in range(5)
     ]
-    mock_doc.get = AsyncMock(return_value=MagicMock(
-        exists=True,
-        to_dict=lambda: {"owner_id": "user1", "history": existing_history, "created_at": 1000}
-    ))
+    stored = {"owner_id": "user1", "history": existing_history, "created_at": 1000}
+    mock_doc.get = AsyncMock(side_effect=lambda *a, **k: MagicMock(exists=True, to_dict=lambda: dict(stored)))
     mock_doc.set = AsyncMock()
     mock_db.collection.return_value.document.return_value = mock_doc
     
-    # Mock transaction
+    # Mock transaction (writes go to `stored`)
     mock_transaction = AsyncMock()
-    mock_transaction.get = AsyncMock(return_value=mock_doc.get.return_value)
-    mock_transaction.set = MagicMock()
+    mock_transaction.get = AsyncMock(side_effect=mock_doc.get.side_effect)
+    mock_transaction.set = MagicMock(side_effect=lambda ref, data, merge=False: stored.update(data))
+    mock_transaction.update = MagicMock(side_effect=lambda ref, data: stored.update(data))
     mock_db.transaction.return_value = mock_transaction
     
     # Callback tracker
@@ -60,27 +63,32 @@ async def test_session_store_overflow_logic():
     with patch("google.cloud.firestore.async_transactional", lambda x: x):
         await store.append_messages_batch("sess1", new_messages)
     
-    # 4. Verify overflow logic
-    # Expected: 7 messages total. Threshold 5. 
-    # Batch 3 extracted. 7 - 3 = 4 remaining in hot storage.
+        # 4. Verify overflow logic
+        # Expected: 7 messages total. Threshold 5. 
+        # Batch 3 extracted. 7 - 3 = 4 remaining in hot storage.
     
-    # Wait for background task
-    try:
-        await asyncio.wait_for(callback_called.wait(), timeout=1.0)
-    except asyncio.TimeoutError:
-        pytest.fail("Callback was not triggered within timeout")
+        # Wait for background task (the hand-off, then the cut, both under the patched decorator)
+        try:
+            await asyncio.wait_for(callback_called.wait(), timeout=1.0)
+            await asyncio.wait_for(asyncio.gather(*list(store._pending_tasks)), timeout=1.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Callback was not triggered within timeout")
         
     assert callback_called.is_set()
     assert captured_data['user_id'] == "user1"
     assert len(captured_data['messages']) == 3
     assert captured_data['messages'][0].parts[0].text == "msg 0"
     
-    # Verify what was saved to Firestore
+    # The append wrote every message (O2: nothing leaves the session before its hand-off)
     args, kwargs = mock_transaction.set.call_args
-    saved_data = args[1]  # transaction.set(doc_ref, data, merge=True)
-    assert len(saved_data["history"]) == 4
-    assert saved_data["history"][0]["parts"][0]["text"] == "msg 3"
-    assert saved_data["history"][-1]["parts"][0]["text"] == "new 2"
+    appended = args[1]  # transaction.set(doc_ref, data, merge=True)
+    assert [m["parts"][0]["text"] for m in appended["history"]] == [f"msg {i}" for i in range(5)] + ["new 1", "new 2"]
+
+    # Verify what is stored after the cut
+    saved_history = stored["history"]
+    assert len(saved_history) == 4
+    assert saved_history[0]["parts"][0]["text"] == "msg 3"
+    assert saved_history[-1]["parts"][0]["text"] == "new 2"
 
 
 def test_consolidation_serializer_includes_consolidation_text_parts():

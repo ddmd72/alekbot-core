@@ -181,7 +181,8 @@ class AuthenticationService:
             }
             logger.debug(f"🔄 Updating user metadata: {user.user_id}")
             try:
-                user = await self.user_repo.update_user(user)
+                # Field-level: a concurrent change of another field (a language switch) is kept.
+                user = await self.user_repo.update_user_fields(user, ("auth_metadata",))
             except Exception as e:
                 logger.error(f"❌ Failed to update user: {e}", exc_info=True)
                 raise

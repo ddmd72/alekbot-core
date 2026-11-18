@@ -2,10 +2,12 @@
 the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on the raw stored documents and on what
 `load_session` returns, never on calls.
 
-The two defects of this store are pinned through their real callers, in caller-named files (arbiter rule 2):
-P11-G2-3 (a cut batch lost when its hand-off fails) in `tests/unit/services/test_overflow_routing_service_store_pins.py`,
-P11-G2-5 (the chat-turn history retry never runs) in `tests/unit/handlers/test_conversation_handler_store_pins.py` and
-`tests/unit/services/test_long_turn_service_store_pins.py`.
+The two former defects of this store are pinned through their real callers, in caller-named files (arbiter rule 2), and
+both pins now pass: P11-G2-3 (a batch lost when its hand-off failed; fixed by owner decision O2, the batch is cut only
+after its hand-off) in `tests/unit/services/test_overflow_routing_service_store_pins.py`, P11-G2-5 (the chat-turn history
+retry never ran) in `tests/unit/handlers/test_conversation_handler_store_pins.py` and
+`tests/unit/services/test_long_turn_service_store_pins.py`. The hand-off-first window itself is checked here
+(section "hand-off first (O2)").
 """
 import asyncio
 import time
@@ -325,7 +327,7 @@ async def test_a_failing_hand_off_leaves_the_append_stored(store, handoffs):
     store.overflow_callback = broken
     await append_each(store, 5)
     await settle(store)
-    assert texts(store) == TEXTS[2:5]
+    assert texts(store) == TEXTS[:5]        # the append is stored, and the batch whose hand-off failed stays (O2)
 
 
 # --------------------------------------------------------------------------------------------------- latest session id
@@ -343,3 +345,119 @@ async def test_latest_session_id_without_the_index_reads_none():
     store = make_store(db=EvalDb(indexes=[]))
     docs(store)["u1:C1"] = {"history": [], "owner_id": "u1", "last_activity": 10.0}
     assert await store.get_latest_session_id("u1") is None
+
+
+# --------------------------------------------------------------------------------------------------- hand-off first (O2)
+
+class FailFirst(Handoffs):
+    """The overflow callback that raises on its first call, as a failed enqueue does, then records like Handoffs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = 0
+
+    async def __call__(self, owner, session_id, messages):
+        if self.failed == 0:
+            self.failed += 1
+            raise ServiceUnavailable("503 UNAVAILABLE the queue write failed")
+        await super().__call__(owner, session_id, messages)
+
+
+async def test_a_failed_hand_off_keeps_the_batch_and_the_next_append_hands_it_off_again(kit_db):
+    handoffs = FailFirst()
+    store = make_store(new_db(kit_db), handoffs=handoffs)
+    await append_each(store, 5)
+    await settle(store)
+    assert texts(store) == TEXTS[:5] and handoffs.failed == 1 and handoffs.calls == []
+    await store.append_messages_batch(SID, [msg(TEXTS[5])], owner_id="u1")
+    await settle(store)
+    assert handoffs.calls == [("u1", SID, TEXTS[:2])]
+    assert texts(store) == TEXTS[2:6]
+
+
+async def test_without_a_callback_the_window_is_cut_with_the_append(kit_db):
+    store = make_store(new_db(kit_db))
+    await append_each(store, 5)
+    assert texts(store) == TEXTS[2:5] and store._pending_tasks == set()
+
+
+async def test_remove_head_cuts_the_stored_head_and_keeps_what_was_appended_after(store):
+    await append_each(store, 3)
+    head = (await store.load_session(SID)).history[:2]
+    await store.append_messages_batch(SID, [msg(TEXTS[3])], owner_id="u1")
+    assert await store.remove_head(SID, head) is True
+    assert texts(store) == TEXTS[2:4]
+    assert await store.remove_head(SID, head) is False              # already cut: the head changed
+    assert texts(store) == TEXTS[2:4]
+
+
+async def test_remove_head_of_messages_that_are_not_the_head_or_of_a_missing_session_cuts_nothing(store):
+    await append_each(store, 3)
+    middle = (await store.load_session(SID)).history[1:3]
+    assert await store.remove_head(SID, middle) is False
+    assert await store.remove_head(SID, []) is False
+    assert await store.remove_head(SID2, middle) is False
+    assert texts(store) == TEXTS[:3] and SID2 not in docs(store)
+
+
+@pytest.mark.h1_only("injects a conflicting commit with interfere_on_txn_read")
+async def test_remove_head_keeps_a_message_appended_during_the_cut(store):
+    await append_each(store, 3)
+    head = (await store.load_session(SID)).history[:2]
+    stored = docs(store)[SID]["history"]
+    # an append commits between the cut's read and its commit: the cut re-runs on the new history
+    store.db.interfere_on_txn_read(SESS, SID, {"history": stored + [raw(TEXTS[3])]}, after_read=True)
+    assert await store.remove_head(SID, head) is True
+    assert texts(store) == TEXTS[2:4]
+
+
+# --------------------------------------------------------------------------------------------------- the ceiling (F3)
+
+class AlwaysFails:
+    """The overflow callback of a hand-off that fails every time (a deterministic error)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, owner, session_id, messages):
+        self.calls += 1
+        raise ValueError("the batch is refused every time")
+
+
+def numbered(n):
+    return [f"message {i}" for i in range(n)]
+
+
+async def test_past_the_ceiling_the_oldest_batch_is_cut_without_a_hand_off_and_logged(kit_db, caplog):
+    failing = AlwaysFails()
+    store = make_store(new_db(kit_db), handoffs=failing)          # window 4, batch 2: ceiling 2 x 4 = 8
+    for text in numbered(8):
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+        await settle(store)
+    assert texts(store) == numbered(8) and failing.calls > 0       # at the ceiling, nothing is cut yet
+    assert "🚨" not in caplog.text
+    await store.append_messages_batch(SID, [msg("message 8")], owner_id="u1")
+    await settle(store)
+    assert texts(store) == numbered(9)[2:]                         # the oldest batch of 2 is gone
+    [line] = [r.getMessage() for r in caplog.records if "🚨" in r.getMessage()]
+    assert SID in line and "oldest 2 messages" in line
+
+
+async def test_the_ceiling_follows_the_threshold_resolvers_window(kit_db, caplog):
+    async def resolve(session_id):
+        return (3, 1)                                              # ceiling 2 x 3 = 6
+
+    store = make_store(new_db(kit_db), handoffs=AlwaysFails(), threshold_resolver=resolve)
+    for text in numbered(7):
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+        await settle(store)
+    assert texts(store) == numbered(7)[1:]
+    assert sum("🚨" in r.getMessage() for r in caplog.records) == 1
+
+
+async def test_a_session_whose_hand_offs_succeed_never_reaches_the_ceiling(store, handoffs, caplog):
+    for text in numbered(12):
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+        await settle(store)
+    assert len(texts(store)) <= 4 and "🚨" not in caplog.text
+    assert [m for _, _, batch in handoffs.calls for m in batch] + texts(store) == numbered(12)

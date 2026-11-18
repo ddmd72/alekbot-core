@@ -36,8 +36,19 @@ class SessionStore(ABC):
         """Replace the stored history, created_at, last_activity and owner (owner defaults to the session id).
 
         Atomicity: a whole-history replace with no precondition; an append between the caller's load and this save
-        is lost (P15-S3, the `$consolidate` command).
+        is lost. To cut handed-off messages use remove_head.
         Errors: logged and swallowed.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def remove_head(self, session_id: str, messages: list[Message]) -> bool:
+        """Cut `messages` from the start of the history if it still starts with them; True when they were cut.
+
+        Used after a batch was handed off to a queue (the overflow window, `$consolidate`). The head is compared as
+        stored (role, parts, created_at), so a batch another caller cut meanwhile is not cut twice (False).
+        Atomicity: one atomic read-and-write; a message appended meanwhile is kept.
+        Errors: logged and re-raised.
         """
         raise NotImplementedError
 
@@ -58,17 +69,20 @@ class SessionStore(ABC):
         """Append messages at the end, all or none, then apply the sliding window.
 
         Window (an append to an existing session): while the history is longer than the window (the store's
-        values, or the threshold resolver's (max, batch) for this session), the oldest `batch` messages are cut and
-        each cut batch is handed to the overflow callback, oldest first, after the append is stored. The first
-        append to a new session is stored whole.
-        Atomicity: concurrent appends to one session are all kept. The cut and the hand-off are not atomic: the cut
-        is stored first, so a failed hand-off loses that batch (P11-G2-3; the memory map lists it as a known loss).
+        values, or the threshold resolver's (max, batch) for this session), the oldest `batch` messages form a batch.
+        The append is stored whole; then each batch is handed to the overflow callback, oldest first, and cut from the
+        session only after its hand-off returned (owner decision O2): a hand-off that raises leaves that batch and the
+        later ones stored, and the next append over the window hands them off again, so the callback must accept a
+        repeated batch. Ceiling: a history past a store-defined multiple of the window (hand-offs failing every time)
+        has its oldest batches cut with the append without a hand-off; they are lost to memory and logged.
+        Without a callback the batches are cut with the append. The first append to a new session is stored whole.
+        Atomicity: concurrent appends to one session are all kept; the cut is a separate atomic step (remove_head).
         Idempotency: none; a repeated call appends the messages again.
         Expiry: does not apply the 90-day expiry; an append to an idle session keeps its old history.
         Errors: by default a failed append is logged and swallowed (nothing stored, no exception), so it must not
         crash the response pipeline; with `raise_on_error=True` it is logged and re-raised. A caller that retries
-        (retry_store_write) or must know whether the messages were stored passes raise_on_error=True (P11-G2-5:
-        the chat-turn and long-turn saves retry without it, so their retry never runs).
+        (retry_store_write) or must know whether the messages were stored passes raise_on_error=True (the chat-turn
+        and long-turn saves do, so their retry runs).
         """
         raise NotImplementedError
 

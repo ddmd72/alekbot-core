@@ -1035,14 +1035,19 @@ class ConversationHandler(ConversationHandlerPort):
             # session store); a companion-type binding (companion_config set) flips
             # write_session=True and writes under mode.write_session_id instead.
             if mode.write_session:
-                await self._save_history_with_retry(
-                    session_store=session_store,
-                    session_id=mode.write_session_id or context.session_id,
-                    user_parts=clean_message_parts,
-                    history_text=history_text,
-                    response_text=response_text,
-                    owner_id=context.user_id,
-                )
+                try:
+                    await self._save_history_with_retry(
+                        session_store=session_store,
+                        session_id=mode.write_session_id or context.session_id,
+                        user_parts=clean_message_parts,
+                        history_text=history_text,
+                        response_text=response_text,
+                        owner_id=context.user_id,
+                    )
+                except Exception as e:
+                    # The answer is already delivered: a lost history pair is logged, never an error reply.
+                    logger.error(f"❌ [ConversationHandler] history save failed for {context.session_id[:16]}: {e}",
+                                 exc_info=True)
 
             logger.info(f"🏁 END ConversationHandler.handle_message ({time.time() - start_time:.2f}s)")
 
@@ -1428,7 +1433,7 @@ class ConversationHandler(ConversationHandlerPort):
             Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
         ]
         await retry_store_write(
-            lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id),
+            lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id, raise_on_error=True),
             label="History save", max_attempts=max_attempts,
         )
 
@@ -1530,8 +1535,9 @@ class ConversationHandler(ConversationHandlerPort):
                         "created_at": msg.created_at,
                     })
 
-                from src.domain.consolidation import ConsolidationBatch
+                from src.domain.consolidation import ConsolidationBatch, handoff_key
                 batch = ConsolidationBatch(
+                    batch_id=f"batch_{handoff_key(session.session_id, old_messages)}",
                     user_id=session.user_id,
                     session_id=session.session_id,
                     messages=serialized
@@ -1546,11 +1552,11 @@ class ConversationHandler(ConversationHandlerPort):
                 )
                 await response_channel.send_status(StatusType.THINKING, thread_id=context.thread_id)
 
-                # Enqueue
+                # Enqueue first, then cut exactly these messages from the stored session: a pair appended since the
+                # load is kept (P15-S3), and a repeat after a failed cut replaces the same batch id.
                 await self.consolidation_queue.enqueue_batch(batch)
-                
-                # Save trimmed session
-                await session_store.save_session(session.session_id, session)
+                if not await session_store.remove_head(session.session_id, old_messages):
+                    logger.warning(f"⚠️ [$consolidate] the batch was no longer at the head of {session.session_id[:16]}")
                 
                 # Process — await keeps HTTP request alive → full CPU on Cloud Run
                 try:

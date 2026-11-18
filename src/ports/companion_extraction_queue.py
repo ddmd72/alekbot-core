@@ -18,7 +18,7 @@ class CompanionExtractionQueue(ABC):
 
     Holds for every method:
     - Tenancy: reads take a session_id (user_id:channel_id or platform:channel_id) and return only that session's
-      batches; account_id travels in the batch; writes by batch_id (a random id) are unscoped.
+      batches; account_id travels in the batch; writes by batch_id are unscoped.
     - Atomicity: no claim and no lease: two concurrent readers process the same batch (P15-D5).
     - Legacy: a stored batch is read as a CompanionExtractionBatch (unknown fields ignored). A batch missing a required
       field or `created_at`: no writer produces one; behaviour pending the data audit.
@@ -26,9 +26,11 @@ class CompanionExtractionQueue(ABC):
 
     @abstractmethod
     async def enqueue_batch(self, batch: CompanionExtractionBatch) -> str:
-        """Store the batch under its batch_id (a replace). Returns batch_id.
+        """Store the batch under its batch_id if no batch has that id. Returns batch_id.
 
-        Idempotency: the same batch twice is one record."""
+        Idempotency: create-if-absent. A batch whose id is already stored (a repeated overflow hand-off: the id is
+        `handoff_key` of its messages) is left as it is, status and attempts included, and the call succeeds; a
+        batch already processed and deleted is stored again."""
 
     @abstractmethod
     async def get_pending_batches(

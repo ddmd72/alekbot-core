@@ -2,9 +2,9 @@
 `FirestoreIndexedEmailRepository` on the evaluating Firestore fake (H1), with the index refusal ON (vector indexes
 included). Assertions are on the raw stored documents and on what readers return.
 
-One strict xfail: P11-G2-1 (a re-saved email loses consolidated_at). The vector search, the pending-embedding reads
-and `update_vectors` (and the xfail P11-G2-2 of the vector search) were removed with the v1 vectors (email index v2,
-slice 10).
+P11-G2-1 (a re-saved email lost consolidated_at) is fixed; its former pin passes. The vector search, the
+pending-embedding reads and `update_vectors` (and the xfail P11-G2-2 of the vector search) were removed with the v1
+vectors (email index v2, slice 10).
 """
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -130,8 +130,6 @@ async def test_mark_consolidated_on_a_deleted_fact_raises_not_found_and_applies_
     assert raised is not None and docs(repo)["u1_e1"]["consolidated_at"] is None
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G2-1: re-saving a consolidated email clears consolidated_at, so it is consolidated again"))
 async def test_re_saving_a_consolidated_email_keeps_it_consolidated(repo):
     """Flips when save_batch carries a stored non-null consolidated_at into the re-saved document."""
     await repo.save_batch([email("e1")])
@@ -139,3 +137,24 @@ async def test_re_saving_a_consolidated_email_keeps_it_consolidated(repo):
     require(await repo.get_unconsolidated_batch("u1") == [], "e1 is consolidated before the re-save")
     await repo.save_batch([email("e1")])
     assert await repo.get_unconsolidated_batch("u1") == []
+
+
+async def test_re_saving_with_a_consolidated_at_writes_the_sent_one(repo):
+    await repo.save_batch([email("e1")])
+    await repo.mark_consolidated("u1", ["e1"], D0)
+    later = D0 + timedelta(days=1)
+    await repo.save_batch([email("e1", consolidated_at=later, subject="Bathroom repair invoice, updated")])
+    stored = docs(repo)["u1_e1"]
+    assert stored["consolidated_at"] == later.replace(tzinfo=timezone.utc)
+    assert stored["subject"] == "Bathroom repair invoice, updated"
+
+
+async def test_re_saving_keeps_each_emails_own_mark_and_replaces_the_rest(repo):
+    await repo.save_batch([email("e1"), email("e2"), email("e1", user_id="u2")])
+    await repo.mark_consolidated("u1", ["e1"], D0)
+    await repo.save_batch([email("e1", subject="Re-indexed"), email("e2", subject="Re-indexed"),
+                           email("e1", user_id="u2", subject="Re-indexed"), email("e3")])
+    assert docs(repo)["u1_e1"]["consolidated_at"] == D0.replace(tzinfo=timezone.utc)
+    assert docs(repo)["u1_e1"]["subject"] == "Re-indexed"
+    assert sorted(ids(await repo.get_unconsolidated_batch("u1"))) == ["e2", "e3"]
+    assert ids(await repo.get_unconsolidated_batch("u2")) == ["e1"]

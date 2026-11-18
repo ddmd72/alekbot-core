@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 import src.adapters.firestore_user_repo as user_module
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -175,3 +176,33 @@ async def test_serial_updates_keep_both_changes(repo):
     await repo.update_user(second)
     stored = docs(repo)["u1"]["config"]
     assert (stored["timezone"], stored["location"]) == ("Europe/Berlin", "Springfield")
+
+
+async def test_field_updates_from_two_stale_reads_keep_both_changes(repo, monkeypatch):
+    await repo.create_user(alex())
+    first, second = await repo.get_user("u1"), await repo.get_user("u1")   # both read before either writes
+    later = datetime(2026, 10, 27, 9, 30, tzinfo=timezone.utc)
+    pin_datetime(monkeypatch, user_module, later)
+    first.config.timezone, first.display_name = "Europe/Berlin", "not written"
+    await repo.update_user_fields(first, ("config.timezone",))
+    second.auth_metadata = {"locale": "pt-PT"}
+    returned = await repo.update_user_fields(second, ("auth_metadata",))
+    stored = docs(repo)["u1"]
+    assert (stored["config"]["timezone"], stored["auth_metadata"], stored["display_name"]) == \
+        ("Europe/Berlin", {"locale": "pt-PT"}, "Alex Doe")
+    assert stored["updated_at"] == later == returned.updated_at
+    assert stored["config"]["location"] == alex().config.location          # the rest of config is untouched
+
+
+async def test_field_update_of_an_unknown_path_raises_and_writes_nothing(repo):
+    await repo.create_user(alex())
+    before = dict(docs(repo)["u1"])
+    with pytest.raises(ValueError, match="config.no_such_field"):
+        await repo.update_user_fields(alex(), ("config.no_such_field",))
+    assert docs(repo)["u1"] == before
+
+
+async def test_field_update_of_a_missing_user_raises_not_found(repo):
+    with pytest.raises(NotFound):
+        await repo.update_user_fields(alex(), ("display_name",))
+    assert "u1" not in docs(repo)

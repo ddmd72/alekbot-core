@@ -20,7 +20,7 @@ async def test_sliding_window_trigger_logic():
     session_store.save_session = AsyncMock()
     
     # Mock append_messages_batch to simulate overflow and trigger callback
-    async def mock_append(session_id, messages, owner_id=None):
+    async def mock_append(session_id, messages, owner_id=None, raise_on_error=False):
         if len(messages) > 0 and session_store.overflow_callback:
             # Simulate that we reached threshold
             await session_store.overflow_callback(owner_id, session_id, messages)

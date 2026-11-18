@@ -17,6 +17,14 @@ from ..ports.llm_port import Message, MessagePart, ToolCall
 from ..utils.logger import logger
 
 
+# Safety valve for an overflow hand-off that fails every time (a deterministic error): the batches then stay in the
+# session and it keeps growing until an append fails on Firestore's 1 MiB document limit, and every later turn is lost
+# from history. Past this many windows the oldest batches are cut without a hand-off (lost, logged 🚨). Two windows (140
+# messages live) is about 35 turns of consecutive failed hand-offs, far past a transient outage that the next appends
+# heal, while keeping the document within twice its normal size, well clear of the limit even with long replies.
+OVERFLOW_CEILING_WINDOWS = 2
+
+
 class FirestoreSessionStore(SessionStore):
     """
     Manages session state persistence in Firestore.
@@ -28,8 +36,13 @@ class FirestoreSessionStore(SessionStore):
       expiry is the lazy 90-day check in `load_session`.
     - `append_messages_batch` reads and writes the document in one transaction (`set(merge=True)`); a conflicting
       commit re-runs the body, so concurrent appends are all kept. The threshold resolver runs once, before the
-      transaction. The window is applied only when the document already exists. Each cut batch goes to the overflow
-      callback as a fire-and-forget task after the commit; a failing callback is only logged.
+      transaction. The window is applied only when the document already exists. With an overflow callback the append
+      stores every message, and one tracked task after the commit hands each batch past the window to the callback,
+      then cuts it with `remove_head` (a second transaction); a failed hand-off is logged and leaves the batch stored.
+      Without a callback the batches are cut inside the append's transaction. With one, a history past
+      `OVERFLOW_CEILING_WINDOWS` windows (hand-offs failing every time) has its oldest batches cut inside the append's
+      transaction without a hand-off, logged 🚨 after the commit.
+    - `remove_head` reads the document in a transaction and writes back the stored history after the head (`update`).
     - `save_session` is a `set(merge=True)` with no precondition.
     - `get_latest_session_id` needs the composite index (owner_id ASC, last_activity DESC).
     - `delete_session` and `cleanup_expired_sessions` are not on the port and have no caller in src/.
@@ -208,11 +221,15 @@ class FirestoreSessionStore(SessionStore):
                         session_id[:8], effective_max_history_length, effective_batch_size,
                     )
 
+            ceiling = OVERFLOW_CEILING_WINDOWS * effective_max_history_length
+            dropped: List[int] = []     # sizes of the batches the valve cut, logged after the commit
+
             @firestore.async_transactional
             async def _batch_append(transaction: firestore.AsyncTransaction) -> Optional[Tuple[str, List[List[Message]]]]:
                 doc = await doc_ref.get(transaction=transaction)
                 nonlocal resolved_owner_id
                 extracted_batches = []
+                dropped.clear()
 
                 if not doc.exists:
                     # If owner_id was not passed, fallback to session_id as owner
@@ -232,15 +249,24 @@ class FirestoreSessionStore(SessionStore):
                     history = self._deserialize_history(data.get("history", []))
                     history.extend(messages)
 
-                    # OVERFLOW LOGIC: Extract all batches until within threshold
-                    while len(history) > effective_max_history_length:
-                        batch = history[:effective_batch_size]
-                        history = history[effective_batch_size:]
+                    if self.overflow_callback is not None:
+                        while len(history) > ceiling:
+                            dropped.append(len(history[:effective_batch_size]))
+                            history = history[effective_batch_size:]
+
+                    # OVERFLOW: the oldest batches past the window. With a callback they stay stored until their
+                    # hand-off succeeded (cut afterwards by remove_head); without one they are cut here.
+                    rest = history
+                    while len(rest) > effective_max_history_length:
+                        batch = rest[:effective_batch_size]
+                        rest = rest[effective_batch_size:]
                         extracted_batches.append(batch)
                         logger.info(
                             f"❄️ Overflow batch #{len(extracted_batches)} for {session_id[:8]}... "
-                            f"(extracted={len(batch)}, remaining={len(history)}, max={effective_max_history_length})"
+                            f"(extracted={len(batch)}, remaining={len(rest)}, max={effective_max_history_length})"
                         )
+                    if self.overflow_callback is None:
+                        history = rest
 
                     state = SessionState(
                         history=history,
@@ -266,15 +292,19 @@ class FirestoreSessionStore(SessionStore):
 
             transaction = self.db.transaction()
             result = await _batch_append(transaction)
+            for size in dropped:
+                logger.error(
+                    f"🚨 [SessionStore] {session_id}: the history passed {ceiling} messages "
+                    f"({OVERFLOW_CEILING_WINDOWS} windows) because its overflow hand-offs keep failing; the oldest "
+                    f"{size} messages were cut without a hand-off and are lost to memory"
+                )
 
             if result and self.overflow_callback:
                 owner, batches = result
-                for batch in batches:
-                    logger.info(f"🔔 Triggering overflow callback for user {owner[:8]}... ({len(batch)} messages)")
-                    task = asyncio.create_task(self.overflow_callback(owner, session_id, batch))
-                    self._pending_tasks.add(task)
-                    task.add_done_callback(self._pending_tasks.discard)
-                    task.add_done_callback(self._on_overflow_done)
+                task = asyncio.create_task(self._hand_off(owner, session_id, batches))
+                self._pending_tasks.add(task)
+                task.add_done_callback(self._pending_tasks.discard)
+                task.add_done_callback(self._on_overflow_done)
 
             logger.debug(
                 f"💾 Session {session_id[:8]}... batch saved ({len(messages)} messages)"
@@ -284,6 +314,58 @@ class FirestoreSessionStore(SessionStore):
             if raise_on_error:
                 raise
             # Soft-fail by default: append failure must not crash the response pipeline.
+
+    async def _hand_off(self, owner: str, session_id: str, batches: List[List[Message]]) -> None:
+        """Hand each batch off, oldest first, and cut it from the session only after its hand-off succeeded (owner
+        decision O2). A failed hand-off stops here: that batch and the later ones stay stored, and the next append
+        that finds the session over its window hands them off again (the callback makes a repeat idempotent)."""
+        callback = self.overflow_callback
+        if callback is None:
+            return
+        for batch in batches:
+            logger.info(f"🔔 Triggering overflow callback for user {owner[:8]}... ({len(batch)} messages)")
+            try:
+                await callback(owner, session_id, batch)
+            except Exception as e:
+                logger.error(
+                    f"❌ [SessionStore] Overflow hand-off failed for {session_id[:16]}: {e} — the batch stays in the "
+                    f"session until the next append hands it off again"
+                )
+                return
+            try:
+                cut = await self.remove_head(session_id, batch)
+            except Exception:
+                return  # logged by remove_head; the batch stays and is handed off again (same id)
+            if not cut:
+                logger.info(f"ℹ️ [SessionStore] Overflow batch of {session_id[:16]} was already cut")
+
+    async def remove_head(self, session_id: str, messages: List[Message]) -> bool:
+        """Cut `messages` from the start of the history in one transaction if it still starts with them.
+
+        The head is compared as stored (serialized role, parts and created_at); the rest of the stored history is
+        written back as it was read, so a message appended meanwhile is kept."""
+        if not messages:
+            return False
+        doc_ref = self.db.collection(self.collection_name).document(session_id)
+        expected = self._serialize_history(messages)
+
+        @firestore.async_transactional
+        async def _cut(transaction: firestore.AsyncTransaction) -> bool:
+            doc = await doc_ref.get(transaction=transaction)
+            if not doc.exists:
+                return False
+            stored = (doc.to_dict() or {}).get("history", [])
+            head = self._serialize_history(self._deserialize_history(stored[: len(expected)]))
+            if head != expected:
+                return False
+            transaction.update(doc_ref, {"history": stored[len(expected):], "updated_at": firestore.SERVER_TIMESTAMP})
+            return True
+
+        try:
+            return bool(await _cut(self.db.transaction()))
+        except Exception as e:
+            logger.error(f"❌ Error cutting the head of {session_id[:16]}...: {e}")
+            raise
 
     def _on_overflow_done(self, task: "asyncio.Task") -> None:
         """Log errors from overflow callback tasks — data loss indicator."""

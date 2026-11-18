@@ -1,8 +1,9 @@
 """P15 · J1: `$consolidate` against a message pair appended while it runs.
 
-The command loads the session (conversation_handler.py:1575), trims the oldest batch in memory, acknowledges with the
-`CONSOLIDATION_STARTED` UI string, enqueues the batch and saves the trimmed session whole (`save_session`, :1623). A pair
-appended between the load and the save (a turn finishing in the same chat) is overwritten by that save.
+The command loads the session (`ConversationHandler.handle_command`), takes the oldest batch, acknowledges with the
+`CONSOLIDATION_STARTED` UI string, enqueues the batch and then cuts exactly those messages from the stored session
+(`SessionStore.remove_head`). A pair appended between the load and the cut (a turn finishing in the same chat) is kept
+(P15-S3 fixed; before, the command saved the trimmed session whole and overwrote such a pair).
 
 The race is forced with an `asyncio.Event` gate in the response channel: it holds on the `CONSOLIDATION_STARTED` text
 (after the load, before the save), the test appends the pair to completion, then releases, and asserts the gate was
@@ -11,8 +12,6 @@ the factory and the channel are fakes that keep what they were given.
 """
 import asyncio
 from typing import Any, List, Optional
-
-import pytest
 
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.llm import Message, MessagePart
@@ -120,9 +119,6 @@ class TestConsolidateCommandInterleaving:
         assert texts[-2:] == [p.parts[0].text for p in PAIR]
         assert "old message 0" not in texts  # the oldest batch left the session
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S3: $consolidate saves the session it loaded before the run, overwriting a pair appended in "
-        "between; owner decision"))
     async def test_a_pair_appended_while_the_command_runs_is_still_in_the_session(self):
         """Collections touched: `development_sessions` (the gate, not `yield_on_get`, orders the steps)."""
         store, queue, handler, context = await _world()

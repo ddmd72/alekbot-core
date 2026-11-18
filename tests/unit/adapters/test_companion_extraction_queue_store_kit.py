@@ -126,3 +126,34 @@ async def test_stuck_session_ids_are_distinct(queue):
     for k in ("c1", "c2", "c3"):
         await queue.delete_batch(k)
     assert await queue.get_stuck_session_ids() == []
+
+
+# --------------------------------------------------------------------------------------------------- create-if-absent
+
+async def test_a_repeated_enqueue_keeps_a_picked_up_batch_as_stored(queue):
+    """A re-delivered overflow batch (same id) must not reset a batch a run already took: status, attempts and the
+    PROCESSING stamp stay, and the call still returns the id."""
+    await put(queue, "c1", 1.0)
+    await queue.update_batch_status("c1", BatchStatus.PROCESSING)
+    assert await queue.increment_attempts("c1") == 1
+    before = dict(docs(queue)["c1"])
+    assert await queue.enqueue_batch(CompanionExtractionBatch(
+        batch_id="c1", session_id=SID, account_id="a1", companion_type="tutor", created_by_user_id="u1",
+        messages=MESSAGES, created_at=9.0)) == "c1"
+    assert docs(queue)["c1"] == before
+    assert before["status"] == "processing" and before["attempts"] == 1
+
+
+async def test_a_repeated_enqueue_keeps_a_failed_batch_failed(queue):
+    await put(queue, "c1", 1.0)
+    await queue.update_batch_status("c1", BatchStatus.FAILED, error="agent failed")
+    await put(queue, "c1", 9.0)
+    assert docs(queue)["c1"]["status"] == "failed" and docs(queue)["c1"]["created_at"] == 1.0
+    assert ids(await queue.get_pending_batches(SID)) == []
+
+
+async def test_an_enqueue_after_the_batch_was_deleted_stores_it_again(queue):
+    await put(queue, "c1", 1.0)
+    await queue.delete_batch("c1")
+    await put(queue, "c1", 2.0)
+    assert ids(await queue.get_pending_batches(SID)) == ["c1"]

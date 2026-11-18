@@ -20,3 +20,7 @@ in the Cabinet and is fixed by switching again; turning indexing off still enque
 
 **Trigger to revisit:** a switch that does not stick, a background writer of the user profile (one that runs while
 the user is in the Cabinet), or moving user settings to field-level writes in general.
+
+**Later (P11-G2-4):** the repository now has `update_user_fields` (a field-level update of named paths). The language
+switch and the sign-in's `auth_metadata` refresh use it; this toggle and the other Cabinet settings still write the
+whole document, so a whole-document writer can still revert a field-level change it read before.

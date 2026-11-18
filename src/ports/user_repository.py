@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Sequence
 from ..domain.user import UserProfile
 
 class UserRepository(ABC):
@@ -11,7 +11,8 @@ class UserRepository(ABC):
       by the next create/update. A record that fails UserProfile validation otherwise: no writer produces one;
       behaviour pending the data audit.
     - Atomicity: create_user, update_user and unlink_platform_identity replace the whole record with no precondition;
-      of two concurrent read-change-write updates of one user only the last survives (P11-G2-4).
+      of two concurrent read-change-write updates of one user only the last survives. update_user_fields writes only
+      the named fields (and updated_at), so concurrent updates of other fields are kept.
       link_platform_identity checks the identity and writes in one atomic step.
     - Errors: backend errors propagate.
     """
@@ -153,6 +154,16 @@ class UserRepository(ABC):
     @abstractmethod
     async def update_user(self, user: UserProfile) -> UserProfile:
         """Write the whole profile and set updated_at; see Atomicity."""
+        pass
+
+    @abstractmethod
+    async def update_user_fields(self, user: UserProfile, fields: Sequence[str]) -> UserProfile:
+        """Write only `fields` of `user` (dotted paths into the profile, e.g. "config.preferred_language") and set
+        updated_at, as one field-level update: what other writers changed meanwhile is kept (see Atomicity).
+
+        Errors: a path that names no profile field raises ValueError; a missing user raises the backend's not-found
+        error (NotFound today).
+        """
         pass
     
     @abstractmethod
