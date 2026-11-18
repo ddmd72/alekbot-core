@@ -26,7 +26,7 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.domain.billing import AccountTier, AccountUsageStats, BillingAccount
 from src.ports.account_repository import AccountRepository
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
-from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.firestore_eval import EvalDocRef
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -37,8 +37,8 @@ COUNTERS = ("total_tokens", "total_cost", "total_requests", "daily_tokens", "dai
 
 
 class Accounts:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
         self.repo: AccountRepository = FirestoreAccountRepository(self.db, ACCOUNTS)
 
     @property
@@ -59,9 +59,9 @@ class Accounts:
 
 
 @pytest.fixture
-def accounts(monkeypatch):
+def accounts(monkeypatch, kit_db):
     pin_datetime(monkeypatch, account_module, T0)
-    return Accounts()
+    return Accounts(kit_db)
 
 
 def io_trace(monkeypatch) -> list:
