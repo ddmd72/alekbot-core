@@ -38,8 +38,7 @@ def _table(entries: List[Dict]) -> List[str]:
 
 
 def _command(field: str) -> List[str]:
-    verb = "ttls " + "update"
-    return ["```bash", f"gcloud firestore fields {verb} {field} --collection-group=<collection-group> \\",
+    return ["```bash", f"gcloud firestore fields ttls update {field} --collection-group=<collection-group> \\",
             "  --enable-ttl --database=us-production --project=<PROJECT_ID>", "```"]
 
 

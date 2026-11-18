@@ -27,7 +27,12 @@ def main(argv) -> int:
     except (IndexError, OSError, ValueError):
         print("skip report: no readable report file")
         return 0
-    print(render(report))
+    try:
+        text = render(report)
+    except (KeyError, TypeError, AttributeError):
+        print("skip report: the file is not a skip report")
+        return 0
+    print(text)
     return 0
 
 

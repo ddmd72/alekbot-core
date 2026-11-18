@@ -72,6 +72,22 @@ def test_every_ephemeral_store_collection_is_a_registry_collection_and_back():
     assert constructed == registered
 
 
+@pytest.mark.parametrize("call", [
+    'FirestoreEphemeralStore(db, "voice_tickets")',
+    "FirestoreEphemeralStore(db, name)",
+    "FirestoreEphemeralStore(db)",
+    "FirestoreEphemeralStore(db, collection=other.voice_tickets_collection)",
+])
+def test_an_ephemeral_store_collection_that_is_not_an_env_config_property_fails(call):
+    with pytest.raises(ValueError):
+        reg.ephemeral_collections_in_source(call)
+
+
+def test_an_env_config_property_argument_is_read_positionally_or_by_keyword():
+    source = "A(db, env_config.a_collection)\nFirestoreEphemeralStore(db, env_config.x_collection)\nFirestoreEphemeralStore(db, collection=env_config.y_collection)\n"
+    assert reg.ephemeral_collections_in_source(source) == {"x_collection", "y_collection"}
+
+
 def test_draft_files_is_an_unprefixed_subcollection_group():
     entry = next(e for e in ENTRIES if e["id"] == "draft_files")
     assert entry["prefixed"] is False

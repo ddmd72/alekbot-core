@@ -32,3 +32,11 @@ def test_the_file_round_trips(tmp_path, capsys):
     path.write_text(json.dumps(REPORT))
     assert main([str(path)]) == 0
     assert "| 1 | other |" in capsys.readouterr().out
+
+
+def test_a_report_of_the_wrong_shape_is_a_note_not_a_failure(tmp_path, capsys):
+    for body in ('{"skipped_by_reason": {"r": {}}}', '{"skipped_by_reason": {"r": 3}}', "[1, 2]", '{"outcomes": 5}'):
+        path = tmp_path / "r.json"
+        path.write_text(body)
+        assert main([str(path)]) == 0
+    assert capsys.readouterr().out.count("not a skip report") == 4
