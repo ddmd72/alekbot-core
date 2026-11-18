@@ -5,6 +5,7 @@ from src.domain.invite_code import InviteCode, InviteType
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.config.environment import EnvironmentConfig
 from src.domain.secret_digest import keyed_digest
+from tests.support.firestore_eval import EvalDb
 
 # Since S5 (SECRETS_AT_REST_RFC §2.5) the doc id is the keyed digest of the normalised code and only a hint is stored.
 DIGEST_KEY = b"k" * 32
@@ -44,8 +45,13 @@ def repo(mock_db, mock_env_config):
     return FirestoreInviteCodeRepository(mock_db, mock_env_config, digest_key=DIGEST_KEY)
 
 @pytest.mark.asyncio
-async def test_create_invite_code(repo, mock_db):
-    """Test creating an invite code."""
+async def test_create_invite_code(mock_env_config):
+    """Creating an invite stores one document under the code's digest, with the hint and no code.
+
+    On the evaluating Firestore fake (not the MagicMock db): create refuses a stored code, so its write is no longer a
+    plain `document().set()`; the assertions are on the stored document, whatever write the adapter uses."""
+    db = EvalDb()
+    repo = FirestoreInviteCodeRepository(db, mock_env_config, digest_key=DIGEST_KEY)
     invite = InviteCode(
         code="ABC-123",
         user_id="user-1",
@@ -54,19 +60,20 @@ async def test_create_invite_code(repo, mock_db):
         expires_at=datetime.now(timezone.utc),
         platform="slack"
     )
-    
-    await repo.create(invite)
-    
-    # Verify DB interactions
-    mock_db.collection.assert_called_with("test_invite_codes")
-    mock_db.collection().document.assert_called_with(keyed_digest(DIGEST_KEY, "invite", "ABC123"))
-    mock_db.collection().document().set.assert_called_once()
-    
+
+    assert await repo.create(invite) is invite
+
+    # Verify DB interactions: one document, in the configured collection, under the digest of the normalised code
+    assert list(db.cols) == ["test_invite_codes"]
+    docs = db.collection("test_invite_codes").docs
+    assert list(docs) == [keyed_digest(DIGEST_KEY, "invite", "ABC123")]
+
     # Verify data format
-    data = mock_db.collection().document().set.call_args[0][0]
+    data = docs[keyed_digest(DIGEST_KEY, "invite", "ABC123")]
     assert "code" not in data and data["hint"] == "C123"
     assert data["type"] == "self_link"
     assert data["platform"] == "slack"
+    assert (data["user_id"], data["account_id"]) == ("user-1", "acc-1")
 
 @pytest.mark.asyncio
 async def test_get_by_code_found(repo, mock_db):
