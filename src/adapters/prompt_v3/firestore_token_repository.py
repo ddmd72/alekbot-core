@@ -314,7 +314,7 @@ class FirestoreTokenRepository(TokenRepository):
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
 
-        doc_ref.set(data)
+        await doc_ref.set(data)
         logger.info(f"Saved token: {token.id} to {collection} collection")
 
     async def delete(self, token_id: TokenId) -> None:
@@ -330,7 +330,7 @@ class FirestoreTokenRepository(TokenRepository):
         doc_ref = self.db.collection(self.system_collection).document(str(token_id))
         doc = await doc_ref.get()
         if doc.exists:
-            doc_ref.delete()
+            await doc_ref.delete()
             logger.info(f"Deleted token: {token_id} from system collection")
             return
 
@@ -338,7 +338,7 @@ class FirestoreTokenRepository(TokenRepository):
         doc_ref = self.db.collection(self.user_collection).document(str(token_id))
         doc = await doc_ref.get()
         if doc.exists:
-            doc_ref.delete()
+            await doc_ref.delete()
             logger.info(f"Deleted token: {token_id} from user collection")
             return
 

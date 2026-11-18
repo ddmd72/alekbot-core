@@ -83,13 +83,11 @@ async def test_saving_an_invalid_blueprint_raises_value_error_and_writes_nothing
     assert store.docs == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D3)
 async def test_save_stores_every_field(store):
     await store.repo.save(Blueprint(id="bp_one", outer_class="Alek extends Agent", class_order=ORDER))
     assert store.docs == {"bp_one": {"blueprint_id": "bp_one", "outer_class": "Alek extends Agent", "class_order": ORDER}}
 
 
-@pytest.mark.xfail(strict=True, reason=D3)
 async def test_a_saved_blueprint_reads_back_equal_and_a_second_save_replaces_it(store):
     first = Blueprint(id="bp_one", outer_class="Alek extends Agent", class_order=ORDER)
     await store.repo.save(first)
@@ -99,7 +97,6 @@ async def test_a_saved_blueprint_reads_back_equal_and_a_second_save_replaces_it(
     assert await store.repo.get("bp_one") == second
 
 
-@pytest.mark.xfail(strict=True, reason=D4)
 async def test_delete_removes_the_blueprint(store):
     store.seed()
     store.seed("bp_two")

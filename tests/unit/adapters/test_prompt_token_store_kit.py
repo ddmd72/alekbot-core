@@ -177,7 +177,6 @@ async def test_save_with_an_unknown_collection_raises_value_error_and_writes_not
     assert store.docs(SYS) == {} and store.docs(USR) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D1)
 async def test_save_lands_in_the_system_collection_by_default_with_every_field(store):
     token = await _token(store, metadata={"version": "2.0", "author": "system"})
     await store.repo.save(token)
@@ -189,27 +188,23 @@ async def test_save_lands_in_the_system_collection_by_default_with_every_field(s
     assert store.docs(USR) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D1)
 async def test_save_to_the_user_collection_lands_there_only(store):
     await store.repo.save(await _token(store, "UNITS_METRIC", "units", "policies", METRIC), collection="user")
     assert list(store.docs(USR)) == ["UNITS_METRIC"] and store.docs(SYS) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D1)
 async def test_a_saved_token_reads_back_with_every_field(store):
     saved = await _token(store, metadata={"version": "2.0", "author": "system", "description": "short"})
     await store.repo.save(saved)
     assert await store.repo.get(TokenId("STYLE_SHORT")) == saved
 
 
-@pytest.mark.xfail(strict=True, reason=D2)
 async def test_delete_removes_the_token_from_the_system_collection(store):
     store.seed(SYS, "A")
     await store.repo.delete(TokenId("A"))
     assert store.docs(SYS) == {}
 
 
-@pytest.mark.xfail(strict=True, reason=D2)
 async def test_delete_removes_the_token_from_the_user_collection(store):
     store.seed(USR, "B")
     await store.repo.delete(TokenId("B"))
