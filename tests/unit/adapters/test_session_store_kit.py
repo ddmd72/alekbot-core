@@ -2,10 +2,12 @@
 the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on the raw stored documents and on what
 `load_session` returns, never on calls.
 
-The two defects of this store are pinned through their real callers, in caller-named files (arbiter rule 2):
-P11-G2-3 (a cut batch lost when its hand-off fails) in `tests/unit/services/test_overflow_routing_service_store_pins.py`,
-P11-G2-5 (the chat-turn history retry never runs) in `tests/unit/handlers/test_conversation_handler_store_pins.py` and
-`tests/unit/services/test_long_turn_service_store_pins.py`.
+The two former defects of this store are pinned through their real callers, in caller-named files (arbiter rule 2), and
+both pins now pass: P11-G2-3 (a batch lost when its hand-off failed; fixed by owner decision O2, the batch is cut only
+after its hand-off) in `tests/unit/services/test_overflow_routing_service_store_pins.py`, P11-G2-5 (the chat-turn history
+retry never ran) in `tests/unit/handlers/test_conversation_handler_store_pins.py` and
+`tests/unit/services/test_long_turn_service_store_pins.py`. The hand-off-first window itself is checked here
+(section "hand-off first (O2)").
 """
 import asyncio
 import time

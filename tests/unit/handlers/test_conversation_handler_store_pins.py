@@ -2,9 +2,10 @@
 the evaluating Firestore fake (H1).
 
 `_save_history_with_retry` wraps the append in `retry_store_write`, which retries only an exception; the store swallows
-every error unless the caller passes `raise_on_error=True`, so a transient error drops the turn's pair from history and
-the retry never runs. The same dead retry sits in `LongTurnService` (`tests/unit/services/test_long_turn_service_store_pins.py`).
-The retry backoff is patched as a module attribute of `src.utils.retry`, never `asyncio.sleep` for the whole loop.
+every error unless the caller passes `raise_on_error=True`. The save passes it, so a transient error is retried and the
+turn's pair is stored (P11-G2-5 fixed; the same holds for `LongTurnService`,
+`tests/unit/services/test_long_turn_service_store_pins.py`). The retry backoff is patched as a module attribute of
+`src.utils.retry`, never `asyncio.sleep` for the whole loop.
 """
 from pathlib import Path
 from types import SimpleNamespace
@@ -52,7 +53,7 @@ async def test_the_turn_history_save_stores_the_pair(world):
 
 
 async def test_a_transient_error_in_the_turn_history_save_is_retried(world):
-    """Flips with `raise_on_error=True` on the append in `ConversationHandler._save_history_with_retry`."""
+    """Holds through `raise_on_error=True` on the append in `ConversationHandler._save_history_with_retry`."""
     world.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE transient"))
     await save_turn(world)
     require(world.db._raises.get((SESS, SID)) == [], "the transient error was raised once")

@@ -1,8 +1,9 @@
 """P15 · J1: `$consolidate` against a message pair appended while it runs.
 
-The command loads the session (conversation_handler.py:1575), trims the oldest batch in memory, acknowledges with the
-`CONSOLIDATION_STARTED` UI string, enqueues the batch and saves the trimmed session whole (`save_session`, :1623). A pair
-appended between the load and the save (a turn finishing in the same chat) is overwritten by that save.
+The command loads the session (`ConversationHandler.handle_command`), takes the oldest batch, acknowledges with the
+`CONSOLIDATION_STARTED` UI string, enqueues the batch and then cuts exactly those messages from the stored session
+(`SessionStore.remove_head`). A pair appended between the load and the cut (a turn finishing in the same chat) is kept
+(P15-S3 fixed; before, the command saved the trimmed session whole and overwrote such a pair).
 
 The race is forced with an `asyncio.Event` gate in the response channel: it holds on the `CONSOLIDATION_STARTED` text
 (after the load, before the save), the test appends the pair to completion, then releases, and asserts the gate was
@@ -11,7 +12,6 @@ the factory and the channel are fakes that keep what they were given.
 """
 import asyncio
 from typing import Any, List, Optional
-
 
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.llm import Message, MessagePart

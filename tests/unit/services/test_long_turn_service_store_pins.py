@@ -2,9 +2,9 @@
 `FirestoreLongTurnRegistry` on the evaluating Firestore fake (H1).
 
 Both session writes of a long turn (the 90 s mark pair and the late-answer pair) go through `retry_store_write`, which
-retries only an exception, while the store swallows a transient error unless `raise_on_error=True` is passed; so the pair
-is dropped and the retry never runs. The chat turn's own save is pinned in
-`tests/unit/handlers/test_conversation_handler_store_pins.py`. The retry backoff is patched as a module attribute.
+retries only an exception, while the store swallows a transient error unless `raise_on_error=True` is passed. Both
+writes pass it, so a transient error is retried and the pair is stored (P11-G2-5 fixed). The chat turn's own save is
+pinned in `tests/unit/handlers/test_conversation_handler_store_pins.py`. The retry backoff is patched as a module attribute.
 """
 from pathlib import Path
 from types import SimpleNamespace
@@ -66,7 +66,7 @@ async def test_the_mark_pair_and_the_record_are_stored(world):
 
 
 async def test_a_transient_error_in_the_late_answer_save_is_retried(world):
-    """Flips with `raise_on_error=True` on the append in `LongTurnService.save_late_answer`."""
+    """Holds through `raise_on_error=True` on the append in `LongTurnService.save_late_answer`."""
     world.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE transient"))
     await save_late_answer(world)
     require(world.db._raises.get((SESS, SID)) == [], "the transient error was raised once")
@@ -74,7 +74,7 @@ async def test_a_transient_error_in_the_late_answer_save_is_retried(world):
 
 
 async def test_a_transient_error_in_the_mark_save_is_retried(world):
-    """Flips with `raise_on_error=True` on the append in `LongTurnService.mark`."""
+    """Holds through `raise_on_error=True` on the append in `LongTurnService.mark`."""
     world.db.raise_on_txn_read(SESS, SID, ServiceUnavailable("503 UNAVAILABLE transient"))
     await mark(world)
     require(world.db._raises.get((SESS, SID)) == [], "the transient error was raised once")
