@@ -46,6 +46,25 @@ class AccountUsageStats(BaseModel):
     monthly_cost: float = 0.0
     monthly_reset_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # The month that ended at the last monthly rotation ("YYYY-MM", UTC), kept so a clock-driven report that runs after
+    # the month turned but before a rotation still has the ended month's totals. None until the first rotation.
+    prev_monthly_tokens: int = 0
+    prev_monthly_cost: float = 0.0
+    prev_monthly_month: Optional[str] = None
+
+    def usage_for_month(self, target: date) -> Tuple[int, float]:
+        """Tokens/cost of the UTC calendar month of `target`, or (0, 0.0) if it had no activity.
+
+        The monthly counters rotate lazily, on the first request of a new month, so the summary that runs at the start
+        of a month must resolve them against an explicit month, like `usage_for_date` does for days: the snapshot of
+        the month that ended at the last rotation, else the live counter when it still sits on that month."""
+        month = target.strftime("%Y-%m")
+        if self.prev_monthly_month == month:
+            return self.prev_monthly_tokens, self.prev_monthly_cost
+        if self.monthly_reset_at and self.monthly_reset_at.strftime("%Y-%m") == month:
+            return self.monthly_tokens, self.monthly_cost
+        return 0, 0.0
+
     def usage_for_date(self, target: date) -> Tuple[int, float]:
         """Tokens/cost for a specific UTC calendar day, or (0, 0.0) if it was idle.
 
