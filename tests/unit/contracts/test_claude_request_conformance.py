@@ -8,8 +8,8 @@ sends its second request, which is checked too. The transport, not the SDK call'
 (`extra_headers`, `timeout`, `stream`) differs from what the SDK puts on the wire.
 
 The contract is `contracts/providers/anthropic/openapi.yaml` (a subset of the SDK's request types, extracted by
-`scripts/contracts/extract_subset.py`). The shapes are `claude_request_shapes.py`. Out of this slice: what needs a
-provider response (the grounded `container` continuation, replayed raw_content blocks); `NOT_REACHABLE` names each.
+`scripts/contracts/extract_subset.py`). The shapes are `claude_request_shapes.py`. Out of this slice: the grounded
+`container` continuation (it needs a streamed pause_turn response); `NOT_REACHABLE` names it.
 """
 from __future__ import annotations
 
@@ -179,15 +179,21 @@ def test_every_allowed_gap_is_sent_by_a_shape():
             assert allowed.value in {
                 _tag(v, allowed.path) for r in all_sent() for v in _values_at(r.body, allowed.path)
             }, allowed
+        elif allowed.path == "":
+            assert any(allowed.field in r.body for r in all_sent()), allowed
         else:
-            assert any(allowed.field in v for r in all_sent() for v in _values_at(r.body, allowed.path or "")
-                       if isinstance(v, dict)) or allowed.path == "", allowed
-
+            assert any(allowed.field in v for r in all_sent() for v in _values_at(r.body, allowed.path)
+                       if isinstance(v, dict)), allowed
 
 # ------------------------------------------------------------------------------------------------- call sites
+def _call_sites(source: str) -> set[tuple[str, ...]]:
+    """Every `self.client.<a>[.<b>...](` call chain in the adapter source, as its names after `client`."""
+    return {tuple(m.group(1).lstrip(".").split(".")) for m in re.finditer(r"self\.client((?:\.\w+)+)\(", source)}
+
+
 def test_every_sdk_call_site_of_the_adapter_maps_to_an_operation():
-    found = set(re.findall(r"self\.client\.(\w+)\.(\w+)\(", ADAPTER_FILE.read_text(encoding="utf-8")))
-    assert found, "no `self.client.<a>.<b>(` call site found: the pattern or the adapter changed"
+    found = set(_call_sites(ADAPTER_FILE.read_text(encoding="utf-8")))
+    assert found, "no `self.client...(` call site found: the pattern or the adapter changed"
     unmapped = sorted(found - set(CALL_SITES))
     assert not unmapped, f"adapter call sites without an Operation in PROVIDERS (add one, with shapes): {unmapped}"
     for site in found:

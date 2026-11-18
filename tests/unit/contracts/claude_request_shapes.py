@@ -34,16 +34,8 @@ EFFORTS = (None, "low", "medium", "high", "xhigh")
 # Keep-list entries of the Anthropic operation that no shape can reach, with the reason. The meta-test fails when an
 # entry here is no longer in the keep list (stale) or when a shape reaches it (no longer needed).
 NOT_REACHABLE: dict[str, str] = {
-    "container": "sent only on a pause_turn continuation of the grounded loop, which needs a provider response "
-                 "(recordings; not in this slice)",
-    "messages[].content[]:thinking": "an assistant turn replayed from raw_content: needs a provider response",
-    "messages[].content[]:redacted_thinking": "an assistant turn replayed from raw_content: needs a provider response",
-    "messages[].content[]:server_tool_use": "a replayed or pause_turn assistant turn: needs a provider response",
-    "messages[].content[]:web_search_tool_result": "a replayed or pause_turn assistant turn: needs a provider response",
-    "messages[].content[]:web_fetch_tool_result": "a replayed or pause_turn assistant turn: needs a provider response",
-    "messages[].content[]:code_execution_tool_result": "a replayed or pause_turn assistant turn: needs a provider response",
-    "messages[].content[]:bash_code_execution_tool_result": "a replayed or pause_turn assistant turn: needs a provider response",
-    "messages[].content[]:text_editor_code_execution_tool_result": "a replayed or pause_turn assistant turn: needs a provider response",
+    "container": "sent only on a pause_turn continuation of the grounded loop, which needs a streamed provider response "
+                 "(a stream fixture; not in this slice)",
 }
 
 
@@ -104,6 +96,41 @@ def _tool_turn(call_id: str = "toolu_01") -> list[Message]:
         Message(role="user", parts=[MessagePart(tool_response={
             "name": "lookup", "response": {"value": 1}, "tool_use_id": call_id})]),
     ]
+
+
+def _raw_content_blocks() -> Any:
+    """An assistant turn as the SDK parsed it, replayed unchanged (`Message.raw_content`: the adapter passes
+    `raw_content.content` through, claude_adapter._convert_messages). Built offline from the SDK's response types."""
+    from anthropic import types as t
+    return t.Message(
+        id="msg_01", type="message", role="assistant", model="claude-sonnet-5-5", stop_reason="end_turn",
+        usage=t.Usage(input_tokens=1, output_tokens=1),
+        content=[
+            t.ThinkingBlock(type="thinking", thinking="The key exists.", signature="sig"),
+            t.RedactedThinkingBlock(type="redacted_thinking", data="opaque"),
+            t.TextBlock(type="text", text="Checking."),
+            t.ToolUseBlock(type="tool_use", id="toolu_r1", name="lookup", input={"key": "k1"}),
+            t.ServerToolUseBlock(type="server_tool_use", id="srvtoolu_1", name="web_search", input={"query": "build log"}),
+            t.WebSearchToolResultBlock(type="web_search_tool_result", tool_use_id="srvtoolu_1", content=[
+                t.WebSearchResultBlock(type="web_search_result", encrypted_content="enc", title="Build logs",
+                                       url="https://example.com/logs")]),
+            t.WebFetchToolResultBlock(type="web_fetch_tool_result", tool_use_id="srvtoolu_2", content=t.WebFetchBlock(
+                type="web_fetch_result", url="https://example.com/logs", content=t.DocumentBlock(
+                    type="document", title="Logs", source=t.PlainTextSource(
+                        type="text", media_type="text/plain", data="log text")))),
+            t.CodeExecutionToolResultBlock(type="code_execution_tool_result", tool_use_id="srvtoolu_3",
+                                           content=t.CodeExecutionResultBlock(
+                                               type="code_execution_result", stdout="1", stderr="", return_code=0, content=[])),
+            t.BashCodeExecutionToolResultBlock(type="bash_code_execution_tool_result", tool_use_id="srvtoolu_4",
+                                               content=t.BashCodeExecutionResultBlock(
+                                                   type="bash_code_execution_result", stdout="ok", stderr="",
+                                                   return_code=0, content=[])),
+            t.TextEditorCodeExecutionToolResultBlock(
+                type="text_editor_code_execution_tool_result", tool_use_id="srvtoolu_5",
+                content=t.TextEditorCodeExecutionViewResultBlock(
+                    type="text_editor_code_execution_view_result", content="line", file_type="text")),
+        ],
+    )
 
 
 def _build() -> dict[str, Shape]:
@@ -174,6 +201,14 @@ def _build() -> dict[str, Shape]:
         messages=[_user(f"{USER_TURN_SYSTEM_ANCHOR}Question one.")])
     add("history/keyed_anchor_no_persona", "claude-sonnet-5-5", turn_key="lamp-orbit-fern",
         messages=[_user(f"{USER_TURN_SYSTEM_ANCHOR}Question one.")])
+
+    # --- an assistant turn replayed from raw_content: every block type the SDK returns, passed back unchanged
+    add("history/raw_content_replay", "claude-sonnet-5-5", tools=[_tool()], messages=[
+        _user("Find k1."),
+        Message(role="model", parts=[MessagePart(text="ignored when raw_content is set")],
+                raw_content=_raw_content_blocks()),
+        Message(role="user", parts=[MessagePart(text="Thanks.")]),
+    ])
 
     # --- files: image, PDF (citations on), several parts, a file nested in a tool_result
     add("files/image", "claude-sonnet-5-5", messages=[

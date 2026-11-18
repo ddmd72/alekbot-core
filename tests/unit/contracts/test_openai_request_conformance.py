@@ -5,11 +5,12 @@ would put on the wire is captured and validated by `assert_request`; the sink an
 client error, nothing about the response is asserted. No network, no key. `openai_request_shapes.SHAPES` is the table.
 
 Meta-tests: the closed subset rejects an unknown field; every kept field and union variant of the contract is used by a
-shape (a dead keep-list entry fails); every `self.client.<a>.<b>(` call site of the adapter maps to an operation.
+shape (a dead keep-list entry fails); every `self.client...(` call chain of the adapter maps to an operation.
 """
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
 import json
 import re
@@ -82,6 +83,26 @@ def test_the_closed_subset_rejects_an_unknown_field(shape):
         assert_request("openai", method, path, headers, {**body, "zz_unknown_field": 1})
 
 
+DEPTHS = ("input[]", "input[].content[]", "tools[]", "text.format", "reasoning")
+
+
+@pytest.mark.parametrize("depth", DEPTHS)
+def test_the_closed_subset_rejects_an_unknown_field_at_depth(depth):
+    """An unknown field inside an input item, a content part, a tool, the text format and the reasoning object fails."""
+    tried = 0
+    for shape in SHAPES:
+        method, path, headers, body = _captured(shape.id)
+        body = copy.deepcopy(body)
+        targets = [v for v in _walk(body, depth) if isinstance(v, dict)]
+        if not targets:
+            continue
+        targets[0]["zz_unknown_field"] = 1
+        with pytest.raises(AssertionError, match="zz_unknown_field: unknown field"):
+            assert_request("openai", method, path, headers, body)
+        tried += 1
+    assert tried, f"no shape sends anything at {depth}"
+
+
 # ------------------------------------------------------------------------------------------ the keep list is used
 def _walk(node, path: str):
     """Every value at `path` (`a.b`, `a[]`) of a body; unions are transparent."""
@@ -142,8 +163,9 @@ def test_the_allowed_field_is_sent_by_a_shape():
 
 # ---------------------------------------------------------------------------------------- the adapter's call sites
 def test_every_sdk_call_site_of_the_adapter_maps_to_an_operation():
-    sites = set(re.findall(r"self\.client\.(\w+)\.(\w+)\(", ADAPTER.read_text(encoding="utf-8")))
-    assert sites, "no `self.client.<a>.<b>(` call site found: the pattern is stale"
+    chains = re.findall(r"self\.client((?:\.\w+)+)\(", ADAPTER.read_text(encoding="utf-8"))
+    sites = {tuple(c.lstrip(".").split(".")) for c in chains}
+    assert sites, "no `self.client...(` call site found: the pattern is stale"
     assert sites <= set(SDK_CALLS), f"call sites with no operation: {sorted(sites - set(SDK_CALLS))}"
     operations = {(op.method, op.path) for op in PROVIDERS["openai"].operations}
     assert {SDK_CALLS[s] for s in sites} <= operations
