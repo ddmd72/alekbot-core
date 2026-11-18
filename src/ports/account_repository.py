@@ -38,7 +38,8 @@ class AccountRepository(ABC):
 
         Atomicity: no concurrent increment is lost. When the UTC day or month has turned since the stored reset stamp,
         the window rotates exactly once under concurrent callers (prev_daily_* snapshot of the ended day, its date in
-        prev_daily_date) and this increment is applied to the new window.
+        prev_daily_date; prev_monthly_* snapshot of the ended month, its month in
+        prev_monthly_month) and this increment is applied to the new window.
         Returns the day's spend before and after this increment, so concurrent callers get disjoint, ordered slices
         and a caller can detect a budget limit crossing without re-reading the account.
         Legacy: an account without `usage` starts its windows on this call; a missing daily_cost_limit is the default
