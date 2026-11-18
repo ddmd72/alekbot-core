@@ -9,10 +9,38 @@ The real `InviteCodeService` over the real Firestore repositories on the evaluat
 a failed write is a repository method that raises once, before it writes.
 """
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
-from tests.unit.adapters.test_invite_code_store_kit import NOW, OWNER, OWNER_ACC, invite, key, store  # noqa: F401
+from src.adapters.firestore_account_repo import FirestoreAccountRepository
+from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
+from src.adapters.firestore_user_repo import FirestoreUserRepository
+from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
+from src.services.invite_code_service import InviteCodeService
+from tests.unit.adapters.test_invite_code_store_kit import (
+    ACCOUNTS, DIGEST_KEY, INDEXES_FILE, INVITES, NOW, OWNER, OWNER_ACC, USERS, WHITELIST, InviteStore, invite, key)
+
+
+class Accepts(InviteStore):
+    """The invite kit's world (`team`, `account_of`, raw `docs`), its real repositories and service built here over
+    `kit_db`."""
+
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={
+            INVITES: "development_invite_codes_v2", USERS: "development_domain_users_v1",
+            ACCOUNTS: "development_domain_accounts_v2", WHITELIST: "development_domain_whitelist_v1"})
+        env = SimpleNamespace(domain_invite_codes_collection=INVITES, domain_users_collection=USERS,
+                              domain_whitelist_collection=WHITELIST, is_production=False)
+        self.repo = FirestoreInviteCodeRepository(self.db, env, digest_key=DIGEST_KEY)
+        self.accounts = FirestoreAccountRepository(self.db, ACCOUNTS)
+        self.users = FirestoreUserRepository(self.db, env, self.accounts)
+        self.service = InviteCodeService(self.repo, self.users, self.accounts, FirestoreWhitelistRepository(self.db, env))
+
+
+@pytest.fixture
+def store(kit_db):
+    return Accepts(kit_db)
 
 
 def fail_once(monkeypatch, repo, method: str) -> None:

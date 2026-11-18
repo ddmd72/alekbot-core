@@ -10,9 +10,31 @@ import asyncio
 import pytest
 from google.api_core.exceptions import NotFound
 
-from tests.unit.adapters.test_account_store_kit import ACCOUNTS, accounts  # noqa: F401 (fixture)
+import src.adapters.firestore_account_repo as account_module
+from src.adapters.firestore_account_repo import FirestoreAccountRepository
+from tests.support.clock_instants import pin_datetime
+from tests.unit.adapters.test_account_store_kit import ACCOUNTS, INDEXES_FILE, T0, Accounts
 from tests.unit.adapters.test_invite_code_store_kit import ACCOUNTS as INVITE_ACCOUNTS
-from tests.unit.adapters.test_invite_code_store_kit import OWNER, OWNER_ACC, store, invite  # noqa: F401 (fixture)
+from tests.unit.adapters.test_invite_code_store_kit import OWNER, OWNER_ACC, InviteStore, invite
+
+
+class Members(Accounts):
+    """The account kit's world (its `seed` and raw `docs`), its real repository built here over `kit_db`."""
+
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={ACCOUNTS: "development_domain_accounts_v2"})
+        self.repo = FirestoreAccountRepository(self.db, ACCOUNTS)
+
+
+@pytest.fixture
+def accounts(monkeypatch, kit_db):
+    pin_datetime(monkeypatch, account_module, T0)
+    return Members(kit_db)
+
+
+@pytest.fixture
+def store(kit_db):
+    return InviteStore(kit_db)
 
 
 async def test_set_member_role_adds_one_entry_and_keeps_every_other_field(accounts):
