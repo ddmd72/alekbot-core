@@ -117,6 +117,7 @@ async def test_delete_all_for_user_leaves_other_users_and_a_repeat_is_a_no_op(st
     assert sorted(store.docs) == ["u2_t1"]
 
 
+@pytest.mark.h1_only("reads the fake's commit log (.commits)")
 async def test_delete_all_for_user_goes_in_batches_of_500(store):
     for i in range(501):
         raw(store, f"t{i:03d}", "u1")
@@ -214,6 +215,7 @@ async def test_find_nearest_backend_up_answers(store):
 
 @pytest.mark.xfail(strict=True, raises=AssertionError,
                    reason="P11-G3-1: every vector query failed, find_nearest answers [] (TasksAgent: 'no tasks')")
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_find_nearest_raises_when_every_query_fails(store):
     """When every field query fails (an outage, a missing index) the caller must get the error, not "no matching
     task". Flipping fix: after the gather in `find_nearest`, `if all(isinstance(r, BaseException) for r in results_lists):
@@ -257,6 +259,7 @@ async def test_get_by_short_id_is_scoped_to_the_user_and_an_unparseable_entry_re
     assert await store.index.get_by_short_id("u1", "deadbeef") is None
 
 
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_get_by_short_id_propagates_backend_errors(store):
     await store.index.upsert(entry("t1", short_id="a1b2c3d4"))
     store.db.collection(COL).fail = ServiceUnavailable("down")
