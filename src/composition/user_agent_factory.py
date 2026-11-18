@@ -818,6 +818,13 @@ class UserAgentFactory(AgentFactoryPort):
         )
         return False
 
+    async def restore_agents_for_user(self, user_id: str) -> bool:
+        """Rebuild the user's eager agents after an eviction unregistered them (AgentFactoryPort): a turn that was
+        delegating when `$admin_cache_reset` or the TTL sweep evicted the user reaches a rebuilt specialist instead of
+        "Unknown recipient". Raises what the build raises (the coordinator logs it)."""
+        await self.ensure_agents_for_user(user_id)
+        return True
+
     # -- Builder methods: one per lazy agent type -----------------------
 
     def _build_doc_generator(self, user_id: str, ctx: _UserContext) -> DocGeneratorAgent:

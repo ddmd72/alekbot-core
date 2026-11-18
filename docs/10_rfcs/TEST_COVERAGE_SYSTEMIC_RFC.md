@@ -785,11 +785,14 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   Caches and breaker: `tests/unit/services/test_prompt_cache_interleaving.py`, `tests/unit/services/test_channel_binding_interleaving.py`,
   `tests/unit/agents/test_breaker_stale_success_interleaving.py`.
 - **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker):
-  - P15-S1: a lazy agent built while an unlocked eviction runs stays registered and untracked.
-  - P15-S1b: an admin cache reset during a build in progress is undone by the build's cache write.
+  - P15-S1: a lazy agent built while an unlocked eviction runs stays registered and untracked. **Fixed:** the lazy build re-reads
+    the entry under the per-user lock and rebuilds it when an eviction dropped it; the marker is removed.
+  - P15-S1b: an admin cache reset during a build in progress is undone by the build's cache write. **Fixed:** every eviction
+    advances a per-user generation and the locked build redoes a build an eviction overtook; the marker is removed.
   - P15-S2: a cache write-back after an invalidation brings back the old value (prompt assembly, channel binding).
   - P15-S3: `$consolidate` overwrites messages appended meanwhile.
-  - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient".
+  - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient". **Fixed:**
+    `route_message` asks the factory port to restore the user's eager agents (`restore_agents_for_user`); the marker is removed.
   - P15-S5: a cancelled child in the delegation gather crashes the turn (tool batch and fan-out).
   - P15-S6: resolved file text is written into the model's own tool-call args. **Fixed:** `normalize_delegate_context`
     returns a copy, so the coordinator's `file_content` no longer rides in the orchestrator's history; the marker is removed.

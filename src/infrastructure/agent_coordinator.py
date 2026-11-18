@@ -513,7 +513,9 @@ class AgentCoordinator:
         Extracts the base agent_id by stripping the _{user_id} suffix,
         looks up the descriptor in the registry, and creates the agent
         if it is non-eager. Used by route_message() to cover ASYNC
-        Cloud Tasks callbacks.
+        Cloud Tasks callbacks. An eager recipient is missing only after an
+        eviction (a cache reset, the TTL sweep) unregistered the user's
+        agents, possibly mid-turn: the factory rebuilds the user's eager set.
         """
         if self._agent_factory is None or self._registry is None:
             return
@@ -525,9 +527,24 @@ class AgentCoordinator:
             return
         base_id = recipient[: -len(suffix)]
         descriptor = self._registry.get_descriptor(base_id)
-        if descriptor is None or descriptor.eager:
+        if descriptor is None:
+            return
+        if descriptor.eager:
+            await self._restore_eager_agents(user_id)
             return
         await self._ensure_lazy_agent(descriptor.agent_type, context)
+
+    async def _restore_eager_agents(self, user_id: str) -> None:
+        """Rebuild the user's evicted eager agents via the factory port."""
+        if self._agent_factory is None:
+            return
+        try:
+            await self._agent_factory.restore_agents_for_user(user_id)
+        except Exception as e:
+            logger.error(
+                "❌ Eager agents rebuild failed (user=%s): %s",
+                user_id[:8], e, exc_info=True,
+            )
 
     async def _execute_sync(
         self,

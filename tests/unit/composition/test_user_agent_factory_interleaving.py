@@ -258,9 +258,6 @@ class TestEvictionDuringATurn:
         assert first.status == AgentStatus.SUCCESS
         assert second.status == AgentStatus.SUCCESS
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S4: an eviction during a turn unregisters the eager specialists, and the coordinator re-creates "
-        "only lazy ones, so the turn's next delegation is 'Unknown recipient'; owner decision"))
     async def test_a_delegation_after_an_eviction_mid_turn_still_reaches_a_specialist(self):
         """The turn delegates to the eager memory specialist, pauses (gate), the user is evicted
         (`invalidate_user_cache`), the turn delegates again. `route_message` re-creates only lazy recipients
