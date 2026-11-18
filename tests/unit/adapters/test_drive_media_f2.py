@@ -2,7 +2,7 @@
 a header that understates the audio, the process limit, the bounded probe. The child-side runner is called in process
 with its ffmpeg calls faked where the case (a clean short window mid-file) cannot be built from a real container; the
 real-ffmpeg cases (each added demuxer, the understating header) run end to end through the sandbox in
-`tests/integration/sandbox/test_media_tunnel_contract.py` since the in-process extractor is gone (S5 card F)."""
+`tests/integration/offline/sandbox/test_media_tunnel_contract.py` since the in-process extractor is gone (S5 card F)."""
 import os
 import resource
 import subprocess

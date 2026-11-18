@@ -333,7 +333,7 @@ check-types: ## mypy (lenient) on src/adapters — informational, never fails
 
 test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted models, offline)
 	@echo "🧪 Running the offline G2 end-to-end test..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/offline/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
 
 test-ci: ## Unit suite once: slow tests and the coverage gate (part of `make ci`)
 	@echo "🧪 Running the full unit suite (slow tests, coverage)..."

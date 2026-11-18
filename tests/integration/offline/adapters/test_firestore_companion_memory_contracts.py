@@ -18,7 +18,7 @@ from tests.contracts.adapter_contracts import (
     FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_SESSION_ID,
     FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID,
 )
-from tests.integration.adapters.conftest import FirestoreCapturingStub
+from tests.integration.offline.adapters.conftest import FirestoreCapturingStub
 
 
 def _env_config_stub():

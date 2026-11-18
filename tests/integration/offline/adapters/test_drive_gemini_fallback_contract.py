@@ -6,7 +6,7 @@ from src.adapters.gemini_adapter import GeminiAdapter
 from src.agents import drive_document_reader_agent, drive_image_triage_agent
 from src.ports.llm_port import LLMRequest, Message, MessagePart
 from tests.contracts.adapter_contracts import DICT_SCHEMA_IS_SENT_AS_JSON_SCHEMA, INLINE_FILE_BYTES_ARE_SENT
-from tests.integration.adapters.conftest import GeminiCapturingStub
+from tests.integration.offline.adapters.conftest import GeminiCapturingStub
 
 
 def _file(data: bytes, mime: str) -> MessagePart:
