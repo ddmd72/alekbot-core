@@ -79,8 +79,6 @@ async def test_a_fresh_running_job_is_left_alone(world):
     assert world.docs["j2"]["status"] == "running"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G3-5: the watchdog overwrites a job that completed after its stale query")
 async def test_a_job_that_completes_after_the_stale_query_stays_completed(world):
     """The watchdog lists the stale running jobs, then writes `failed` with no precondition, so a job that completed in
     between is shown as failed. Flipping fix: a `last_update_time` precondition on the watchdog's update, or a

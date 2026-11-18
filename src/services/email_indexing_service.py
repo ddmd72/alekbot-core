@@ -12,8 +12,9 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfoNotFoundError
 
+from ..domain.auto_index_slot import auto_index_slot_date
 from ..domain.email_dates import to_naive_utc
 from ..domain.email import (
     GMAIL_INDEX_PROVIDER,
@@ -171,9 +172,16 @@ class EmailIndexingService:
 
         Eligibility criteria:
           - gmail_auto_index enabled in user config
-          - current local hour matches gmail_auto_index_hour
+          - now falls in the one-hour slot of gmail_auto_index_hour on a local date (`auto_index_slot_date`:
+            a skipped hour fires at the next local hour, a repeated hour once)
           - no indexing job already running
           - OAuth credentials present
+          - the local date is not yet claimed: the job is created under the deterministic id
+            `auto-{user}-{provider}-{local date}` with `create_job_if_absent`, so one day starts one job
+            however many ticks, repeated hours or concurrent deliveries there are (rhythm from stored state,
+            decisions/worker_task_dedup.md)
+
+        A user whose stored timezone is not an IANA zone is skipped with a log line; the rest are still served.
 
         Returns (job_ids_to_enqueue, started, skipped). Caller enqueues the jobs.
         Requires oauth injected in constructor.
@@ -197,9 +205,15 @@ class EmailIndexingService:
                 skipped += 1
                 continue
 
-            user_tz = ZoneInfo(cfg.timezone or "UTC")
-            local_hour = now_utc.astimezone(user_tz).hour
-            if local_hour != cfg.gmail_auto_index_hour:
+            try:
+                slot_date = auto_index_slot_date(now_utc, cfg.timezone or "UTC", cfg.gmail_auto_index_hour)
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning(
+                    "[EmailIndexing] unusable timezone %r for %s, skipping", cfg.timezone, user_id[:8]
+                )
+                skipped += 1
+                continue
+            if slot_date is None:
                 skipped += 1
                 continue
 
@@ -224,8 +238,14 @@ class EmailIndexingService:
                 triggered_by="scheduler",
                 mode="incremental",
                 account_id=profile.account_id,
-            )
-            await self._job_repo.create_job(job)
+            ).model_copy(update={"job_id": f"auto-{user_id}-{GMAIL_INDEX_PROVIDER}-{slot_date.isoformat()}"})
+            if not await self._job_repo.create_job_if_absent(job):
+                logger.info(
+                    "[EmailIndexing] %s already has the auto-index job of %s, skipping",
+                    user_id[:8], slot_date.isoformat(),
+                )
+                skipped += 1
+                continue
             job_ids.append(job.job_id)
             logger.info(
                 "[EmailIndexing] created job %s for %s", job.job_id[:8], user_id[:8]
@@ -280,15 +300,19 @@ class EmailIndexingService:
     async def mark_stale_jobs_failed(self, stale_threshold: datetime) -> int:
         """
         Mark all 'running' jobs older than stale_threshold as 'failed'.
-        Returns the count of jobs marked.
+        Returns the count of jobs marked. The write is conditional on the job still being `running`: a job that
+        completed after the stale query keeps its status and is not counted.
         """
         stale_jobs = await self._job_repo.get_stale_running_jobs(stale_threshold)
         marked = 0
         for stale_job in stale_jobs:
-            await self._job_repo.update_job(stale_job.job_id, {
+            applied = await self._job_repo.update_job(stale_job.job_id, {
                 "status": "failed",
                 "updated_at": datetime.now(timezone.utc),
-            })
+            }, expected_status="running")
+            if applied is False:
+                logger.info("[EmailIndexing] Stale job %s moved on, left alone", stale_job.job_id[:8])
+                continue
             marked += 1
             logger.warning(
                 "[EmailIndexing] Marked stale job %s as failed", stale_job.job_id[:8]

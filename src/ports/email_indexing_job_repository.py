@@ -25,8 +25,22 @@ class EmailIndexingJobRepository(ABC):
         Idempotency: a repeat stores the same job.
         """
 
+    async def create_job_if_absent(self, job: IndexingJob) -> bool:
+        """Persist `job` under its job_id only when no job has that id; True when this call stored it.
+
+        The scheduler's auto-index uses it with a deterministic id per (user, provider, local date): of two ticks that
+        race, one gets True and the other False, so one day starts one job. This default is a read, then a write, and is
+        NOT atomic: a backend that can create a document atomically must override it (the Firestore adapter does).
+        """
+        if await self.get_job(job.job_id) is not None:
+            return False
+        await self.create_job(job)
+        return True
+
     @abstractmethod
-    async def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
+    async def update_job(
+        self, job_id: str, updates: Dict[str, Any], expected_status: Optional[str] = None
+    ) -> bool:
         """
         Partial update called after each successful chunk:
           - next_page_token: current cursor (primary resume point on Cloud Tasks timeout)
@@ -35,7 +49,9 @@ class EmailIndexingJobRepository(ABC):
           - status: updated on terminal transitions (completed/failed)
           - updated_at: always refreshed
 
-        Merges `updates` into the stored job with no read and no precondition: last writer wins per field.
+        Merges `updates` into the stored job: last writer wins per field. With `expected_status` the write is applied only
+        while the stored job still has that status (compare and set, atomic in the backend) and returns False, writing
+        nothing, when the job has moved on; without it the write is unconditional and returns True.
         Errors: a missing job raises the backend's not-found error (NotFound today).
         """
 
@@ -69,6 +85,6 @@ class EmailIndexingJobRepository(ABC):
         Return all jobs with status=running and updated_at older than updated_before.
         Used by the watchdog to detect and mark zombie jobs as failed.
 
-        Order: none. Limit: none. Covers every user. Atomicity: a read only; the caller's later update does not
-        re-check the job (P11-G3-5: a job that completed in between is overwritten as failed).
+        Order: none. Limit: none. Covers every user. Atomicity: a read only; a caller that fails a job
+        from this list passes `expected_status="running"` to `update_job`, so a job that completed in between stays so.
         """
