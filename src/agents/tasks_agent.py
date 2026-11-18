@@ -44,6 +44,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.llm import FinishReason
+from ..domain.local_time import wall_time_instant
 from ..domain.task import (
     RecurrencePattern,
     RecurrenceRange,
@@ -638,9 +639,9 @@ class TasksAgent(BaseAgent):
             recurrence: Optional[TaskRecurrence] = None
             if rec_args := args.get("recurrence"):
                 recurrence = self._parse_recurrence(rec_args, args.get("due_datetime"))
-            parsed_due = self._parse_datetime(args.get("due_datetime"))
+            parsed_due = self._parse_user_time(args.get("due_datetime"))
             reminder_dt, is_reminder_on = self._derive_reminder(
-                self._parse_datetime(args.get("reminder_datetime")),
+                self._parse_user_time(args.get("reminder_datetime")),
                 parsed_due,
                 self._user_tz,
             )
@@ -650,7 +651,7 @@ class TasksAgent(BaseAgent):
                     title=args["title"],
                     body=args.get("body"),
                     due_datetime=parsed_due,
-                    start_datetime=self._parse_datetime(args.get("start_datetime")),
+                    start_datetime=self._parse_user_time(args.get("start_datetime")),
                     reminder_datetime=reminder_dt,
                     is_reminder_on=is_reminder_on,
                     importance=TaskImportance(args["importance"]) if args.get("importance") else TaskImportance.NORMAL,
@@ -663,8 +664,8 @@ class TasksAgent(BaseAgent):
 
         if name == "update_task":
             list_id, task_id = await self._indexing.resolve_short_id(user_id, args["task_ref"])
-            parsed_due = self._parse_datetime(args.get("due_datetime"))
-            parsed_reminder = self._parse_datetime(args.get("reminder_datetime"))
+            parsed_due = self._parse_user_time(args.get("due_datetime"))
+            parsed_reminder = self._parse_user_time(args.get("reminder_datetime"))
             # Auto-reminder: task had no due_date, a new due_datetime is set, no explicit reminder,
             # and the reminder was not explicitly turned off.
             reminder_dt = parsed_reminder
@@ -684,7 +685,7 @@ class TasksAgent(BaseAgent):
                     title=args.get("title"),
                     body=args.get("body"),
                     due_datetime=parsed_due,
-                    start_datetime=self._parse_datetime(args.get("start_datetime")),
+                    start_datetime=self._parse_user_time(args.get("start_datetime")),
                     reminder_datetime=reminder_dt,
                     is_reminder_on=is_reminder_on,
                     importance=TaskImportance(args["importance"]) if args.get("importance") else None,
@@ -910,6 +911,20 @@ class TasksAgent(BaseAgent):
                 start_date=datetime.now(timezone.utc).date().isoformat(),
             ),
         )
+
+    def _parse_user_time(self, value: Any) -> Optional[datetime]:
+        """A time the model sends for Graph (due, start, reminder). A time of day without an offset is the user's wall
+        time, returned as its aware UTC instant (`wall_time_instant`; a time the zone skips raises ValueError); a time
+        with an offset is that instant; a date alone names no instant and stays the day as written (naive midnight).
+        None and an unreadable value as `_parse_datetime`."""
+        parsed = self._parse_datetime(value)
+        if parsed is None:
+            return None
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            return wall_time_instant(value, self._user_tz)
+        return parsed
 
     @staticmethod
     def _parse_datetime(value: Any) -> Optional[datetime]:
