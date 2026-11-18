@@ -156,7 +156,6 @@ class InviteCodeService:
         await self.user_repo.update_user(new_member)
 
         # 4. Update Account IAM Policy
-        account.iam_policy[new_member_user_id] = iam_role
-        await self.account_repo.update_account(account)
+        await self.account_repo.set_member_role(invite.account_id, new_member_user_id, iam_role)
 
         logger.info(f"User {new_member_user_id} joined account {invite.account_id} as {invite.role}")

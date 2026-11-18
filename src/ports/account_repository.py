@@ -30,6 +30,16 @@ class AccountRepository(ABC):
         pass
 
     @abstractmethod
+    async def set_member_role(self, account_id: str, user_id: str, role: str) -> None:
+        """Store `role` as user_id's entry of the account's iam_policy; every other entry and field is kept as stored.
+
+        Atomicity: one entry is written, never the whole map, so concurrent calls for different members of one account
+        all land (two team invites accepted at once). Idempotency: a repeat with the same role changes nothing.
+        Errors: an absent account raises (NotFound), nothing written.
+        """
+        pass
+
+    @abstractmethod
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float
     ) -> UsageIncrement:
@@ -60,18 +70,3 @@ class AccountRepository(ABC):
         """Accounts whose stored is_active is true. Order: none promised. No limit. A document without is_active:
         no writer produces one; behaviour pending the data audit."""
         pass
-
-    # ========================================================================
-    # OAuth Multi-Tenant Session 2: IAM Policy Operations
-    # RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
-    # Note: IAM operations use existing get_account() and update_account()
-    #       iam_policy is changed by reading the account and calling update_account()
-    # ========================================================================
-
-    # No additional methods needed for MVP.
-    # iam_policy changes use:
-    #   - get_account(account_id) → read iam_policy
-    #   - update_account(account) → write modified iam_policy
-    #
-    # Future optimization (Phase 2): Add atomic IAM policy updates
-    #   - async def update_iam_policy(account_id: str, user_id: str, role: str) -> BillingAccount

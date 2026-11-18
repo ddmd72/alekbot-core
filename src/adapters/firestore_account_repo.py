@@ -54,6 +54,10 @@ class FirestoreAccountRepository(AccountRepository):
         await doc_ref.update(account.model_dump(exclude={"usage"}))
         return account
 
+    async def set_member_role(self, account_id: str, user_id: str, role: str) -> None:
+        # The one map entry by its field path: a whole-map write would drop a member another writer added since its read.
+        await self.accounts_collection.document(account_id).update({f"iam_policy.{user_id}": role})
+
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float
     ) -> UsageIncrement:
