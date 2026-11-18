@@ -13,7 +13,7 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
   cursors, `snap.get`);
 - writes: `set` (merge or not), `create` (`AlreadyExists`), `update` (dotted keys are nested paths, `NotFound` on a
   missing document, optional `last_update_time` precondition), `delete`, batches; `Increment`, `ArrayUnion`,
-  `ArrayRemove`, `SERVER_TIMESTAMP` (a tz-aware UTC `datetime`) and `DELETE_FIELD` applied; `set`/`create`/`update`
+  `ArrayRemove`, `SERVER_TIMESTAMP` (a `DatetimeWithNanoseconds` in UTC, as every stored timestamp reads back) and `DELETE_FIELD` applied; `set`/`create`/`update`
   return a `WriteResult` whose `transform_results` follow the alphabetical order of the transformed paths; values are
   stored as the client encodes them (a naive `datetime` is UTC, an aware one is converted to UTC, tuples and sets come
   back as lists, a `datetime.date` raises `TypeError`); a batch or a transaction commit is atomic: when any write
@@ -63,6 +63,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from unittest.mock import patch
 
+from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, InvalidArgument, NotFound, Aborted
 from google.cloud.firestore_v1 import ReadAfterWriteError
 from google.cloud.firestore_v1._helpers import READ_AFTER_WRITE_ERROR, GeoPoint
@@ -260,7 +261,7 @@ def _resolve(value: Any, current: Any, path: str, sink: Sink) -> Any:
         sink.append((path, Value(null_value=0)))     # array transforms report a null result (verified on the test database 2026-10-22)
         return kept
     if value is SERVER_TIMESTAMP:
-        now = datetime.now(timezone.utc)
+        now = _timestamp(datetime.now(timezone.utc))
         sink.append((path, Value(timestamp_value=now)))
         return now
     if isinstance(value, dict):                      # a map replaces what was there; transforms inside it still apply
@@ -268,10 +269,18 @@ def _resolve(value: Any, current: Any, path: str, sink: Sink) -> Any:
     return _plain(value)
 
 
+def _timestamp(value: datetime) -> DatetimeWithNanoseconds:
+    """A stored timestamp as the client decodes it: a `DatetimeWithNanoseconds` of the UTC instant (naive means UTC;
+    verified on the test database 2026-11-18, P12). Microsecond precision: nanoseconds are not kept."""
+    utc = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return DatetimeWithNanoseconds(utc.year, utc.month, utc.day, utc.hour, utc.minute, utc.second, utc.microsecond,
+                                   tzinfo=timezone.utc)
+
+
 def _plain(value: Any) -> Any:
     """A written value as the client encodes it and a read decodes it (`_helpers.encode_value` / `decode_value`)."""
-    if isinstance(value, datetime):                  # naive means UTC; an aware value comes back as the UTC instant
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    if isinstance(value, datetime):
+        return _timestamp(value)
     if isinstance(value, date):
         raise TypeError("Cannot convert to a Firestore Value", value, "Invalid type", type(value))
     if isinstance(value, (list, tuple, set, frozenset)):
@@ -596,6 +605,8 @@ class EvalQuery:
             if not isinstance(vector, Vector):
                 continue
             v = [float(x) for x in vector]
+            if self.db.vector_dimension is not None and len(v) != self.db.vector_dimension:
+                continue                             # not in an index of this dimension: Firestore does not find it
             dot = sum(a * b for a, b in zip(v, query))
             na, nb = math.sqrt(sum(a * a for a in v)), math.sqrt(sum(b * b for b in query))
             distance = 1.0 if na == 0 or nb == 0 else 1.0 - dot / (na * nb)
@@ -814,10 +825,13 @@ def _serves(declared: List[tuple], head: set, tail: List[tuple]) -> bool:
 
 class EvalDb:
     def __init__(self, indexes: Union[None, str, Path, List[dict]] = None,
-                 groups: Optional[Dict[str, str]] = None) -> None:
+                 groups: Optional[Dict[str, str]] = None, vector_dimension: Optional[int] = None) -> None:
         """`indexes` (a path to `config/firestore.indexes.json` or its parsed list) switches the index refusal on;
         `groups` maps a collection's name here to the collection group the index file declares it under (an unmapped
-        collection is looked up under its own last path segment)."""
+        collection is looked up under its own last path segment). `vector_dimension` is the dimension the vector
+        indexes have in this test (the real backend of the kits renders them at it): a vector query of another
+        dimension is refused as Firestore refuses it, and a stored vector of another dimension is not found. Without
+        it no dimension is checked."""
         self.cols: Dict[str, EvalCollection] = {}
         self.commits: List[List[tuple]] = []
         self._clock = 0
@@ -826,6 +840,7 @@ class EvalDb:
         self._raises: Dict[Tuple[str, str], List[BaseException]] = {}
         self.declared = _load_indexes(indexes)
         self.groups = dict(groups or {})
+        self.vector_dimension = vector_dimension
 
     def write_option(self, last_update_time: Any = None) -> WriteOption:
         return WriteOption(last_update_time)
@@ -911,7 +926,13 @@ class EvalDb:
             yield await ref.get(transaction=transaction, field_paths=field_paths)
 
     def _check_index(self, name: str, is_group: bool, ops: List[tuple]) -> None:
-        """`FailedPrecondition` naming the missing composite, when the index refusal is on and no declared index serves."""
+        """`FailedPrecondition` naming the missing composite, when the index refusal is on and no declared index serves;
+        and, with `vector_dimension`, for a vector query whose query vector has another dimension."""
+        for op in ops:
+            if op[0] == "find_nearest" and self.vector_dimension is not None \
+                    and len(list(op[1]["query_vector"])) != self.vector_dimension:
+                raise FailedPrecondition(f"Missing vector index configuration: field {op[1]['vector_field']!r}, "
+                                         f"dimension {len(list(op[1]['query_vector']))}")
         if self.declared is None:
             return
         group = name if is_group else self.groups.get(name, name.rsplit("/", 1)[-1])
