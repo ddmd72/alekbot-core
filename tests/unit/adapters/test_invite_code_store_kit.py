@@ -373,6 +373,7 @@ async def test_a_backend_error_propagates(store, monkeypatch, call):
         await call(store.repo)
 
 
+@pytest.mark.h1_only("uses the fake collection's query-failure switch (fail =)")
 async def test_a_backend_error_in_list_propagates(store):
     await store.repo.create(invite())
     store.db.collection(INVITES).fail = RuntimeError("backend down")
