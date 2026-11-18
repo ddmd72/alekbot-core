@@ -115,12 +115,23 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   file of `KITS` again through `tests/cloud/test_kits_cloud.py` (one child per file, from the kit itself) with `kit_db` overridden by the
   real client behind the cloud guards: a name mapped in `groups` to `development_X` runs on `test_X` with the composites of
   `config/firestore.indexes.json` for `development_X` created first (any other name runs on `test_kits_<name>`), and every collection a test
-  touches is purged before its first use and after the test. `db.collection(name).docs` stays the raw view (written through on the real
-  backend: documents and top-level fields, not nested values changed in place). A test that drives a fake-only hook
-  (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`, `cols`, `indexes=[]`) carries
-  `@pytest.mark.h1_only("<why>")` and is skipped there; a kit test that still builds an `EvalDb` fails there; a kit without `kit_db` is
-  one skipped collector. One kit by hand: `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly`.
-  A real-vs-fake disagreement: the test database is the arbiter (the fake is fixed; an adapter defect is a strict xfail `P12-D<n>`).
+  touches is purged before its first use and after the test. A kit without `kit_db` is one skipped collector.
+  - **Nothing is silently lost there.** `db.collection(name).docs` is the raw view, written through for documents and top-level fields;
+    a nested value is frozen (a nested edit such as `docs["u1"]["config"]["x"] = …` raises: assign the top-level field instead). A
+    public attribute set on the database or a collection raises, except `yield_on_get`, which only interleaves the fake's reads: keep
+    a test that sets it only when its assertion holds under real concurrency, else mark it. `collections()`, `recursive_delete()` and an
+    `indexes=` other than `None` or the repository file raise. Building an `EvalDb` anywhere in a kit (import time, any fixture scope)
+    fails, and every Firestore client a kit test builds must be on the test database.
+  - **`h1_only`.** A test that drives a fake-only hook (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`,
+    `cols`, `EvalDb(`, `indexes=[]`, a naive datetime written raw) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
+    `tests/unit/support/test_h1_only_marks.py` checks each mark names a reason and reaches one of those hooks. `h1_only` is forbidden on
+    a test that fails on the real backend: the test database is the arbiter, so the fake is fixed, or an adapter defect is a strict
+    xfail `P12-D<n>`. A missing index is a setup gap, never a mark: `render_indexes` renders composites only, so a kit whose adapter
+    runs a collection-group query with a filter (today `firestore_drive_index_repo.py`, through `test_drive_index_v2_parity.py`) first
+    adds its COLLECTION_GROUP single-field override to the cloud index model (Admin API `update_field`).
+  - **Converting a kit.** The fixture swap is one `test(mechanical): …` commit (no assertion changed); the `h1_only` marks are a separate
+    commit; the PR body gives each kit's passed / skipped / failed counts on the test database. One kit by hand:
+    `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly`.
 
 ## Coverage floors and the untested-module list
 
