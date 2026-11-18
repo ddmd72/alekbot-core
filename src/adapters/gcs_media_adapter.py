@@ -58,6 +58,11 @@ class GcsMediaAdapter(MediaStoragePort):
             logger.warning("GcsMediaAdapter: '%s' is not stored (expired or never written)", key)
             raise FileNotFoundError(key) from e
 
+    async def exists(self, key: str) -> bool:
+        """Whether the object is stored (the SDK's `exists` reads its metadata; a not-found is False)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, partial(self._exists_sync, key))
+
     async def generate_signed_url(self, key: str, ttl_seconds: int) -> str:
         """Mint a short-lived V4 signed URL (IAM signBlob on Cloud Run)."""
         loop = asyncio.get_event_loop()
@@ -87,6 +92,11 @@ class GcsMediaAdapter(MediaStoragePort):
         bucket = client.bucket(self._bucket_name)
         blob = bucket.blob(key)
         return blob.download_as_bytes()
+
+    def _exists_sync(self, key: str) -> bool:
+        from google.cloud import storage  # type: ignore[attr-defined]  # lazy import — optional at startup; mypy resolves google.cloud to a stub namespace without it
+
+        return storage.Client().bucket(self._bucket_name).blob(key).exists()
 
     def _signed_url_sync(self, key: str, ttl_seconds: int) -> str:
         from datetime import timedelta

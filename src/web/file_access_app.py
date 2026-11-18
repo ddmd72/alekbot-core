@@ -14,7 +14,9 @@ reach a private storage object:
          buttons) instead of redirecting — see _VIDEO_KEY_PREFIX below.
          Everything else: mint a fresh short-lived (5 min) GCS V4 signed URL
          for the object key and 302-redirect the browser to it (these are
-         HTML reports/docs meant to be viewed, not downloaded).
+         HTML reports/docs meant to be viewed, not downloaded). An object the
+         bucket's lifecycle already deleted answers 410, as /raw does, instead
+         of a redirect to the storage's own not-found page.
 
     GET /f/<token>/raw
       Same-origin byte stream backing the video landing page's buttons —
@@ -101,6 +103,10 @@ def create_file_access_blueprint(
             return Response(_video_landing_page(token, access.key), mimetype="text/html")
 
         try:
+            if not await media_storage.exists(access.key):
+                # The token outlived the object (the bucket's lifecycle deleted it): gone, not an outage.
+                logger.info("[FileAccess] %s is no longer stored", access.key)
+                return Response("This file has expired.", status=410)
             signed = await media_storage.generate_signed_url(access.key, _SIGNED_URL_TTL)
         except Exception as e:  # noqa: BLE001
             logger.error("[FileAccess] signing failed for %s: %s", access.key, e, exc_info=True)
