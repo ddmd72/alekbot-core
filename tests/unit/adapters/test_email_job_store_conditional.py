@@ -90,6 +90,12 @@ class _Journal(EmailIndexingJobRepository):
     async def create_job(self, job: IndexingJob) -> None:
         self.jobs[job.job_id] = job
 
+    async def create_job_if_absent(self, job: IndexingJob) -> bool:
+        if job.job_id in self.jobs:
+            return False
+        self.jobs[job.job_id] = job
+        return True
+
     async def update_job(self, job_id: str, updates: Dict[str, Any], expected_status: Optional[str] = None) -> bool:
         return True
 
@@ -104,10 +110,3 @@ class _Journal(EmailIndexingJobRepository):
 
     async def get_stale_running_jobs(self, updated_before: datetime) -> List[IndexingJob]:
         return []
-
-
-async def test_the_port_default_create_if_absent_stores_once():
-    journal = _Journal()
-    assert await journal.create_job_if_absent(_job(emails_stored=1)) is True
-    assert await journal.create_job_if_absent(_job(emails_stored=2)) is False
-    assert journal.jobs["j1"].emails_stored == 1

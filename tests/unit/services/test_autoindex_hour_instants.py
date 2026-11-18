@@ -31,6 +31,13 @@ class _Journal(EmailIndexingJobRepository):
         self.jobs[job.job_id] = job
         self.created.append(job)
 
+    async def create_job_if_absent(self, job: IndexingJob) -> bool:
+        if job.job_id in self.jobs:
+            return False
+        self.jobs[job.job_id] = job
+        self.created.append(job)
+        return True
+
     async def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
         self.jobs[job_id] = self.jobs[job_id].model_copy(update=updates)
 
