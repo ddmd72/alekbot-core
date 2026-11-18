@@ -15,7 +15,6 @@ from google.api_core.exceptions import NotFound
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from src.domain.email import IndexedEmail, IndexingState
-from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -25,8 +24,8 @@ V1_VECTOR_FIELDS = {"vector", "tags_vector", "metadata_vector", "attachments_vec
 
 
 @pytest.fixture
-def repo():
-    db = EvalDb(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1",
+def repo(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1",
                                                STATE: "development_email_indexing_state"})
     env = SimpleNamespace(domain_email_facts_collection=FACTS, email_indexing_state_collection=STATE)
     return FirestoreIndexedEmailRepository(db, env)
