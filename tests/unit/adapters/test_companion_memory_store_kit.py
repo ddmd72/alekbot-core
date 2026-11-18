@@ -30,7 +30,7 @@ def _adapter(db) -> FirestoreCompanionMemoryRepository:
 
 class Store:
     def __init__(self, kit_db) -> None:
-        self.db = kit_db(indexes=INDEXES_FILE, groups={REC: "development_companion_records"})
+        self.db = kit_db(indexes=INDEXES_FILE, groups={REC: "development_companion_records"}, vector_dimension=2)
         self.repo = _adapter(self.db)
 
     @property

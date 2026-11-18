@@ -26,7 +26,8 @@ V1 = {"text": "Hotel booking RM-55120 confirmed.", "state": "current", "vector":
 
 class Firestore:
     def __init__(self, kit_db) -> None:
-        self.db = kit_db(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1"})
+        self.db = kit_db(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1"},
+                         vector_dimension=2)
         self.index: EmailCardIndex = FirestoreEmailCardIndex(
             self.db, SimpleNamespace(domain_email_facts_collection=FACTS))
 

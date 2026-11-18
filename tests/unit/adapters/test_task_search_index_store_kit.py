@@ -34,7 +34,7 @@ class Store:
     """The real adapter over one EvalDb with the declared indexes, its collection mapped to its index group."""
 
     def __init__(self, kit_db) -> None:
-        self.db = kit_db(indexes=INDEXES_FILE, groups={COL: "development_task_search_index"})
+        self.db = kit_db(indexes=INDEXES_FILE, groups={COL: "development_task_search_index"}, vector_dimension=2)
         self.index = _adapter(self.db)
 
     @property
