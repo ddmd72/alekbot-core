@@ -38,12 +38,6 @@ class _GatedLlm:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="P15-S7: a success admitted before the breaker tripped calls record_success "
-    "afterwards and closes the OPEN breaker; owner decision",
-)
 async def test_success_admitted_before_trip_does_not_close_the_tripped_breaker():
     now = [1000.0]
     resilience = InMemoryProviderResilience(

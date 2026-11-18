@@ -799,7 +799,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     child's own `CancelledError` is a failed `ToolResult` unless the gathering task is itself being cancelled; both markers are removed.
   - P15-S6: resolved file text is written into the model's own tool-call args. **Fixed:** `normalize_delegate_context`
     returns a copy, so the coordinator's `file_content` no longer rides in the orchestrator's history; the marker is removed.
-  - P15-S7: a stale success closes a tripped provider breaker.
+  - P15-S7: a stale success closes a tripped provider breaker. **Fixed:** `_call_llm` records a primary success only if the
+    breaker is not OPEN when it lands (it was closed at admission); the marker is removed.
 - **Known limit.** The nested `context` dict of `agent_execution` is not checked per key: producers forward a runtime dict and the consumer passes
   the whole dict to the agent.
 - **Built in part 2** (next note): per-type double runs, retry after a partial effect and the agent instance-state meta-test. Closed since: the three
