@@ -40,9 +40,9 @@ from the Home Screen or Siri therefore began with a failed call or a full Google
 - The Home Screen app has its own cookie jar, separate from Safari's. Each entry point logs in
   once a day on its own.
 
-## Known debt (not fixed here)
+## Known debt (fixed)
 
-`/auth/refresh` mints the new access token from a stub `BillingAccount` whose `iam_policy` is
-empty, so the refreshed token always carries `role: viewer`. An owner would lose the Team tab.
-Nothing calls the endpoint today. Fix it by loading user and account from the repositories (the
-TODO in the handler) before anything starts using it.
+`/auth/refresh` used to mint the new access token from a stub `BillingAccount` with an empty
+`iam_policy`, so a refreshed token carried `role: viewer` and tier FREE, and a deleted user still
+got one. It now loads the stored user and account (`AuthenticationService.resume_session`) and
+refuses with 401 when the user is absent or inactive or the account is absent.

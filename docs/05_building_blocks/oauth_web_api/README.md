@@ -220,20 +220,21 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 ```
 
 **Cookies Updated:**
-- `access_token` - New JWT access token (1 hour TTL)
+- `access_token` - New JWT access token (`ACCESS_TOKEN_TTL`, 24 hours by default)
 
 **Error Codes:**
-- `401` - Missing, expired, or invalid refresh token
+- `401` - Missing, expired, or invalid refresh token, or an access token sent as one
+- `401` - The user is absent or inactive, or their account is absent (`{"error": "Session no longer valid"}`)
+- `500` - A store error while loading the user or account (no detail in the body)
 
 **Implementation:**
-- File: [src/web/oauth_app.py:210-284](../../../src/web/oauth_app.py#L210)
+- File: [src/web/oauth_app.py](../../../src/web/oauth_app.py) (`refresh_token_endpoint`)
 - **Step 1:** Extract refresh token from cookie or `Authorization` header
 - **Step 2:** Verify refresh token via `session_service.verify_refresh_token()`
-- **Step 3:** Extract `user_id` and `account_id` from JWT payload
-- **Step 4:** Create new access token (TODO: fetch user/account from DB)
+- **Step 3:** Load the stored user (the token's `sub`) and the user's stored account via
+  `AuthenticationService.resume_session()`; the token's `account_id` is not used
+- **Step 4:** Create new access token from them: role from the account's `iam_policy`, tier from the account, as at sign-in
 - **Step 5:** Update `access_token` cookie
-
-**Note:** Currently trusts refresh token payload. In production, should fetch user/account from database to ensure user is still active.
 
 ---
 
