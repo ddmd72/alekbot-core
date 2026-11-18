@@ -110,7 +110,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 
 ## Remote MCP server (claude.ai connector)
 
-Routed by the ASGI dispatcher in `main.py` to the `mcp` SDK app: `/mcp` (streamable HTTP, bearer token),
+Routed by the ASGI dispatcher in `src/web/mcp_dispatcher.py` to the `mcp` SDK app: `/mcp` (streamable HTTP, bearer token),
 `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-authorization-server`,
 `/.well-known/oauth-protected-resource…`; the consent page is `GET`/`POST /mcp/consent`
 (`src/web/mcp_consent_app.py`). A second, resource-server-only app serves the drive connector: `/drive-mcp`

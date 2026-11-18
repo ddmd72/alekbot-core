@@ -2,104 +2,30 @@ import sys
 import os
 import signal
 import asyncio
-import contextlib
-from typing import Optional
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails
 from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
-from src.web.mcp_error_logger import McpErrorLogger
+from src.web.main_service_routes import create_main_service_blueprint
+from src.web.mcp_dispatcher import build_shared_asgi
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.composition.application_graph import build_application_graph
 from src.utils.logger import logger, quiet_third_party_loggers
 from src.utils.telemetry import init_telemetry
 from src.composition.memory_telemetry_setup import build_memory_telemetry
-from src.domain.memory_telemetry import SCOPE_WORKER_TASK
-from src.utils.memory_scope import memory_scope
-from src.domain.cloud_task_delivery import CloudTaskDelivery
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
 from src.composition.drive_connector_tools import build_drive_connector_tools_from_container
-from src.composition.drive_mcp_setup import build_drive_mcp_app
+from src.composition.drive_mcp_setup import build_drive_mcp_or_none
 from src.composition.drive_link_setup import build_drive_link_service
 from src.composition.voice_mcp_setup import build_voice_mcp_tokens, voice_mcp_tools_enabled
 from src.composition.voice_resume_setup import build_voice_resume_service
 from src.web.drive_link_app import create_drive_link_blueprint
-from src.domain.mcp_resource import DRIVE_PATH
-
-
-def _is_mcp_path(path: str) -> bool:
-    # The paths the facts app (authorization server + `/mcp`) serves. No docstring: a test reads this body's literals.
-    if path == "/mcp" or path == "/mcp/":
-        return True
-    if path in ("/authorize", "/token", "/register", "/revoke"):
-        return True
-    if path == "/.well-known/oauth-authorization-server":
-        return True
-    if path.startswith("/.well-known/oauth-protected-resource"):
-        return True
-    return False
-
-
-def mcp_owner(path: str) -> Optional[str]:
-    """Which MCP app owns `path`: "drive", "facts", or None (the Quart app).
-
-    The drive checks run first: the facts protected-resource-metadata test is a prefix match.
-    """
-    if path in (DRIVE_PATH, DRIVE_PATH + "/"):
-        return "drive"
-    if path == "/.well-known/oauth-protected-resource" + DRIVE_PATH:
-        return "drive"
-    return "facts" if _is_mcp_path(path) else None
-
-
-def build_drive_mcp_or_none(authorization_service, auth_config, tools=None, voice_tokens=None):
-    """The drive connector's app, or None when its build fails: the facts connector must keep running. `tools` None:
-    the app lists no tool (only the auth-seam tests build it so; `main()` always passes the tools). `voice_tokens`
-    None: every voice MCP token is refused (no `VOICE_MCP_SIGNING_KEY`)."""
-    try:
-        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config, tools=tools,
-                                   voice_tokens=voice_tokens)
-    except Exception as drive_err:
-        logger.error(f"❌ Failed to initialize drive MCP connector: {drive_err}", exc_info=True)
-        logger.warning("🤖 Bot will continue without the drive connector")
-        return None
-
-
-def build_mcp_parent_asgi(*, main_app, facts_mcp, drive_mcp, facts_asgi):
-    """The plain ASGI dispatcher: lifespan runs every MCP session manager; paths go by `mcp_owner`.
-
-    `drive_mcp` None (its build failed): `/drive-mcp` falls through to the Quart app (404).
-    """
-    drive_asgi = McpErrorLogger(drive_mcp.streamable_http_app()) if drive_mcp is not None else None
-
-    async def parent_asgi(scope, receive, send):
-        if scope["type"] == "lifespan":
-            async with contextlib.AsyncExitStack() as stack:
-                await stack.enter_async_context(facts_mcp.session_manager.run())
-                if drive_mcp is not None:
-                    await stack.enter_async_context(drive_mcp.session_manager.run())
-                while True:
-                    message = await receive()
-                    if message["type"] == "lifespan.startup":
-                        await send({"type": "lifespan.startup.complete"})
-                    elif message["type"] == "lifespan.shutdown":
-                        await send({"type": "lifespan.shutdown.complete"})
-                        return
-        owner = mcp_owner(scope.get("path", ""))
-        if owner == "facts":
-            await facts_asgi(scope, receive, send)
-        elif owner == "drive" and drive_asgi is not None:
-            await drive_asgi(scope, receive, send)
-        else:
-            await main_app(scope, receive, send)
-
-    return parent_asgi
 
 
 async def main():
@@ -527,20 +453,6 @@ async def main():
                 from src.web.landing_app import create_landing_blueprint
                 main_app.register_blueprint(create_landing_blueprint(app.session_service))
 
-                # Add health endpoint
-                @main_app.route("/health", methods=["GET"])
-                async def health():
-                    from quart import jsonify
-                    return jsonify({"status": "healthy", "mode": "http"}), 200
-
-                # Real browsers + link-preview bots request these by default; serving them
-                # stops the recurring 404 noise (prod log audit, P2 hygiene batch).
-                @main_app.route("/favicon.ico", methods=["GET"])
-                async def favicon():
-                    from quart import send_file
-                    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static")
-                    return await send_file(os.path.join(static_dir, "alek-logo.png"), mimetype="image/png")
-
                 # Accepted /worker identities, computed once: SERVICE_ACCOUNT_EMAIL plus the optional
                 # transition list. Empty set: every call refused on Cloud Run (ERROR logged once, here),
                 # open locally (manual curl triggers).
@@ -550,32 +462,11 @@ async def main():
                     label="Worker",
                 )
 
-                # Add /worker endpoint — delegates to WorkerHandler
-                @main_app.route("/worker", methods=["POST"])
-                async def worker():
-                    from quart import request, jsonify
-                    # OIDC gate. Cloud Tasks / Cloud Scheduler attach an OIDC
-                    # token signed by an accepted identity (_worker_oidc_gate);
-                    # no identity configured: closed on Cloud Run, open locally,
-                    # keeping manual curl triggers working (CLAUDE.md "Manual
-                    # Triggers"). Identity-only check — audience is not pinned
-                    # (callers use inconsistent audiences); see verifier docstring.
-                    if not await _worker_oidc_gate(request.headers.get("Authorization")):
-                        logger.warning("Rejected unauthenticated /worker request")
-                        return jsonify({"error": "unauthorized"}), 401
-                    payload = await request.get_json(silent=True) or {}
-                    delivery = CloudTaskDelivery.from_headers(request.headers)
-                    if delivery is not None:
-                        logger.info(
-                            "📥 /worker delivery: task_type=%s task=%s retry_count=%s execution_count=%s",
-                            payload.get("task_type"), delivery.task_name,
-                            delivery.retry_count, delivery.execution_count,
-                        )
-                    with memory_scope(SCOPE_WORKER_TASK, str(payload.get("task_type") or "slack_event")):
-                        body, status = await worker_handler.handle(
-                            payload, delivery=delivery, headers=dict(request.headers),
-                        )
-                        return jsonify(body), status
+                # /health, /favicon.ico and /worker (the gate above is injected)
+                main_app.register_blueprint(create_main_service_blueprint(
+                    worker_handler, _worker_oidc_gate,
+                    static_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static"),
+                ))
 
                 # ====================================================================
                 # Remote MCP connector for claude.ai Custom Connectors
@@ -657,31 +548,14 @@ async def main():
                     hypercorn_config.accesslog = None
                     hypercorn_config.errorlog = "-"
 
-                    if mcp_components is not None:
-                        # Plain ASGI dispatcher routing by path.
-                        #
-                        # Starlette's Mount("/mcp", ...) strips the prefix and
-                        # requires a trailing slash — it does NOT match exact
-                        # "/mcp" for POST, which is what claude.ai sends. It
-                        # also conflicts with the SDK's absolute-path routes
-                        # (SDK builds /authorize, /token, /register and PRM at
-                        # server root, not under a mount prefix).
-                        #
-                        # So we forward the FastMCP-owned paths to the SDK
-                        # sub-app WITHOUT path rewriting, and everything else
-                        # falls through to the Quart app. Quart handles
-                        # /mcp/consent (the consent UI blueprint), /auth/*,
-                        # /api/*, /slack/*, /worker, /health, /cabinet.
-                        _fastmcp = mcp_components.fastmcp
-                        _mcp_asgi = McpErrorLogger(_fastmcp.streamable_http_app())
-
-                        parent_asgi = build_mcp_parent_asgi(
-                            main_app=main_app, facts_mcp=_fastmcp, drive_mcp=drive_mcp, facts_asgi=_mcp_asgi
-                        )
-
-                        await serve(parent_asgi, hypercorn_config)
-                    else:
-                        await serve(main_app, hypercorn_config)
+                    await serve(
+                        build_shared_asgi(
+                            main_app,
+                            facts_mcp=mcp_components.fastmcp if mcp_components is not None else None,
+                            drive_mcp=drive_mcp,
+                        ),
+                        hypercorn_config,
+                    )
 
                 # Replace adapter's start with shared app start
                 slack_adapter.start = start_shared_app

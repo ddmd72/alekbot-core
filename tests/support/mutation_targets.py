@@ -180,6 +180,10 @@ TARGETS: tuple[MutationTarget, ...] = (
                    extra=("tests/unit/test_worker_redelivery_route.py",)),  # reaches it only through main
     MutationTarget("src.adapters.firestore_task_claim_store", "tests/unit/adapters/firestore_task_claim_store_equivalent_mutants.txt",
                    extra=("tests/unit/test_worker_redelivery_route.py",)),  # reaches it only through main
+    # U1: the routes and the MCP dispatcher moved out of main(); default operators (not the wiring group, whose size is pinned at 22).
+    MutationTarget("src.web.main_service_routes", "tests/unit/web/main_service_routes_equivalent_mutants.txt"),
+    MutationTarget("src.web.mcp_dispatcher", "tests/unit/web/mcp_dispatcher_equivalent_mutants.txt",
+                   extra=("tests/unit/test_mcp_dispatch.py",)),
     MutationTarget("src.services.reminders_service", "tests/unit/services/reminders_service_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_agent_note_adapter", "tests/unit/adapters/firestore_agent_note_adapter_equivalent_mutants.txt"),
     MutationTarget("src.services.task_setup_service", "tests/unit/services/task_setup_service_equivalent_mutants.txt"),

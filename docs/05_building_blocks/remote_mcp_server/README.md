@@ -70,7 +70,7 @@ src/composition/
 src/web/
     mcp_consent_app.py                     # Quart blueprint: /mcp/consent GET/POST
 
-main.py                                     # parent ASGI dispatcher + lifespan chain
+src/web/mcp_dispatcher.py                    # parent ASGI dispatcher + lifespan chain (wired by main.py)
 ```
 
 **Layering rationale (hexagonal):**

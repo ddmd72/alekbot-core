@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-09
 **Status:** Live; widened in S1b (2026-10-22), pending deploy
-**Scope:** `/worker` (`main.py`) and `WorkerHandler`: every Cloud Tasks delivery (all `task_type`s,
+**Scope:** `/worker` (`src/web/main_service_routes.py`) and `WorkerHandler`: every Cloud Tasks delivery (all `task_type`s,
 `telegram_update`, queued Slack events). Introduced for `agent_execution` (deep research, documents,
 images, `tell_alek` errands); widened to every delivery in S1b.
 

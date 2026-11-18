@@ -1,0 +1,1 @@
+# Mutants a reviewer ruled equivalent for src.web.main_service_routes: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check).
