@@ -49,10 +49,10 @@ class FirestoreAccountRepository(AccountRepository):
         return account
 
     async def update_account(self, account: BillingAccount) -> BillingAccount:
-        # Every field but usage: the counters are increment_account_usage's, and a whole-document write would undo an
-        # increment that landed since the caller's read.
+        # Every field but usage and iam_policy: the counters are increment_account_usage's and the members
+        # set_member_role's; writing either from the caller's read would undo a change that landed since.
         doc_ref = self.accounts_collection.document(account.account_id)
-        await doc_ref.update(account.model_dump(exclude={"usage"}))
+        await doc_ref.update(account.model_dump(exclude={"usage", "iam_policy"}))
         return account
 
     async def set_member_role(self, account_id: str, user_id: str, role: str) -> None:

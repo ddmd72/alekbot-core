@@ -94,3 +94,22 @@ async def test_a_member_id_with_a_dot_or_a_backtick_stays_one_key_of_the_map(acc
     await accounts.repo.set_member_role("a1", "u.2", "member")
     await accounts.repo.set_member_role("a1", "u`3", "viewer")
     assert accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u.2": "member", "u`3": "viewer"}
+
+
+async def test_update_account_keeps_a_member_added_since_the_callers_read(accounts):
+    """Flips when update_account writes the iam_policy it was given (the caller's read of {u1})."""
+    await accounts.seed()
+    account = await accounts.repo.get_account("a1")
+    await accounts.repo.set_member_role("a1", "u2", "member")
+    account.daily_cost_limit = 9.0
+    await accounts.repo.update_account(account)
+    assert accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u2": "member"}
+    assert accounts.docs["a1"]["daily_cost_limit"] == 9.0
+
+
+async def test_update_account_never_writes_members(accounts):
+    await accounts.seed()
+    account = await accounts.repo.get_account("a1")
+    account.iam_policy = {}
+    await accounts.repo.update_account(account)
+    assert accounts.docs["a1"]["iam_policy"] == {"u1": "owner"}

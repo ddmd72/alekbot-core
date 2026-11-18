@@ -25,8 +25,9 @@ class AccountRepository(ABC):
 
     @abstractmethod
     async def update_account(self, account: BillingAccount) -> BillingAccount:
-        """Store the account's fields as given. Usage counters are not the caller's to write: a usage
-        increment that landed since the caller's get_account is kept. Errors: an absent account raises (NotFound)."""
+        """Store the account's fields as given, except usage and iam_policy, which are kept as stored: a usage
+        increment or a member (set_member_role) that landed since the caller's get_account is kept. Members change only
+        through set_member_role. Errors: an absent account raises (NotFound)."""
         pass
 
     @abstractmethod
