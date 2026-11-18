@@ -4,6 +4,7 @@
 tests/cloud/conftest.py :: skip :: 'cloud gate not configured: TEST_FIRESTORE_DATABASE, TEST_SA_EMAIL and GOOGLE_CLOUD_PROJECT must all be set' :: x1  # cloud: real writes to the Firestore test database: `make test-cloud`, weekly `Firestore parity`
 tests/cloud/conftest.py :: skip :: 'cloud gate: run with `make test-cloud` (RUN_CLOUD_TESTS=1); a bare pytest never writes to the test database' :: x1  # cloud: real writes to the Firestore test database: `make test-cloud`, weekly `Firestore parity`
 tests/cloud/test_gcs_parity_cloud.py :: skip :: 'GCS parity not configured: TEST_GCS_BUCKET must be set' :: x1  # manual: needs TEST_GCS_BUCKET; `make test-cloud` on the owner's machine only, the weekly workflow does not pass it (P12)
+tests/cloud/test_task_queue_cloud.py :: skip :: 'paused queue not configured: TEST_TASKS_QUEUE must be set' :: x1  # cloud: real writes to the Firestore test database: `make test-cloud`, weekly `Firestore parity`
 tests/conftest.py :: mark.skip :: reason='slow test: run with `make ci` (RUN_SLOW_TESTS=1)' :: x1  # ci-slow: the conftest switch that skips slow tests unless RUN_SLOW_TESTS=1
 tests/conftest.py :: mark.skip :: reason='timing test: run with `make test-timing` (RUN_TIMING_TESTS=1)' :: x1  # timing: the conftest switch that skips timing tests unless RUN_TIMING_TESTS=1
 tests/contracts/user_drive_contract.py :: skip :: 'a drive without search' :: x1  # param: a case of a backend-parametrised or contract test that does not apply here; the other cases run in check
