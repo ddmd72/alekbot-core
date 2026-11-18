@@ -32,7 +32,7 @@ from src.config.environment import EnvironmentConfig
 from tests.support.cloud_credentials import select_credentials
 from tests.support.cloud_indexes import admin_index, existing_signature, of_group, wanted_signature
 from tests.support.firestore_eval import EvalDb
-from tests.support.kit_backend import RealKitBackend
+from tests.support.kit_backend import RealKitBackend, guard_clients
 from tests.support.store_inventory import KITS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -227,18 +227,7 @@ def _cloud_kits_reach_only_the_test_database(request: Any, monkeypatch: Any) -> 
     if request.node.getparent(KitModule) is None:
         return
     cloud = request.getfixturevalue("cloud")
-    from google.cloud.firestore_v1.async_client import AsyncClient
-    from google.cloud.firestore_v1.client import Client
-
-    for cls in (Client, AsyncClient):
-        original = cls.__init__
-
-        def checked(self: Any, *a: Any, _original: Any = original, **k: Any) -> None:
-            _original(self, *a, **k)
-            if self._database != cloud.database or self.project != cloud.project:
-                pytest.fail("guard: a kit test constructed a Firestore client that is not on the test database and project")
-
-        monkeypatch.setattr(cls, "__init__", checked)
+    guard_clients(monkeypatch, cloud.database, cloud.project)
 
 
 @pytest.fixture

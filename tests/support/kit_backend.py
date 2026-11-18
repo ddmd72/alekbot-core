@@ -54,6 +54,23 @@ def real_name(name: str, groups: Optional[Dict[str, str]]) -> str:
     return rendered_group(group) if group else UNGROUPED_PREFIX + name     # type: ignore[return-value]
 
 
+def guard_clients(monkeypatch: Any, database: str, project: str) -> None:
+    """Every Firestore `Client` or `AsyncClient` constructed while this is installed must be on `database` and `project`,
+    or the construction fails (`pytest.fail`). The cloud gate installs it for every kit test there, in place of the unit
+    suite's network guard. The classes patched are the ones `google.cloud.firestore.Client` / `AsyncClient` resolve to."""
+    from google.cloud import firestore
+
+    for cls in (firestore.Client, firestore.AsyncClient):
+        original = cls.__init__
+
+        def checked(self: Any, *a: Any, _original: Any = original, **k: Any) -> None:
+            _original(self, *a, **k)
+            if self._database != database or self.project != project:
+                pytest.fail("guard: a kit test constructed a Firestore client that is not on the test database and project")
+
+        monkeypatch.setattr(cls, "__init__", checked)
+
+
 def _refuse(*_a: Any, **_k: Any) -> None:
     raise TypeError("a nested value of a raw document is frozen on the real backend (the change would not reach "
                     "Firestore): assign the top-level field, or mark the test h1_only")

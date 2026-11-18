@@ -230,3 +230,22 @@ def test_an_index_set_the_real_database_cannot_honour_is_refused():
     for indexes in ([], [SESSIONS_INDEX], "elsewhere.json"):
         with pytest.raises(ValueError, match="h1_only"):
             backend(indexes=indexes)
+
+
+# --------------------------------------------------------------------------------------------------- the client guard
+
+@pytest.mark.parametrize("name", ["Client", "AsyncClient"])
+def test_the_client_guard_refuses_another_database_or_project_and_passes_the_test_one(monkeypatch, name):
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import firestore
+    from google.cloud.firestore_v1 import async_client, client
+
+    from tests.support.kit_backend import guard_clients
+
+    cls = getattr(firestore, name)
+    assert cls is {"Client": client.Client, "AsyncClient": async_client.AsyncClient}[name]
+    guard_clients(monkeypatch, "kits-test", "p")
+    for project, database in (("p", "other-test"), ("q", "kits-test")):
+        with pytest.raises(pytest.fail.Exception, match="not on the test database"):
+            cls(project=project, database=database, credentials=AnonymousCredentials())
+    assert cls(project="p", database="kits-test", credentials=AnonymousCredentials())._database == "kits-test"
