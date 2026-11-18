@@ -195,6 +195,7 @@ async def test_a_date_field_that_is_not_a_timestamp_raises_attribute_error(store
         await store.repo.get_job("j1")
 
 
+@pytest.mark.h1_only("the fake collection's failure switch (.fail =)")
 async def test_backend_errors_propagate(store):
     await store.repo.create_job(job())
     store.db.collection(JOBS).fail = ServiceUnavailable("down")
