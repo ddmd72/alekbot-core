@@ -24,8 +24,8 @@ AT = NOW + timedelta(hours=1)
 
 
 @pytest.fixture
-def world():
-    return ReviewWorld()
+def world(kit_db):
+    return ReviewWorld(kit_db)
 
 
 def stored(world, question_id):
