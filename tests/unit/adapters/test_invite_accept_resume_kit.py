@@ -18,6 +18,7 @@ from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepositor
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
 from src.services.invite_code_service import InviteCodeService
+from tests.support.redelivery_world import require
 from tests.unit.adapters.test_invite_code_store_kit import (
     ACCOUNTS, DIGEST_KEY, INDEXES_FILE, INVITES, NOW, OWNER, OWNER_ACC, USERS, WHITELIST, InviteStore, invite, key)
 
@@ -124,3 +125,43 @@ async def test_a_completed_accept_retried_is_refused_as_a_used_code_and_changes_
     with pytest.raises(ValueError, match="expired or already used"):
         await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     assert (dict(store.docs[key()]), await members(store)) == before
+
+
+async def test_a_completed_code_re_presented_after_the_user_moved_on_is_refused_and_changes_nothing(store):
+    """Flips when the resume is told from the user's current account: after the accept the user moved to another
+    account, and the old code would re-join the first one (past its expiry too)."""
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    user = await store.users.get_user("usr-new")
+    user.account_id = "acc-usr-new"                                # moved on, e.g. by another team's invite
+    await store.users.update_user(user)
+    before = (dict(store.docs[key()]), await members(store))
+
+    with pytest.raises(ValueError, match="expired or already used"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == "acc-usr-new"
+    assert (dict(store.docs[key()]), await members(store)) == before
+
+
+async def test_a_finished_accept_stamps_its_code_completed(store):
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    doc = store.docs[key()]
+    assert doc["used_by_user_id"] == "usr-new"
+    assert doc["used_at"] <= doc["completed_at"]
+
+
+async def test_a_failed_completion_stamp_is_finished_by_the_retry(store, monkeypatch):
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    fail_once(monkeypatch, store.repo, "complete")
+    with pytest.raises(RuntimeError, match="backend down"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    require(await store.account_of("usr-new") == OWNER_ACC, "the move landed before the stamp failed")
+    assert "completed_at" not in store.docs[key()]
+
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert "completed_at" in store.docs[key()]
+    assert await members(store) == {OWNER: "OWNER", "usr-new": "member"}

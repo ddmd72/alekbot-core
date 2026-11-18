@@ -54,6 +54,15 @@ class InviteCodeRepository(ABC):
         pass
 
     @abstractmethod
+    async def complete(self, invite_code: InviteCode) -> None:
+        """Store invite_code's completed_at on the stored invite (the accept its claim was made for has finished);
+        every other stored field is kept.
+
+        Idempotency: a repeat rewrites the stamp. Errors: an absent code raises (NotFound), nothing written.
+        """
+        pass
+
+    @abstractmethod
     async def list_by_user(self, user_id: str) -> List[InviteCode]:
         """Return every invite created by `user_id`, used and expired ones included.
 

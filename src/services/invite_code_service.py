@@ -97,9 +97,10 @@ class InviteCodeService:
         """
         Consume a team invite code to join a user to an account.
 
-        The writes run claim, membership, then the user's move, so a failure after the claim leaves the code held by
-        this user and nothing else changed but the membership: the same user's retry with the same code completes
-        the accept (each write repeats harmlessly), even past the code's expiry; anyone else is refused.
+        The writes run claim, membership, the user's move, then the code's completion stamp. A failure after the
+        claim leaves the code claimed by this user and not completed: the same user's retry with the same code
+        finishes the accept (each write repeats harmlessly), even past the code's expiry; anyone else is refused. A
+        completed code is refused to everyone, its claimant included, wherever that user is now.
         """
         logger.info(f"User {new_member_user_id} attempting to consume an invite")
         
@@ -107,7 +108,8 @@ class InviteCodeService:
         invite = await self.repo.get_by_code(code)
         if not invite:
             raise ValueError("Invalid invite code")
-        resuming = invite.used_at is not None and invite.used_by_user_id == new_member_user_id
+        resuming = (invite.used_at is not None and invite.completed_at is None
+                    and invite.used_by_user_id == new_member_user_id)
         if not resuming and not invite.is_valid():
             raise ValueError("Invite code expired or already used")
         
@@ -120,9 +122,7 @@ class InviteCodeService:
         if not new_member:
             raise ValueError(f"User {new_member_user_id} not found")
             
-        if new_member.account_id == invite.account_id:
-            if resuming:        # the move is the last write: this accept is complete, its code is spent
-                raise ValueError("Invite code expired or already used")
+        if new_member.account_id == invite.account_id and not resuming:
             raise ValueError("User is already a member of this account")
 
         # 2. WHITELIST CHECK (NEW - 2026-02-05)
@@ -160,8 +160,7 @@ class InviteCodeService:
                 logger.warning(f"⛔ [InviteCodeService] Invite already used; {new_member_user_id} not joined")
                 raise ValueError("Invite code expired or already used")
 
-        # The membership before the move: a user moved into the account always holds a role there, and the move,
-        # written last, is what marks the accept complete (the account check above).
+        # The membership before the move: a user moved into the account always holds a role there.
         await self.account_repo.set_member_role(invite.account_id, new_member_user_id, iam_role)
 
         # Note: In MVP we overwrite the user's account.
@@ -169,5 +168,9 @@ class InviteCodeService:
         # unless we migrate it. For MVP, we assume joining a team switches context.
         new_member.account_id = invite.account_id
         await self.user_repo.update_user(new_member)
+
+        # Written last and durable: once stamped, the code resumes nothing, whatever account the user is in later.
+        invite.completed_at = datetime.now(timezone.utc)
+        await self.repo.complete(invite)
 
         logger.info(f"User {new_member_user_id} joined account {invite.account_id} as {invite.role}")

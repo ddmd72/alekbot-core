@@ -51,6 +51,9 @@ class FirestoreInviteCodeRepository(InviteCodeRepository):
             
         if invite_code.used_by_user_id:
             data["used_by_user_id"] = invite_code.used_by_user_id
+
+        if invite_code.completed_at:
+            data["completed_at"] = invite_code.completed_at
             
         return data
 
@@ -75,7 +78,8 @@ class FirestoreInviteCodeRepository(InviteCodeRepository):
             platform=doc_dict.get("platform"),
             role=doc_dict.get("role", "MEMBER"),
             used_at=doc_dict.get("used_at"),
-            used_by_user_id=doc_dict.get("used_by_user_id")
+            used_by_user_id=doc_dict.get("used_by_user_id"),
+            completed_at=doc_dict.get("completed_at"),
         )
 
     @log_execution_time
@@ -131,6 +135,11 @@ class FirestoreInviteCodeRepository(InviteCodeRepository):
 
         claimed: bool = await _claim(self.db.transaction())
         return claimed
+
+    @log_execution_time
+    async def complete(self, invite_code: InviteCode) -> None:
+        """Write the accept's completion stamp alone (a field update: NotFound on an absent code)."""
+        await self.collection.document(self._doc_id(invite_code.code)).update({"completed_at": invite_code.completed_at})
 
     @log_execution_time
     async def list_by_user(self, user_id: str) -> List[InviteCode]:
