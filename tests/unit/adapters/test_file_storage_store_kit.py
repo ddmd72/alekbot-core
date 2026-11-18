@@ -5,8 +5,9 @@ import asyncio
 import unicodedata
 
 import pytest
-from google.api_core.exceptions import ServiceUnavailable
+from google.api_core.exceptions import PreconditionFailed, ServiceUnavailable
 
+from src.adapters import gcs_file_storage_adapter
 from src.adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from tests.support.gcs_fake import FakeGcs
 from tests.support.redelivery_world import Rendezvous, require
@@ -103,7 +104,6 @@ async def test_upload_failure_returns_nothing(fake, store):
     assert fake.names(BUCKET) == []
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="P11-G4-3: delete of a missing upload leaks the SDK NotFound")
 async def test_delete_of_a_missing_file_is_file_not_found(store):
     """`open_file`'s delete answers "not found — nothing to delete" only on FileNotFoundError; the SDK's NotFound
     becomes "Could not delete" and an ERROR. Flips when `delete` maps NotFound to FileNotFoundError, as `download`
@@ -117,8 +117,6 @@ async def test_delete_of_a_missing_file_is_file_not_found(store):
     assert isinstance(err, FileNotFoundError)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G4-2: two concurrent uploads of one name both return it; the later replaces the earlier")
 async def test_concurrent_same_name_uploads_get_two_names(store):
     """Slack names every pasted image `image.png`; two at once (two channels, Slack and Telegram) both see the name
     free, both return it, and the second write replaces the first image. Flips when the upload is conditional
@@ -138,3 +136,33 @@ async def test_concurrent_same_name_uploads_get_two_names(store):
     names = await asyncio.gather(upload(b"first"), upload(b"second"))
     require(rv.met and not rv.stalled, "both uploads checked the name before either wrote")
     assert len(set(names)) == 2 and {await store.download(n, "u1") for n in names} == {b"first", b"second"}
+
+
+async def test_retried_upload_that_had_landed_keeps_its_name(fake, store):
+    """P11-G4-2, the read-back: the client retries a conditional write whose response was lost and meets its own
+    object (412). The upload is the one stored, under the first name; no second copy is written."""
+    fake.fail_next("upload", PreconditionFailed("412"), landed=True)
+    name = await store.upload(b"%PDF invoice FA-0137", "FA-0137.pdf", "u1", "application/pdf")
+    assert name == "FA-0137.pdf"
+    assert fake.names(BUCKET) == ["u1/files/FA-0137.pdf"]
+    assert await store.download(name, "u1") == b"%PDF invoice FA-0137"
+
+
+async def test_upload_that_never_gets_a_name_fails_and_writes_nothing(fake, store, monkeypatch):
+    """P11-G4-2: every chosen name taken at write time, attempt after attempt: the upload fails loudly, it never
+    replaces a file."""
+    monkeypatch.setattr(gcs_file_storage_adapter, "_MAX_NAME_ATTEMPTS", 2)
+    fake.fail_next("upload", PreconditionFailed("412"))
+    fake.fail_next("upload", PreconditionFailed("412"))
+    with pytest.raises(PreconditionFailed):
+        await store.upload(b"x", "image.png", "u1", "image/png")
+    assert fake.names(BUCKET) == []
+
+
+async def test_delete_outage_is_not_file_not_found(fake, store):
+    """Control for P11-G4-3: only a missing object is FileNotFoundError; an outage stays an outage."""
+    await store.upload(b"x", "FA-0137.pdf", "u1", "application/pdf")
+    fake.fail_next("delete", ServiceUnavailable("503"))
+    with pytest.raises(ServiceUnavailable):
+        await store.delete("FA-0137.pdf", "u1")
+    assert fake.names(BUCKET) == ["u1/files/FA-0137.pdf"]
