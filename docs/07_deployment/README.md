@@ -670,6 +670,10 @@ release, never earlier: a protocol restored first runs the new code with the old
 `DRIVE_SPECIALIST_RFC.md` §13 (summarised in `decisions/drive_specialist.md` § Rollback); the one-off commands with the
 release's own values are in its rollout notes (ops).
 
+**Image registry retention.** `python scripts/infrastructure/artifact_registry_retention.py` (dry run; `--apply` sets the
+cleanup policy and cleans the backlog) keeps the 5 newest image versions per package and deletes versions older than
+14 days; it refuses when an image a revision or job needs would go (`decisions/artifact_registry_retention.md`).
+
 **The `:latest` trap.** After a failed deploy or a traffic rollback, `:latest` still points at the new image. Every
 `gcloud run services update`, and every Makefile target that wraps it (warm/cold, `claude-`/`openai-`/`dr-rollback` and
 `-forward`), creates a new revision from that image; with traffic pinned to the old revision it gets 0 %, so a kill-switch
