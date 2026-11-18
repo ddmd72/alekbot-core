@@ -11,7 +11,8 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
   the client encodes it (cursor values and datetimes nested in a map value are compared as given); cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure
   is refused) whose pre-filter may be a range or `!=`; dotted field paths everywhere (`where`, `order_by`, `select`,
   cursors, `snap.get`);
-- writes: `set` (merge or not), `create` (`AlreadyExists`), `update` (dotted keys are nested paths, `NotFound` on a
+- writes: `set` (merge or not), `create` (`AlreadyExists`), `update` (dotted keys are nested paths, parsed as the
+  client parses them: a backtick-quoted segment such as ``a.`x.y` `` is one key; `NotFound` on a
   missing document, optional `last_update_time` precondition), `delete`, batches; `Increment`, `ArrayUnion`,
   `ArrayRemove`, `SERVER_TIMESTAMP` (a `DatetimeWithNanoseconds` in UTC, as every stored timestamp reads back) and `DELETE_FIELD` applied; `set`/`create`/`update`
   return a `WriteResult` whose `transform_results` follow the alphabetical order of the transformed paths; values are
@@ -70,6 +71,7 @@ from google.cloud.firestore_v1._helpers import READ_AFTER_WRITE_ERROR, GeoPoint
 from google.cloud.firestore_v1.base_document import BaseDocumentReference
 from google.cloud.firestore_v1.base_query import _validate_opation
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+from google.cloud.firestore_v1.field_path import FieldPath
 from google.cloud.firestore_v1.transforms import (
     DELETE_FIELD, SERVER_TIMESTAMP, ArrayRemove, ArrayUnion, Increment,
 )
@@ -98,17 +100,21 @@ def stored_vector(value: Any) -> List[float]:
 
 # --------------------------------------------------------------------------------------------- field paths
 
-def _get_path(data: Optional[Dict[str, Any]], path: str) -> Any:
+def _parts(path: Union[str, Tuple[str, ...]]) -> Tuple[str, ...]:
+    return tuple(path.split(".")) if isinstance(path, str) else path
+
+
+def _get_path(data: Optional[Dict[str, Any]], path: Union[str, Tuple[str, ...]]) -> Any:
     cur: Any = data
-    for part in path.split("."):
+    for part in _parts(path):
         if not isinstance(cur, dict) or part not in cur:
             return _MISSING
         cur = cur[part]
     return cur
 
 
-def _set_path(target: Dict[str, Any], path: str, value: Any) -> None:
-    *parents, leaf = path.split(".")
+def _set_path(target: Dict[str, Any], path: Union[str, Tuple[str, ...]], value: Any) -> None:
+    *parents, leaf = _parts(path)
     for part in parents:
         nxt = target.get(part)
         if not isinstance(nxt, dict):
@@ -117,8 +123,8 @@ def _set_path(target: Dict[str, Any], path: str, value: Any) -> None:
     target[leaf] = value
 
 
-def _del_path(target: Dict[str, Any], path: str) -> None:
-    *parents, leaf = path.split(".")
+def _del_path(target: Dict[str, Any], path: Union[str, Tuple[str, ...]]) -> None:
+    *parents, leaf = _parts(path)
     for part in parents:
         target = target.get(part)    # type: ignore[assignment]
         if not isinstance(target, dict):
@@ -436,10 +442,11 @@ class EvalDocRef:
                 raise NotFound(f"No document to update: {col.name}/{self.id}")
             stored = copy.deepcopy(col.docs[self.id])
             for path, value in data.items():                  # type: ignore[union-attr]
+                parts = tuple(FieldPath.from_string(path).parts)   # the client's parse: `quoted` segments are one key
                 if value is DELETE_FIELD:
-                    _del_path(stored, path)
+                    _del_path(stored, parts)
                 else:
-                    _set_path(stored, path, _resolve(value, _get_path(stored, path), path, sink))
+                    _set_path(stored, parts, _resolve(value, _get_path(stored, parts), path, sink))
         elif kind == "delete":
             self._check_precondition(extra)
             col.docs.pop(self.id, None)

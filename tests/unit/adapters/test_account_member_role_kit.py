@@ -86,3 +86,11 @@ async def test_two_invites_accepted_into_one_account_at_once_both_become_members
     assert (await store.accounts.get_account(OWNER_ACC)).iam_policy == {OWNER: "OWNER", "usr-a": "member",
                                                                         "usr-b": "member"}
     assert (await store.account_of("usr-a"), await store.account_of("usr-b")) == (OWNER_ACC, OWNER_ACC)
+
+
+async def test_a_member_id_with_a_dot_or_a_backtick_stays_one_key_of_the_map(accounts):
+    """Flips when the field path is built unescaped (`iam_policy.u.2` nests a map `u` with a key `2`)."""
+    await accounts.seed()
+    await accounts.repo.set_member_role("a1", "u.2", "member")
+    await accounts.repo.set_member_role("a1", "u`3", "viewer")
+    assert accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u.2": "member", "u`3": "viewer"}

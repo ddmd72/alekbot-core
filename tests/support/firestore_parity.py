@@ -8,7 +8,9 @@ Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_quer
 the Facts S4 scenarios equality_and_in_without_composite and set_merge_fields_replaces_a_map_whole, and the fact
 profile's arrays_of_maps_vector_and_projection: documented behaviour, not yet run on the test database, owner
 `make test-cloud` before deploy; and P11's
-naive_datetime_filter_is_utc: the client's own encoding, run on the emulator 2026-10-27, not yet on the test database); where the
+naive_datetime_filter_is_utc: the client's own encoding, run on the emulator 2026-10-27, not yet on the test database;
+and update_quoted_segment_is_one_key: the client's own field-path parse, not yet run on the emulator or the test
+database); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
 
@@ -27,6 +29,7 @@ from google.api_core import exceptions as gexc
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+from google.cloud.firestore_v1.field_path import FieldPath
 from google.cloud.firestore_v1.types.document import Value
 from google.cloud.firestore_v1.vector import Vector
 
@@ -224,6 +227,13 @@ async def dotted_paths(db: Any, col: str) -> Any:
             "where": await _ids(_where(c, "ids.tg", "==", "T1")),
             "order_by": await _ids(c.order_by("usage.n", direction=DESC)),
             "select": {s.id: s.to_dict() async for s in c.select(["usage.n"]).stream()}}
+
+
+async def update_quoted_segment_is_one_key(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    await d.set({"m": {"u1": "x"}})
+    await d.update({FieldPath("m", "u.2").to_api_repr(): "y", FieldPath("m", "u-3").to_api_repr(): "z"})
+    return (await d.get()).to_dict()
 
 
 async def set_dotted_key_is_literal(db: Any, col: str) -> Any:
@@ -646,6 +656,8 @@ SCENARIOS: List[Scenario] = [
         "doc": {"ids": {"slack": "U1", "tg": "T1"}, "usage": {"n": 2}}, "get": 2, "where": ["a"], "order_by": ["b", "a"],
         "select": {"a": {"usage": {"n": 2}}, "b": {"usage": {"n": 5}}}}),
     Scenario("set_dotted_key_is_literal", set_dotted_key_is_literal, {"p.q": 1}),
+    Scenario("update_quoted_segment_is_one_key", update_quoted_segment_is_one_key,
+             {"m": {"u1": "x", "u.2": "y", "u-3": "z"}}),
     Scenario("increment_results", increment_results, {
         "stored": {"usage": {"z": 3, "a": 2.5, "m": 7, "new": 4}},
         "results": [("double_value", 2.5), ("integer_value", 7), ("integer_value", 4), ("integer_value", 3)]}),

@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
+from google.cloud.firestore_v1.field_path import FieldPath
 
 from ..domain.billing import (
     DEFAULT_DAILY_COST_LIMIT,
@@ -56,7 +57,8 @@ class FirestoreAccountRepository(AccountRepository):
 
     async def set_member_role(self, account_id: str, user_id: str, role: str) -> None:
         # The one map entry by its field path: a whole-map write would drop a member another writer added since its read.
-        await self.accounts_collection.document(account_id).update({f"iam_policy.{user_id}": role})
+        # Escaped, so an id with a dot or a backtick stays one key of the map.
+        await self.accounts_collection.document(account_id).update({FieldPath("iam_policy", user_id).to_api_repr(): role})
 
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float
