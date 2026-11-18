@@ -173,8 +173,8 @@ class TestRefresh:
         assert "access_token=" not in _set_cookies(resp)
 
     async def test_access_token_presented_as_refresh_issues_nothing(self):
-        # Refused, but as a 500: verify_refresh_token raises ValueError for the wrong type, which the route's
-        # jwt handlers do not catch (src/web/oauth_app.py:311-320; session_service.py:225-226). P7 report item.
+        # Refused with 401: verify_refresh_token raises ValueError for the wrong type, which the route catches with
+        # the jwt errors (src/web/oauth_app.py, /auth/refresh; session_service.py verify_refresh_token). P7-R.
         w = World()
         w.client.set_cookie("localhost", "refresh_token", access_token())
         resp = await w.client.post("/auth/refresh")
@@ -190,8 +190,10 @@ class TestRefresh:
         assert resp.status_code == 401
 
     async def test_valid_refresh_token_is_accepted(self):
-        # The positive control: the refusals above are not a route that refuses everything.
+        # The positive control: the refusals above are not a route that refuses everything. The refresh token's user
+        # must be stored: /auth/refresh mints from the stored user and account and refuses an absent user (P19-D1b).
         w = World()
+        await w.seed()
         w.client.set_cookie("localhost", "refresh_token", refresh_token())
         resp = await w.client.post("/auth/refresh")
         assert resp.status_code == 200
