@@ -30,6 +30,8 @@ pytest-asyncio
 pytest-mock
 # Parallel unit suite (make test-unit / make check: -n auto); pinned so CI matches local
 pytest-xdist==3.8.0
+# Provider request contracts (tests/contracts/openapi_contract.py, scripts/contracts/extract_subset.py): Draft 2020-12
+jsonschema==4.26.0
 # Network guard for the unit suite (tests/unit/conftest.py, tests/support/network_guard.py): connect() to non-loopback raises
 pytest-socket==0.8.1
 # Affected-tests selection (make test-affected); needs coverage<8; never combined with --cov
