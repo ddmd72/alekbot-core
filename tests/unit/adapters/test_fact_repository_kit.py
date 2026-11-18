@@ -374,7 +374,10 @@ async def test_search_returns_at_most_limit_nearest(store):
 async def test_search_account_is_the_argument_else_the_context_account_else_the_user_id(store):
     put_raw(store, "own", "own")
     put_raw(store, "foreign", "foreign", account_id=OTHER)
-    query = [1.0, 0.0, 0.0]
+    # Reviewer edit (P12 batch D): the stored facts carry 768-dimensional vectors (put_raw -> embed); the query was
+    # [1, 0, 0], which the old fake compared over three components only. A query of the stored dimension, as Firestore
+    # requires; the assertions (which account's facts are searched) are unchanged.
+    query = embed("own")
 
     async def found(**kw):
         return ids(await store.repo.search_facts(query, "vector", **kw))
