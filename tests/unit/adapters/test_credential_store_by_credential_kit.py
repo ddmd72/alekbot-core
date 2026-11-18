@@ -18,7 +18,6 @@ from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 CREDS = "eval_credentials"
@@ -28,8 +27,8 @@ REGISTRY = ConnectorRegistry()
 
 
 class Store:
-    def __init__(self, cipher=None, db=None) -> None:
-        self.db = db or EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_credentials"})
+    def __init__(self, kit_db, cipher=None, db=None) -> None:
+        self.db = db or kit_db(indexes=INDEXES_FILE, groups={CREDS: "development_credentials"})
         self.cipher = cipher or AesGcmTestCipher()
         self.repo = FirestoreCredentialStore(self.db, SimpleNamespace(credentials_collection=CREDS), cipher=self.cipher)
 
@@ -50,8 +49,8 @@ class NoDecrypt(AesGcmTestCipher):
 
 
 @pytest.fixture
-def store() -> Store:
-    return Store()
+def store(kit_db) -> Store:
+    return Store(kit_db)
 
 
 def cred(user_id=ALEX, kind="microsoft_onedrive", *, subject="sub-1", label="alex@example.com",
@@ -156,13 +155,13 @@ async def test_delete_of_another_users_credential_id_touches_nothing(store):
 
 # ------------------------------------------------------------------ cross-user listings, plaintext only
 
-async def test_list_by_account_finds_the_account_across_users(store):
+async def test_list_by_account_finds_the_account_across_users(store, kit_db):
     await store.repo.save(cred("user-1", kind="gmail", subject="sub-1", label="user@example.com"))
     await store.repo.save(cred("user-1", kind="google_tasks", subject="sub-1", label="user@example.com"))
     await store.repo.save(cred("user-2", kind="gmail", subject="sub-1", label="user@example.com"))
     await store.repo.save(cred(CLARA, kind="gmail", subject="sub-2", label="clara@example.com"))
     await store.repo.save(cred(ALEX, kind="microsoft_todo", subject="sub-1"))     # another realm, same subject
-    reader = Store(cipher=NoDecrypt(), db=store.db)
+    reader = Store(kit_db, cipher=NoDecrypt(), db=store.db)
     keys = await reader.repo.list_by_account("google", "sub-1")
     expected = [CredentialKey(user_id=c.user_id, credential_id=c.credential_id)
                 for u in (ALEX, CLARA, "user-1", "user-2") for c in await store.repo.list_for_user(u)
@@ -173,12 +172,12 @@ async def test_list_by_account_finds_the_account_across_users(store):
     assert await reader.repo.list_by_account("google", "sub-9") == []
 
 
-async def test_list_user_ids_lists_each_user_of_a_kind_once(store):
+async def test_list_user_ids_lists_each_user_of_a_kind_once(store, kit_db):
     await store.repo.save(cred(ALEX, subject="sub-1"))
     await store.repo.save(cred(ALEX, subject="sub-2"))
     await store.repo.save(cred(CLARA, subject="sub-3"))
     await store.repo.save(cred(CLARA, kind="gmail", subject="sub-3"))
-    reader = Store(cipher=NoDecrypt(), db=store.db)
+    reader = Store(kit_db, cipher=NoDecrypt(), db=store.db)
     users = await reader.repo.list_user_ids("microsoft_onedrive")
     assert sorted(users) == [ALEX, CLARA] and len(users) == 2
     assert await reader.repo.list_user_ids("gmail") == [CLARA]
@@ -292,9 +291,9 @@ async def test_list_keys_lists_the_users_records_of_a_kind_with_no_cipher_call(s
     assert store.cipher.decrypts == decrypts
 
 
-async def test_list_keys_still_lists_when_the_cipher_fails(store):
+async def test_list_keys_still_lists_when_the_cipher_fails(store, kit_db):
     a = await store.repo.save(cred(kind="gmail", subject="sub-g"))
-    broken = Store(cipher=NoDecrypt(), db=store.db)
+    broken = Store(kit_db, cipher=NoDecrypt(), db=store.db)
     assert await broken.repo.list_keys(ALEX, "gmail") == [CredentialKey(user_id=ALEX, credential_id=a)]
     with pytest.raises(RuntimeError):
         await broken.repo.get(ALEX, a)          # a decrypt failure still raises, never "not connected"
