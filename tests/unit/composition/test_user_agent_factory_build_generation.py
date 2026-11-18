@@ -127,3 +127,36 @@ async def test_a_lazy_build_that_finds_its_entry_evicted_rebuilds_it_and_is_trac
     agent = factory.coordinator.get_agent(f"{LAZY_BASE_ID}_{USER}")
     assert agent is not None and agent.agent_id in entry["_lazy_agent_ids"]
     assert agent.built_from == entry["_user_context"].user_profile.version == 2
+
+
+async def test_an_unknown_lazy_type_is_refused_without_building_anything():
+    factory = _factory()
+
+    assert await factory.create_agent_on_demand("no_such_lazy_type", USER) is False
+
+    assert factory.built == 0
+    assert USER not in factory._cache
+    assert factory.coordinator.agents == {}
+
+
+async def test_a_lazy_build_whose_entry_is_evicted_on_every_attempt_gives_up(monkeypatch, caplog):
+    monkeypatch.setitem(UserAgentFactory._LAZY_BUILDERS, LAZY_TYPE,
+                        lambda factory, user_id, ctx: _agent(f"{LAZY_BASE_ID}_{user_id}", ctx.user_profile.version))
+    monkeypatch.setitem(UserAgentFactory._LAZY_AGENT_IDS, LAZY_TYPE, LAZY_BASE_ID)
+    factory = _factory()
+
+    class _EvictingLock(asyncio.Lock):
+        """Every acquirer finds the user evicted just before it gets the lock (a reset storm)."""
+
+        async def acquire(self):
+            factory.invalidate_user_cache(USER)
+            return await super().acquire()
+
+    factory._creation_locks[USER] = _EvictingLock()
+
+    built = await factory.create_agent_on_demand(LAZY_TYPE, USER)
+
+    assert built is False
+    assert factory.built == _MAX_BUILD_ATTEMPTS  # one rebuild of the entry per attempt
+    assert factory.coordinator.get_agent(f"{LAZY_BASE_ID}_{USER}") is None
+    assert f"attempts to build {LAZY_TYPE}; not built" in caplog.text
