@@ -133,6 +133,7 @@ async def test_a_legacy_mark_with_neither_field_is_expired(stores):
     assert stores.docs(EVENTS)[TELEGRAM_KEY]["expires_at"] == T0 + timedelta(seconds=TELEGRAM_TTL)
 
 
+@pytest.mark.h1_only("a naive datetime survives only in the fake")
 async def test_a_naive_expires_at_is_read_as_utc_defensive_branch(stores):
     """A defensive branch, not a contract: the client always returns an aware Timestamp; a naive value exists only
     when a test seeds one into the fake."""
