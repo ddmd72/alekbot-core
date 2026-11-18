@@ -13,7 +13,6 @@ from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_user_settings import DriveUserSettings
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 CONNS, SETTINGS = "eval_drive_connections", "eval_drive_user_settings"
@@ -29,15 +28,15 @@ def conn(user_id, connection_id, minutes=0, **over):
     return DriveConnection(**base)
 
 
-def firestore_repo():
-    db = EvalDb(indexes=INDEXES_FILE, groups={CONNS: "development_drive_connections",
+def firestore_repo(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={CONNS: "development_drive_connections",
                                               SETTINGS: "development_drive_user_settings"})
     return FirestoreDriveConnectionRepository(db, CONNS, SETTINGS), db
 
 
 @pytest.fixture(params=["firestore", "fake"])
-def repo(request):
-    return firestore_repo()[0] if request.param == "firestore" else FakeDriveConnectionRepository()
+def repo(request, kit_db):
+    return firestore_repo(kit_db)[0] if request.param == "firestore" else FakeDriveConnectionRepository()
 
 
 # ---------------------------------------------------------------------------------------------- the port's rules
@@ -130,8 +129,8 @@ class TestPortRules:
 # ---------------------------------------------------------------------------------------------- Firestore only
 
 class TestFirestoreDocuments:
-    async def test_the_stored_document_and_its_id(self):
-        repo, db = firestore_repo()
+    async def test_the_stored_document_and_its_id(self, kit_db):
+        repo, db = firestore_repo(kit_db)
         await repo.create(conn("usr-1", "conn-1", ref_tag="a1"))
         doc = db.collection(CONNS).docs["usr-1:conn-1"]
         assert {k: doc[k] for k in ("connection_id", "user_id", "account_id", "credential_id", "kind",
@@ -143,22 +142,22 @@ class TestFirestoreDocuments:
             "disconnected_at": None}
         assert doc["updated_at"] is not None
 
-    async def test_the_settings_document_and_its_id(self):
-        repo, db = firestore_repo()
+    async def test_the_settings_document_and_its_id(self, kit_db):
+        repo, db = firestore_repo(kit_db)
         await repo.save_settings(DriveUserSettings(user_id="usr-1", primary_connection_id="conn-1"))
         doc = db.collection(SETTINGS).docs["usr-1"]
         assert (doc["user_id"], doc["primary_connection_id"]) == ("usr-1", "conn-1")
 
-    async def test_a_transition_writes_the_state_and_the_disconnect_time(self):
-        repo, db = firestore_repo()
+    async def test_a_transition_writes_the_state_and_the_disconnect_time(self, kit_db):
+        repo, db = firestore_repo(kit_db)
         await repo.create(conn("usr-1", "conn-1"))
         await repo.transition("usr-1", "conn-1", GONE, T0)
         doc = db.collection(CONNS).docs["usr-1:conn-1"]
         assert (doc["state"], doc["disconnected_at"]) == ("disconnected", T0)
 
     @pytest.mark.parametrize("field, value", [("user_id", "usr-2"), ("connection_id", "conn-9")])
-    async def test_a_document_that_contradicts_its_address_is_absent(self, field, value, caplog):
-        repo, db = firestore_repo()
+    async def test_a_document_that_contradicts_its_address_is_absent(self, kit_db, field, value, caplog):
+        repo, db = firestore_repo(kit_db)
         await repo.create(conn("usr-1", "conn-1", indexing_enabled=True))
         db.collection(CONNS).docs["usr-1:conn-1"][field] = value
         assert await repo.get("usr-1", "conn-1") is None
@@ -168,23 +167,23 @@ class TestFirestoreDocuments:
         assert await repo.transition("usr-1", "conn-1", NEEDS, T0) is False
         assert "does not match its address" in caplog.text
 
-    async def test_settings_stored_under_another_user_are_absent(self, caplog):
-        repo, db = firestore_repo()
+    async def test_settings_stored_under_another_user_are_absent(self, kit_db, caplog):
+        repo, db = firestore_repo(kit_db)
         await repo.save_settings(DriveUserSettings(user_id="usr-1", primary_connection_id="conn-1"))
         db.collection(SETTINGS).docs["usr-1"]["user_id"] = "usr-2"
         assert await repo.get_settings("usr-1") is None
         assert "another user" in caplog.text
 
     @pytest.mark.parametrize("field", ["credential_id", "drive_identity", "mount_name"])
-    async def test_an_identity_field_is_never_emptied(self, field):
-        repo, _ = firestore_repo()
+    async def test_an_identity_field_is_never_emptied(self, kit_db, field):
+        repo, _ = firestore_repo(kit_db)
         await repo.create(conn("usr-1", "conn-1"))
         with pytest.raises(ValueError):
             await repo.update("usr-1", "conn-1", **{field: ""})
         assert (await repo.get("usr-1", "conn-1")) == conn("usr-1", "conn-1")
 
-    async def test_a_concurrent_state_change_is_not_lost_by_a_settings_write(self):
-        repo, db = firestore_repo()
+    async def test_a_concurrent_state_change_is_not_lost_by_a_settings_write(self, kit_db):
+        repo, db = firestore_repo(kit_db)
         await repo.create(conn("usr-1", "conn-1"))
         db.interfere_on_txn_read(CONNS, "usr-1:conn-1", {"state": "needs_reconnect"}, after_read=True)
         await repo.update("usr-1", "conn-1", indexing_enabled=True)
