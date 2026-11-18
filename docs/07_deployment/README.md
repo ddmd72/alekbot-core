@@ -286,6 +286,11 @@ are never deleted (nothing breaks).
 | `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h) |
 | `<prefix>drive_model_usage` | monthly drive model-usage documents (the `{user}:initial` document has no `expires_at`) |
 | `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
+| `<prefix>event_dedup` | inbound event dedup claims (1 h); reads check expiry themselves |
+| `<prefix>drive_note_erase_requests` | pending drive-note erase requests |
+| `<prefix>short_links` | short links (`resolve` re-checks expiry itself, the sweep lags) |
+| `<prefix>mcp_auth_codes` | MCP authorization codes (about 10 minutes) |
+| `<prefix>mcp_refresh_tokens` | expired MCP refresh tokens (an absent token is refused like an expired one) |
 
 ```bash
 gcloud firestore fields ttls update expires_at --collection-group=<collection-group> \
@@ -317,11 +322,6 @@ Collections whose code writes an expiry but whose policy is not in this runbook 
 
 | Collection | Field | Note |
 |---|---|---|
-| `<prefix>event_dedup` | `expires_at` | the store writes `expires_at` "for Firestore TTL policy" (1 h default) but the deployment runbook lists no policy on this collection; reads check expiry themselves |
-| `<prefix>drive_note_erase_requests` | `expires_at` | the collection's property says a TTL policy on `expires_at` exists; the deployment runbook does not list it |
-| `<prefix>short_links` | `expires_at` | the repository says a policy is meant and unverified; the runbook lists none; `resolve` checks expiry itself |
-| `<prefix>mcp_auth_codes` | `expires_at` | short-lived (about 10 minutes) by the collection's description; the runbook lists no policy. The same files also write the refresh-token expiry (mcp_refresh_tokens) |
-| `<prefix>mcp_refresh_tokens` | `expires_at` | rotated on use; the runbook lists no policy on expiry |
 
 <!-- ttl-unverified:end -->
 

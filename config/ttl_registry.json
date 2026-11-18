@@ -107,8 +107,8 @@
    "id": "event_dedup",
    "collection": "event_dedup",
    "field": "expires_at",
-   "deleted_by": "unverified",
-   "note": "the store writes `expires_at` \"for Firestore TTL policy\" (1 h default) but the deployment runbook lists no policy on this collection; reads check expiry themselves",
+   "deleted_by": "ttl-policy",
+   "what_expires": "inbound event dedup claims (1 h); reads check expiry themselves",
    "writers": [
     "src/adapters/firestore_dedup_store.py"
    ]
@@ -117,8 +117,8 @@
    "id": "drive_note_erase_requests",
    "collection": "drive_note_erase_requests",
    "field": "expires_at",
-   "deleted_by": "unverified",
-   "note": "the collection's property says a TTL policy on `expires_at` exists; the deployment runbook does not list it",
+   "deleted_by": "ttl-policy",
+   "what_expires": "pending drive-note erase requests",
    "writers": [
     "src/adapters/firestore_ephemeral_store.py"
    ]
@@ -127,8 +127,8 @@
    "id": "short_links",
    "collection": "short_links",
    "field": "expires_at",
-   "deleted_by": "unverified",
-   "note": "the repository says a policy is meant and unverified; the runbook lists none; `resolve` checks expiry itself",
+   "deleted_by": "ttl-policy",
+   "what_expires": "short links (`resolve` re-checks expiry itself, the sweep lags)",
    "writers": [
     "src/domain/short_link.py",
     "src/adapters/firestore_short_link_repository.py",
@@ -152,8 +152,8 @@
    "id": "mcp_auth_codes",
    "collection": "mcp_auth_codes",
    "field": "expires_at",
-   "deleted_by": "unverified",
-   "note": "short-lived (about 10 minutes) by the collection's description; the runbook lists no policy. The same files also write the refresh-token expiry (mcp_refresh_tokens)",
+   "deleted_by": "ttl-policy",
+   "what_expires": "MCP authorization codes (about 10 minutes)",
    "writers": [
     "src/adapters/firestore_mcp_client_repository.py",
     "src/domain/mcp.py",
@@ -166,8 +166,8 @@
    "id": "mcp_refresh_tokens",
    "collection": "mcp_refresh_tokens",
    "field": "expires_at",
-   "deleted_by": "unverified",
-   "note": "rotated on use; the runbook lists no policy on expiry",
+   "deleted_by": "ttl-policy",
+   "what_expires": "expired MCP refresh tokens (an absent token is refused like an expired one)",
    "writers": [
     "src/adapters/firestore_mcp_client_repository.py",
     "src/domain/mcp.py",
