@@ -87,9 +87,6 @@ class TestMalformedValuesAreRefusedAndNothingIsWritten:
         assert resp.status_code == 400
         assert world.user_doc("usr-1") == before
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="P19-D4: JSON `true` passes the `isinstance(hour, int)` check as hour 1 and is stored as a "
-                              "bool (user_cabinet_app.py:1336-1337, 1378-1379); the route says 'hour must be integer 0-23'")
     @pytest.mark.parametrize("path", ["/api/gmail/auto-index", "/api/gmail/daily-review"])
     async def test_a_boolean_hour_is_refused(self, world, path):
         """`True` is an `int` in Python: JSON `true` must not be accepted as an hour."""
@@ -98,10 +95,6 @@ class TestMalformedValuesAreRefusedAndNothingIsWritten:
         assert resp.status_code == 400
         assert world.user_doc("usr-1") == before
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="P19-D3: a request body that is not JSON answers 500 on every Cabinet write route "
-                              "(get_json raises BadRequest, caught by `except Exception`, user_cabinet_app.py:537-559); no repo spec: "
-                              "HTTP convention (RFC 9110 section 15.5.1), a malformed request body is a client error (400)")
     @pytest.mark.parametrize("path", ["/api/user/timezone", "/api/gmail/auto-index", "/api/user/deep-research"])
     async def test_a_body_that_is_not_json_is_a_4xx(self, world, path):
         resp = await world.client.put(path, headers={**world.token(ALEX), "Content-Type": "application/json"}, data="{nope")

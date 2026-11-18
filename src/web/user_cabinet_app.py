@@ -71,6 +71,18 @@ MAX_BULK_ANSWERS = 50
 MALFORMED_ANSWER = "each answer needs a question_id and one of that question's options"
 
 
+async def _json_object_body():
+    """The request body as a JSON object, for every Cabinet write route.
+
+    Returns ``(body, None)``, or ``(None, (response, 400))`` when the body is not valid JSON or not a JSON object: a
+    malformed request body is a client error, so it never reaches a route's own ``except Exception`` (which answers 500).
+    """
+    body = await request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return None, (jsonify({"error": "request body must be a JSON object"}), 400)
+    return body, None
+
+
 def create_user_cabinet_blueprint(
     invite_service: InviteCodeService,
     session_service: SessionService,
@@ -283,12 +295,17 @@ def create_user_cabinet_blueprint(
             platform_user_id: "U0123456789" (Slack) or "@username" (Telegram)
         """
         try:
-            body = await request.get_json()
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             platform = body.get("platform")
             platform_user_id = body.get("platform_user_id")
             
             if not platform or not platform_user_id:
                 return jsonify({"error": "platform and platform_user_id are required"}), 400
+            if platform == "phone":
+                # A phone is bound only through the OTP routes (/api/user/phone/...): this route carries no proof.
+                return jsonify({"error": "a phone number is linked only through the OTP verification"}), 400
             
             # Link platform ID to user (uses user_repo from closure)
             await user_repo.add_platform_id(g.user_id, platform, platform_user_id)
@@ -338,7 +355,9 @@ def create_user_cabinet_blueprint(
             telegram_user_id: "123456789" (numeric Telegram user ID)
         """
         try:
-            body = await request.get_json()
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             telegram_user_id = body.get("telegram_user_id")
             
             if not telegram_user_id:
@@ -378,7 +397,9 @@ def create_user_cabinet_blueprint(
         if not twilio_verify_client:
             return jsonify({"error": "Phone verification not configured"}), 501
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             phone_number = (body.get("phone_number") or "").strip()
             if not _E164_PATTERN.match(phone_number):
                 return jsonify({"error": "phone_number must be E.164: a plus sign, the country code and the number, digits only"}), 400
@@ -408,7 +429,9 @@ def create_user_cabinet_blueprint(
         if not twilio_verify_client:
             return jsonify({"error": "Phone verification not configured"}), 501
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             phone_number = (body.get("phone_number") or "").strip()
             code = (body.get("code") or "").strip()
             if not _E164_PATTERN.match(phone_number):
@@ -448,7 +471,9 @@ def create_user_cabinet_blueprint(
             role: "MEMBER" (optional, default MEMBER)
         """
         try:
-            body = await request.get_json()
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             invite_type = body.get("type", "team_invite")
 
             if invite_type == "team_invite":
@@ -540,7 +565,9 @@ def create_user_cabinet_blueprint(
         """Update the user's timezone. Body: {\"timezone\": \"Europe/Lisbon\"}"""
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             tz_name = body.get("timezone", "").strip()
             if not tz_name:
                 return jsonify({"error": "timezone field is required"}), 400
@@ -576,7 +603,9 @@ def create_user_cabinet_blueprint(
     async def set_location():
         """Update the user's location. Body: {"location": "Springfield"}"""
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             location = body.get("location", "").strip()
             user = await user_repo.get_user(g.user_id)
             if not user:
@@ -613,7 +642,9 @@ def create_user_cabinet_blueprint(
         """
         try:
             from ..domain.language import normalize_voice_languages
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             try:
                 codes = normalize_voice_languages(body.get("voice_languages", []))
             except ValueError as e:
@@ -652,7 +683,9 @@ def create_user_cabinet_blueprint(
         """Update language preference. Body: {\"preferred_language\": \"en\"|null, \"agent_mirror\": bool}"""
         from ..domain.language import LanguageCode
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             lang_raw = body.get("preferred_language")
             mirror = body.get("agent_mirror", True)
 
@@ -743,7 +776,9 @@ def create_user_cabinet_blueprint(
         from ..domain.agent_note import NoteCreate
         from zoneinfo import ZoneInfo
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             text = (body.get("text") or "").strip()
             instruction = (body.get("instruction") or "").strip()
             due_raw = body.get("due")
@@ -790,7 +825,9 @@ def create_user_cabinet_blueprint(
         from ..domain.agent_note import NoteUpdate
         from zoneinfo import ZoneInfo
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
 
             user = await user_repo.get_user(g.user_id)
             user_tz = ZoneInfo(user.config.timezone if user else "UTC")
@@ -998,7 +1035,9 @@ def create_user_cabinet_blueprint(
     async def search_facts():
         """Semantic vector search over the user's facts."""
         try:
-            body = await request.get_json()
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             query = (body or {}).get("query", "").strip()
             if not query:
                 return jsonify({"error": "query is required"}), 400
@@ -1059,7 +1098,9 @@ def create_user_cabinet_blueprint(
             code: "INV-123..."
         """
         try:
-            body = await request.get_json()
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             code = body.get("code")
             if not code:
                 return jsonify({"error": "code is required"}), 400
@@ -1332,13 +1373,15 @@ def create_user_cabinet_blueprint(
     async def gmail_auto_index_set():
         """Update auto-index schedule. Body: {\"enabled\": bool, \"hour\": 0-23}"""
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             enabled = body.get("enabled")
             hour = body.get("hour")
 
             if enabled is None or not isinstance(enabled, bool):
                 return jsonify({"error": "enabled (bool) required"}), 400
-            if hour is None or not isinstance(hour, int) or not (0 <= hour <= 23):
+            if hour is None or isinstance(hour, bool) or not isinstance(hour, int) or not (0 <= hour <= 23):
                 return jsonify({"error": "hour must be integer 0-23"}), 400
 
             user = await user_repo.get_user(g.user_id)
@@ -1374,13 +1417,15 @@ def create_user_cabinet_blueprint(
     async def gmail_daily_review_set():
         """Update daily review schedule. Body: {\"enabled\": bool, \"hour\": 0-23}"""
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             enabled = body.get("enabled")
             hour = body.get("hour")
 
             if enabled is None or not isinstance(enabled, bool):
                 return jsonify({"error": "enabled (bool) required"}), 400
-            if hour is None or not isinstance(hour, int) or not (0 <= hour <= 23):
+            if hour is None or isinstance(hour, bool) or not isinstance(hour, int) or not (0 <= hour <= 23):
                 return jsonify({"error": "hour must be integer 0-23"}), 400
 
             user = await user_repo.get_user(g.user_id)
@@ -1419,7 +1464,9 @@ def create_user_cabinet_blueprint(
     async def deep_research_set():
         """Update deep research settings. Body: {\"second_pass\": bool}"""
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             second_pass = body.get("second_pass")
 
             if second_pass is None or not isinstance(second_pass, bool):
@@ -1577,7 +1624,9 @@ def create_user_cabinet_blueprint(
         The toggle is the user's explicit consent to the copy; it is read uncached at each delivery, so
         it applies from the next report. Turning it off leaves copies already made on the drive."""
         try:
-            body = await request.get_json(force=True) or {}
+            body, bad_body = await _json_object_body()
+            if bad_body is not None:
+                return bad_body
             enabled = body.get("enabled")
             if not isinstance(enabled, bool):
                 return jsonify({"error": "enabled (bool) required"}), 400
