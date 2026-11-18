@@ -47,10 +47,11 @@ class FaultyRepo(FirestoreFactRepository):
         await super().stale_due_fact(due, fields)
 
 
-def make_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextService]:
+def make_fact_world(kit_db: Optional[Callable[..., Any]] = None, groups: Optional[Mapping[str, str]] = None,
+                    ) -> Tuple[FactStore, FaultyRepo, BiographicalContextService]:
     """The evaluating fact store (index refusal on), a repository over it that refreshes the real biographical cache, and
-    that service; `repo.fail_on` names the fact ids whose staling fails."""
-    store = FactStore(indexes=INDEXES_FILE)
+    that service; `repo.fail_on` names the fact ids whose staling fails. `kit_db` and `groups` go to `FactStore`."""
+    store = FactStore(indexes=INDEXES_FILE, kit_db=kit_db, groups=dict(groups or {}))
     repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.fail_on = set()
     bio = BiographicalContextService(repo)

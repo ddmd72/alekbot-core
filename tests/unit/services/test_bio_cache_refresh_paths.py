@@ -100,10 +100,10 @@ def agent_view_of_new(new: str) -> Tuple[List[str], List[str]]:
     return [new, ACME, MARIA], [VEGETARIAN, YOGA]
 
 
-def account_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextService]:
+def account_fact_world(kit_db: Any = None, groups: Any = None) -> Tuple[FactStore, FaultyRepo, BiographicalContextService]:
     """`make_fact_world` with the production wiring of the context service (`ServiceContainer`): the configuration
     service and an account store, so a refresh without explicit limits keeps the account's own."""
-    store = FactStore(indexes=INDEXES_FILE)
+    store = FactStore(indexes=INDEXES_FILE, kit_db=kit_db, groups=dict(groups or {}))
     repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.fail_on = set()
     bio = BiographicalContextService(repo, config_service=ConfigurationService(), account_repo=AccountLimits())
