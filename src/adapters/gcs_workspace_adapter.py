@@ -175,11 +175,11 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
         """The patch landed on `generation` but the delete did not (a write replaced it in between): take our stamp off
         that version, so its history reads "replaced", not "deleted" (P11-G4-1). Only our own stamp: a concurrent
         delete that patched after us owns the keys now. A failure here is logged; the caller still reports the loss."""
-        version = self._bucket().get_blob(key, generation=generation)
-        if version is None or (version.metadata or {}).get("delete_id") != delete_id:
-            return
-        version.metadata = {"deleted_by": None, "delete_id": None, "deleted_fire": None, "renamed_to": None}
         try:
+            version = self._bucket().get_blob(key, generation=generation)
+            if version is None or (version.metadata or {}).get("delete_id") != delete_id:
+                return
+            version.metadata = {"deleted_by": None, "delete_id": None, "deleted_fire": None, "renamed_to": None}
             version.patch()  # the loaded blob carries its generation: this patches that version, live or noncurrent
         except GoogleAPIError as e:
             logger.warning("[Workspace] a lost delete left its stamp on %s generation %s: %s", path, generation, e)

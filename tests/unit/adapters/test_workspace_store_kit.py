@@ -231,3 +231,23 @@ async def test_stamp_that_cannot_be_cleared_still_reports_the_conflict(fake, sto
     assert any("left its stamp" in r.getMessage() for r in caplog.records)
     g1 = next(v for v in fake.versions(BUCKET, "u1/" + P) if v.generation == e1.generation)
     assert g1.metadata["deleted_by"] == "chat"      # the stamp stays: only the log says why
+
+
+async def test_stamp_that_cannot_be_read_back_still_reports_the_conflict(fake, store, caplog):
+    """P11-G4-1: the read of the stamped version fails (an outage) after the overwrite: the delete still reports that
+    it lost (WorkspaceConflict, not the outage), and the failure is logged."""
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+
+    def fail_the_stamp_read():
+        fake.fail_next("get", ServiceUnavailable("503"))
+
+    def fire_overwrites():
+        blob = fake.client().bucket(BUCKET).blob("u1/" + P)
+        blob.upload_from_string(b"v2", content_type="text/markdown; charset=utf-8", if_generation_match=e1.generation)
+        fake.on("get", fail_the_stamp_read)   # after the landed-check's read of the live object: the next read fails
+
+    fake.on("delete", fire_overwrites, when="before")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(WorkspaceConflict):
+            await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(deleted_by="chat"))
+    assert any("left its stamp" in r.getMessage() for r in caplog.records)
