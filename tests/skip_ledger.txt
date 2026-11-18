@@ -267,6 +267,7 @@ tests/unit/web/test_cabinet_escape_html.py :: skipif :: shutil.which('node') is 
 tests/unit/web/test_cabinet_xss_sinks.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_ask_lelik.py :: skipif :: shutil.which('node') is None :: x9  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_control_channel.py :: skipif :: shutil.which('node') is None :: x6  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_call_page_geo_button.py :: skipif :: shutil.which('node') is None :: x7  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_listening.py :: skipif :: shutil.which('node') is None :: x7  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_speaker_route.py :: skipif :: shutil.which('node') is None :: x23  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_sandbox_app_abnormal_recycle.py :: skip :: 'no /proc' :: x1  # ci: skips only on a machine without it; the Linux runner has it (the skip report shows otherwise)

@@ -32,6 +32,17 @@ def _authorized_decision():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("channel_type", ["im", "channel", "group", "mpim"])
+async def test_command_metadata_carries_the_slack_channel_type(channel_type):
+    handler, iam = AsyncMock(), AsyncMock()
+    iam.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(handler, iam)
+    event = {"type": "message", "text": "$geo", "channel": "D1", "user": "U1", "ts": "1.1", "channel_type": channel_type}
+    await adapter._process_message_event(event, "1.1")
+    assert handler.handle_command.call_args.args[1].metadata["channel_type"] == channel_type
+
+
+@pytest.mark.asyncio
 async def test_command_metadata_carries_platform_and_channel():
     conversation_handler = AsyncMock()
     iam_service = AsyncMock()

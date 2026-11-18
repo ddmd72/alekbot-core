@@ -25,6 +25,7 @@ HELD_AS = {
     "memory_fact_service": "_memory_facts",
     "fact_answers": "_fact_answers",
     "drive_note_service": "_drive_notes",
+    "geo_mark_service": "_geo_marks",
     "long_turn_service": "_long_turns",
     "doc_delivery_service": "_doc_delivery_service",
 }

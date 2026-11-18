@@ -36,6 +36,7 @@ from src.ports.llm_port import LLMPort, LLMResponse, LLMRequest, Message, Messag
 from src.ports.log_sink import LogSink
 from src.ports.platform_auth_port import PlatformAuthPort, IAMDecision
 from src.ports.quota_service import QuotaService
+from src.ports.reverse_geocoding_port import ReverseGeocodingPort
 from src.ports.repository import FactRepository
 from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.ports.task_queue import TaskQueue
@@ -256,7 +257,8 @@ class TestConversationHandlerPortContract:
             name for name, method in inspect.getmembers(ConversationHandlerPort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
+        # reviewer edit, geo marks v1 (GEO_MARKS_RFC §4.6): `handle_geo_mark` joins the two; the exact set is pinned.
+        assert abstract_methods == {"handle_message", "handle_command", "handle_geo_mark"}, f"got {abstract_methods}"
 
     def test_handle_message_signature(self):
         sig = inspect.signature(ConversationHandlerPort.handle_message)
@@ -267,6 +269,12 @@ class TestConversationHandlerPortContract:
         sig = inspect.signature(ConversationHandlerPort.handle_command)
         params = list(sig.parameters.keys())
         assert params == ["self", "command", "context", "response_channel"]
+
+    def test_has_handle_geo_mark(self):
+        assert getattr(ConversationHandlerPort.handle_geo_mark, "__isabstractmethod__", False)
+        assert inspect.iscoroutinefunction(ConversationHandlerPort.handle_geo_mark)
+        params = list(inspect.signature(ConversationHandlerPort.handle_geo_mark).parameters)
+        assert params == ["self", "fix", "context", "response_channel"]
 
 
 class TestConversationHandlerPortMockImplementation:
@@ -1117,3 +1125,29 @@ class TestWhitelistRepositoryMockImplementation:
         mock_repo.get_whitelist.return_value = wl
         result = await mock_repo.get_whitelist()
         assert result is wl
+
+
+# =============================================================================
+# ReverseGeocodingPort (GEO_MARKS_RFC §4.3)
+# =============================================================================
+
+class TestReverseGeocodingPortContract:
+    def test_is_abstract_class(self):
+        assert issubclass(ReverseGeocodingPort, ABC)
+
+    def test_cannot_instantiate_directly(self):
+        with pytest.raises(TypeError):
+            ReverseGeocodingPort()
+
+    def test_nearest_address_is_its_one_abstract_async_method(self):
+        abstract_methods = {
+            name for name, method in inspect.getmembers(ReverseGeocodingPort)
+            if getattr(method, "__isabstractmethod__", False)
+        }
+        assert abstract_methods == {"nearest_address"}
+        assert inspect.iscoroutinefunction(ReverseGeocodingPort.nearest_address)
+
+    def test_nearest_address_signature(self):
+        sig = inspect.signature(ReverseGeocodingPort.nearest_address)
+        assert list(sig.parameters) == ["self", "latitude", "longitude", "language"]
+        assert sig.parameters["language"].kind is inspect.Parameter.KEYWORD_ONLY

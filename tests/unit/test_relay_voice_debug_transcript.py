@@ -21,7 +21,7 @@ from src.domain.voice_turn_ownership import TurnOwnership
 from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import VoiceSessionService
+from src.services.voice_session_service import VoiceSessionService, VoiceControl
 from tests.support.control_socket_fake import FakeControlSocket
 
 _KNOB = "VOICE_DEBUG_TRANSCRIPT_USERS"
@@ -172,7 +172,7 @@ async def _run_call(user_id: str, listed: frozenset, mode: str = "interpreter") 
         "mode": mode, "voice": VOICE_PROVIDER_PROFILES["xai"].session.to_dict(),
         "control_token_sha256": control_token_digest(TOKEN)})
     service = VoiceSessionService(realtime_session_factory=lambda spec: provider, control_plane=control_plane,
-                                  alert_sink=_Alerts(), control_hub=hub, ask_tick_s=0.005,
+                                  alert_sink=_Alerts(), control=VoiceControl(hub), ask_tick_s=0.005,
                                   call_options=VoiceRelayCallOptions(debug_transcript_users=listed))
 
     async def inbound():

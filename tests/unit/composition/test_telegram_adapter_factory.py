@@ -31,7 +31,7 @@ def test_factory_forwards_skill_service_to_conversation_handler():
             chat=ChatServices(coordinator=AsyncMock(), agent_factory=AsyncMock(), skill_service=sentinel_skill_service),
             iam_service=AsyncMock(),
         )
-        assert mock_handler.call_args.kwargs["skill_service"] is sentinel_skill_service
+        assert mock_handler.call_args.kwargs["commands"].skills is sentinel_skill_service
 
 
 @pytest.mark.requirement("REQ-CORE-09")
@@ -49,4 +49,4 @@ def test_factory_defaults_skill_service_to_none():
             chat=ChatServices(coordinator=AsyncMock(), agent_factory=AsyncMock()),
             iam_service=AsyncMock(),
         )
-        assert mock_handler.call_args.kwargs["skill_service"] is None
+        assert mock_handler.call_args.kwargs["commands"].skills is None

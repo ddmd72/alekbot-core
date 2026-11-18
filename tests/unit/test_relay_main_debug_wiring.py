@@ -40,7 +40,7 @@ def test_both_services_get_the_listed_users(monkeypatch):
     phone, web = _boot(monkeypatch, "user-a; user-b")
     assert phone["call_options"].debug_transcript_users == frozenset({"user-a", "user-b"})
     assert web["call_options"].debug_transcript_users == frozenset({"user-a", "user-b"})
-    assert "control_hub" in web and "control_hub" not in phone  # the two are the phone and the web service
+    assert "control" in web and "control" not in phone  # the two are the phone and the web service
 
 
 def test_unset_gives_both_services_an_empty_set(monkeypatch):
