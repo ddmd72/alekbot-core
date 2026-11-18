@@ -7,11 +7,12 @@ turns only `slow` and `timing` into a skip by a switch, the other two skip throu
 by the gate that runs it, and renders one sorted line per site for `tests/skip_ledger.txt`.
 
 Gates: `ci` runs in the CI `check` job (its prerequisite is on the runner), `ci-slow` runs in `make ci` (RUN_SLOW_TESTS=1),
-`timing` runs in `make test-timing` (CI job `timing`, after a merge to main), `cloud` runs in `make test-cloud`
+`timing` runs in `make test-timing` (CI job `timing`, after a merge to main), `render-job` runs in the post-merge workflow
+`render.yml` (job `render`: node modules and chrome-headless-shell installed; job `sandbox-image`: the built sandbox images), `cloud` runs in `make test-cloud`
 (weekly `Firestore parity`), `param` is a case of a parametrised or contract test that does not apply to one backend
 (the other cases run), `manual` runs only when the owner starts it by hand (a make target, an emulator, the Mac) and
 `never` has no gate and no job that prepares its prerequisite. Every line carries a reason; `never` is the list the
-P22b post-merge job and the owner's decisions work down.
+owner's decisions work down.
 
 A line is `<path> :: <kind> :: <condition> :: x<count>  # <gate>: <reason>`; a marker line has no count (a file
 either holds the marker or not, so adding a slow test to a file that has one changes nothing). `x<count>` is the number of tests
@@ -36,7 +37,7 @@ HEADER = (
 )
 
 MARKERS = ("slow", "timing", "docker", "performance")
-GATES = ("ci", "ci-slow", "timing", "cloud", "param", "manual", "never")
+GATES = ("ci", "ci-slow", "timing", "render-job", "cloud", "param", "manual", "never")
 # Kinds of site: `skipif`, `mark.skip`, `skip` (a runtime pytest.skip), `importorskip`, `marker`.
 Site = Tuple[str, str, str]          # (path relative to the repo root, kind, condition)
 
@@ -60,7 +61,13 @@ def _r(kind: str, path: str, condition: str, gate: str, reason: str) -> Rule:
     return Rule(kind, path, condition, gate, reason)
 
 
-P22B = "no CI job installs it (P22b: the post-merge npm ci / image job)"
+# The files the post-merge workflow render.yml runs, per job (tests/unit/test_render_job_covers_ledger.py compares both ways).
+_RENDER_FILES = (r"^tests/unit/adapters/(sandbox_client/test_(docx_runner_contract|pdf_runner_contract|html_renderer_contract)"
+                 r"|sandbox_engine/test_(docx_render_engine|docx_render_engine_limits|html_render_engine_real|html_render_no_network))\.py$")
+_IMAGE_FILES = (r"^tests/unit/(test_dockerfile_sandbox|test_sandbox_light_image)\.py$"
+                r"|^tests/unit/adapters/sandbox_engine/(test_child_launcher|test_docx_render_engine_limits)\.py$")
+RENDER_JOB = "installed by the post-merge workflow render.yml (job `render`), which fails when the test skips"
+IMAGE_JOB = "built by the post-merge workflow render.yml (job `sandbox-image`), which runs the `docker` tests against it and fails when one skips"
 RULES: Tuple[Rule, ...] = (
     # --- by place -----------------------------------------------------------------------------------------------
     _r("skip", r"^tests/cloud/test_gcs_parity_cloud\.py$", r".*", "manual",
@@ -70,7 +77,7 @@ RULES: Tuple[Rule, ...] = (
     # --- markers and the switches that turn them into skips -------------------------------------------------------
     _r("marker", r"", r"slow", "ci-slow", "skipped unless RUN_SLOW_TESTS=1, which `make ci` sets"),
     _r("marker", r"", r"timing", "timing", "skipped unless RUN_TIMING_TESTS=1: `make test-timing`, CI job `timing` after a merge to main"),
-    _r("marker", r"", r"docker", "never", f"the marker of tests that need the built sandbox image (SANDBOX_TEST_IMAGE); {P22B}"),
+    _r("marker", _IMAGE_FILES, r"docker", "render-job", f"the marker of tests that need the built sandbox image (SANDBOX_TEST_IMAGE, SANDBOX_TEST_LIGHT_IMAGE); {IMAGE_JOB}"),
     _r("marker", r"", r"performance", "manual", "manual benchmark against real Firestore (tests/performance), no make target or job"),
     _r("mark.skip", r"^tests/conftest\.py$", r"reason='timing test.*", "timing", "the conftest switch that skips timing tests unless RUN_TIMING_TESTS=1"),
     _r("mark.skip", r"^tests/conftest\.py$", r"reason='slow test.*", "ci-slow", "the conftest switch that skips slow tests unless RUN_SLOW_TESTS=1"),
@@ -93,15 +100,15 @@ RULES: Tuple[Rule, ...] = (
        "skips only on a machine without it; the Linux runner has it (the skip report shows otherwise)"),
     _r("skip", r"", r"'this ffmpeg (estimates|reads) the duration exactly'", "ci", "skips only when the installed ffmpeg is exact for the fixture"),
     # --- prerequisites no gate provides ----------------------------------------------------------------------------
-    _r("skipif", r"", r"not _HAS_NODE or os\.geteuid\(\) == 0 or sys\.platform not in \('linux', 'darwin'\)", "never",
-       f"needs docx_generator/node_modules (npm ci); {P22B}"),
-    _r("skipif", r"", r"not _READY|not _SANDBOX_READY", "never",
-       f"needs pdf_generator/node_modules/puppeteer and chrome-headless-shell; {P22B}"),
+    _r("skipif", _RENDER_FILES, r"not _HAS_NODE or os\.geteuid\(\) == 0 or sys\.platform not in \('linux', 'darwin'\)", "render-job",
+       f"needs docx_generator/node_modules (npm ci); {RENDER_JOB}"),
+    _r("skipif", _RENDER_FILES, r"not _READY|not _SANDBOX_READY", "render-job",
+       f"needs pdf_generator/node_modules/puppeteer and chrome-headless-shell; {RENDER_JOB}"),
     _r("skipif", r"", r"not _has_playwright_chromium\(\)", "never", "needs Playwright Chromium; no CI job runs `playwright install`"),
     _r("skip", r"", r"'Playwright Chromium is not installed'", "never", "needs Playwright Chromium; no CI job runs `playwright install`"),
-    _r("skipif", r"", r"not _IMAGE or shutil\.which\('docker'\) is None|not _LIGHT_IMAGE or shutil\.which\('docker'\) is None"
-                      r"|not os\.getenv\('SANDBOX_TEST_IMAGE'\) or shutil\.which\('docker'\) is None", "never",
-       f"needs the built sandbox image (SANDBOX_TEST_IMAGE); {P22B}"),
+    _r("skipif", _IMAGE_FILES, r"not _IMAGE or shutil\.which\('docker'\) is None|not _LIGHT_IMAGE or shutil\.which\('docker'\) is None"
+                      r"|not os\.getenv\('SANDBOX_TEST_IMAGE'\) or shutil\.which\('docker'\) is None", "render-job",
+       f"needs the built sandbox image (SANDBOX_TEST_IMAGE); {IMAGE_JOB}"),
     _r("skipif", r"", r"os\.geteuid\(\) != 0", "never", "needs root to make a foreign-owned directory; CI and ci-gate run non-root"),
     _r("skipif", r"", r"sys\.platform != 'darwin'", "manual", "macOS only (urllib's system-proxy lookup); the owner's machine"),
     _r("skipif", r"", r"not EMULATOR", "manual", "needs the Firestore emulator started by hand (tests/CLAUDE.md P5)"),
