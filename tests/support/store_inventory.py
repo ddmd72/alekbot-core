@@ -31,8 +31,9 @@ CLIENT_PARAMS: frozenset = frozenset({"db", "client", "firestore_client", "stora
 # drive suites' own copy in `tests/unit/adapters/firestore_drive_eval_fakes.py`); `NameAwareDb` is that copy with
 # document-name awareness; `NoteDb` is that copy with the drive notes' versions subcollection
 # (`tests/unit/adapters/firestore_drive_note_fakes.py`); `FactStore` wraps an `EvalDb`; `FakeGcs` is `tests/support/gcs_fake.py`;
-# `FailingTasksClient` is the Cloud Tasks client of `tests/support/redelivery_world.py`.
-CLIENT_FAKES: frozenset = frozenset({"EvalDb", "NameAwareDb", "NoteDb", "FactStore", "FakeGcs", "FailingTasksClient"})
+# `FailingTasksClient` is the Cloud Tasks client of `tests/support/redelivery_world.py`; `kit_db` is the kits' backend fixture
+# (`tests/support/kit_backend.py`: `EvalDb` in the unit suite, the test database in the cloud gate).
+CLIENT_FAKES: frozenset = frozenset({"EvalDb", "NameAwareDb", "NoteDb", "FactStore", "FakeGcs", "FailingTasksClient", "kit_db"})
 
 # Names that stand for a mock. A construction whose arguments derive from one of these and from no fake is refused, and so is a
 # helper that assigns one to an attribute of the store (`adapter._client = MagicMock()`); `patch(target)` and `patch.object(o, n)`

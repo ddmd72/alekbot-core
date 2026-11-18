@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.ports.llm_port import LLMPort
 from src.ports.repository import FactRepository
 from src.config.environment import EnvironmentConfig, Environment
+from tests.support.kit_backend import kit_db  # noqa: F401  (the store kits' backend fixture; the cloud gate overrides it)
 
 
 @pytest.fixture(scope="session", autouse=True)
