@@ -164,13 +164,12 @@ class TestLazyBuildAfterAnUnlockedEviction:
         assert agent.agent_id in factory._cache[USER]["_lazy_agent_ids"]
 
     async def test_a_lazy_agent_built_after_an_eviction_is_tracked_or_not_registered(self, lazy_type):
-        """`create_agent_on_demand` reads `self._cache[user]` (user_agent_factory.py:701) and only then waits at the
-        per-user lock (:717); `invalidate_user_cache` -> `_evict_user` (:281-309) takes no lock. The waiter then builds
-        from the evicted entry's context and appends its id to that detached entry: the agent stays registered with the
-        coordinator, no entry tracks it, and no later eviction unregisters it.
-
-        Note for the owner: a fix must re-read the entry inside the lock and handle `None` there WITHOUT calling
-        `ensure_agents_for_user` (it takes the same per-user lock, which is not re-entrant)."""
+        """`invalidate_user_cache` -> `_evict_user` takes no lock, so it can drop the entry while a lazy build waits at
+        the per-user lock. The build must not use the entry it saw before waiting: an agent appended to that detached
+        entry would stay registered with the coordinator, tracked by no entry, and no later eviction would unregister it.
+        So the lazy agent is either tracked by the current entry or not registered at all. (`create_agent_on_demand`
+        re-reads the entry under the lock and, finding none, rebuilds it outside the lock: `ensure_agents_for_user`
+        takes the same per-user lock, which is not re-entrant.)"""
         factory = _factory()
 
         lock, built = await _lazy_build_waiting_on_the_lock(factory, evict=True)
@@ -208,16 +207,11 @@ class TestResetDuringABuild:
         assert self._registered_versions(factory) == {1}
 
     async def test_no_entry_built_from_the_profile_read_before_a_reset_is_cached_after_it(self):
-        """`ensure_agents_for_user` holds the per-user lock while `_create_and_cache_agents` awaits (the profile read,
-        user_agent_factory.py:335/668-672) and writes the entry at the end (:666); `_evict_user` (:297) is unlocked and
-        finds no entry yet, so the reset (`$admin_cache_reset`) does nothing and the build then caches what it read
-        before the reset. The eager agents are registered (:628) before the entry is written (:666), so the stale build
-        is also what the coordinator routes to.
-
-        Note for the owner: this test's build is a stand-in for `_create_and_cache_agents`. A fix must sit in
-        `ensure_agents_for_user` / `_evict_user` (e.g. a per-user generation bumped by the eviction and checked by the
-        locked caller before it keeps the build); a generation check placed inside `_create_and_cache_agents` before
-        :666 is bypassed by the stand-in, and then the stand-in must be updated with the fix."""
+        """`ensure_agents_for_user` holds the per-user lock while `_create_and_cache_agents` awaits (the profile read)
+        and writes the entry at the end; `_evict_user` is unlocked and finds no entry yet. A reset (`$admin_cache_reset`)
+        during the build must still win: neither the cache nor the coordinator may keep agents built from the profile
+        read before it. The check lives in the locked caller (the per-user generation `_evict_user` advances), not in
+        `_create_and_cache_agents`, which this test replaces with a stand-in."""
         factory = _factory()
 
         await self._build_with_a_gate(factory, reset=True)
@@ -260,9 +254,9 @@ class TestEvictionDuringATurn:
 
     async def test_a_delegation_after_an_eviction_mid_turn_still_reaches_a_specialist(self):
         """The turn delegates to the eager memory specialist, pauses (gate), the user is evicted
-        (`invalidate_user_cache`), the turn delegates again. `route_message` re-creates only lazy recipients
-        (`_try_lazy_load`, agent_coordinator.py:183,503-505: eager descriptors are skipped), so the second
-        delegation ends in the `Unknown recipient` failure (:218-223)."""
+        (`invalidate_user_cache`), the turn delegates again. The eviction unregistered the user's eager agents, so the
+        second delegation must find them rebuilt (`route_message` -> `_try_lazy_load` -> the factory port's
+        `restore_agents_for_user`), not end in the `Unknown recipient` failure."""
         factory = _factory(_registry())
         gate = _Gate()
 

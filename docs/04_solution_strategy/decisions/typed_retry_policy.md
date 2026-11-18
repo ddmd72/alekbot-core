@@ -34,6 +34,12 @@ Retry behavior is determined by the **type** of error caught in
 | ``asyncio.CancelledError``                        | **never swallowed**, propagated outward      |
 | Any other ``Exception``                           | **never retried** — deterministic by assumption |
 
+Scope of the ``CancelledError`` row: the agent's own handling, which still propagates. Where the
+``DelegationEngine`` gathers specialists (a tool batch, a fan-out), a child's own ``CancelledError`` that reaches
+the gather becomes that child's failed ``ToolResult``, unless the gathering task is itself being cancelled
+(``asyncio.current_task().cancelling()``), in which case it propagates (P15-S5, owner decision;
+``docs/05_building_blocks/multi_agent_system/README.md``).
+
 Backoff: exponential ``base * 2^(attempt-1)`` plus uniform jitter
 ``[0, jitter)``. Jitter is mandatory for the rate-limit case to defend
 against synchronised retry storms — when many agents (or many users on

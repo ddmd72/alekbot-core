@@ -40,13 +40,19 @@ class TestGatheredFailureText:
         assert _gathered_failure(ValueError("quota exceeded")) == "quota exceeded"
 
     async def test_a_cancel_of_the_running_task_propagates(self):
+        # The raise is observed inside the task: a task that cancelled itself ends cancelled even when the coroutine
+        # returns normally, so awaiting the task would not tell a propagated cancel from a swallowed one.
         async def turn():
             asyncio.current_task().cancel()  # the turn is being cancelled; no await has delivered it yet
-            return _gathered_failure(asyncio.CancelledError())
+            try:
+                _gathered_failure(asyncio.CancelledError())
+            except asyncio.CancelledError:
+                asyncio.current_task().uncancel()
+                return "propagated"
+            asyncio.current_task().uncancel()
+            return "converted"
 
-        task = asyncio.create_task(turn())
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        assert await asyncio.create_task(turn()) == "propagated"
 
     async def test_a_keyboard_interrupt_propagates(self):
         with pytest.raises(KeyboardInterrupt):

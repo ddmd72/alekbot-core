@@ -1,8 +1,8 @@
 """P15 · J1: the delegation engine's gathered tool batch and fan-out, and the model's ToolCall it dispatches.
 
 `DelegationEngine._execute_tool_calls` and `_dispatch_with_fanout` gather their children with `return_exceptions=True`
-and then sort the results with `isinstance(result, Exception)`. A child that raises `CancelledError` on its own (a
-`BaseException`, not an `Exception`, and not a cancel of the batch) slips past that check. The concurrent cases are forced
+and then sort the results. A child that raises `CancelledError` on its own (a `BaseException`, not an `Exception`, and
+not a cancel of the batch) is that child's failure like any exception (owner decision O4). The concurrent cases are forced
 with `asyncio.Event` gates: one child holds until the other has started, and the test asserts the gate was reached.
 
 The fan-out and file-ref cases run through a real `AgentCoordinator` over the real manifest registry with stub specialists
@@ -88,8 +88,8 @@ class TestGatheredBatch:
         assert [r.result_str for r in results] == ["first answer", "second answer"]
 
     async def test_a_child_that_raises_cancelled_error_becomes_a_failed_tool_result(self, monkeypatch):
-        """`_execute_tool_calls` (delegation_engine.py:640-690) gathers with `return_exceptions=True` and converts only
-        `isinstance(result, Exception)` (:680); a `CancelledError` (a `BaseException`) is appended as the result."""
+        """`_execute_tool_calls` gathers with `return_exceptions=True`; a child's own `CancelledError` (a `BaseException`)
+        must become that call's failed `ToolResult`, not be appended as the batch's result, and the sibling's answer stays."""
         started = None
         results: List[Any] = []
         try:
@@ -140,9 +140,9 @@ class TestFanout:
         assert "web answer about the weather in Springfield" in merged.result_str and "maps answer" in merged.result_str
 
     async def test_a_secondary_that_raises_cancelled_error_keeps_the_primary_answer(self):
-        """`_dispatch_with_fanout` (delegation_engine.py:833-862) gathers primary + secondaries with
-        `return_exceptions=True`; `_merge_fanout_results` (:864-935) skips only `isinstance(response, Exception)` and
-        reads `response.status` on the `CancelledError` (the loop at :886, the read at :899), so the whole dispatch raises."""
+        """`_dispatch_with_fanout` gathers primary + secondaries with `return_exceptions=True`; `_merge_fanout_results`
+        must skip a secondary that ended in its own `CancelledError` like any failed secondary, not read `response.status`
+        on it (which would raise and wipe the primary's answer)."""
         web_started, merged, raised = await self._fanout(secondary_raises=True)
 
         assert web_started.is_set()

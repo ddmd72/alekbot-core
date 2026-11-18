@@ -2,7 +2,7 @@
 
 ``assemble`` misses, awaits ``_assemble_static_template`` and then ``_save_to_cache``;
 ``invalidate_cache()`` takes no key and clears everything. A template read before the
-invalidation but saved after it is stale and gets served for the full TTL.
+invalidation must not be saved after it: it is stale and would be served for the full TTL.
 
 No Firestore collection is read here: the gated coroutine is the only suspension point.
 The gate captures the source value at call time, so the test is not vacuous.

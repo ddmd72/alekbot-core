@@ -1,8 +1,8 @@
 """S2 (channel binding): a cache-miss ``get`` that straddles a ``bind`` of the same channel.
 
-``get`` reads the port, then writes the cache; ``bind`` saves and writes the cache. If the
-read began before the save, the old value overwrites the new one in the cache for the TTL.
-The fake port captures its stored value at call time and suspends on a gate.
+``get`` reads the port, then writes the cache; ``bind`` saves and writes the cache. A read that
+began before the save must not write its old value over the new one: the cache would serve it
+for the TTL. The fake port captures its stored value at call time and suspends on a gate.
 
 ``PromptComponentService.get_assembled_prompt`` is not tested: it has no caller in ``src/``.
 """
