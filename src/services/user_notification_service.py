@@ -515,6 +515,10 @@ class UserNotificationService:
                 "session_id": effective_session_id,
                 "thread_id": None,
                 "current_message_parts": [framed],
+                # Where this run spoke: a document it hands to async delivery lands here, not on whatever channel is
+                # last active by the time the document is ready (P13-D2).
+                "origin_channel_id": channel_info.channel_id,
+                "origin_platform": channel_info.platform,
                 **({"thinking_effort": thinking_effort} if thinking_effort else {}),
                 **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),

@@ -36,8 +36,6 @@ EMAILS = [
     {"email_id": "m2", "from": "user@example.com", "subject": "Example School parents' meeting",
      "date": "2026-10-26T19:00:00+00:00", "snippet": "", "body": "", "attachments": []},
 ]
-D2 = ("P13-D2: a background run's document follows the last-active channel at delivery, not the channel the run "
-      "spoke in; fix after the plan (owner)")
 
 
 def fire(note_id: str) -> dict:
@@ -154,7 +152,6 @@ async def _reminder_with_a_page(monkeypatch, world: SeamWorld) -> dict:
     return bodies[0]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=D2)
 async def test_a_reminder_page_lands_where_the_reminder_spoke(monkeypatch):
     """No primary: the reminder speaks on the last-active channel (C1); by the time its page is delivered the user has
     chatted in C2. The run's context carries no origin (`ums.py:383-402`), so the page follows the last-active
