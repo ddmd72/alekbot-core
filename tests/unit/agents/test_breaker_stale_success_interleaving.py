@@ -1,8 +1,9 @@
-"""S7: a success that was in flight when the breaker tripped closes the tripped breaker.
+"""S7: a success that was in flight when the breaker tripped must not close the tripped breaker.
 
 ``BaseAgent._call_llm`` checks ``is_provider_open``, awaits ``generate_content`` and then
 ``record_success``. A call admitted while the breaker was closed can finish after other
-calls tripped it; its ``record_success`` wipes the failure window and the OPEN marker.
+calls tripped it; a ``record_success`` then would wipe the failure window and the OPEN marker,
+so a success that lands on an OPEN breaker is not recorded.
 HALF-OPEN admitting every caller is by design and is not tested here.
 """
 
@@ -38,12 +39,6 @@ class _GatedLlm:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="P15-S7: a success admitted before the breaker tripped calls record_success "
-    "afterwards and closes the OPEN breaker; owner decision",
-)
 async def test_success_admitted_before_trip_does_not_close_the_tripped_breaker():
     now = [1000.0]
     resilience = InMemoryProviderResilience(

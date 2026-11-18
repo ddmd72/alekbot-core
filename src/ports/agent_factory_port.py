@@ -27,3 +27,15 @@ class AgentFactoryPort(ABC):
         Returns False if the agent could not be created (missing dependencies).
         """
         ...
+
+    async def restore_agents_for_user(self, user_id: str) -> bool:
+        """
+        Rebuild and register the user's eager agents when they are not registered.
+
+        The coordinator calls this when a message is routed to a user's eager
+        agent that is not registered: an eviction (a cache reset, the TTL sweep)
+        unregistered the user's agents while a turn was still delegating.
+        Returns True if the agents are in service afterwards. A factory that
+        builds no eager agents keeps this default and returns False.
+        """
+        return False

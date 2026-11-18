@@ -2,7 +2,7 @@
 
 ``assemble`` misses, awaits ``_assemble_static_template`` and then ``_save_to_cache``;
 ``invalidate_cache()`` takes no key and clears everything. A template read before the
-invalidation but saved after it is stale and gets served for the full TTL.
+invalidation must not be saved after it: it is stale and would be served for the full TTL.
 
 No Firestore collection is read here: the gated coroutine is the only suspension point.
 The gate captures the source value at call time, so the test is not vacuous.
@@ -44,12 +44,6 @@ def _service(source: dict) -> tuple[PromptAssemblyService, asyncio.Event, asynci
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="P15-S2: assemble saves a template read before invalidate_cache() after the "
-    "invalidation, so the stale prompt is served for the cache TTL; owner decision",
-)
 async def test_template_read_before_invalidation_is_not_served_afterwards():
     source = {"template": "OLD"}
     service, reached, release = _service(source)

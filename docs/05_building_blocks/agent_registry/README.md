@@ -161,20 +161,27 @@ Agents marked with `eager=False` on their `AgentDescriptor` are **not** instanti
 calls `AgentFactoryPort.create_agent_on_demand(agent_type, user_id)` before dispatching.
 For ASYNC Cloud Tasks callbacks via `route_message()`, the coordinator parses the recipient
 (`{base_agent_id}_{user_id}`), looks up the descriptor via `registry.get_descriptor(base_id)`,
-and lazy-loads if `eager=False`.
+and lazy-loads if `eager=False`. A missing recipient whose descriptor is eager was unregistered by an
+eviction (`$admin_cache_reset`, the TTL sweep), possibly while a turn was still delegating: the coordinator
+calls `restore_agents_for_user(user_id)`, which rebuilds the user's eager set, instead of answering
+"Unknown recipient" (P15-S4).
 
 **Port:** `AgentFactoryPort` (`src/ports/agent_factory_port.py`) — one abstract method
-`create_agent_on_demand(agent_type, user_id) -> bool`. `UserAgentFactory` implements it.
+`create_agent_on_demand(agent_type, user_id) -> bool`, and `restore_agents_for_user(user_id) -> bool`
+(default `False`, for a factory with no eager agents). `UserAgentFactory` implements both.
 The coordinator depends on the port (not on the factory class), preserving hexagonal layering.
 
 **Wiring:** `build_application_graph` calls `coordinator.set_agent_factory(agent_factory)` after both objects
 exist. Before this call, lazy loading is a no-op (factory is `None`).
 
 **Concurrency:** per-user `asyncio.Lock` prevents duplicate instantiation.
-`coordinator.get_agent(expected_id)` check provides idempotency.
+`coordinator.get_agent(expected_id)` check provides idempotency. The lazy build re-reads the user's
+cache entry under the lock and, if an eviction dropped it meanwhile, rebuilds the entry first (P15-S1).
 
 **Eviction:** `_lazy_agent_ids` list tracks created lazy agents per user. Background TTL sweep
-unregisters them alongside eager agents.
+unregisters them alongside eager agents. Eviction takes no lock, so it advances a per-user generation; a
+build that an eviction overtook (a reset while the profile was being read) is redone, at most three
+builds, the last one kept (P15-S1b).
 
 ---
 

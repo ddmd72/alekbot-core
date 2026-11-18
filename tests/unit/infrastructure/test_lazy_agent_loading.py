@@ -173,7 +173,9 @@ class TestRouteMessageLazyLoad:
             payload={},
             context={"user_id": "user789"},
         )
-        # This will fail (agent not registered) but should NOT call factory
+        # An eager recipient is never lazy-built: the coordinator asks the factory to restore the user's eager set
+        # instead (test_coordinator_restores_evicted_eager_agents.py), so this mock's restore registers nothing and the
+        # message fails as an unknown recipient.
         await coordinator.route_message(msg)
         mock_factory.create_agent_on_demand.assert_not_awaited()
 

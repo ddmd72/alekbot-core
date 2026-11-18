@@ -117,6 +117,12 @@ if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
 
 
+# A build overtaken by an eviction is redone this many times at most; the last one is kept (a reset storm must not leave
+# the user without agents) and a later reset or the TTL sweep replaces it. A lazy build that finds its entry evicted
+# rebuilds the entry as many times before it gives up.
+_MAX_BUILD_ATTEMPTS = 3
+
+
 def _voice_profile_for(user_id: str, config: "UserBotConfig") -> VoiceProviderProfile:
     if config.voice_provider and config.voice_provider not in VOICE_PROVIDER_PROFILES:
         # A stale value must not fail the user's calls; the default takes over.
@@ -242,6 +248,10 @@ class UserAgentFactory(AgentFactoryPort):
         self._cache: Dict[str, Dict[str, object]] = {}
         self._cache_ttl = 3600
         self._creation_locks: Dict[str, asyncio.Lock] = {}  # Per-user locks
+        # Per-user eviction counter. `_evict_user` runs without the per-user lock (a reset, the TTL sweep), so a build in
+        # progress under the lock cannot see an eviction through the entry (it has not written one yet): the build
+        # compares the counter before and after and drops a build an eviction overtook.
+        self._generations: Dict[str, int] = {}
         self._sweep_task: Optional[asyncio.Task] = None
         self._warmups: Set["asyncio.Task[None]"] = set()  # strong refs: a bare task can be collected mid-run
 
@@ -273,7 +283,11 @@ class UserAgentFactory(AgentFactoryPort):
 
     def _evict_user(self, user_id: str) -> bool:
         """Remove a user's cache entry and unregister every agent it built (eager and lazy).
-        THE single eviction path — used by the TTL sweep and by invalidate_user_cache."""
+        THE single eviction path — used by the TTL sweep and by invalidate_user_cache.
+
+        Bumps the user's generation even when there is no entry: a build in progress has not written its entry yet,
+        and the bump is how `ensure_agents_for_user` learns that the profile it read was reset."""
+        self._bump_generation(user_id)
         entry = self._cache.pop(user_id, None)
         if entry is None:
             return False
@@ -284,6 +298,12 @@ class UserAgentFactory(AgentFactoryPort):
         for agent_id in entry.get("_lazy_agent_ids", []):
             self.coordinator.unregister_agent(agent_id)
         return True
+
+    def _generation(self, user_id: str) -> int:
+        return self._generations.get(user_id, 0)
+
+    def _bump_generation(self, user_id: str) -> None:
+        self._generations[user_id] = self._generations.get(user_id, 0) + 1
 
     async def ensure_agents_for_user(self, user_id: str) -> Dict[str, object]:
         # Fast path: check cache without acquiring a lock
@@ -305,7 +325,27 @@ class UserAgentFactory(AgentFactoryPort):
             # registration is refused ("already registered") and the coordinator keeps routing
             # to the old config snapshot.
             self._evict_user(user_id)
-            return await self._create_and_cache_agents(user_id)
+            return await self._build_unless_overtaken(user_id)
+
+    async def _build_unless_overtaken(self, user_id: str) -> Dict[str, object]:
+        """Build the user's agents and keep the build only if no eviction ran while it awaited. Called under the
+        per-user lock. An eviction during the build (`$admin_cache_reset`) found no entry to drop, so without this
+        check the build would cache and keep routing to the profile read before the reset."""
+        for _ in range(_MAX_BUILD_ATTEMPTS - 1):
+            generation = self._generation(user_id)
+            cached = await self._create_and_cache_agents(user_id)
+            if self._generation(user_id) == generation:
+                return cached
+            logger.info("[UserAgentFactory] user %s was evicted during the build; rebuilding", user_id[:8])
+            self._evict_user(user_id)
+        generation = self._generation(user_id)
+        cached = await self._create_and_cache_agents(user_id)
+        if self._generation(user_id) != generation:
+            logger.warning(
+                "[UserAgentFactory] user %s was evicted during each of %d builds; keeping the last one",
+                user_id[:8], _MAX_BUILD_ATTEMPTS,
+            )
+        return cached
 
     async def _create_and_cache_agents(self, user_id: str) -> Dict[str, object]:
         """Create all agents for a user and store them in the cache. Called under per-user lock."""
@@ -721,13 +761,6 @@ class UserAgentFactory(AgentFactoryPort):
         with the coordinator, and tracks it for later eviction.
         Returns True if the agent was created or already existed.
         """
-        cached = self._cache.get(user_id)
-        if cached is None:
-            # Eager agents not yet created — caller should have called
-            # ensure_agents_for_user() first. Do it now as safety net.
-            await self.ensure_agents_for_user(user_id)
-            cached = self._cache[user_id]
-
         builder = self._LAZY_BUILDERS.get(agent_type)
         if builder is None:
             logger.warning(
@@ -735,33 +768,60 @@ class UserAgentFactory(AgentFactoryPort):
             )
             return False
 
-        # Per-user lock prevents duplicate instantiation on concurrent delegations
         lock = self._creation_locks.setdefault(user_id, asyncio.Lock())
-        async with lock:
-            ctx: _UserContext = cached["_user_context"]
+        for _ in range(_MAX_BUILD_ATTEMPTS):
+            if self._cache.get(user_id) is None:
+                # Eager agents not yet created (or evicted) — caller should have called
+                # ensure_agents_for_user() first. Do it now as safety net. Outside the
+                # per-user lock: ensure_agents_for_user takes it, and it is not re-entrant.
+                await self.ensure_agents_for_user(user_id)
 
-            # Check if already registered in coordinator (idempotent)
-            expected_id = f"{self._LAZY_AGENT_IDS[agent_type]}_{user_id}"
-            if self.coordinator.get_agent(expected_id) is not None:
+            # Per-user lock prevents duplicate instantiation on concurrent delegations
+            async with lock:
+                # Re-read under the lock: an eviction (it takes no lock) may have dropped the entry while this call
+                # waited. Building from the detached entry would register an agent that no entry tracks, so no later
+                # eviction would unregister it; the entry is rebuilt on the next attempt instead.
+                cached = self._cache.get(user_id)
+                if cached is None:
+                    continue
+                ctx: _UserContext = cached["_user_context"]
+
+                # Check if already registered in coordinator (idempotent)
+                expected_id = f"{self._LAZY_AGENT_IDS[agent_type]}_{user_id}"
+                if self.coordinator.get_agent(expected_id) is not None:
+                    return True
+
+                agent = builder(self, user_id, ctx)
+                if agent is None:
+                    return False
+
+                agent.bind_runtime(AgentRuntime(coordinator=self.coordinator,
+                                                prompt_content_store=self.prompt_content_store,
+                                                quota_service=self.quota_service))
+                try:
+                    self.coordinator.register_agent(agent)
+                except ValueError:
+                    return True  # already registered by concurrent call
+
+                cached["_lazy_agent_ids"].append(agent.agent_id)
+                logger.info(
+                    "🦥 [AgentFactory] Lazy-created %s for user %s",
+                    agent_type, user_id[:8],
+                )
                 return True
 
-            agent = builder(self, user_id, ctx)
-            if agent is None:
-                return False
+        logger.warning(
+            "[UserAgentFactory] user %s was evicted during each of %d attempts to build %s; not built",
+            user_id[:8], _MAX_BUILD_ATTEMPTS, agent_type,
+        )
+        return False
 
-            agent.bind_runtime(AgentRuntime(coordinator=self.coordinator, prompt_content_store=self.prompt_content_store,
-                                            quota_service=self.quota_service))
-            try:
-                self.coordinator.register_agent(agent)
-            except ValueError:
-                return True  # already registered by concurrent call
-
-            cached["_lazy_agent_ids"].append(agent.agent_id)
-            logger.info(
-                "🦥 [AgentFactory] Lazy-created %s for user %s",
-                agent_type, user_id[:8],
-            )
-            return True
+    async def restore_agents_for_user(self, user_id: str) -> bool:
+        """Rebuild the user's eager agents after an eviction unregistered them (AgentFactoryPort): a turn that was
+        delegating when `$admin_cache_reset` or the TTL sweep evicted the user reaches a rebuilt specialist instead of
+        "Unknown recipient". Raises what the build raises (the coordinator logs it)."""
+        await self.ensure_agents_for_user(user_id)
+        return True
 
     # -- Builder methods: one per lazy agent type -----------------------
 
