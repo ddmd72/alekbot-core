@@ -311,6 +311,17 @@ class TaskSetupService:
         )
 
     # ------------------------------------------------------------------
+    # owns_subscription
+    # ------------------------------------------------------------------
+
+    async def owns_subscription(self, user_id: str, sub_id: str, list_id: str) -> bool:
+        """True when `user_id`'s stored config holds subscription `sub_id` on list `list_id`. The webhook's binding of
+        a notification to the user of its URL (clientState is one secret shared by every subscription)."""
+        config = await self._task_config.get_config(user_id)
+        sub = self._find_sub(config, sub_id)
+        return sub is not None and sub.list_id == list_id
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
