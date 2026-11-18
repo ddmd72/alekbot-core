@@ -9,6 +9,7 @@ from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.config.environment import EnvironmentConfig
 from src.ports.memory_write_lease import MemoryWriteLeasePort
 from tests.support.firestore_eval import EvalDocRef
+from tests.support.kit_backend import never_called
 
 ACC = "acc-1"
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
@@ -192,7 +193,7 @@ class TestRelease:
         before = {k: dict(v) for k, v in _docs(db, env).items()}
         started = []
         real_transaction = db.transaction
-        monkeypatch.setattr(db, "transaction", lambda: started.append(1) or real_transaction())
+        monkeypatch.setattr(db, "transaction", never_called(lambda: started.append(1) or real_transaction()))
 
         await lease.release(account_id, "o1")
 

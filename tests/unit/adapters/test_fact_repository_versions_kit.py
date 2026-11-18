@@ -19,6 +19,7 @@ from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, NoCacheRefresh, embed
+from tests.support.kit_backend import never_called
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -148,7 +149,7 @@ async def test_write_superseding_with_nothing_to_replace_is_refused_before_any_i
     def no_transaction():
         raise AssertionError("a transaction was opened")
 
-    monkeypatch.setattr(store.db, "transaction", no_transaction)
+    monkeypatch.setattr(store.db, "transaction", never_called(no_transaction))
     with pytest.raises(ValueError, match="replaces no document"):
         await store.repo.write_superseding(make_fact("new"), [])
 
@@ -165,7 +166,7 @@ async def test_write_superseding_refuses_a_new_fact_without_a_vector_before_any_
     def no_transaction():
         raise AssertionError("a transaction was opened")
 
-    monkeypatch.setattr(store.db, "transaction", no_transaction)
+    monkeypatch.setattr(store.db, "transaction", never_called(no_transaction))
     with pytest.raises(ValueError, match=missing):
         await store.repo.write_superseding(incomplete, closed_by(incomplete, [old], "stage1"))
 
