@@ -38,7 +38,7 @@ from tests.support.cloud_indexes import admin_index, existing_key, of_group, pro
 from tests.support.firestore_eval import EvalDb
 from tests.support.gcs_fake import FakeGcs
 from tests.support.gcs_kit_backend import RealKitGcsBackend, run_prefix
-from tests.support.kit_backend import RealKitBackend, guard_clients
+from tests.support.kit_backend import BuildingIndexRetry, RealKitBackend, guard_clients
 from tests.support.store_inventory import KITS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -307,6 +307,7 @@ def kit_db(cloud: SimpleNamespace, client: Any, ensure_indexes: Callable[[str, L
     sync = firestore.Client(project=cloud.project, database=cloud.database, credentials=cloud.credentials)
     if sync._database != cloud.database or sync.project != cloud.project:
         pytest.fail("guard: the constructed sync client does not point at the test database and project")
+    client._firestore_api_internal = BuildingIndexRetry(client._firestore_api)    # "currently building" after READY
     backend = RealKitBackend(client, sync, ensure_indexes)
     yield backend
     try:

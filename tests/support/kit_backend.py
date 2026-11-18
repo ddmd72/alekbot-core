@@ -30,10 +30,14 @@ other attribute is the real client's, so a fake-only hook
 (`interfere_on_txn_read`, `versions`, a patched `EvalDocRef`) fails here: such a test carries
 `@pytest.mark.h1_only("<why>")` and is skipped in the cloud run.
 """
+import asyncio
+import time
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 import pytest
+from google.api_core.exceptions import FailedPrecondition
 
 from tests.support.cloud_indexes import LIVE_PREFIX, render_indexes, rendered_group
 from tests.support.firestore_eval import EvalDb
@@ -404,3 +408,50 @@ class RealKitBackend:
             self.purge(real)
         for injected in self.injections:
             injected.check_reached()
+
+
+BUILDING_RETRY_S = 10 * 60          # how long a query may keep meeting "index currently building"
+BUILDING_BACKOFF_S = (5.0, 60.0)    # first and longest wait between attempts
+
+
+class BuildingIndexRetry:
+    """The kits' real client's GAPIC API with `run_query` and `run_aggregation_query` retried, with backoff and for at most
+    `BUILDING_RETRY_S`, on exactly one answer: FAILED_PRECONDITION "index ... currently building". A freshly created index
+    of the test database can give it after the Admin API reports READY, and after a probe query it served once (seen
+    2026-11-19: a probe served, the same query minutes later was refused again), so readiness is settled where the kit's
+    query is sent. Any other answer, and the same one past the deadline, is raised as it came. Every other call is the
+    API's own. Installed by the cloud `kit_db` fixture: `client._firestore_api_internal = BuildingIndexRetry(api)`."""
+
+    RETRIED = ("run_query", "run_aggregation_query")
+
+    def __init__(self, api: Any, sleep: Callable[[float], Any] = asyncio.sleep,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self._api = api
+        self._sleep = sleep
+        self._clock = clock
+        self.refusals = 0
+
+    def __getattr__(self, attr: str) -> Any:
+        found = getattr(self._api, attr)
+        if attr not in self.RETRIED:
+            return found
+        return lambda *a, **k: self._retrying(found, *a, **k)
+
+    async def _retrying(self, call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        deadline = self._clock() + BUILDING_RETRY_S
+        wait, longest = BUILDING_BACKOFF_S
+        refused = 0
+        while True:
+            try:
+                result = await call(*args, **kwargs)
+            except FailedPrecondition as exc:
+                if "currently building" not in str(exc) or self._clock() > deadline:
+                    raise
+                refused += 1
+                self.refusals += 1
+                await self._sleep(wait)
+                wait = min(wait * 2, longest)
+                continue
+            if refused:
+                warnings.warn(f"a kit query met 'index currently building' {refused} time(s) before it was served")
+            return result
