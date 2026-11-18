@@ -222,7 +222,7 @@ steps:
       - "--memory=1024Mi"
       - "--cpu=2"
       - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,DEBUG_PROMPTS=true,GCS_MEDIA_BUCKET=alek-media-dev,BIGQUERY_PROMPT_DATASET=alek_observability_dev"
-      - "--set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest"
+      - "--set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest"
       - "--project=$PROJECT_ID"
 
   # Deploy Cloud Run service for the voice relay (same image, different
