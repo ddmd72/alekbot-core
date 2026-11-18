@@ -8,7 +8,7 @@ can take the claimed code.
 The real `InviteCodeService` over the real Firestore repositories on the evaluating fake, as the invite kit builds them;
 a failed write is a repository method that raises once, before it writes.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -165,3 +165,30 @@ async def test_a_failed_completion_stamp_is_finished_by_the_retry(store, monkeyp
     await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     assert "completed_at" in store.docs[key()]
     assert await members(store) == {OWNER: "OWNER", "usr-new": "member"}
+
+
+async def _interrupted(store, monkeypatch, expires_at) -> None:
+    """usr-new's accept claimed the code and failed before the move; the stored code then expires at `expires_at`."""
+    await store.team("usr-new")
+    await store.repo.create(invite())
+    fail_once(monkeypatch, store.users, "update_user")
+    with pytest.raises(RuntimeError):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    store.docs[key()] = {**store.docs[key()], "expires_at": expires_at}
+
+
+async def test_a_resume_just_inside_a_day_past_expiry_finishes_the_accept(store, monkeypatch):
+    await _interrupted(store, monkeypatch, datetime.now(timezone.utc) - timedelta(days=1) + timedelta(minutes=1))
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == OWNER_ACC
+    assert "completed_at" in store.docs[key()]
+
+
+async def test_a_resume_just_past_a_day_after_expiry_is_refused_and_changes_nothing(store, monkeypatch):
+    """Also what an unstamped code claimed before the stamp existed meets once its window has passed."""
+    await _interrupted(store, monkeypatch, datetime.now(timezone.utc) - timedelta(days=1) - timedelta(minutes=1))
+    before = (dict(store.docs[key()]), await members(store))
+    with pytest.raises(ValueError, match="expired or already used"):
+        await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert await store.account_of("usr-new") == "acc-usr-new"
+    assert (dict(store.docs[key()]), await members(store)) == before

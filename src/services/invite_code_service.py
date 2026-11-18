@@ -12,6 +12,10 @@ from ..ports.whitelist_repository import WhitelistRepository
 from ..utils.logger import logger
 
 
+# How long past a code's expiry its claimant may still finish an interrupted accept.
+_RESUME_GRACE = timedelta(days=1)
+
+
 class InviteCodeService:
     """
     Service for managing invite codes (generation, validation, consumption).
@@ -99,8 +103,9 @@ class InviteCodeService:
 
         The writes run claim, membership, the user's move, then the code's completion stamp. A failure after the
         claim leaves the code claimed by this user and not completed: the same user's retry with the same code
-        finishes the accept (each write repeats harmlessly), even past the code's expiry; anyone else is refused. A
-        completed code is refused to everyone, its claimant included, wherever that user is now.
+        finishes the accept (each write repeats harmlessly) until a day past the code's expiry; anyone else is
+        refused. A completed code is refused to everyone, its claimant included, wherever that user is now; so is an
+        unstamped one past that day (codes claimed before the stamp existed carry none).
         """
         logger.info(f"User {new_member_user_id} attempting to consume an invite")
         
@@ -109,7 +114,8 @@ class InviteCodeService:
         if not invite:
             raise ValueError("Invalid invite code")
         resuming = (invite.used_at is not None and invite.completed_at is None
-                    and invite.used_by_user_id == new_member_user_id)
+                    and invite.used_by_user_id == new_member_user_id
+                    and datetime.now(timezone.utc) < invite.expires_at + _RESUME_GRACE)
         if not resuming and not invite.is_valid():
             raise ValueError("Invite code expired or already used")
         
