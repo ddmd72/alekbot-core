@@ -182,6 +182,7 @@ class TestFirestoreDocuments:
             await repo.update("usr-1", "conn-1", **{field: ""})
         assert (await repo.get("usr-1", "conn-1")) == conn("usr-1", "conn-1")
 
+    @pytest.mark.h1_only("forces a concurrent commit with interfere_on_txn_read")
     async def test_a_concurrent_state_change_is_not_lost_by_a_settings_write(self, kit_db):
         repo, db = firestore_repo(kit_db)
         await repo.create(conn("usr-1", "conn-1"))
