@@ -53,6 +53,7 @@ pytestmark = [
 ]
 
 INDEXER_TOKEN = "tok-indexer-oidc"
+STRANGER_TOKEN = "tok-stranger-oidc"     # a verified identity listed in no caller group
 GOOGLE_BEARER = "tok-garden-drive"
 ONEDRIVE_TEMPAUTH = "tok-memo-download"
 MP4_FAMILY = "mov,mp4,m4a,3gp,3g2,mj2"
@@ -182,7 +183,8 @@ async def light(tmp_path, monkeypatch):
     monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.setitem(ChildLauncher.__init__.__kwdefaults__, "nproc", 4000)
     monkeypatch.setitem(ChildLauncher.__init__.__kwdefaults__, "nofile", 256)
-    emails = {f"Bearer {INDEXER_TOKEN}": "indexer@example.com", "Bearer tok-main-oidc": "main@example.com"}
+    emails = {f"Bearer {INDEXER_TOKEN}": "indexer@example.com", "Bearer tok-main-oidc": "main@example.com",
+              f"Bearer {STRANGER_TOKEN}": "stranger@example.com"}
     monkeypatch.setattr(sandbox_caller_gate, "verify_oidc_identity", lambda auth, audiences: emails.get(auth))
     work, out = tmp_path / "light-work", tmp_path / "light-out"
     work.mkdir()
@@ -391,12 +393,13 @@ async def test_a_playlist_is_refused_nothing_it_names_is_fetched_and_the_instanc
     assert light.recycler.calls == 1                                 # any end but RESULT ok recycles (abnormal)
 
 
-async def test_a_caller_outside_the_indexer_group_cannot_open_a_tunnel(tmp_path, light, drive):
-    """The light service's MAIN group parses only (`INDEXER += media`): its token is refused before any stream, so the
-    drive is read for the size only and never through the tunnel."""
+async def test_a_caller_without_the_media_prefix_cannot_open_a_tunnel(tmp_path, light, drive):
+    """A verified caller whose identity is in no caller group holds no `media` prefix (on the light service both MAIN and
+    INDEXER hold it: S5 and S5b): its token is refused before any stream, so the drive is read for the size only and
+    never through the tunnel."""
     source = drive.onedrive("fid-memo-0006", make_cueless_webm(2))
     with pytest.raises(ParserUnavailable):
-        await media_port(light, drive, token="tok-main-oidc").probe(source)
+        await media_port(light, drive, token=STRANGER_TOKEN).probe(source)
     assert [rng for _, rng, _ in drive.requests] == ["bytes=0-0"]
     assert light.recycler.calls == 0
 
