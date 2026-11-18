@@ -234,7 +234,7 @@ Left as a hint, not as a commitment:
 - `src/domain/user.py` — `complexity_settings_overrides`
 - `src/infrastructure/agent_config.py` — `DEFAULT_COMPLEXITY_SETTINGS`, resolver
 - `src/services/agent_context_builder.py` — `resolve_for_task`
-- `src/services/task_execution_resolver.py` _(new)_
+- `src/infrastructure/task_execution_resolver.py` _(new)_
 - `src/agents/router_agent.py` — output schema, Firestore prompt token
 - `src/handlers/conversation_handler.py` — complexity in context, always Smart
 - `src/agents/core/smart_response_agent.py` — override in the delegation loop

@@ -23,6 +23,7 @@ DOC_READING_TESTS: tuple[str, ...] = (
     "tests/unit/domain/test_drive_search_v2_frozen_core.py",
     "tests/unit/infrastructure/test_workspace_tools.py",
     "tests/unit/test_facts_have_no_ttl_policy.py",
+    "tests/unit/test_rfc_status_matches_tree.py",
 )
 
 

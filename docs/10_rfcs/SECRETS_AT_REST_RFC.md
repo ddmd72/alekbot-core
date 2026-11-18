@@ -25,7 +25,7 @@ bug that dumps a collection, an export. Two classes, by what the app does with t
 | Verify-only | `domain_invite_codes` | doc id = the raw 9-hex code, 36 bits (`invite_code_service.py:47-48`) | compared on join |
 | Verify-only | `mcp_refresh_tokens` | already `sha256(token)` (`mcp_authorization_service.py:449-450`) | compared on refresh |
 
-**Completeness pass (2026-10-29, main @ b818f7a1).** Checked: every collection in `config/environment.py` and named
+**Completeness pass (2026-10-29, main @ b818f7a1).** Checked: every collection in `src/config/environment.py` and named
 inline in `src/adapters/firestore_*.py`; every `secrets.*`/`uuid4` minting site; log lines interpolating a ticket, code
 or token; Cloud Tasks payloads (none carries a secret); Logfire (LLM SDKs only, no HTTP header capture); GCS (content);
 `prompt_content` (no credential reaches a model); cookies (login `state`, Cabinet session: not persisted). Found:
@@ -121,7 +121,7 @@ is granted **on the key**, to the **main service's** and the **indexer's** ident
 separate identities (main service, indexer, voice relay, sandbox, deep-research job); the indexer (`indexer_main.py`; it
 refreshes OneDrive) and the main service need the key, while the relay, sandbox and job get no grant and no secret.
 **Fail closed:** both services refuse to start without `KMS_CRYPTO_KEY` (the main service also needs the digest key),
-mirroring `config/auth.py:162-170`. The cipher and the digest key are built in the composition root
+mirroring `src/config/auth.py:162-170`. The cipher and the digest key are built in the composition root
 (`build_application_graph`), outside the MCP build, whose errors are swallowed (`main.py:517-522`: "Bot will continue
 without MCP connector"): fail closed means a failed start, never "MCP silently off". The indexer has no `load_settings()`
 (`indexer_main.py:99-140`): it reads the key name from its environment and fails closed the same way.
