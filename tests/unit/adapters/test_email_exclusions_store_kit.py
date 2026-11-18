@@ -27,8 +27,8 @@ def _adapter(db: EvalDb) -> FirestoreEmailExclusionsAdapter:
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={EXCL: "development_email_exclusions"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={EXCL: "development_email_exclusions"})
         self.adapter = _adapter(self.db)
 
     @property
@@ -37,8 +37,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def exclusion(user="u1", kind="sender_domain", pattern="example.com", reason="recurring newsletter") -> EmailExclusion:
@@ -71,6 +71,7 @@ async def test_add_exclusions_stores_one_document_per_user_type_and_pattern_and_
     assert "exclusion_id" not in stored
 
 
+@pytest.mark.h1_only("reads the fake's commit log (db.commits)")
 async def test_add_exclusions_of_nothing_is_a_no_op(store):
     await store.adapter.add_exclusions([])
     assert store.docs == {} and store.db.commits == []
@@ -97,6 +98,7 @@ async def test_delete_exclusion_removes_the_document_by_id_and_a_missing_id_is_a
     assert [e.pattern for e in await store.adapter.get_exclusions("u1")] == ["example.org"]
 
 
+@pytest.mark.h1_only("sets the fake's collection .fail")
 async def test_backend_errors_propagate(store):
     await store.adapter.add_exclusions([exclusion()])
     store.db.collection(EXCL).fail = ServiceUnavailable("down")

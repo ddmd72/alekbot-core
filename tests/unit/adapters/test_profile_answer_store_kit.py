@@ -10,7 +10,6 @@ from src.domain.profile_answers import (
 )
 from tests.support.fact_kit import ACC, OTHER
 from tests.support.fact_store import make_env_config
-from tests.support.firestore_eval import EvalDb
 
 COLLECTION = "eval_profile_answers"
 AT = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
@@ -31,8 +30,8 @@ def env():
 
 
 @pytest.fixture
-def db():
-    return EvalDb()
+def db(kit_db):
+    return kit_db()
 
 
 @pytest.fixture
