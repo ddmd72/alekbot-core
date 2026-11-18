@@ -10,10 +10,10 @@ from typing import Dict, List, Set
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-HOOKS = (
-    "interfere_on_txn_", "raise_on_txn_read", "EvalDocRef", ".versions", ".cols", "EvalDb(", "indexes=[]",
-    "tzinfo=None",      # a naive datetime written raw: the real client stores it as UTC, so only the fake returns it naive
-)
+HOOKS = ("interfere_on_txn_", "raise_on_txn_read", "EvalDocRef", ".versions", ".cols", "EvalDb(", "indexes=[]")
+# A naive datetime written raw: the real client stores it as UTC, so only the fake returns it naive. Counted only in the marked
+# test's own source (a helper that builds one somewhere would otherwise excuse any test that calls it).
+OWN_HOOKS = ("tzinfo=None",)
 SKIP = {Path(__file__).resolve(), (REPO / "tests" / "support" / "kit_backend.py").resolve()}
 
 
@@ -48,6 +48,7 @@ def problems(source: str) -> List[str]:
             continue
         if not _reason(marks[0]):
             found.append(f"{node.name}: h1_only without a reason")
+        own = ast.get_source_segment(source, node) or ""
         seen: Set[str] = set()
         todo: List[ast.AST] = [node]
         text = ""
@@ -61,8 +62,8 @@ def problems(source: str) -> List[str]:
                 seen.add(name)
                 if name in defs and defs[name] is not current:
                     todo.append(defs[name])
-        if not any(hook in text for hook in HOOKS):
-            found.append(f"{node.name}: h1_only on a test that drives none of the fake-only hooks {HOOKS}")
+        if not (any(hook in text for hook in HOOKS) or any(hook in own for hook in OWN_HOOKS)):
+            found.append(f"{node.name}: h1_only on a test that drives none of the fake-only hooks {HOOKS + OWN_HOOKS}")
     return found
 
 
@@ -102,7 +103,7 @@ class TestAll:
     pass
 '''
     assert problems(source) == ["pytestmark: mark the tests, not the module", "test_no_reason: h1_only without a reason",
-                                "test_no_hook: h1_only on a test that drives none of the fake-only hooks " + str(HOOKS),
+                                "test_no_hook: h1_only on a test that drives none of the fake-only hooks " + str(HOOKS + OWN_HOOKS),
                                 "TestAll: mark the tests, not the class"]
 
 
@@ -122,3 +123,22 @@ async def test_through_a_helper(store):
     broken(store.db)
 '''
     assert problems(source) == []
+
+
+def test_a_naive_datetime_counts_only_in_the_marked_tests_own_source():
+    source = '''
+import pytest
+
+def naive(at):
+    return at.replace(tzinfo=None)
+
+@pytest.mark.h1_only("a naive datetime survives only in the fake")
+async def test_own(stores):
+    stores.docs()["k"] = {"expires_at": T0.replace(tzinfo=None)}
+
+@pytest.mark.h1_only("a naive datetime survives only in the fake")
+async def test_through_a_helper(stores):
+    stores.docs()["k"] = {"expires_at": naive(T0)}
+'''
+    assert problems(source) == [
+        "test_through_a_helper: h1_only on a test that drives none of the fake-only hooks " + str(HOOKS + OWN_HOOKS)]
