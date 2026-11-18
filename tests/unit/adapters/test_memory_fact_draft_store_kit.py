@@ -91,6 +91,7 @@ async def test_an_expired_draft_reads_none_at_the_expiry_instant_and_not_a_secon
     assert "u1:ab12" in store.docs                      # reading never deletes: the backend's TTL sweep does
 
 
+@pytest.mark.h1_only("a naive datetime written raw (tzinfo=None): the real client stores it as UTC, only the fake returns it naive")
 async def test_a_naive_expiry_is_read_as_utc(store):
     raw(store, expires_at=NOW.replace(tzinfo=None) - timedelta(days=1))
     assert store.docs["u1:ab12"]["expires_at"].tzinfo is None       # a raw document: the fake stores it as written
