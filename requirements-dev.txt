@@ -30,6 +30,8 @@ pytest-asyncio
 pytest-mock
 # Parallel unit suite (make test-unit / make check: -n auto); pinned so CI matches local
 pytest-xdist==3.8.0
+# Provider request contracts (tests/contracts/openapi_contract.py, scripts/contracts/extract_subset.py): Draft 2020-12
+jsonschema==4.26.0
 # Network guard for the unit suite (tests/unit/conftest.py, tests/support/network_guard.py): connect() to non-loopback raises
 pytest-socket==0.8.1
 # Affected-tests selection (make test-affected); needs coverage<8; never combined with --cov
@@ -44,3 +46,8 @@ ruff==0.15.15
 # Type checking — strict on domain/ports (make typecheck); pinned like ruff, bumps are deliberate
 mypy==2.4.0
 
+
+# Provider-contract subsets (make contract-extract): the Anthropic subset is built from the SDK's request types through
+# pydantic and written with PyYAML, so its equality test (test_provider_subsets.py) must not move with a release
+pydantic==2.14.3
+PyYAML==6.0.3

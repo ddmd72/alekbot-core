@@ -140,7 +140,7 @@ K ?= 300
 .PHONY: services status
 .PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
 .PHONY: typecheck check-types
-.PHONY: check-models check-pricing openai-model openai-rollback openai-forward
+.PHONY: check-models check-pricing contract-extract openai-model openai-rollback openai-forward
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
 .PHONY: delete
 
@@ -206,6 +206,7 @@ help: ## Show this help message
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
 	@echo "  make check-pricing   Fetch live model prices and audit billing.py"
+	@echo "  make contract-extract PROVIDER=openai|anthropic [REF=<sha>]  Regenerate contracts/providers/<p>/openapi.yaml"
 	@echo ""
 	@echo "🧪 E2E TESTING (real API flow):"
 	@echo "  make test-e2e-smart / -quick / -router / -consolidation / -websearch / -all"
@@ -633,6 +634,10 @@ check-pricing: ## Fetch live model prices (OpenRouter) and audit billing.py → 
 	@echo "💰 Fetching live model prices and auditing billing.py..."
 	@$(PYTHON) scripts/validation/check_pricing.py
 	@echo "📄 Open: scripts/memory/pricing_report.md"
+
+contract-extract: ## Regenerate a provider's request contract subset (contracts/providers/<p>/openapi.yaml); never hand-edit it
+	@test -n "$(PROVIDER)" || (echo "usage: make contract-extract PROVIDER=openai|anthropic [REF=<sha>]" && exit 2)
+	@$(PYTHON) -m scripts.contracts.extract_subset --provider $(PROVIDER) $(if $(REF),--ref $(REF))
 
 # E2E tests (real API flow)
 

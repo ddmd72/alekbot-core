@@ -692,7 +692,7 @@ class OpenAIAdapter(LLMPort):
             logger.error(f"[OpenAIAdapter] File part without content: keys={sorted(file_data)}")
             raise LLMClientError(f"file part without content ({mime})")
         if mime.startswith("image/"):
-            return {"type": "input_image", "image_url": f"data:{mime};base64,{b64}"}
+            return {"type": "input_image", "image_url": f"data:{mime};base64,{b64}", "detail": "auto"}
         name = file_data.get("name") or (os.path.basename(file_data["path"]) if "path" in file_data else "")
         return {"type": "input_file", "filename": name or _default_filename(mime),
                 "file_data": f"data:{mime};base64,{b64}"}

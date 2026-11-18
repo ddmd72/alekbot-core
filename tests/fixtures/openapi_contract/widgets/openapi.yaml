@@ -1,0 +1,100 @@
+# Invented mini contract for tests/unit/contracts/test_openapi_contract.py (shaped like an extracted subset; no real API).
+openapi: 3.1.0
+info:
+  title: widgets request subset
+  version: 9.9.9
+x-source: https://example.com/widgets@abc
+x-retrieved: '2026-11-18'
+x-transforms: []
+servers:
+  - url: https://api.widgets.example.com/v2
+paths:
+  /widgets:
+    post:
+      parameters:
+        - name: x-widget-beta
+          in: header
+          required: false
+          style: simple
+          explode: false
+          schema:
+            type: array
+            items:
+              anyOf:
+                - type: string
+                  enum: [beta-a, beta-b]
+                - const: beta-legacy
+                  x-alek-extension: sent on the legacy path (2026-11-18)
+        - name: x-widget-tenant
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWidget'
+components:
+  schemas:
+    CreateWidget:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+        color:
+          type: string
+          enum: [red, blue]
+        legacy_size:
+          type: integer
+          deprecated: true
+        old_mode:
+          type: string
+          deprecated: true
+          x-alek-extension: sent only to the old models (2026-11-18)
+        parts:
+          type: array
+          items:
+            anyOf:
+              - $ref: '#/components/schemas/Bolt'
+              - $ref: '#/components/schemas/Gear'
+              - $ref: '#/components/schemas/Note'
+        label:
+          anyOf:
+            - type: string
+            - type: 'null'
+    Bolt:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [bolt]
+        length:
+          type: number
+    Gear:
+      type: object
+      additionalProperties: false
+      required: [type, teeth]
+      properties:
+        type:
+          const: gear
+        teeth:
+          type: integer
+    Note:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        type:
+          anyOf:
+            - const: note
+            - type: 'null'
+        text:
+          type: string

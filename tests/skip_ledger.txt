@@ -159,6 +159,7 @@ tests/unit/composition/test_user_agent_factory_values.py :: marker :: slow  # ci
 tests/unit/composition/test_voice_mcp_cross_side_pairing.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_voice_mcp_setup.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_worker_tasks_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
+tests/unit/contracts/test_provider_subsets.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/domain/test_drive_content_terms_query_cost.py :: marker :: timing  # timing: skipped unless RUN_TIMING_TESTS=1: `make test-timing`, CI job `timing` after a merge to main
 tests/unit/domain/test_drive_text_gate.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/domain/test_drive_text_gate_documents.py :: marker :: timing  # timing: skipped unless RUN_TIMING_TESTS=1: `make test-timing`, CI job `timing` after a merge to main
