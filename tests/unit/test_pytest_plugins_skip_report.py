@@ -22,6 +22,24 @@ def test_skipped_b():
 
 def test_skipped_c():
     pytest.skip("another reason")
+
+@pytest.mark.xfail(reason="known")
+def test_expected_failure():
+    assert False
+
+@pytest.mark.xfail(reason="fixed")
+def test_unexpected_pass():
+    pass
+
+@pytest.fixture
+def broken():
+    raise RuntimeError("setup fails")
+
+def test_setup_error(broken):
+    pass
+
+def test_plain_failure():
+    assert False
 """
 
 
@@ -40,14 +58,14 @@ def _run(pytester):
 def test_the_report_counts_outcomes_and_groups_skips_by_reason(pytester, monkeypatch, tmp_path):
     out = tmp_path / "report.json"
     monkeypatch.setenv("SKIP_REPORT_PATH", str(out))
-    _run(pytester).assert_outcomes(passed=1, skipped=3)
+    _run(pytester)
     report = json.loads(out.read_text())
-    assert report["outcomes"] == {"passed": 1, "skipped": 3}
+    assert report["outcomes"] == {"passed": 1, "skipped": 3, "xfailed": 1, "xpassed": 1, "error": 1, "failed": 1}
     assert report["skipped_by_reason"]["needs a thing"]["count"] == 2
     assert report["skipped_by_reason"]["another reason"]["count"] == 1
     assert all("test_inner.py::" in t for t in report["skipped_by_reason"]["needs a thing"]["tests"])
 
 
 def test_without_the_path_nothing_is_written(pytester, tmp_path):
-    _run(pytester).assert_outcomes(passed=1, skipped=3)
+    _run(pytester)
     assert not list(tmp_path.iterdir())

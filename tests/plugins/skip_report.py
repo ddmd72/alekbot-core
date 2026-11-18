@@ -1,8 +1,9 @@
 """Writes which tests ran and which were skipped, and why, to the path in SKIP_REPORT_PATH (P22: "CI reports which ran").
 
 A skip ledger says which gate is meant to run a test; this report says what the run did. Enabled by `-p tests.plugins.skip_report`
-(the CI step that passes it and uploads the file is the workflow's, not this module's). Without SKIP_REPORT_PATH it does nothing.
-Under xdist the controller process writes the one file (workers report through the same terminal-summary hook on the controller).
+(`make test-ci` passes it and the CI workflow uploads the file). Without SKIP_REPORT_PATH it does nothing.
+Each test counts once: `passed`, `failed`, `error` (a failure in setup), `skipped`, `xfailed`, `xpassed`. Under xdist the
+controller sees every worker's reports through the same hook and writes the one file.
 """
 import json
 import os
@@ -18,12 +19,20 @@ def _state(config) -> Dict:
     return config._skip_report
 
 
+def _outcome(report) -> str:
+    if hasattr(report, "wasxfail"):
+        return "xfailed" if report.skipped else "xpassed"
+    if report.when == "setup" and report.failed:
+        return "error"
+    return "skipped" if report.skipped else report.outcome
+
+
 def pytest_report_teststatus(report, config):
-    if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
+    if report.when == "call" or (report.when == "setup" and not report.passed):
         state = _state(config)
-        outcome = "skipped" if report.skipped else report.outcome
+        outcome = _outcome(report)
         state["outcomes"][outcome] += 1
-        if report.skipped:
+        if outcome == "skipped":
             longrepr = report.longrepr
             reason = longrepr[2] if isinstance(longrepr, tuple) else str(longrepr)
             state["skips"].append({"test": report.nodeid, "reason": reason.removeprefix("Skipped: ")})

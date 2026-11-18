@@ -335,11 +335,14 @@ test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted m
 	@echo "🧪 Running the offline G2 end-to-end test..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
 
+# Where the run writes which tests ran and which were skipped (tests/plugins/skip_report.py); CI uploads it.
+SKIP_REPORT_PATH ?= skip-report.json
+
 test-ci: ## Unit suite once: slow tests and the coverage gate (part of `make ci`)
 	@echo "🧪 Running the full unit suite (slow tests, coverage)..."
 	@$(XDIST_WARNING)
-	RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
-	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
+	SKIP_REPORT_PATH=$(SKIP_REPORT_PATH) RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
+	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS) -p tests.plugins.skip_report
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py
 	@echo "🚦 Enforcing per-layer coverage floors..."
