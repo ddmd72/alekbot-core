@@ -1,6 +1,6 @@
 name: Firestore parity
 
-# Fake-vs-real Firestore scenarios (make test-cloud): real writes to the TEST database only.
+# Fake-vs-real scenarios (make test-cloud): real writes to the TEST Firestore database, the GCS test bucket and the paused Cloud Tasks test queue only.
 # The verdict lives in the `parity` artifact and the step summary; the job is red only when the run itself
 # could not happen (auth, install, upload, an unconfigured gate, zero tests run), never because a scenario failed. Runs on main (WIF is bound to it).
 on:
@@ -49,9 +49,15 @@ jobs:
           TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
           TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          TEST_GCS_BUCKET: ${{ secrets.TEST_GCS_BUCKET }}
+          TEST_TASKS_QUEUE: ${{ secrets.TEST_TASKS_QUEUE }}
         run: |
           for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT; do
             if [ -z "${!name}" ]; then echo "::error::secret for $name is empty"; exit 1; fi
+          done
+          # Optional: an empty one makes its tests skip (the GCS bucket, the paused queue), never fails the run.
+          for name in TEST_GCS_BUCKET TEST_TASKS_QUEUE; do
+            if [ -z "${!name}" ]; then echo "::warning::secret for $name is empty: its cloud tests skip"; fi
           done
 
       - name: make test-cloud
@@ -61,6 +67,8 @@ jobs:
           TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
           TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          TEST_GCS_BUCKET: ${{ secrets.TEST_GCS_BUCKET }}
+          TEST_TASKS_QUEUE: ${{ secrets.TEST_TASKS_QUEUE }}
           PYTEST_ADDOPTS: --junitxml=parity.xml -rfEs
         run: |
           set -o pipefail
@@ -76,13 +84,15 @@ jobs:
           TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           TEST_WIF_PROVIDER: ${{ secrets.TEST_WIF_PROVIDER }}
+          TEST_GCS_BUCKET: ${{ secrets.TEST_GCS_BUCKET }}
+          TEST_TASKS_QUEUE: ${{ secrets.TEST_TASKS_QUEUE }}
         run: |
           python - <<'PY' || { rm -f parity.log parity.xml; exit 1; }
           import os
           import urllib.parse
           from pathlib import Path
 
-          names = ("TEST_FIRESTORE_DATABASE", "TEST_SA_EMAIL", "GOOGLE_CLOUD_PROJECT", "TEST_WIF_PROVIDER")
+          names = ("TEST_FIRESTORE_DATABASE", "TEST_SA_EMAIL", "GOOGLE_CLOUD_PROJECT", "TEST_WIF_PROVIDER", "TEST_GCS_BUCKET", "TEST_TASKS_QUEUE")
           values = {os.environ.get(n, "") for n in names}
           values.add(urllib.parse.quote(os.environ.get("TEST_SA_EMAIL", ""), safe=""))
           parts = os.environ.get("TEST_WIF_PROVIDER", "").split("/")
