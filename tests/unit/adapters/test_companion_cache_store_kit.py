@@ -17,7 +17,6 @@ import pytest
 from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from src.services.companion_context_assembler_service import CompanionContextAssemblerService
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 CACHE, REC = "eval_companion_context_cache", "eval_companion_records"
@@ -25,13 +24,13 @@ SESSION = "slack:C1"
 SUMMARY = "Plays tennis on Sundays"
 
 
-def _adapter(db: EvalDb) -> FirestoreCompanionCacheRepository:
+def _adapter(db) -> FirestoreCompanionCacheRepository:
     return FirestoreCompanionCacheRepository(db, SimpleNamespace(companion_context_cache_collection=CACHE))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={CACHE: "development_companion_context_cache",
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={CACHE: "development_companion_context_cache",
                                                        REC: "development_companion_records"})
         self.repo = _adapter(self.db)
         memory = FirestoreCompanionMemoryRepository(self.db, SimpleNamespace(companion_records_collection=REC))
@@ -47,8 +46,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 async def test_save_then_get_returns_the_summary_and_the_document_carries_session_account_and_server_time(store):

@@ -18,14 +18,23 @@ def rendered_group(group: str) -> Optional[str]:
     return TEST_PREFIX + group[len(LIVE_PREFIX):] if group.startswith(LIVE_PREFIX) else None
 
 
-def render_indexes(group: str, indexes: Union[str, Path, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def render_indexes(group: str, indexes: Union[str, Path, List[Dict[str, Any]]],
+                   vector_dimension: Optional[int] = None) -> List[Dict[str, Any]]:
     """The composites `indexes` (the file or its parsed list) declares on the live group `group`, renamed to its test
-    group. Empty for a group that is not `development_*` or has none."""
+    group; with `vector_dimension`, every vector field at that dimension (a kit's test vectors are short, and Firestore
+    finds a vector only through an index of its own dimension). Empty for a group that is not `development_*` or has none."""
     target = rendered_group(group)
     raw = json.loads(Path(indexes).read_text()) if isinstance(indexes, (str, Path)) else indexes
     if target is None:
         return []
-    return [dict(index, collectionGroup=target) for index in raw if index.get("collectionGroup") == group and "fields" in index]
+
+    def field(f: Dict[str, Any]) -> Dict[str, Any]:
+        if vector_dimension is None or "vectorConfig" not in f:
+            return f
+        return dict(f, vectorConfig=dict(f["vectorConfig"], dimension=vector_dimension))
+
+    return [dict(index, collectionGroup=target, fields=[field(f) for f in index["fields"]])
+            for index in raw if index.get("collectionGroup") == group and "fields" in index]
 
 
 def _mode(field: Dict[str, Any]) -> str:
@@ -59,6 +68,16 @@ def of_group(indexes: Any, group: str) -> List[Any]:
     """The Admin API indexes that belong to `group`: `list_indexes` under one collection group's parent answers with the
     indexes of every group of the database (seen on the test database 2026-11-18), so the caller filters by name."""
     return [i for i in indexes if i.name.split("/collectionGroups/", 1)[-1].split("/", 1)[0] == group]
+
+
+def wanted_key(index: Dict[str, Any]) -> Tuple[Any, ...]:
+    """`wanted_signature` plus the dimension of each vector field: two vector indexes that differ only in dimension are
+    different indexes (what `ensure_indexes` compares)."""
+    return wanted_signature(index), tuple(f["vectorConfig"]["dimension"] for f in index["fields"] if "vectorConfig" in f)
+
+
+def existing_key(index: Any) -> Tuple[Any, ...]:
+    return existing_signature(index), tuple(f.vector_config.dimension for f in index.fields if f.vector_config.dimension)
 
 
 def admin_index(index: Dict[str, Any]) -> Any:

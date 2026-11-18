@@ -15,7 +15,6 @@ from src.adapters.in_memory_email_card_index import InMemoryEmailCardIndex
 from src.domain.email_card import CardState, EmailCard
 from src.domain.email_card_document import card_document
 from src.ports.email_card_index import EmailCardIndex
-from tests.support.firestore_eval import EvalDb
 from tests.unit.domain.email_search_fixtures import booking, invoice, policy, school_notice
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -26,8 +25,9 @@ V1 = {"text": "Hotel booking RM-55120 confirmed.", "state": "current", "vector":
 
 
 class Firestore:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1"},
+                         vector_dimension=2)
         self.index: EmailCardIndex = FirestoreEmailCardIndex(
             self.db, SimpleNamespace(domain_email_facts_collection=FACTS))
 
@@ -54,8 +54,8 @@ class InMemory:
 
 
 @pytest.fixture(params=[Firestore, InMemory], ids=["firestore", "in_memory"])
-async def backend(request):
-    b = request.param()
+async def backend(request, kit_db):
+    b = Firestore(kit_db) if request.param is Firestore else InMemory()
     await b.put(USER, booking(), [1.0, 0.0])
     await b.put(USER, invoice(), [0.0, 1.0])
     await b.put(USER, school_notice(), [0.7, 0.7])
@@ -72,9 +72,9 @@ def test_both_implement_the_port():
     assert issubclass(FirestoreEmailCardIndex, EmailCardIndex) and issubclass(InMemoryEmailCardIndex, EmailCardIndex)
 
 
-async def test_every_read_shape_is_served_by_a_declared_index():
+async def test_every_read_shape_is_served_by_a_declared_index(kit_db):
     """The fake refuses a query no index in config/firestore.indexes.json serves (the vector one included)."""
-    b = Firestore()
+    b = Firestore(kit_db)
     await b.put(USER, booking(), [1.0, 0.0])
     for field in ("about_keys", "name_keys", "people_keys"):
         await b.index.find_by_keys(USER, field, ["l:type:booking"], 10)

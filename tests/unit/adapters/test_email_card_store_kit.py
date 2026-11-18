@@ -11,7 +11,7 @@ from src.adapters.firestore_email_card_store import FirestoreEmailCardStore
 from src.domain.email_card_lifecycle import CardExpect, CardWriteResult
 from src.ports.email_card_store import EmailCardStore
 from tests.support.email_card_store import FakeEmailCardStore
-from tests.support.firestore_eval import EvalDb, eval_transactions, stored_vector
+from tests.support.firestore_eval import stored_vector
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 FACTS = "eval_email_facts"
@@ -21,8 +21,8 @@ CARDED = {"card_state": "carded", "card_version": 1, "people_digest": "dg", "car
 
 
 class Firestore:
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={FACTS: "development_domain_email_facts_v1"})
         self.store: EmailCardStore = FirestoreEmailCardStore(self.db, SimpleNamespace(domain_email_facts_collection=FACTS))
 
     async def seed(self, user_id: str, email_id: str) -> None:
@@ -48,9 +48,8 @@ class Fake:
 
 
 @pytest.fixture(params=[Firestore, Fake], ids=["firestore", "fake"])
-def backend(request):
-    with eval_transactions():
-        yield request.param()
+def backend(request, kit_db):
+    return Firestore(kit_db) if request.param is Firestore else Fake()
 
 
 def test_both_implement_the_port():
@@ -125,8 +124,8 @@ async def test_read_expect_maps_stored_documents_and_leaves_absent_ones_out(back
     assert await backend.store.read_expect("u-alex", []) == {}
 
 
-async def test_the_firestore_store_writes_to_the_v1_collection_under_the_user_prefixed_id():
-    fs = Firestore()
+async def test_the_firestore_store_writes_to_the_v1_collection_under_the_user_prefixed_id(kit_db):
+    fs = Firestore(kit_db)
     await fs.seed("u-alex", "m1")
     await fs.store.write_card("u-alex", "m1", CARDED, None, CardExpect.absent())
     assert sorted(fs.db.collection(FACTS).docs) == ["u-alex_m1"]

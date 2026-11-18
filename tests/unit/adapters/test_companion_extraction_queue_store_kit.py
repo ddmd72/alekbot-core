@@ -16,7 +16,6 @@ import src.adapters.firestore_companion_extraction_queue as queue_module
 from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
 from src.domain.companion_extraction import CompanionExtractionBatch
 from src.domain.consolidation import BatchStatus
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 QUEUE = "eval_companion_extraction_queue"
@@ -25,8 +24,8 @@ MESSAGES = [{"role": "user", "text": "Como se dice 'car service'?"}, {"role": "m
 
 
 @pytest.fixture
-def queue():
-    db = EvalDb(indexes=INDEXES_FILE, groups={QUEUE: "development_companion_extraction_queue"})
+def queue(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={QUEUE: "development_companion_extraction_queue"})
     return FirestoreCompanionExtractionQueue(db, SimpleNamespace(companion_extraction_queue_collection=QUEUE))
 
 

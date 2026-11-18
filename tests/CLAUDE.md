@@ -120,6 +120,9 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   real client behind the cloud guards: a name mapped in `groups` to `development_X` runs on `test_X` with the composites of
   `config/firestore.indexes.json` for `development_X` created first (any other name runs on `test_kits_<name>`), and every collection a test
   touches is purged before its first use and after the test. A kit without `kit_db` is one skipped collector.
+  A kit whose store runs vector queries passes its test vectors' dimension, `kit_db(..., vector_dimension=2)`: the vector
+  indexes are rendered at it on the test database (Firestore finds a vector only through an index of its own dimension), and
+  `EvalDb` refuses a query vector of another dimension and does not find a stored one, as Firestore does.
   - **Nothing is silently lost there.** `db.collection(name).docs` is the raw view, written through for documents and top-level fields;
     a nested value is frozen (a nested edit such as `docs["u1"]["config"]["x"] = …` raises: assign the top-level field instead). A
     public attribute set on the database or a collection raises, except `yield_on_get`, which only interleaves the fake's reads: keep
@@ -132,7 +135,8 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     `indexes=` other than `None` or the repository file raise. Building an `EvalDb` anywhere in a kit (import time, any fixture scope)
     fails, and every Firestore client a kit test builds must be on the test database.
   - **`h1_only`.** A test that drives a fake-only hook (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`,
-    `cols`, `commits`, the collection's `fail =` switch, `EvalDb(`, `indexes=[]`, a naive datetime written raw in the test itself) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
+    `cols`, `commits`, `executed`, `_check_index`, the collection's `fail =` switch, `EvalDb(`, `indexes=[]`, a naive datetime written raw
+    in the test itself) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
     `tests/unit/support/test_h1_only_marks.py` checks each mark names a reason and reaches one of those hooks. `h1_only` is forbidden on
     a test that fails on the real backend: the test database is the arbiter, so the fake is fixed, or an adapter defect is a strict
     xfail `P12-D<n>`. A missing index is a setup gap, never a mark: `render_indexes` renders composites only, so a kit whose adapter

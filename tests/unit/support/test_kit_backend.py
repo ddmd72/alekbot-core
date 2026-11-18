@@ -314,3 +314,34 @@ def test_a_replacement_that_is_called_and_then_restored_passes(monkeypatch):
     monkeypatch.undo()
     backend.purge_touched()
     assert db.batch() == "batch"
+
+
+# --------------------------------------------------------------------------------------------------- vectors, private names
+
+VECTOR_INDEX = {"collectionGroup": "development_task_search_index", "queryScope": "COLLECTION",
+                "fields": [{"fieldPath": "user_id", "order": "ASCENDING"},
+                           {"fieldPath": "content_vector", "vectorConfig": {"dimension": 768, "flat": {}}}]}
+
+
+def test_vector_indexes_render_at_the_kits_dimension_and_differ_by_dimension():
+    from tests.support.cloud_indexes import existing_key, wanted_key
+    [kept] = render_indexes("development_task_search_index", [VECTOR_INDEX])
+    [short] = render_indexes("development_task_search_index", [VECTOR_INDEX], vector_dimension=2)
+    assert kept["fields"][1]["vectorConfig"]["dimension"] == 768 and VECTOR_INDEX["fields"][1]["vectorConfig"]["dimension"] == 768
+    assert short["fields"] == [VECTOR_INDEX["fields"][0], {"fieldPath": "content_vector", "vectorConfig": {"dimension": 2, "flat": {}}}]
+    assert wanted_signature(short) == wanted_signature(kept) and wanted_key(short) != wanted_key(kept)
+    assert existing_key(admin_index(short)) == wanted_key(short)
+
+
+def test_the_backend_renders_the_vector_indexes_at_the_dimension_the_kit_passes():
+    ensured = []
+    backend = RealKitBackend(Client(), Sync(), lambda group, wanted: ensured.append(wanted), [VECTOR_INDEX])
+    backend(groups={"eval_tasks": "development_task_search_index"}, vector_dimension=2).collection("eval_tasks")
+    assert [f.get("vectorConfig", {}).get("dimension") for f in ensured[0][0]["fields"]] == [None, 2]
+
+
+def test_a_private_name_of_a_fake_set_on_a_wrapper_is_refused():
+    _, db = backend_and_db()
+    for target in (db, db.collection("eval_sessions")):
+        with pytest.raises(AttributeError, match="h1_only"):
+            target._check_index = lambda *a: None
