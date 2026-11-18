@@ -49,6 +49,7 @@ class TestAcquire:
         assert await lease.acquire(ACC, "o1", T0, T0 + RUN)
         assert await lease.acquire(ACC, "o2", T0 + RUN, T0 + 2 * RUN) is True
 
+    @pytest.mark.h1_only("reads the fake's transaction stamp (txn_versions) to show nothing was committed")
     async def test_acquire_held_by_another_is_false_and_writes_nothing(self, lease, db, env):
         assert await lease.acquire(ACC, "o1", T0, T0 + RUN)
         before = dict(_docs(db, env)[ACC])
@@ -98,6 +99,7 @@ class TestAcquire:
             await lease.acquire(ACC, "o1", now, until)
         assert _docs(db, env) == {}
 
+    @pytest.mark.h1_only("traces reads and commits through a patched EvalDocRef.get and the fake's commit")
     async def test_two_concurrent_acquires_one_wins(self, lease, db, env, monkeypatch):
         db.collection(env.memory_write_leases_collection).yield_on_get = True
         events = []
@@ -157,6 +159,7 @@ class TestRelease:
         assert _docs(db, env)[ACC]["lease_owner"] == "o2"
         assert await lease.acquire(ACC, "o3", later + timedelta(seconds=1), later + RUN) is False
 
+    @pytest.mark.h1_only("counts reads through a patched EvalDocRef.get to require the re-read after the abort")
     async def test_a_release_racing_a_takeover_never_deletes_the_new_holder(self, lease, db, env, monkeypatch):
         await lease.acquire(ACC, "o1", T0, T0 + RUN)
         db.collection(env.memory_write_leases_collection).yield_on_get = True
