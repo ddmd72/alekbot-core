@@ -266,7 +266,8 @@ def test_uid_drop_in_container():
         "from src.domain.sandbox_contract import SandboxLimits\n"
         "import pwd\n"
         f"e = pwd.getpwnam({user!r})\n"
-        "d = tempfile.mkdtemp(); os.chown(d, e.pw_uid, e.pw_gid); open(d + '/in', 'wb').close()\n"
+        # The image closes /tmp to root (Dockerfile.sandbox); per-request dirs live under /work, as the server makes them.
+        "d = tempfile.mkdtemp(dir='/work'); os.chown(d, e.pw_uid, e.pw_gid); open(d + '/in', 'wb').close()\n"
         "async def main():\n"
         f"    r = await ChildLauncher(user={user!r}).run(['python3', '-c', 'import os; print(os.getuid())'],\n"
         "        workdir=d, env={},\n"
