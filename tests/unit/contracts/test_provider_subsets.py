@@ -111,3 +111,54 @@ def test_the_anthropic_subset_is_what_the_installed_sdk_gives():
     retrieved = yaml.safe_load(committed)["x-retrieved"]
     fresh = es.render(es.sdk_subset(es.PROVIDERS["anthropic"], retrieved))
     assert fresh == committed, "the installed SDK differs from the subset: make contract-extract PROVIDER=anthropic"
+
+
+# Free-form places in a committed subset: our own JSON Schemas (the PROVIDERS open paths) and the provider's own free-form
+# JSON fields. Everything else is closed; a hand edit that opens an object (or adds an unlisted free-form one) fails.
+FREE_FORM = {
+    "openai": {
+        "/components/schemas/FunctionTool/properties/parameters": "open path tools[].parameters: our tool's JSON Schema",
+        "/components/schemas/TextResponseFormatJsonSchema/properties/schema":
+            "open path text.format.schema: our output JSON Schema",
+        "/components/schemas/FunctionTool/properties/output_schema/anyOf[0]":
+            "FunctionTool.output_schema: the provider's own free-form JSON object",
+    },
+    "anthropic": {
+        "/components/schemas/ToolParam/properties/input_schema": "open path tools[].input_schema: our tool's JSON Schema",
+        "/components/schemas/JSONOutputFormatParam/properties/schema":
+            "open path output_config.format.schema: our output JSON Schema",
+        "/components/schemas/ToolUseBlockParam/properties/input": "a tool_use block's input: the model's own JSON arguments",
+        "/components/schemas/ServerToolUseBlockParam/properties/input":
+            "a server_tool_use block's input: the model's own JSON arguments",
+        "/components/schemas/ToolParam/properties/input_examples/items": "ToolParam.input_examples: example JSON arguments",
+    },
+}
+
+
+def _open_places(node, path: str, unclosed: list, free: list) -> None:
+    if isinstance(node, dict):
+        extra = node.get("additionalProperties")
+        if "properties" in node and extra is not False:
+            unclosed.append(path)
+        if extra is True or extra == {} or isinstance(extra, dict):
+            free.append(path)
+        elif node.get("type") == "object" and "properties" not in node and "anyOf" not in node and "allOf" not in node:
+            free.append(path)
+        for key, value in node.items():
+            _open_places(value, f"{path}/{key}", unclosed, free)
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            _open_places(value, f"{path}[{i}]", unclosed, free)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_the_subset_is_closed_except_the_named_free_form_fields(provider):
+    """A structural guard against hand edits of the committed YAML (the extractor writes it, never a person)."""
+    unclosed: list = []
+    free: list = []
+    _open_places(_doc(provider), "", unclosed, free)
+    assert unclosed == [], f"objects with properties that are not closed (additionalProperties: false): {unclosed}"
+    assert sorted(free) == sorted(FREE_FORM[provider]), (
+        "free-form places differ from the named list: unlisted "
+        f"{sorted(set(free) - set(FREE_FORM[provider]))}, stale {sorted(set(FREE_FORM[provider]) - set(free))}")
+    assert all(reason.strip() for reason in FREE_FORM[provider].values())

@@ -4,6 +4,7 @@ TEST_COVERAGE_SYSTEMIC_RFC §4a, P17. The contracts are subsets extracted by `sc
 (never edited by hand). Body schemas are JSON Schema Draft 2020-12 (OpenAPI 3.1), validated with `jsonschema`; one
 validator per operation is compiled once per process. A field the schema marks `deprecated` fails unless the contract
 allows it (`x-alek-extension`, from the extractor's ALLOWED table).
+JSON Schema `format` keywords (date-time, uri, ...) are not enforced: no FormatChecker is passed.
 
 A failure lists every violation, one per line: `<where>: unknown field | wrong type | missing required | value not
 allowed | deprecated`. `<where>` is a JSON path into the body (`$.input[1].content[0].type`) or `header <name>`. Where
