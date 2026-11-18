@@ -5,11 +5,14 @@ Mock at the Firestore SDK boundary (db_client), NOT at the port level.
 Per ADAPTER_WIRE_TESTING.md mandate.
 
 Tests cover:
-- create_note: generates epoch-ms note_id; validates word count; enforces note cap
+- create_note: generates a "{epoch_ms}-{uuid4 hex}" note_id; validates word count; enforces note cap
 - list_active_notes: filters visible_after > as_of and expires_after <= as_of
 - delete_note: not found → False; ownership mismatch → False; found → True
 - update_note: not found raises ValueError; ownership mismatch raises ValueError; updates fields
 """
+
+import re
+import uuid
 
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -90,8 +93,9 @@ def _make_note_data(
 
 class TestCreateNote:
 
-    async def test_create_note_generates_epoch_ms_id(self, adapter, col_mock):
-        """note_id is a 13-digit epoch-milliseconds string."""
+    async def test_create_note_generates_epoch_ms_prefixed_unique_id(self, adapter, col_mock):
+        """note_id is "{13-digit epoch milliseconds}-{uuid4 hex}" (P11-G1-2: two notes in one millisecond get distinct
+        ids), stored under that id."""
         doc_ref = MagicMock()
         doc_ref.set = AsyncMock()
         col_mock.document.return_value = doc_ref
@@ -108,10 +112,11 @@ class TestCreateNote:
             data = NoteCreate(user_id=_USER_ID, text="Remind about dentist", instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
             note = await adapter.create_note(data)
 
-        assert len(note.note_id) == 13
-        assert note.note_id.isdigit()
-        note_id_int = int(note.note_id)
-        assert abs(note_id_int - before_ms) < 5000  # within 5 seconds
+        ms, _, suffix = note.note_id.partition("-")
+        assert len(ms) == 13 and ms.isdigit()
+        assert int(ms) == before_ms  # the pinned creation millisecond
+        assert re.fullmatch(r"[0-9a-f]{32}", suffix) and uuid.UUID(hex=suffix).version == 4
+        col_mock.document.assert_called_with(note.note_id)
 
     async def test_create_note_persists_to_firestore(self, adapter, col_mock):
         doc_ref = MagicMock()

@@ -48,7 +48,7 @@ def _payload(task_type: str) -> dict:
 
 async def _seed_one_time_note(graph: Any, monkeypatch: Any) -> str:
     """A one-time note for `u1` due `T0`, created a day earlier through the graph's own note store (its id is the
-    creation millisecond, so the adapter's clock is pinned)."""
+    creation millisecond plus a uuid suffix; the adapter's clock is pinned)."""
     from src.adapters import firestore_agent_note_adapter
     from src.domain.agent_note import NoteCreate
     pin_datetime(monkeypatch, firestore_agent_note_adapter, T0 - timedelta(days=1))

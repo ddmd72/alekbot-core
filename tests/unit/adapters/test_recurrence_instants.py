@@ -1,14 +1,14 @@
 """DateutilRecurrenceAdapter across DST transitions (P16-B, defect P16-D4).
 
-The adapter evaluates a rule on the user's local wall clock: it turns the anchor into a NAIVE local time
-(`src/adapters/dateutil_recurrence_adapter.py:104`, which drops `fold`) and turns the occurrence back with
-`replace(tzinfo=zone)` (`:112`, always fold 0). In the repeated fall-back hour that reads every second-pass time as
-the first pass, one hour earlier in real time.
+The adapter evaluates a rule on the user's local wall clock. Before the P16-D4 fix it turned the anchor into a NAIVE
+local time (dropping `fold`) and turned the occurrence back with `replace(tzinfo=zone)` (always fold 0), which in the
+repeated fall-back hour read every second-pass time as the first pass, one hour earlier in real time. Every cell below
+now passes; they pin the target model.
 
 Rules per zone: `D` = daily at the repeated HH:30 (Berlin 02, Helsinki 03, New York 01), `H` = HOURLY, `M` = every
 15 minutes, and the controls `C9` = daily 09:00 and, New York only, `C2` = daily 02:30 (not repeated there).
 
-The target model a D4 fix must hit (the card's product rule):
+The target model (the card's product rule, the D4 fix):
 - DAILY (and coarser) rules are evaluated on the wall clock and KEEP THE ANCHOR'S FOLD: from a first-pass anchor the
   repeated HH:30 is its first pass (RFC 5545 §3.3.10 sends a repeated local start time to §3.3.5, which reads it as
   the first occurrence, so the second pass of the same day is not a new occurrence); from a second-pass anchor it is
@@ -24,12 +24,12 @@ Assertions per cell, as the partition in the card states it: `first_occurrence(r
 - fold-0 anchors, `D`: `_oracle(..., fold_aware=True)` (also skips minutes in the second pass, per §3.3.5);
 - fold-0 anchors, `H` and `M`: inequality plus "the result's local wall time matches the rule" only. An exact
   wall-clock value would assert the D4 gap (the skipped second pass) as correct, and the real-time value is what
-  the count xfails pin;
+  the count tests in `TestFallBackUserVisible` pin;
 - controls: `_oracle`, exact, at every anchor.
 """
 
 from datetime import datetime, time, timedelta, timezone
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -49,7 +49,6 @@ from tests.support.clock_instants import (
 )
 
 UTC = timezone.utc
-D4 = "P16-D4: recurrence drops fold (dateutil_recurrence_adapter.py:104,112); owner decision"
 
 _REPEATED_HH = {zone: REPEATED_HOUR[zone].wall.hour for zone in ZONES}
 _SKIPPED_HH = {zone: SKIPPED_HOUR[zone].naive.hour for zone in ZONES}
@@ -146,25 +145,15 @@ class TestFallBackFoldZeroAnchors:
 # Fall back: fold-1 anchors (T, T+1m, T+30m) — the second pass of the repeated hour
 # =============================================================================
 
-# The measured partition, one literal table: (anchor label, rule, kind) → "xfail" (P16-D4) or "pass".
-FOLD1_PARTITION: Dict[Tuple[str, str, str], str] = {
-    ("T", "D", "first"): "pass", ("T", "H", "first"): "pass", ("T", "M", "first"): "pass",
-    ("T+1m", "D", "first"): "pass", ("T+1m", "H", "first"): "pass", ("T+1m", "M", "first"): "pass",
-    ("T+30m", "D", "first"): "pass", ("T+30m", "H", "first"): "pass", ("T+30m", "M", "first"): "pass",
-    ("T", "D", "next"): "pass", ("T", "H", "next"): "pass", ("T", "M", "next"): "pass",
-    ("T+1m", "D", "next"): "pass", ("T+1m", "H", "next"): "pass", ("T+1m", "M", "next"): "pass",
-    ("T+30m", "D", "next"): "pass", ("T+30m", "H", "next"): "pass", ("T+30m", "M", "next"): "pass",
-}
+# Every cell: each fold-1 anchor × each rule × first/next, in every zone (18 per zone; all passed once D4 was fixed).
+FOLD1_LABELS = ("T", "T+1m", "T+30m")
+FOLD1_RULES = ("D", "H", "M")
+FOLD1_KINDS = ("first", "next")
 
 
 def _fold1_cells() -> list:
-    out = []
-    for zone in ZONES:
-        for (label, name, kind), verdict in FOLD1_PARTITION.items():
-            marks = [pytest.mark.xfail(strict=True, raises=AssertionError, reason=D4)] if verdict == "xfail" else []
-            out.append(pytest.param(zone, transition(zone, "fall", label), name, kind, marks=marks,
-                                    id=f"{zone}-{label}-{name}-{kind}"))
-    return out
+    return [pytest.param(zone, transition(zone, "fall", label), name, kind, id=f"{zone}-{label}-{name}-{kind}")
+            for zone in ZONES for kind in FOLD1_KINDS for label in FOLD1_LABELS for name in FOLD1_RULES]
 
 
 class TestFallBackFoldOneAnchors:
