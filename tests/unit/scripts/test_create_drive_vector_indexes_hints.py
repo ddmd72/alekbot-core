@@ -13,6 +13,7 @@ def _calls(tmp_path, **env_extra):
     (tmp_path / "gcloud").write_text(_STUB)
     (tmp_path / "gcloud").chmod(0o755)
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "STUB_DIR": str(tmp_path), "PROJECT_ID": "p",
+           "FIRESTORE_DATABASE": "test-db",
            **env_extra}
     proc = subprocess.run(["bash", str(_SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr

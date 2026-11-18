@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "deploy_firestore_indexes.py"
+_DB = "test-db"   # the database is an explicit argument, no default (TEST_COVERAGE_SYSTEMIC_RFC §4 "Indexes")
 
 _INDEXES = [
     {"collectionGroup": "plain", "queryScope": "COLLECTION",
@@ -45,7 +46,8 @@ def _load(result):
 
 def test_array_fields_get_array_config_and_vector_entries_are_skipped_whole(index_file):
     module, commands = _load(SimpleNamespace(returncode=0, stderr=""))
-    assert module.deploy_indexes(str(index_file), "p") == []
+    assert module.deploy_indexes(str(index_file), "p", _DB) == []
+    assert all(f"--database={_DB}" in c for c in commands)
     assert [c[5] for c in commands] == ["--collection-group=plain", "--collection-group=names"]
     assert "--field-config=field-path=tags,array-config=contains" in commands[1]
     assert "--field-config=field-path=b,order=descending" in commands[0]
@@ -53,9 +55,9 @@ def test_array_fields_get_array_config_and_vector_entries_are_skipped_whole(inde
 
 def test_failures_are_returned_and_already_exists_is_not_one(index_file):
     module, _ = _load(SimpleNamespace(returncode=1, stderr="ERROR: PERMISSION_DENIED"))
-    assert module.deploy_indexes(str(index_file), "p") == ["plain", "names"]
+    assert module.deploy_indexes(str(index_file), "p", _DB) == ["plain", "names"]
     module, _ = _load(SimpleNamespace(returncode=1, stderr="ERROR: index already exists"))
-    assert module.deploy_indexes(str(index_file), "p") == []
+    assert module.deploy_indexes(str(index_file), "p", _DB) == []
 
 
 @pytest.mark.parametrize("gcloud_exit,stderr,expected", [(0, "", 0), (1, "PERMISSION_DENIED", 1),
@@ -66,6 +68,7 @@ def test_cli_exit_code(tmp_path, index_file, gcloud_exit, stderr, expected):
     stub.write_text(f"#!/bin/sh\necho '{stderr}' >&2\nexit {gcloud_exit}\n")
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
     env = {**os.environ, "PATH": f"{stub.parent}{os.pathsep}{os.environ['PATH']}"}
-    run = subprocess.run([sys.executable, str(_SCRIPT), str(index_file), "p"], env=env, capture_output=True,
+    run = subprocess.run([sys.executable, str(_SCRIPT), str(index_file), "p", _DB], env=env, capture_output=True,
                          text=True, timeout=60)
+    assert f"(database={_DB})" in run.stdout, run.stdout + run.stderr   # past the usage check, into the deploy
     assert run.returncode == expected, run.stdout + run.stderr

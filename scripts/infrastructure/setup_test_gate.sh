@@ -88,6 +88,10 @@ JSON
 run gcloud storage buckets update "gs://${BUCKET}" --versioning --lifecycle-file="$LIFECYCLE" --project="$P"
 run gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" --member="serviceAccount:${SA}" \
     --role=roles/storage.objectAdmin --project="$P"
+# objectAdmin has no storage.buckets.get; the parity fixture reads the bucket's versioning. Narrowest GA role with it
+# (bucket-scoped, no write right; the Beta bucketViewer adds nothing here, objectAdmin already lists objects).
+run gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" --member="serviceAccount:${SA}" \
+    --role=roles/storage.legacyBucketReader --project="$P"
 
 echo "== Paused test Cloud Tasks queue (tasks are created, never dispatched)"
 if exists gcloud tasks queues describe "$QUEUE" --location="$REGION" --project="$P"; then

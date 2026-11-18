@@ -117,7 +117,7 @@ def _deploy_commands():
     spec.loader.exec_module(module)
     commands = []
     module.run_command = lambda cmd: commands.append(cmd) or SimpleNamespace(returncode=0, stderr="")
-    module.deploy_indexes(str(_ROOT / "config" / "firestore.indexes.json"), "p")
+    module.deploy_indexes(str(_ROOT / "config" / "firestore.indexes.json"), "p", "test-db")
     return commands
 
 

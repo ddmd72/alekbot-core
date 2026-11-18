@@ -252,9 +252,11 @@ Set by hand in the Twilio Console (the REST `IncomingPhoneNumbers` write did not
 `config/firestore.indexes.json` is the live database's index configuration: only `development_`-prefixed collections
 appear in it (a test enforces the prefix).
 - Composites and single-field exemptions: `make deploy-indexes PROJECT_ID=<PROJECT_ID>` (or
-  `python scripts/infrastructure/deploy_firestore_indexes.py config/firestore.indexes.json <PROJECT_ID>`). An existing
+  `python scripts/infrastructure/deploy_firestore_indexes.py config/firestore.indexes.json <PROJECT_ID> <DATABASE>`; the
+  make target passes `FIRESTORE_DATABASE` from `.env`, and a missing database is refused: no live default). An existing
   index answers "already exists": read the output, not only the exit code. Vector entries are skipped.
-- Vector indexes: `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh` (drive;
+- Vector indexes (every `create_*vector_index*.sh` refuses to run without `FIRESTORE_DATABASE`; `.env` has it, source it
+  or pass it): `PROJECT_ID=<PROJECT_ID> FIRESTORE_DATABASE=<DATABASE> scripts/infrastructure/create_drive_vector_indexes.sh` (drive;
   `COLLECTION_PREFIX` defaults to `development_`) and `scripts/infrastructure/create_task_search_vector_indexes.sh`
   (task search). A vector index carries only the dimension (768) and `flat`; the distance measure is chosen per query.
 - Both need the project id passed explicitly: `.env` has `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`.

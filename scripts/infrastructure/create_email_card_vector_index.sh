@@ -6,13 +6,13 @@
 #          (card_state, user_id, card_vector: v1's live field order on the card's own state field). Without it the
 #          meaning list of every search is skipped (one WARNING per search) and only the key lists answer.
 #          Owner-run, before the deploy that serves the card search.
-# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_email_card_vector_index.sh
+# Usage:   PROJECT_ID=<project> FIRESTORE_DATABASE=<database> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_email_card_vector_index.sh
 # ==============================================================================
 
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID (from .env)}"
-DATABASE_ID="us-production"
+DATABASE_ID="${FIRESTORE_DATABASE:?set FIRESTORE_DATABASE (from .env); there is no default database}"
 COLLECTION="${COLLECTION_PREFIX-development_}domain_email_facts_v1"
 VECTOR_CONFIG='{"dimension":"768", "flat": "{}"}'
 

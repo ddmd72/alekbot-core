@@ -36,6 +36,7 @@ def test_the_script_creates_the_declared_vector_index():
 
 def test_the_script_targets_the_facts_collection_in_the_named_database():
     assert 'COLLECTION="${COLLECTION_PREFIX-development_}domain_email_facts_v1"' in _SCRIPT
-    assert 'DATABASE_ID="us-production"' in _SCRIPT
+    assert 'DATABASE_ID="${FIRESTORE_DATABASE:?' in _SCRIPT   # the database is explicit, never a live default
+    assert "us-production" not in _SCRIPT
     assert 'PROJECT_ID="${PROJECT_ID:?' in _SCRIPT          # never a hard-coded project
     assert _SCRIPT.count("create_index \"") == 1
