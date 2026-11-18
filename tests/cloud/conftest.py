@@ -10,12 +10,15 @@ Identity Federation in CI, the default credentials themselves; the email is chec
 datastore.indexAdmin on the test database only); the constructed client's database and project are the configured ones.
 
 The store kits run here too (`test_kits_cloud.py`): the bottom of this file collects each kit file of `KITS` and overrides
-`kit_db` with the real backend of `tests/support/kit_backend.py`, behind the same guards.
+`kit_db` with the real backend of `tests/support/kit_backend.py`, behind the same guards, and `kit_gcs` with the test
+bucket of `tests/support/gcs_kit_backend.py`, behind the bucket guards of `gcs_bucket` (each test under its own prefix of
+`kits/<run id>/`; without `TEST_GCS_BUCKET` the GCS kits skip).
 """
 import ast
 import importlib
 import os
 import time
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +35,8 @@ from src.config.environment import EnvironmentConfig
 from tests.support.cloud_credentials import select_credentials
 from tests.support.cloud_indexes import admin_index, existing_key, of_group, wanted_key
 from tests.support.firestore_eval import EvalDb
+from tests.support.gcs_fake import FakeGcs
+from tests.support.gcs_kit_backend import RealKitGcsBackend, run_prefix
 from tests.support.kit_backend import RealKitBackend, guard_clients
 from tests.support.store_inventory import KITS
 
@@ -158,10 +163,13 @@ def _kit_files() -> List[str]:
     return sorted({path for files in KITS.values() for path in files})
 
 
+SEAMS = ("kit_db", "kit_gcs")
+
+
 def _on_the_seam(path: Path) -> bool:
-    """The kit takes `kit_db` (a parameter of some function or fixture): it is converted to the backend seam."""
+    """The kit takes `kit_db` or `kit_gcs` (a parameter of some function or fixture): it is converted to the backend seam."""
     return any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and any(arg.arg == "kit_db" for arg in node.args.args + node.args.kwonlyargs)
+               and any(arg.arg in SEAMS for arg in node.args.args + node.args.kwonlyargs)
                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
 
 
@@ -183,7 +191,7 @@ class KitModule(pytest.Module):
 
     def collect(self) -> Any:
         if not _on_the_seam(REPO_ROOT / self.kit_file):
-            pytest.skip(f"{self.kit_file} does not take kit_db yet (not converted to the real backend)")
+            pytest.skip(f"{self.kit_file} does not take kit_db or kit_gcs yet (not converted to the real backend)")
         return super().collect()
 
 
@@ -202,17 +210,24 @@ def pytest_pycollect_makemodule(module_path: Path, parent: Any) -> Any:
     return None
 
 
+FAKE_ONLY_MARKS = ("h1_only", "gcs_fake_only")
+
+
 def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
-    """A kit test marked `h1_only` drives a hook only the fake has: skipped on the real backend."""
+    """A kit test marked `h1_only` (or `gcs_fake_only`) drives a hook only the fake has: skipped on the real backend."""
     for item in items:
-        mark = item.get_closest_marker("h1_only")
-        if mark is not None and item.getparent(KitModule) is not None:
-            item.add_marker(pytest.mark.skip(reason=f"h1_only: {mark.args[0] if mark.args else 'fake-only hook'}"))
+        if item.getparent(KitModule) is None:
+            continue
+        for name in FAKE_ONLY_MARKS:
+            mark = item.get_closest_marker(name)
+            if mark is not None:
+                item.add_marker(pytest.mark.skip(reason=f"{name}: {mark.args[0] if mark.args else 'fake-only hook'}"))
+                break
 
 
 def _fake_classes() -> tuple:
     from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb as DriveEvalDb
-    return (EvalDb, DriveEvalDb)
+    return (EvalDb, DriveEvalDb, FakeGcs)
 
 
 def _refuse_fakes(config: Any) -> None:
@@ -261,3 +276,24 @@ def kit_db(cloud: SimpleNamespace, client: Any, ensure_indexes: Callable[[str, L
         backend.purge_touched()
     finally:
         sync.close()
+
+
+_GCS_PREFIXES = run_prefix(uuid.uuid4().hex[:8])
+
+
+def _refuse_storage_client(*_a: Any, **_k: Any) -> None:
+    pytest.fail("guard: a GCS kit test built a storage client of its own; take the client of kit_gcs (client() or "
+                "install(monkeypatch))")
+
+
+@pytest.fixture
+def kit_gcs(gcs_bucket: Any, monkeypatch: Any) -> Any:
+    """The GCS kits' backend on the test bucket (tests/support/gcs_kit_backend.py): one fresh prefix per test, erased before
+    first use and after the test. Any other `storage.Client(...)` built during the test fails (a client of the default
+    credentials would write to whatever bucket name the kit declares); `install(monkeypatch)` replaces it with the
+    backend's client."""
+    client, bucket = gcs_bucket
+    monkeypatch.setattr(storage, "Client", _refuse_storage_client)
+    backend = RealKitGcsBackend(client, bucket, next(_GCS_PREFIXES))
+    yield backend
+    backend.teardown()
