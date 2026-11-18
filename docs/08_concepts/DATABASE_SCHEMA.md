@@ -112,7 +112,7 @@ How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
 | `{p}email_exclusions` | sender, domain and subject patterns skipped before classification | `{user_id}_{pattern_type}_{pattern}` | `EmailExclusion`, `src/domain/email.py` |
 | `{p}task_search_index` | vectors and display fields for Microsoft To Do tasks (To Do is the source of truth) | `{user_id}_{task_id}` | `TaskSearchEntry`, `src/domain/task.py` |
 | `{p}task_config` | primary list and Graph webhook subscriptions per user | `user_id` | `TaskUserConfig`, `src/domain/task.py` |
-| `{p}orchestrator_notes` | self-reminders that fire on schedule | epoch milliseconds | `AgentNote`, `src/domain/agent_note.py` |
+| `{p}orchestrator_notes` | self-reminders that fire on schedule | `{epoch_ms}-{uuid4 hex}` (older: epoch milliseconds) | `AgentNote`, `src/domain/agent_note.py` |
 | `{p}skills` | a user's custom skills (`versions/v<n>` and `files/{sha256}` below each) | `{user_id}:{name}` | `src/adapters/firestore_skill_repository.py` |
 | `{p}skill_drafts` | skill drafts waiting for `$skill save` | `{user_id}:{code}` | `src/adapters/firestore_skill_repository.py` |
 

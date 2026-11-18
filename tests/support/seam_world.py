@@ -519,14 +519,15 @@ class SeamWorld:
 
     async def seed_note(self, monkeypatch: Any, *, due: datetime, created_at: datetime,
                         complexity: Optional[TaskComplexity] = None, recurrence: Optional[str] = None) -> str:
-        """Create the "call dad" note for `u1` through the real adapter (its id is `created_at`'s millisecond, so each
-        note needs its own `created_at`). Returns the note id."""
+        """Create the "call dad" note for `u1` through the real adapter, its clock pinned to `created_at` (the note id is
+        `created_at`'s millisecond plus a uuid suffix). Returns the note id."""
         pin_datetime(monkeypatch, firestore_agent_note_adapter, created_at)
         note = await self.notes.create_note(NoteCreate(
             user_id=USER, text="call dad", instruction="Remind the user to call dad.",
             due=due, recurrence=recurrence, complexity=complexity,
         ))
-        require(note.note_id == str(int(created_at.timestamp() * 1000)), "the note id is the creation millisecond")
+        require(note.note_id.startswith(f"{int(created_at.timestamp() * 1000)}-"),
+                "the note id starts with the creation millisecond")
         return note.note_id
 
     def chat_handler(self, **kw: Any) -> ConversationHandler:

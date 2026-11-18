@@ -2,10 +2,10 @@
 `FirestoreAgentNoteAdapter` on the evaluating Firestore fake (H1), with the index refusal ON (both queries are
 single-field). Assertions are on the raw stored documents and on what readers return.
 
-`notes` is the one fixture that selects the backend. The clock is pinned and a note id is the creation millisecond
-(open defect P11-G1-2), so every multi-note fixture is seeded as raw documents with distinct ids or re-pins the clock
-before each create. Documents no writer produces (no `text`, a non-timestamp `due`) are not pinned: their behaviour
-waits for the data audit.
+`notes` is the one fixture that selects the backend. The clock is pinned; a note id is the creation millisecond plus a
+uuid suffix (P11-G1-2), so two creates at one pinned instant keep both notes. Multi-note fixtures are seeded as raw
+documents with distinct ids or re-pin the clock before each create. Documents no writer produces (no `text`, a
+non-timestamp `due`) are not pinned: their behaviour waits for the data audit.
 """
 import asyncio
 import dataclasses
@@ -148,9 +148,6 @@ async def test_two_notes_created_a_millisecond_apart_are_both_kept(notes, monkey
     assert (await notes.port.get_note("u2", b.note_id)).text == "water the garden"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P11-G1-2: two notes created in one millisecond overwrite each other "
-                          "(note id = creation millisecond, plain set)")
 async def test_two_notes_created_in_the_same_millisecond_are_both_kept(notes):
     """Flips when the note id carries a uuid suffix (`f"{epoch_ms}-{uuid4().hex}"`), so ids never collide."""
     a = await create(notes, user_id="u1", texts=DAD)

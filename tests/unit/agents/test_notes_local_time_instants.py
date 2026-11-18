@@ -22,7 +22,6 @@ D5 = "P16-D5: a skipped local time is accepted as an instant (notes_agent.py:225
 
 class TestSkippedSpringTime:
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D5)
     @pytest.mark.parametrize("zone", ZONES)
     def test_a_skipped_wall_time_is_refused(self, zone):
         skipped = SKIPPED_HOUR[zone]

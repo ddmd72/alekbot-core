@@ -19,8 +19,8 @@ class AgentNotePort(ABC):
     - Tenancy: a note belongs to `user_id`. Every user-facing method (get_note, update_note, delete_note,
       delete_if_due_at, claim_one_time_if_due_at, list_active_notes) answers a foreign note as absent and changes
       nothing. list_due_reminders and reschedule_if_due_at are cross-user (the fire tick only).
-    - Ids: a note id is unique across all users and never reused for another note (P11-G1-2: today two notes created in
-      the same millisecond share one id and the second replaces the first).
+    - Ids: a note id is unique across all users and never reused for another note (two notes created in the same
+      millisecond get distinct ids).
     - Times: every datetime read back from the store is aware UTC.
     - Legacy: a note without `instruction` reads its `text`; a pre-2026-07-30 map recurrence {type, interval} reads as
       an RRULE; an unreadable recurrence reads as one-time; an unknown complexity reads as None; a missing
