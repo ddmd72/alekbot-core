@@ -67,7 +67,7 @@ We could hand-roll the MCP protocol and OAuth server — the spec is public. We 
 
 - The `mcp` SDK (`mcp.server.fastmcp.FastMCP`) ships with Streamable HTTP transport, JSON-RPC protocol handlers, RFC 9728 / RFC 8414 metadata endpoints, `/authorize` / `/token` / `/register` handlers with PKCE S256 and RFC 8707 validation, and a `BearerAuthBackend` middleware. All of that would be ~700 LOC of custom code that ships bugs.
 - The SDK's `OAuthAuthorizationServerProvider` Protocol is the clean extension point: we implement 9 methods, the SDK handles the rest.
-- **Cost:** we adopt the SDK's API shape, which is API-unstable (`FastMCP` is pinned to `mcp==1.27.*` and may have breaking changes on minor bumps). Acceptable for an experimental feature.
+- **Cost:** we adopt the SDK's API shape, which is API-unstable (`FastMCP` is pinned to `mcp==1.30.*`, the newest 1.x line, which alone gets 1.x security fixes; it may have breaking changes on minor bumps, and `mcp` 2.x renames `FastMCP` to `MCPServer`). Acceptable for an experimental feature.
 
 ### 4.3 OAuth server at server root, not under `/mcp`
 

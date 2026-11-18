@@ -166,6 +166,8 @@ def build_drive_mcp_app(
             issuer_url=AnyHttpUrl(issuer_root),
             resource_server_url=AnyHttpUrl(drive_uri),
             required_scopes=[DRIVE_SCOPE],
+            # Off on purpose: `DriveTokenVerifier` checks the token's `aud` against the drive resource itself.
+            validate_token_resource=False,
         ),
         streamable_http_path=DRIVE_PATH,
         transport_security=build_transport_security(auth_config.mcp_resource_uri),
