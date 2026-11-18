@@ -16,7 +16,6 @@ from google.api_core.exceptions import NotFound
 import src.adapters.firestore_consolidation_queue as queue_module
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
-from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 QUEUE = "eval_consolidation_queue"
@@ -24,8 +23,8 @@ MESSAGES = [{"role": "user", "text": "When is the car service?"}, {"role": "mode
 
 
 @pytest.fixture
-def queue():
-    db = EvalDb(indexes=INDEXES_FILE, groups={QUEUE: "development_consolidation_queue"})
+def queue(kit_db):
+    db = kit_db(indexes=INDEXES_FILE, groups={QUEUE: "development_consolidation_queue"})
     return FirestoreConsolidationQueue(db, SimpleNamespace(consolidation_queue_collection=QUEUE))
 
 
