@@ -67,3 +67,24 @@ def test_an_hourly_rule_that_matches_months_away_is_found(adapter):
     anchor = SUMMER_MIDNIGHT.utc
     got = adapter.next_occurrence("FREQ=HOURLY;BYMONTH=6;BYMINUTE=0", anchor, BERLIN)
     assert got == datetime(anchor.year + 1, 6, 1, 0, 0, tzinfo=ZoneInfo(BERLIN)).astimezone(UTC)
+
+
+
+def test_a_skipped_wall_time_reached_from_a_second_pass_anchor_is_read_one_hour_later(adapter):
+    """A coarse rule keeps the anchor's pass only for a repeated wall time. From an anchor in the autumn second pass,
+    the next spring-gap occurrence (the EU change: last Sunday of March, at the skipped HH:30) is still read with the
+    offset before the jump, one local hour later, the same instant a first-pass anchor gives."""
+    z = ZoneInfo(BERLIN)
+    skipped = SKIPPED_HOUR[BERLIN].naive
+    rule = f"FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU;BYHOUR={skipped.hour};BYMINUTE={skipped.minute}"
+    second_pass = transition(BERLIN, "fall", "T+30m").utc + timedelta(minutes=10)
+    first_pass = transition(BERLIN, "fall", "T").utc - timedelta(minutes=20)
+    assert second_pass.astimezone(z).fold == 1 and first_pass.astimezone(z).fold == 0
+
+    from_second = adapter.next_occurrence(rule, second_pass, BERLIN)
+    from_first = adapter.next_occurrence(rule, first_pass, BERLIN)
+
+    assert from_first is not None and from_second == from_first
+    local = from_second.astimezone(z)
+    assert local.year == skipped.year + 1
+    assert (local.hour, local.minute) == (skipped.hour + 1, skipped.minute)

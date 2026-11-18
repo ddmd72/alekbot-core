@@ -139,8 +139,9 @@ class DateutilRecurrenceAdapter(RecurrencePort):
             return None
         if occurrence is None:
             return None
-        # The anchor's pass: a repeated wall time on the anchor's side of the fall-back.
-        return occurrence.replace(tzinfo=zone, fold=local.fold).astimezone(timezone.utc)
+        # A repeated wall time takes the anchor's pass; any other (a skipped one included) is read with fold 0.
+        repeated = len(self._instants(occurrence, zone)) == 2
+        return occurrence.replace(tzinfo=zone, fold=local.fold if repeated else 0).astimezone(timezone.utc)
 
     def _real_time(
         self, rule: str, period: timedelta, anchor: datetime, zone: ZoneInfo, inc: bool
