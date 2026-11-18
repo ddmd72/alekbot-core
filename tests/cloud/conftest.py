@@ -26,7 +26,7 @@ import pytest
 from dotenv import dotenv_values
 from google.api_core.exceptions import AlreadyExists
 from google.auth import impersonated_credentials
-from google.cloud import firestore, firestore_admin_v1
+from google.cloud import firestore, firestore_admin_v1, storage
 
 from src.config.environment import EnvironmentConfig
 from tests.support.cloud_credentials import select_credentials
@@ -81,6 +81,24 @@ async def client(cloud: SimpleNamespace):  # type: ignore[no-untyped-def]
         pytest.fail("guard: the constructed client does not point at the test database and project")
     yield db
     db.close()      # synchronous in google-cloud-firestore 2.34
+
+
+@pytest.fixture(scope="module")
+def gcs_bucket(cloud):
+    bucket = _setting("TEST_GCS_BUCKET")
+    if not bucket:
+        pytest.skip("GCS parity not configured: TEST_GCS_BUCKET must be set")
+    if not bucket.endswith("-test"):
+        pytest.fail("guard: the test bucket name does not end in -test")
+    if bucket in {_setting("GCS_MEDIA_BUCKET"), _setting("GCS_WORKSPACE_BUCKET")}:
+        pytest.fail("guard: the test bucket is a live bucket")
+    client = storage.Client(project=cloud.project, credentials=cloud.credentials)
+    if client.project != cloud.project or \
+            getattr(client._credentials, "service_account_email", None) != _setting("TEST_SA_EMAIL"):
+        pytest.fail("guard: the constructed storage client does not use the test project and service account")
+    if not client.get_bucket(bucket).versioning_enabled:
+        pytest.fail("guard: the test bucket is not versioned (every scenario assumes versioning)")
+    return client, bucket
 
 
 # ------------------------------------------------------------------------------------------------ indexes
