@@ -19,7 +19,7 @@ Alek said a file was attached, and none arrived.
   everything else → `send_rich_content`. `ConversationHandler` calls it.
 - An `.html` file is stored in the private media bucket and delivered as a `/f/<token>` capability link minted for
   `user_id` (`FileLinkService`), the route every stored file uses (owner decision O8, P11-G4-5), never as its storage
-  key; without a user id or a link service the page is uploaded as a file.
+  key; without a user id or a link service, or when the private store fails (an ERROR), the page is uploaded as a file.
 - `application_graph` builds one `RichContentService` per platform, passes it to that platform's adapter factory
   (a required argument), and hands the same instance to `UserNotificationService` through that platform's `PlatformKit` (`composition/platform_kit.py`).
 - On Slack, a channel stored as a user id (`U…`) is turned into the DM id before an upload (a `📎` marker when no

@@ -158,3 +158,18 @@ async def test_store_html_without_a_link_service_stores_nothing(monkeypatch, fak
         assert await service._store_html(PAGE, "trip-notes.html", "u1") is None
     assert fake.names(BUCKET) == []
     assert any("no capability link" in r.getMessage() for r in caplog.records)
+
+
+async def test_html_page_whose_private_store_fails_is_uploaded_as_a_file(monkeypatch, fake, caplog):
+    """P11-G4-5 (review F): the private store fails: the failure is an ERROR, and the page still reaches the user,
+    uploaded as a file the way a page without a link is; no link and no key go out."""
+    platform = RecordingPlatform()
+    service, _ = _linking_service(monkeypatch, fake, platform)
+    fake.fail_next("upload", ServiceUnavailable("503"))
+    with caplog.at_level(logging.ERROR):
+        out = await service.process(RichContent("file", {"filename": "trip-notes.html", "content": PAGE}, ""), "C1",
+                                    user_id="u1")
+    assert out is None
+    assert platform.files == [Upload(PAGE.encode("utf-8"), "trip-notes.html", "trip-notes.html", "C1")]
+    assert fake.names(BUCKET) == []
+    assert any(r.levelno == logging.ERROR and "trip-notes.html" in r.getMessage() for r in caplog.records)

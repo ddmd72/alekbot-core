@@ -129,10 +129,13 @@ class RichContentService:
 
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "md"
 
-        # HTML → private bucket + capability link, when one can be minted for this user; otherwise the page is
-        # uploaded below like any other file (as on Telegram), never posted as its storage key.
+        # HTML → private bucket + capability link, when one can be minted for this user; otherwise, or when the
+        # private store fails (logged as ERROR there), the page is uploaded below like any other file (as on
+        # Telegram), never posted as its storage key and never dropped.
         if ext == "html" and self._can_link(user_id):
-            return await self._store_html(text_content, filename, user_id)
+            link = await self._store_html(text_content, filename, user_id)
+            if link:
+                return link
 
         # All other formats → encode/convert → platform file upload
         try:
@@ -226,7 +229,7 @@ class RichContentService:
             return links.build_link(key=stored_key, user_id=user_id)
         except Exception as e:
             logger.error(
-                "RichContentService: GCS upload failed for '%s' — %s; skipping delivery",
+                "RichContentService: GCS upload failed for '%s' — %s; no link",
                 filename,
                 e,
             )

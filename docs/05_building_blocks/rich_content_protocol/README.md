@@ -85,7 +85,7 @@ PlatformMediaPort
 - An `.html` file on Slack is stored in the private media bucket and returned as a `/f/<token>` capability link
   (`FileLinkService`, the one delivery path of every stored file); `deliver` sends it as a message. The link names its
   owner, so it needs the user id: `ConversationHandler` (rich content and the `html_gcs_link` item) and
-  `UserNotificationService` pass it; a caller without one gets the page uploaded as a file, as on Telegram (an
+  `UserNotificationService` pass it; a caller without one, or a failed private store, gets the page uploaded as a file, as on Telegram (an
   `html_gcs_link` item then posts nothing). The storage key never reaches the user.
 - GCS-based types (`map_image`, `weather_image`, deferred) would return a link the same way.
 - `widget` uses direct `upload_image()` (no GCS, no URL). Image appears inline.
