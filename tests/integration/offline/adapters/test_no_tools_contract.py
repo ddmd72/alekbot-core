@@ -13,7 +13,7 @@ from src.adapters.grok_adapter import GrokAdapter
 from src.adapters.openai_adapter import OpenAIAdapter
 from src.ports.llm_port import LLMRequest, Message, MessagePart
 from tests.contracts.adapter_contracts import FORCE_TOOL_USE_WITHOUT_TOOLS_OMITS_TOOL_CHOICE
-from tests.integration.adapters.conftest import (
+from tests.integration.offline.adapters.conftest import (
     ClaudeCapturingStub,
     OpenAIResponsesCapturingStub,
 )

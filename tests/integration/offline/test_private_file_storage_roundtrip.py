@@ -23,6 +23,7 @@ from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
 from src.services.document_delivery_service import DocumentDeliveryService, DeliveredDocument
 from src.services.file_conversion_service import FileConversionService
+from tests.support.drive_access_stub import allow_access
 
 _SECRET = "x" * 40
 _BASE = "https://dev.alekbot.app"
@@ -88,8 +89,9 @@ def doc_delivery(media, links):
 @pytest.fixture
 def conversion(media):
     # FileStoragePort unused in these paths (delivered keys go to media); a bare
-    # MagicMock is fine — we only exercise the media branch.
-    return FileConversionService(storage=MagicMock(), media_storage=media)
+    # MagicMock is fine — we only exercise the media branch. `access` (the drive access policy, required) is never
+    # consulted on that branch; production passes its UserDriveService (service_container.py).
+    return FileConversionService(storage=MagicMock(), media_storage=media, access=allow_access())
 
 
 class TestPrivateStorageRoundTrip:

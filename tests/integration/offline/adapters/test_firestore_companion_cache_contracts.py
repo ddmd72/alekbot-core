@@ -11,7 +11,7 @@ from src.adapters.firestore_companion_cache_repository import (
     FirestoreCompanionCacheRepository,
 )
 from tests.contracts.adapter_contracts import FIRESTORE_COMPANION_CACHE_SAVE_INCLUDES_ACCOUNT_ID
-from tests.integration.adapters.conftest import FirestoreCapturingStub
+from tests.integration.offline.adapters.conftest import FirestoreCapturingStub
 
 
 def _env_config_stub():
