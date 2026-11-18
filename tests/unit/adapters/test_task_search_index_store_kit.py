@@ -17,7 +17,7 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from src.domain.task import TaskImportance, TaskSearchEntry, TaskStatus
-from tests.support.firestore_eval import EvalDb, stored_vector
+from tests.support.firestore_eval import stored_vector
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -26,15 +26,15 @@ VEC = [1.0, 0.0]
 INDEXED_AT = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
 
-def _adapter(db: EvalDb) -> FirestoreTaskSearchIndex:
+def _adapter(db) -> FirestoreTaskSearchIndex:
     return FirestoreTaskSearchIndex(db, SimpleNamespace(task_search_index_collection=COL))
 
 
 class Store:
     """The real adapter over one EvalDb with the declared indexes, its collection mapped to its index group."""
 
-    def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={COL: "development_task_search_index"})
+    def __init__(self, kit_db) -> None:
+        self.db = kit_db(indexes=INDEXES_FILE, groups={COL: "development_task_search_index"})
         self.index = _adapter(self.db)
 
     @property
@@ -43,8 +43,8 @@ class Store:
 
 
 @pytest.fixture
-def store():
-    return Store()
+def store(kit_db):
+    return Store(kit_db)
 
 
 def entry(task_id="t1", user_id="u1", content=VEC, context=None, status=TaskStatus.NOT_STARTED, list_id="L1",
