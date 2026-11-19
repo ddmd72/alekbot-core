@@ -534,7 +534,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 | (built 2026-10-27; see "Built (P14)"; the two deep-research `MATRIX` rows are 200)
 | P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (built 2026-10-27; see "Built (P15, part 1)" and "Built (P15, part 2)"; the three `MATRIX` rows are 200 (matrix card M))
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
-| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised"; request slice for OpenAI and Claude built 2026-11-19, see "Built (P17 request slice)") |
+| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised"; request slice for OpenAI and Claude built 2026-11-19, see "Built (P17 request slice)"; response side and recorder built 2026-11-19, see "Built (P17 response side + recorder)") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 | (cheap part built 2026-11-07: the spec-drift workflow and the review skill; see "Built (P18 cheap part)"; `make contract-probe` waits for P17 and the owner's sandboxes)
 | P19 | **Web surfaces, the rest**: `oauth_app`, `user_cabinet_app` route-level tests through the Quart test client on H1 stores — connect flows (with Google token mocks), session cap, every Cabinet write route | check | 1.5–2 | data-exposure bugs beyond the gates of P7 | 3 |
 | P20 | **Field registry and spec drift**: H5 for facts (AST); H6 with the normalisation table; one Firestore database default (§1.4 item 13) and a lint test requiring `database=` in scripts | check | 1.5–2.5 | write-only fields, spec drift, wrong database | 3 |
@@ -1039,6 +1039,36 @@ Deviations and results:
   `web-search-2025-03-05` (the legacy search tool). No shape failed on the first run, so no adapter change was needed.
 - **Still open for P17:** the other providers (Gmail, Graph, Slack, Twilio, Telegram, Cloudflare SFU, Google OAuth), the recordings, WebSocket event schemas, and
   the low-coverage adapters listed in the table.
+
+**Built (P17 response side + recorder, 2026-11-19).** The response side of the OpenAI and Anthropic contracts and the regeneration
+command of the recordings, before any recording. Test-only (plus the extractor's table and `scripts/contracts/record.py`).
+- **Responses in the subsets.** `Operation.responses` in the extractor's `PROVIDERS` (`Response`: status, media type, the top-level
+  fields the adapter reads, union variants, ALLOWED gaps, an SDK model for the Anthropic source; `reads` cites the adapter lines).
+  Below the top level every kept object is materialised and closed, as on the request side; a top-level field the adapter does not
+  read stays by name with an any-value schema (`x-alek-unread`), so the object stays closed without copying what OpenAI echoes back
+  of the request. OpenAI: the `Response` JSON (output: message, function_call, reasoning, web_search_call). Anthropic: the SSE
+  stream on the wire (`text/event-stream`, one event's data; `ping` an ALLOWED gap, the SDK's event types lack it) and the `Message`
+  the SDK assembles from it (`application/json`; blocks: text, thinking, redacted_thinking, tool_use, server_tool_use and the five
+  server-tool result blocks). The request parts of both subsets are byte-for-byte unchanged.
+- **Check:** `assert_response` and `assert_stream` beside `assert_request` (`tests/contracts/openapi_contract.py`).
+- **Conformance through the real SDK:** `tests/unit/contracts/<provider>_response_samples.py` (bodies as the wire carries them; Claude
+  rendered as a stream) + `test_<provider>_response_conformance.py`: each sample conforms, is read by the real SDK and adapter, and
+  replayed as `raw_content` conforms to the request contract; unknown and wrong-typed fields fail at the top level and at depth;
+  every kept field, variant and gap is exercised. The grounded loop's pause_turn continuation (the request side's `NOT_REACHABLE`
+  `container`) now runs offline over a scripted stream.
+- **P17-D1 (open, strict xfail):** the Anthropic SDK's stream accumulator sets `caller: null` on every tool_use / server_tool_use
+  block whose start event has no `caller`, and a replay (raw_content, the pause_turn continuation) sends it; the request contract has
+  no null there. The recordings `replay_thinking_and_tool_use` and `grounding_dynamic_container` settle whether the API accepts it
+  (accepted: an ALLOWED gap; refused: an adapter fix).
+- **Recorder:** `make contract-record PROVIDER=openai|anthropic [ONLY=] [MAX_USD=1.0] [DRY_RUN=1] [ENV_FILE=]` runs named scenarios
+  (one per response kind, the `NOT_REACHABLE` replays; the same-provider fallback is `UNREACHABLE`: no real call yields a 529)
+  through the real adapter and SDK with a recording transport, and writes `tests/fixtures/providers/<provider>/<scenario>.json`
+  (`_meta` with the regeneration command, every exchange, its cost legs; headers scrubbed to an allowlist). Money is enforced in the
+  script: a pessimistic estimate before each call against the cap, the `billing.py` cost after it, a stop on a call with tokens and
+  a $0 cost; `DRY_RUN=1` builds the first requests in process (no network, no key). Web search is priced by the script ($0.01 per
+  search, both providers): `billing.py` has no per-search leg.
+- **Still open for P17:** the recordings themselves (a measured cost probe first), a test that replays every committed recording
+  through its contract and the real SDK, P17-D1, and the providers, event schemas and adapters listed in the request-slice note.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years

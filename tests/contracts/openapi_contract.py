@@ -1,9 +1,12 @@
-"""Validate a request we send against a provider's request contract, `contracts/providers/<provider>/openapi.yaml`.
+"""Validate a request we send, and a response we receive, against a provider's contract,
+`contracts/providers/<provider>/openapi.yaml`.
 
 TEST_COVERAGE_SYSTEMIC_RFC §4a, P17. The contracts are subsets extracted by `scripts/contracts/extract_subset.py`
 (never edited by hand). Body schemas are JSON Schema Draft 2020-12 (OpenAPI 3.1), validated with `jsonschema`; one
-validator per operation is compiled once per process. A field the schema marks `deprecated` fails unless the contract
-allows it (`x-alek-extension`, from the extractor's ALLOWED table).
+validator per operation is compiled once per process (a response's on first use). In a request, a field the schema
+marks `deprecated` fails unless the contract allows it (`x-alek-extension`, from the extractor's ALLOWED table); in a
+response it is accepted. `assert_response` checks one body (one event's data for a stream); `assert_stream` a whole
+server-sent-event stream.
 JSON Schema `format` keywords (date-time, uri, ...) are not enforced: no FormatChecker is passed.
 
 A failure lists every violation, one per line: `<where>: unknown field | wrong type | missing required | value not
@@ -47,6 +50,54 @@ def assert_request(
         raise AssertionError(f"{provider} {method.upper()} {path} breaks the contract:\n" + "\n".join(problems))
 
 
+def assert_response(
+    provider: str,
+    method: str,
+    path: str,
+    status: int | str,
+    body: Any,
+    *,
+    media: str = "application/json",
+    contracts_dir: Path = CONTRACTS_DIR,
+) -> None:
+    """Fail (AssertionError, every violation on its own line) unless a response body conforms to the provider's
+    contract for that operation, status and media type.
+
+    For `text/event-stream` the body is ONE event's data JSON (see `assert_stream` for a whole stream). A field the
+    source marks deprecated is accepted in a response (the provider may still send it); a top-level field the contract
+    keeps as `x-alek-unread` accepts any value."""
+    op = _operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
+    problems = sorted(set(op.response_problems(str(status), media, body, "$")))
+    if problems:
+        raise AssertionError(
+            f"{provider} {method.upper()} {path} {status} {media} breaks the contract:\n" + "\n".join(problems))
+
+
+def assert_stream(
+    provider: str,
+    method: str,
+    path: str,
+    status: int | str,
+    events: list[Mapping[str, Any]],
+    *,
+    contracts_dir: Path = CONTRACTS_DIR,
+) -> None:
+    """Fail unless every event of a server-sent-event stream conforms: `events` is `[{"event": <name>, "data":
+    <JSON>}]` in wire order. Each violation is prefixed `event[i]`; an event whose name differs from its data's
+    `type` is a violation too (the SDK dispatches on the name)."""
+    op = _operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
+    problems: list[str] = []
+    for i, event in enumerate(events):
+        data = event.get("data")
+        name = event.get("event")
+        if isinstance(data, dict) and name is not None and data.get("type") != name:
+            problems.append(f"event[{i}]: event name {name!r} differs from data.type {data.get('type')!r}")
+        problems += sorted(set(op.response_problems(str(status), "text/event-stream", data, f"event[{i}] $")))
+    if problems:
+        raise AssertionError(
+            f"{provider} {method.upper()} {path} {status} text/event-stream breaks the contract:\n" + "\n".join(problems))
+
+
 # ------------------------------------------------------------------------------------------------------- loading
 def _deprecated(validator: Any, value: Any, instance: Any, schema: Mapping[str, Any]) -> Iterator[ValidationError]:
     if value is True and EXTENSION not in schema:
@@ -80,19 +131,35 @@ def _base_paths(doc: dict) -> list[str]:
 
 
 class _Operation:
-    """One operation's compiled validators: the body and each declared header."""
+    """One operation's compiled validators: the body and each declared header; each response (status, media type)
+    compiled on first use."""
 
     def __init__(self, doc: dict, op: dict):
         self.schemas = (doc.get("components") or {}).get("schemas") or {}
+        self.op = op
         body = op["requestBody"]["content"]["application/json"]["schema"]
         self.body = self._compile(body)
         self.headers = [(p["name"], bool(p.get("required")), p["schema"], self._compile(p["schema"]))
                         for p in op.get("parameters") or [] if p.get("in") == "header"]
+        self._responses: dict[tuple[str, str], Any] = {}
 
-    def _compile(self, schema: dict) -> Any:
+    def _compile(self, schema: dict, validator: Any = _Validator) -> Any:
         root = {**schema, "components": {"schemas": self.schemas}}
-        _Validator.check_schema(root)
-        return _Validator(root)
+        validator.check_schema(root)
+        return validator(root)
+
+    def response_problems(self, status: str, media: str, body: Any, root: str) -> Iterator[str]:
+        key = (status, media)
+        if key not in self._responses:
+            responses = self.op.get("responses") or {}
+            content = (responses.get(status) or {}).get("content") or {}
+            if media not in content:
+                known = sorted((s, m) for s, r in responses.items() for m in r.get("content") or {})
+                raise AssertionError(f"no {status} {media} response in the contract (it has {known})")
+            # Responses: a deprecated field is the provider's to send, so the plain Draft 2020-12 validator.
+            self._responses[key] = self._compile(content[media]["schema"], jsonschema.Draft202012Validator)
+        for error in self._responses[key].iter_errors(body):
+            yield from self._explain(error, root)
 
     def problems(self, headers: Mapping[str, str], body: Any) -> Iterator[str]:
         for error in self.body.iter_errors(body):
