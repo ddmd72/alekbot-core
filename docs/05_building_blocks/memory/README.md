@@ -916,10 +916,11 @@ cache at once (§5.2).
 
 **What makes a fact a directive** is decided in one place, `is_directive(fact)` (`src/domain/fact_lifecycle.py`; a fact
 or its cached dict): today the old `domain == agent_directive` marker, later the consolidator's directive flag
-(`FACT_PROFILE_RFC.md` §6 row 15, PR 13). The prompt builder's split, the profile step and the companion call it; the
-reads that select directives (Stage 2b and its backstop, the companion) filter on `DIRECTIVE_DOMAIN`, defined next to
-it, so both change together. The expiry pin (`expiry_pinned`, §2.7) is wider: a
-directive, a principle or a `mindset` fact; principles and mindset facts are pinned but are not directives.
+(`FACT_PROFILE_RFC.md` §6 row 15, PR 13). The prompt builder's split, the baseline fill, the profile step and the
+companion call it; the reads that select directives (the baseline's directive list, Stage 2b and its backstop, the
+companion) filter on `DIRECTIVE_DOMAIN`, defined next to it, so both change together. The expiry pin (`expiry_pinned`,
+§2.7) is wider: a directive, a principle or a `mindset` fact; principles and mindset facts are pinned but are not
+directives.
 
 ### 4.3 The search engines
 
