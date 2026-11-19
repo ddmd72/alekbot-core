@@ -151,17 +151,18 @@ reference.
 | `source_phrase` | `slack_geo` / `telegram_pin` / `lelik_button` | "from the location link in Slack" / "as a Telegram location" / "from the voice call page" |
 | `accuracy_clause` | ≤ 100 m | ", accurate to about {n} m" |
 | | > 100 m, no landmarks and no areas | ", approximate: within about {n} m (or {x.x} km), so the address names the area, not the exact spot" |
-| | > 100 m, landmarks or areas present | ", approximate: within about {n} m (or {x.x} km), so the address and the places around it name the area, not the exact spot" |
+| | > 100 m, landmarks or areas present | ", approximate: within about {n} m (or {x.x} km) of this point; everything below is looked up from this point, so it names the area, not the exact spot" |
 | | absent, Telegram | " — no accuracy came with it, so this may be a point picked on the map rather than where the user was" |
 | | absent, Slack or Lelik | " — no accuracy came with it, so how close it is to the spot is unknown" |
 | `address_clause` | present | "{address} (looked up from the position, not stated by the user)" |
 | | absent (no geocoder, lookup failed, no result) | "not available (the lookup returned no address)" |
-| `landmarks_block` | landmarks present | a header line "Landmarks around the position (from Google Maps, nearest first, each with its distance from the position; reference points for where the position is, not stated by the user):", then one line per landmark in the lookup's order: "- {name} ({kinds}), {n} m away: the position is {relation_phrase}" |
+| `landmarks_block` | landmarks present | a header line "Landmarks around the position (from Google Maps, nearest first, with distances from the position; reference points for where the position is, not stated by the user):", then one line per landmark, nearest first (the port's order): "- {name} ({kinds}), {n} m away: the position is {relation_phrase}" |
 | | a landmark without kinds / without a known relation | the "({kinds})" / ": the position is …" part is left out |
+| | relation `WITHIN` | the distance is left out: "- {name} ({kinds}): the position is within it" (Google measures to the landmark's point, not its edge, so "250 m away" would contradict "within") |
 | | no landmarks | no line at all (the feature is Experimental outside India; its absence says nothing) |
 | `relation_phrase` | `NEAR` / `WITHIN` / `BESIDE` / `BEHIND` | "near it" / "within it" / "beside it" / "behind it" |
 | | `ACROSS_THE_ROAD` / `DOWN_THE_ROAD` / `AROUND_THE_CORNER` | "across the road from it" / "down the road from it" / "around the corner from it" |
-| `areas_line` | areas present | "Areas (from Google Maps): the position is {containment} {name}; {containment} {name}" — `WITHIN` "within", `OUTSKIRTS` "on the outskirts of", `NEAR` "near"; an area with another containment is left out |
+| `areas_line` | areas present | "Areas (from Google Maps): the position is {containment} {name}; {containment} {name}" — `WITHIN` "within", `OUTSKIRTS` "on the outskirts of", `NEAR` "near" (the adapter drops an area with any other containment) |
 | | no areas | no line at all |
 | local time | `UserBotConfig.timezone`, UTC when unset or unreadable | the owner's clock, with its offset, so the age can be computed against the prompt's current time |
 
@@ -190,7 +191,9 @@ If live consolidations show state facts ("Alex is at Main Street"), the fix is i
   - `address`: the first result's `formatted_address`.
   - `landmarks` / `areas`: the response-level `address_descriptor` (up to 5 landmarks, 3 areas). A landmark's name is
     `display_name.text`, its distance `straight_line_distance_meters`; an area's `containment`. An entry without a
-    name or a distance is skipped; an unknown relation becomes `None`.
+    name or a distance is skipped; an unknown relation becomes `None`; an area whose containment is not `WITHIN`,
+    `OUTSKIRTS` or `NEAR` is skipped. Google ranks landmarks by prominence, not distance (a live probe came back out
+    of distance order): the adapter sorts them by distance, so the port returns the nearest first.
   - Address descriptors are GA in India and Experimental everywhere else (Google, read 2026-11-19); they bill on the
     same Geocoding SKU. A missing or malformed `address_descriptor` gives no landmarks and never fails the address.
   - `ZERO_RESULTS`, any other status, an HTTP error or the timeout → `GeoPlace.EMPTY`, logged with the status only.
@@ -333,7 +336,8 @@ The page gets a position and sends it over the control channel; Lelik receives i
   nearest street address: {address_clause}{landmarks_clause}{areas_clause}. They shared it for what they ask with it.
   Do not read the coordinates aloud.]" (the §4.2 phrases, with "the caller" for "the user" in the no-accuracy and
   address clauses). `landmarks_clause`: "; landmarks around the position (from Google Maps, nearest first): {item};
-  {item}", each item "{name} ({kinds}), {n} m away, the position is {relation_phrase}" with the §4.2 omissions;
+  {item}", each item "{name} ({kinds}), {n} m away, the position is {relation_phrase}" with the §4.2 omissions (no
+  distance for `WITHIN`);
   `areas_clause`: "; areas: the position is {containment} {name}, {containment} {name}". Each is empty when there are
   none.
 - **History:** in-call only. It is not added to the call transcript buffer, the post-call chat note or companion
