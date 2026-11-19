@@ -14,8 +14,7 @@ from src.domain.drive_note import (
     item_binding_key, next_version, note_after_write, note_doc_id, tagged_ref_key,
 )
 
-from tests.unit.adapters.firestore_drive_eval_fakes import eval_transactions
-from tests.unit.adapters.firestore_drive_note_fakes import NOTES, NoteDb
+from tests.unit.adapters.firestore_drive_note_fakes import NOTES, note_db, on_the_fake, versions_of
 
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
 U, OTHER, D1, D2 = "u", "other", "drive1", "drive2"
@@ -39,14 +38,14 @@ class _Ticks:
 
 
 @pytest.fixture(params=["memory", "firestore"])
-def adapter(request):
+def adapter(request, kit_db):
     if request.param == "memory":
         yield InMemoryDriveNoteRepository(clock=_Ticks()), None
         return
     env = MagicMock()
     env.drive_notes_collection = NOTES
-    db = NoteDb()
-    with eval_transactions():
+    db = note_db(kit_db)
+    with on_the_fake(db):
         yield FirestoreDriveNoteRepository(db, env), db
 
 
@@ -334,6 +333,7 @@ def _firestore(adapter):
     return repo, db
 
 
+@pytest.mark.h1_only("reads the raw writes of the fake's transaction log (db.transactions)")
 async def test_firestore_writes_updated_at_as_a_server_timestamp(adapter):
     from google.cloud import firestore
     repo, db = _firestore(adapter)
@@ -355,7 +355,7 @@ async def test_firestore_stores_the_vector_as_a_vector_and_drops_it_when_cleared
 async def test_firestore_versions_live_under_the_parent(adapter):
     repo, db = _firestore(adapter)
     await first(repo)
-    assert set(db.versions_of("u:n1")) == {"v1"}
+    assert set(versions_of(db, "u:n1")) == {"v1"}
 
 
 async def test_firestore_stub_holds_only_its_fields(adapter):
@@ -365,9 +365,10 @@ async def test_firestore_stub_holds_only_its_fields(adapter):
     stored = db.collection(NOTES).docs["u:n1"]
     assert set(stored) == {"note_id", "user_id", "account_id", "state", "erase_pending", "match_keys", "revision",
                            "updated_at"}
-    assert db.versions_of("u:n1") == {}
+    assert versions_of(db, "u:n1") == {}
 
 
+@pytest.mark.h1_only("counts the fake's batch commits (db.commits)")
 async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter):
     repo, db = _firestore(adapter)
     note = await first(repo)
@@ -376,10 +377,11 @@ async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter)
         await repo.write_version(nxt, v, expected_version=n - 1)
         note = await repo.get(U, "n1")
     assert (await repo.erase(U, ["n1"])).erased == 1
-    assert db.versions_of("u:n1") == {}
+    assert versions_of(db, "u:n1") == {}
     assert len(db.commits) == 1 and len(db.commits[0]) == 3              # v1..v3 in a batch, the rest with the stub
 
 
+@pytest.mark.h1_only("drives the fake collection's query-failure switch (fail =)")
 async def test_firestore_errors_are_store_unavailable(adapter):
     repo, db = _firestore(adapter)
     db.collection(NOTES).fail = ServiceUnavailable("down")
@@ -390,6 +392,7 @@ async def test_firestore_errors_are_store_unavailable(adapter):
         await repo.changed_since(U, None, 5)
 
 
+@pytest.mark.h1_only("reads the fake's query log (db.executed())")
 async def test_firestore_every_query_filters_the_user(adapter):
     repo, db = _firestore(adapter)
     await first(repo)
@@ -504,6 +507,7 @@ async def test_closing_a_missing_previous_version_is_tolerated(adapter):
     assert [v.version for v in await repo.list_versions(U, "n1")] == [2]
 
 
+@pytest.mark.h1_only("the contention is the drive fake's buffered transaction (contended)")
 async def test_firestore_a_contended_first_write_reruns_and_conflicts_writing_nothing(adapter):
     from unittest.mock import patch
     from tests.unit.adapters.firestore_drive_note_fakes import contended
@@ -518,7 +522,7 @@ async def test_firestore_a_contended_first_write_reruns_and_conflicts_writing_no
                side_effect=contended(db, interloper)):
         with pytest.raises(DriveNoteConflict):
             await repo.write_version(note, v1, expected_version=0)
-    assert db.collection(NOTES).docs["u:n1"] == other and db.versions_of("u:n1") == {}
+    assert db.collection(NOTES).docs["u:n1"] == other and versions_of(db, "u:n1") == {}
 
 
 async def test_firestore_exhausted_transaction_retries_are_a_conflict(adapter):
@@ -576,7 +580,7 @@ async def test_firestore_a_long_erase_redoes_its_batches_when_a_write_lands_in_b
 
     db.batch = batch
     assert (await repo.erase(U, ["n1"])).erased == 1
-    assert landed and db.versions_of("u:n1") == {}
+    assert landed and versions_of(db, "u:n1") == {}
     assert (await repo.get(U, "n1")).erase_pending
 
 
@@ -598,6 +602,8 @@ async def test_a_conflict_partway_through_an_erase_all_erases_the_rest(adapter):
         repo._erase_one = flaky
         result = await repo.erase(U, ["n1", "n2", "n3", "missing"])
     else:
+        from src.adapters import firestore_drive_note_repo
+        installed = firestore_drive_note_repo.firestore.async_transactional   # the client's, or the fake's pass-through
         calls = []
 
         def second_gives_up(fn):          # the stub transaction of n2 (the 2nd note) exhausts its retries
@@ -605,7 +611,7 @@ async def test_a_conflict_partway_through_an_erase_all_erases_the_rest(adapter):
                 calls.append(1)
                 if len(calls) == 2:
                     raise ValueError("Failed to commit transaction in 5 attempts.") from Aborted("contention")
-                return await fn(transaction)
+                return await installed(fn)(transaction)   # the others run as the installed decorator runs them
             return run
 
         with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional",

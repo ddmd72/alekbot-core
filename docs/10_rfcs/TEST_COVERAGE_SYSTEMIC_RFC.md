@@ -999,6 +999,28 @@ fragments in `tests/fixtures/spec_drift/`. Deviations from §4a:
   for the owner). Escalation is one line, only for a finding that takes effect within 30 days or a review PR open for 14 days.
 - **Not built:** `make contract-probe` (live probes, mechanism 3): it needs P17's contracts and the owner's sandboxes.
 
+**Built (P12 rest, 2026-11-19).** The store kits that `kit_db` did not reach yet, on the real backends. Test-only: no `src/` change.
+- **GCS kits on the test bucket.** `kit_gcs` (`tests/support/gcs_kit_backend.py`) is `FakeGcs` in the unit suite and the versioned
+  `TEST_GCS_BUCKET` in the cloud gate: each test under its own `kits/<run id>/<n>/` prefix (erased before and after), names prefixed out and
+  stripped back, a declared plain bucket inspected as its live versions, access changes refused, any other storage client refused. The fake's
+  faults and interleavings (`fail_next`, `on`) run around the real requests too. `gcs_fake_only` (checked by
+  `tests/unit/support/test_gcs_fake_only_marks.py`) marks only the four signed-URL tests (they read the fake's `signed_urls`). On the bucket:
+  file storage 15 passed, media 9 passed and 4 skipped, workspace 16 passed.
+- **Drive mirror and drive note contracts on the test database.** H1 does not evaluate a range on `__name__`, a note's `versions`
+  subcollection or a server clock, so `mirror_db(kit_db)` and `note_db(kit_db)` (in `tests/unit/adapters/firestore_drive_mirror_fakes.py` and
+  `firestore_drive_note_fakes.py`) keep the drive fakes where `kit_db` is H1 and take the real database otherwise. Mirror: 42 passed, 4
+  `h1_only`. Note: 63 passed, 10 `h1_only` (two drive-fake hooks registered: the transaction log, the `contended` stand-in), 1 failed:
+  `test_a_conflict_partway_through_an_erase_all_erases_the_rest`, whose stand-in for `async_transactional` calls the function on a
+  transaction it never began (the real client refuses it; a test-side disagreement, left to the reviewer).
+- **Index readiness.** A freshly created index answers "currently building" for a while after the Admin API reports READY, and
+  can answer it again after serving one query. `ensure_indexes` now runs a probe query per composite after READY (`probe_query` in
+  `tests/support/cloud_indexes.py`, checked offline against H1's index model for every composite of the repository file by
+  `tests/unit/support/test_cloud_index_probe.py`), and the kits' client retries exactly that answer on its query RPCs
+  (`BuildingIndexRetry` in `tests/support/kit_backend.py`); both back off for up to 10 minutes. The index key also carries the direction
+  of `__name__`.
+- **What stays:** the Cloud Tasks kit (`tests/unit/adapters/test_task_queue_store_kit.py`, still one skipped collector; the paused queue has its
+  own real test in `tests/cloud/test_task_queue_cloud.py`).
+
 **Built (P17 request slice, 2026-11-19).** The request side of the OpenAI and Anthropic contracts, before the other providers. Test-only (plus the
 extractor's `PROVIDERS` table). Files: `scripts/contracts/extract_subset.py` and `make contract-extract` (writes `contracts/providers/<provider>/openapi.yaml`),
 `tests/contracts/openapi_contract.py` (`assert_request`), and per provider `tests/unit/contracts/<provider>_request_shapes.py` + `test_<provider>_request_conformance.py`

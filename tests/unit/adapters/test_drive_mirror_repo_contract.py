@@ -17,23 +17,22 @@ from src.domain.drive_mirror import (
 )
 from src.ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY
 
-from tests.unit.adapters.firestore_drive_eval_fakes import eval_transactions
-from tests.unit.adapters.firestore_drive_mirror_fakes import LEDGER, ROOTS, NameAwareDb
+from tests.unit.adapters.firestore_drive_mirror_fakes import LEDGER, ROOTS, mirror_db, on_the_fake
 
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
 U, D1, D2 = "u", "microsoft_onedrive:drive1", "microsoft_onedrive:drive2"   # drive identities (MULTI_DRIVE_RFC §7.2)
 
 
 @pytest.fixture(params=["memory", "firestore"])
-def adapter(request):
+def adapter(request, kit_db):
     if request.param == "memory":
         yield InMemoryDriveMirrorRepository(), None
         return
     env = MagicMock()
     env.drive_mirror_roots_collection = ROOTS
     env.drive_transcript_mirror_collection = LEDGER
-    db = NameAwareDb()
-    with eval_transactions():
+    db = mirror_db(kit_db)
+    with on_the_fake(db):
         yield FirestoreDriveMirrorRepository(db, env), db
 
 
@@ -330,6 +329,7 @@ async def test_pinned_keys_paged(adapter, monkeypatch):
 
 # -- the Firestore adapter alone --------------------------------------------------------------------------------------------
 
+@pytest.mark.h1_only("drives the fake collection's query-failure switch (fail =)")
 @pytest.mark.parametrize("error", [ServiceUnavailable("down"), FailedPrecondition("The query requires an index.")])
 async def test_backend_error_is_store_unavailable(adapter, error):
     repo, db = adapter

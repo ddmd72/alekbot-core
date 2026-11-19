@@ -22,8 +22,8 @@ def _adapter(fake: FakeGcs) -> GcsFileStorageAdapter:
 
 
 @pytest.fixture
-def fake():
-    return FakeGcs(buckets={BUCKET: "plain"})
+def fake(kit_gcs):
+    return kit_gcs(buckets={BUCKET: "plain"})
 
 
 @pytest.fixture

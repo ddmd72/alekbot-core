@@ -1,17 +1,28 @@
 """The evaluating Firestore client (firestore_drive_eval_fakes) with what the drive-note store also uses: subcollections
 (`doc_ref.collection("versions")`, kept as their own collection named `<parent collection>/<doc id>/<name>`) and
 `SERVER_TIMESTAMP` resolved to a strictly increasing clock when a transaction or a document reference writes it. Queries,
-cursors, projections, kNN, counts, batches and the pass-through transactions are the shared fake's."""
+cursors, projections, kNN, counts, batches and the pass-through transactions are the shared fake's.
+
+`note_db(kit_db)` is the contract's database over the kits' backend seam (P12, tests/support/kit_backend.py): in the unit
+suite `kit_db` is H1, which has neither the subcollection naming nor the server clock above, so the contract keeps this drive
+fake there; in the cloud gate it is the real test database (`development_drive_notes`' composites, vectors at dimension 2),
+whose server sets `updated_at` and keeps `versions` under each note natively. `versions_of(db, doc_id)` reads a note's
+versions on either; `on_the_fake(db)` is the fake's pass-through transactions, and nothing on the real database."""
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Callable, ContextManager, Dict, List
 
 from google.cloud import firestore
 
-from tests.unit.adapters.firestore_drive_eval_fakes import EvalCollection, EvalDb, EvalDocRef, EvalTransaction
+from tests.support.firestore_eval import EvalDb as H1
+from tests.unit.adapters.firestore_drive_eval_fakes import (
+    EvalCollection, EvalDb, EvalDocRef, EvalTransaction, eval_transactions,
+)
 
 NOTES = "eval_drive_notes"
+GROUPS = {NOTES: "development_drive_notes"}
 T0 = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
 
 
@@ -132,3 +143,18 @@ def contended(db: "NoteDb", interloper: Any) -> Any:
                 return result
         return run
     return decorator
+
+
+def note_db(kit_db: Callable[..., Any]) -> Any:
+    """The contract's database: `NoteDb` in the unit suite (where `kit_db` is H1), the test database in the cloud gate."""
+    return NoteDb() if kit_db is H1 else kit_db(groups=GROUPS, vector_dimension=2)
+
+
+def on_the_fake(db: Any) -> ContextManager[Any]:
+    """`eval_transactions()` for the drive fake; nothing for the real database (its transactions are the client's own)."""
+    return eval_transactions() if isinstance(db, EvalDb) else contextlib.nullcontext()
+
+
+def versions_of(db: Any, doc_id: str) -> Dict[str, Dict[str, Any]]:
+    """The stored versions of note document `doc_id` (version id -> document), on the fake or the real database."""
+    return dict(db.collection(f"{NOTES}/{doc_id}/versions").docs)

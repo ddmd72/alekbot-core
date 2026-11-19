@@ -91,12 +91,12 @@ query for a missing index, so those scenarios skip), and the test database in `t
 is the arbiter. A new kit that leans on a Firestore behaviour H1 has not been checked for adds a scenario here first. The cloud
 run (switched on by `RUN_CLOUD_TESTS=1`, which `make test-cloud` sets; a bare pytest skips it) reads `TEST_FIRESTORE_DATABASE`, `TEST_SA_EMAIL` and `GOOGLE_CLOUD_PROJECT` from the environment or the repo's dotenv file,
 refuses to start unless the database ends in `-test`, is not the live one and the client uses the test service account's
-impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; the Admin API lists every group's indexes under one group's parent, so `ensure_indexes` filters by the group's name: unfiltered, an index of another group with the same fields counted as present and READY, the likely cause of the scenarios once seen failing after READY). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
+impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; the Admin API lists every group's indexes under one group's parent, so `ensure_indexes` filters by the group's name: unfiltered, an index of another group with the same fields counted as present and READY, the likely cause of the scenarios once seen failing after READY; after READY it runs a probe query per composite, `probe_query` of `tests/support/cloud_indexes.py`, and retries a "currently building" answer with backoff for up to 10 minutes, since a fresh index can still refuse a query then; one served probe is not a stable signal, so the kits' client also retries that one answer on every query RPC, `BuildingIndexRetry` of `tests/support/kit_backend.py`). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
 Identity Federation as the test service account and runs `make test-cloud` (artifact `parity`: `parity.xml`, `parity.log`; never red for a failed scenario).
 `tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
 is unchanged. The workflow also passes `TEST_GCS_BUCKET` and `TEST_TASKS_QUEUE` (optional: an empty secret only warns and its tests skip). The parity artifact is redacted (six values are replaced before upload: the three required secrets, the two optional ones and `TEST_WIF_PROVIDER` with the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet). One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
-**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in the unit suite (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow passes it). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
+**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in the unit suite (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow passes it; the bucket guards are the `gcs_bucket` fixture of `tests/cloud/conftest.py`, shared with the GCS store kits). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
 
 **The paused queue** (`tests/cloud/test_task_queue_cloud.py`): the real `GcpTaskQueue` enqueues onto the Cloud Tasks queue named by `TEST_TASKS_QUEUE` (optional `TEST_TASKS_LOCATION`, default the deploy region); the test asserts the task exists with dispatch count 0 and that a repeated dedup key is refused as ALREADY_EXISTS (worker task: `None`; agent task: the same name). Guards fail, never skip: the name ends in `-test`, is none of the live `agent-tasks-*` / `alek-bot-tasks-*` / `drive-sync-*` names, and the queue is PAUSED before the first enqueue (the test never pauses a queue). Tasks it creates are deleted at the end; it skips without the variable.
 
@@ -136,7 +136,8 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     `indexes=` other than `None` or the repository file raise. Building an `EvalDb` anywhere in a kit (import time, any fixture scope)
     fails, and every Firestore client a kit test builds must be on the test database.
   - **`h1_only`.** A test that drives a fake-only hook (`interfere_on_txn_*`, `raise_on_txn_read`, a patched `EvalDocRef`, `versions`,
-    `txn_versions`, `cols`, `commits`, `executed`, `_check_index`, the collection's `fail =` switch, `EvalDb(`, `indexes=[]`, a naive datetime written raw
+    `txn_versions`, `cols`, `commits`, `executed`, `_check_index`, the collection's `fail =` switch, the drive fake's `transactions[...]`
+    log and its `contended(...)` stand-in, `EvalDb(`, `indexes=[]`, a naive datetime written raw
     in the test itself) carries `@pytest.mark.h1_only("<why>")` and is skipped there;
     `tests/unit/support/test_h1_only_marks.py` checks each mark names a reason and reaches one of those hooks. `h1_only` is forbidden on
     a test that fails on the real backend: the test database is the arbiter, so the fake is fixed, or an adapter defect is a strict
@@ -144,6 +145,16 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     runs a collection-group query with a filter first adds its COLLECTION_GROUP single-field override to the cloud index model
     (Admin API `update_field`); no converted kit reaches one today (`firestore_drive_index_repo.py`'s `_subdoc_refs` is called
     from `scripts/` only, not by `test_drive_index_v2_parity.py`).
+  - **GCS kits** take `kit_gcs(buckets=...)` (`tests/support/gcs_kit_backend.py`): `FakeGcs` in the unit suite, the versioned
+    test bucket in the cloud gate, each test under its own `kits/<run id>/<n>/` prefix (erased before and after; the client
+    adds the prefix and takes it off every name it returns). A bucket declared `plain` is inspected (`versions`, `live`,
+    `names`) as its live versions, exact for adapters that never address a generation. `fail_next` and `on` run on the bucket
+    too, around the real request; one planned and never reached fails the test. Access changes are refused, any other
+    `storage.Client` a GCS kit test builds fails. Fake-only: `signed_urls` and `clock=` (`@pytest.mark.gcs_fake_only("<why>")`,
+    checked by `tests/unit/support/test_gcs_fake_only_marks.py`; the same rule as `h1_only`).
+  - **Builder-based contracts** keep their drive fake where `kit_db` is H1 and take the real database otherwise: `mirror_db(kit_db)`
+    (`firestore_drive_mirror_fakes.py`: H1 does not evaluate a range on `__name__`) and `note_db(kit_db)` (`firestore_drive_note_fakes.py`:
+    the notes' `versions` subcollection and the server clock), with `on_the_fake(db)` in place of `eval_transactions()`.
   - **Converting a kit.** The fixture swap is one `test(mechanical): …` commit (no assertion changed); the `h1_only` marks are a separate
     commit; the PR body gives each kit's passed / skipped / failed counts on the test database. One kit by hand:
     `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly` (never `-p no:logging`: it

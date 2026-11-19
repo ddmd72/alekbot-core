@@ -10,12 +10,16 @@ Identity Federation in CI, the default credentials themselves; the email is chec
 datastore.indexAdmin on the test database only); the constructed client's database and project are the configured ones.
 
 The store kits run here too (`test_kits_cloud.py`): the bottom of this file collects each kit file of `KITS` and overrides
-`kit_db` with the real backend of `tests/support/kit_backend.py`, behind the same guards.
+`kit_db` with the real backend of `tests/support/kit_backend.py`, behind the same guards, and `kit_gcs` with the test
+bucket of `tests/support/gcs_kit_backend.py`, behind the bucket guards of `gcs_bucket` (each test under its own prefix of
+`kits/<run id>/`; without `TEST_GCS_BUCKET` the GCS kits skip).
 """
 import ast
 import importlib
 import os
 import time
+import uuid
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,21 +28,25 @@ from typing import Any, Callable, Dict, Iterator, List, Set
 import google.auth
 import pytest
 from dotenv import dotenv_values
-from google.api_core.exceptions import AlreadyExists
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition
 from google.auth import impersonated_credentials
-from google.cloud import firestore, firestore_admin_v1
+from google.cloud import firestore, firestore_admin_v1, storage
 
 from src.config.environment import EnvironmentConfig
 from tests.support.cloud_credentials import select_credentials
-from tests.support.cloud_indexes import admin_index, existing_key, of_group, wanted_key
+from tests.support.cloud_indexes import admin_index, existing_key, of_group, probe_query, wanted_key
 from tests.support.firestore_eval import EvalDb
-from tests.support.kit_backend import RealKitBackend, guard_clients
+from tests.support.gcs_fake import FakeGcs
+from tests.support.gcs_kit_backend import RealKitGcsBackend, run_prefix
+from tests.support.kit_backend import BuildingIndexRetry, RealKitBackend, guard_clients
 from tests.support.store_inventory import KITS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 INDEX_READY_TIMEOUT_S = 15 * 60
 INDEX_POLL_S = 10
+INDEX_SERVING_TIMEOUT_S = 10 * 60      # after READY: until a probe query stops answering "currently building"
+INDEX_SERVING_BACKOFF_S = (5, 60)      # first and longest wait between probes
 Index = firestore_admin_v1.Index
 
 
@@ -83,13 +91,37 @@ async def client(cloud: SimpleNamespace):  # type: ignore[no-untyped-def]
     db.close()      # synchronous in google-cloud-firestore 2.34
 
 
+@pytest.fixture(scope="module")
+def gcs_bucket(cloud):
+    bucket = _setting("TEST_GCS_BUCKET")
+    if not bucket:
+        pytest.skip("GCS parity not configured: TEST_GCS_BUCKET must be set")
+    if not bucket.endswith("-test"):
+        pytest.fail("guard: the test bucket name does not end in -test")
+    if bucket in {_setting("GCS_MEDIA_BUCKET"), _setting("GCS_WORKSPACE_BUCKET")}:
+        pytest.fail("guard: the test bucket is a live bucket")
+    client = storage.Client(project=cloud.project, credentials=cloud.credentials)
+    if client.project != cloud.project or \
+            getattr(client._credentials, "service_account_email", None) != _setting("TEST_SA_EMAIL"):
+        pytest.fail("guard: the constructed storage client does not use the test project and service account")
+    if not client.get_bucket(bucket).versioning_enabled:
+        pytest.fail("guard: the test bucket is not versioned (every scenario assumes versioning)")
+    return client, bucket
+
+
 # ------------------------------------------------------------------------------------------------ indexes
 
 @pytest.fixture(scope="module")
-def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]]], None]:
+def ensure_indexes(cloud: SimpleNamespace) -> Iterator[Callable[[str, List[Dict[str, Any]]], None]]:
     """`ensure(collection, indexes)`: create the missing indexes (in `config/firestore.indexes.json` shape) of a collection
-    on the test database and wait until all are READY. Created once and kept: the collection ids are fixed names."""
+    on the test database, wait until all are READY, then until each one serves its probe query (`probe_query`): a freshly
+    READY index can still refuse a query as "currently building" (seen on the test database 2026-11-18, first run of the
+    drive mirror and note groups), so that answer is retried with backoff for up to `INDEX_SERVING_TIMEOUT_S`; any other
+    answer ends the wait (the kit's own query then reports it). Created once and kept: the collection ids are fixed names."""
     admin = firestore_admin_v1.FirestoreAdminClient(credentials=cloud.credentials)
+    probe_db = firestore.Client(project=cloud.project, database=cloud.database, credentials=cloud.credentials)
+    if probe_db._database != cloud.database or probe_db.project != cloud.project:
+        pytest.fail("guard: the constructed probe client does not point at the test database and project")
     done: Set[str] = set()
     failed: Set[str] = set()
 
@@ -121,12 +153,40 @@ def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]
             if Index.State.NEEDS_REPAIR in wanted:
                 pytest.fail(f"an index of {collection} needs repair")
             if all(state == Index.State.READY for state in wanted):
-                return
+                break
             if time.monotonic() > deadline:
                 pytest.fail(f"the indexes of {collection} were not READY within {INDEX_READY_TIMEOUT_S // 60} minutes")
             time.sleep(INDEX_POLL_S)
+        for index in indexes:
+            _wait_serving(collection, index)
 
-    return ensure
+    def _wait_serving(collection: str, index: Dict[str, Any]) -> None:
+        query = probe_query(probe_db.collection(collection), index)
+        if query is None:
+            return
+        started = time.monotonic()
+        deadline = started + INDEX_SERVING_TIMEOUT_S
+        wait, longest = INDEX_SERVING_BACKOFF_S
+        refusals = 0
+        while True:
+            try:
+                query.get()
+                if refusals:      # visible in the run's warnings summary: the wait this seam exists for
+                    warnings.warn(f"an index of {collection} answered 'currently building' {refusals} time(s) after READY; "
+                                  f"it served after {time.monotonic() - started:.0f}s")
+                return
+            except FailedPrecondition as exc:
+                if "currently building" not in str(exc):
+                    return
+                if time.monotonic() > deadline:
+                    pytest.fail(f"an index of {collection} was READY but still building after "
+                                f"{INDEX_SERVING_TIMEOUT_S // 60} minutes")
+                refusals += 1
+            time.sleep(wait)
+            wait = min(wait * 2, longest)
+
+    yield ensure
+    probe_db.close()
 
 
 # ------------------------------------------------------------------------------------------------ store kits (P12)
@@ -140,10 +200,13 @@ def _kit_files() -> List[str]:
     return sorted({path for files in KITS.values() for path in files})
 
 
+SEAMS = ("kit_db", "kit_gcs")
+
+
 def _on_the_seam(path: Path) -> bool:
-    """The kit takes `kit_db` (a parameter of some function or fixture): it is converted to the backend seam."""
+    """The kit takes `kit_db` or `kit_gcs` (a parameter of some function or fixture): it is converted to the backend seam."""
     return any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and any(arg.arg == "kit_db" for arg in node.args.args + node.args.kwonlyargs)
+               and any(arg.arg in SEAMS for arg in node.args.args + node.args.kwonlyargs)
                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
 
 
@@ -165,7 +228,7 @@ class KitModule(pytest.Module):
 
     def collect(self) -> Any:
         if not _on_the_seam(REPO_ROOT / self.kit_file):
-            pytest.skip(f"{self.kit_file} does not take kit_db yet (not converted to the real backend)")
+            pytest.skip(f"{self.kit_file} does not take kit_db or kit_gcs yet (not converted to the real backend)")
         return super().collect()
 
 
@@ -184,17 +247,24 @@ def pytest_pycollect_makemodule(module_path: Path, parent: Any) -> Any:
     return None
 
 
+FAKE_ONLY_MARKS = ("h1_only", "gcs_fake_only")
+
+
 def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
-    """A kit test marked `h1_only` drives a hook only the fake has: skipped on the real backend."""
+    """A kit test marked `h1_only` (or `gcs_fake_only`) drives a hook only the fake has: skipped on the real backend."""
     for item in items:
-        mark = item.get_closest_marker("h1_only")
-        if mark is not None and item.getparent(KitModule) is not None:
-            item.add_marker(pytest.mark.skip(reason=f"h1_only: {mark.args[0] if mark.args else 'fake-only hook'}"))
+        if item.getparent(KitModule) is None:
+            continue
+        for name in FAKE_ONLY_MARKS:
+            mark = item.get_closest_marker(name)
+            if mark is not None:
+                item.add_marker(pytest.mark.skip(reason=f"{name}: {mark.args[0] if mark.args else 'fake-only hook'}"))
+                break
 
 
 def _fake_classes() -> tuple:
     from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb as DriveEvalDb
-    return (EvalDb, DriveEvalDb)
+    return (EvalDb, DriveEvalDb, FakeGcs)
 
 
 def _refuse_fakes(config: Any) -> None:
@@ -237,9 +307,31 @@ def kit_db(cloud: SimpleNamespace, client: Any, ensure_indexes: Callable[[str, L
     sync = firestore.Client(project=cloud.project, database=cloud.database, credentials=cloud.credentials)
     if sync._database != cloud.database or sync.project != cloud.project:
         pytest.fail("guard: the constructed sync client does not point at the test database and project")
+    client._firestore_api_internal = BuildingIndexRetry(client._firestore_api)    # "currently building" after READY
     backend = RealKitBackend(client, sync, ensure_indexes)
     yield backend
     try:
         backend.purge_touched()
     finally:
         sync.close()
+
+
+_GCS_PREFIXES = run_prefix(uuid.uuid4().hex[:8])
+
+
+def _refuse_storage_client(*_a: Any, **_k: Any) -> None:
+    pytest.fail("guard: a GCS kit test built a storage client of its own; take the client of kit_gcs (client() or "
+                "install(monkeypatch))")
+
+
+@pytest.fixture
+def kit_gcs(gcs_bucket: Any, monkeypatch: Any) -> Any:
+    """The GCS kits' backend on the test bucket (tests/support/gcs_kit_backend.py): one fresh prefix per test, erased before
+    first use and after the test. Any other `storage.Client(...)` built during the test fails (a client of the default
+    credentials would write to whatever bucket name the kit declares); `install(monkeypatch)` replaces it with the
+    backend's client."""
+    client, bucket = gcs_bucket
+    monkeypatch.setattr(storage, "Client", _refuse_storage_client)
+    backend = RealKitGcsBackend(client, bucket, next(_GCS_PREFIXES))
+    yield backend
+    backend.teardown()
