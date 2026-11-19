@@ -12,7 +12,8 @@ The grounded loop's pause_turn continuation runs offline too: its second request
 `NOT_REACHABLE` entry) and is checked against the request contract.
 
 Meta-tests: an unknown field and a wrong-typed field fail at the top level and at depth, in a message and in an event;
-every kept top-level field, union variant and ALLOWED gap of both responses is exercised (a dead keep-list entry fails).
+every kept top-level field and union variant of both responses is exercised (a dead keep-list entry fails), and every
+ALLOWED gap is carried by a sample or, for the stream, a committed recording.
 """
 from __future__ import annotations
 
@@ -32,7 +33,9 @@ from src.domain.llm import FinishReason
 from src.ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart
 from tests.contracts.openapi_contract import assert_request, assert_response, assert_stream
 from tests.unit.contracts import claude_response_samples as cs
+from tests.unit.contracts.allowed_gaps import carries
 from tests.unit.contracts.claude_response_samples import SAMPLES, events, sse
+from tests.unit.contracts.recorded_exchanges import EXCHANGES, provider_of, recording
 
 OPERATION = PROVIDERS["anthropic"].operations[0]
 MESSAGE, STREAM = OPERATION.responses
@@ -159,9 +162,11 @@ def test_the_grounded_loop_continues_a_paused_turn_in_its_container():
 # P17-D1: the SDK's stream accumulator builds every block of content_block_start with `model_dump()` (not
 # exclude_unset; anthropic/lib/streaming/_messages.py accumulate_event), so a tool_use or server_tool_use block whose
 # start event has no `caller` gets `caller: None` set, and replaying the block (raw_content, the pause_turn
-# continuation) sends `"caller": null`. The request contract (the SDK's request types) has no null there. Whether the
-# API accepts null is settled by a recording (`make contract-record PROVIDER=anthropic`, scenarios
-# replay_thinking_and_tool_use and grounding_dynamic_container): accepted -> an ALLOWED gap; refused -> an adapter fix.
+# continuation) sends `"caller": null`. The recordings settled it for `server_tool_use` only (replay_server_tool_blocks:
+# null sent, answered 200), now an ALLOWED gap narrowed to that block. On the real wire a `tool_use` and a server-tool
+# result block arrive with `caller: {type: direct}` (replay_thinking_and_tool_use, replay_server_tool_blocks), so no
+# recording shows null there and the contract keeps refusing it; these samples' start events carry no caller, which is
+# why the cases below still fail, on those blocks alone.
 _P17_D1 = pytest.mark.xfail(strict=True, raises=AssertionError,
                             reason="P17-D1: a replayed tool block carries caller: null, absent from the request contract")
 
@@ -219,10 +224,15 @@ def test_the_replayed_tool_block_carries_caller_null_p17_d1():
 
 # ----------------------------------------------------------------------------------------- unknown and wrong fields
 def _violations(body, media: str = "application/json") -> list[str]:
+    """The violations `assert_response` lists ([] when it passes). Any other failure (an operation not found, no
+    response for the status or media type) propagates: read as [], it would make a test asserting [] pass vacuously."""
     try:
         assert_response("anthropic", "POST", PATH, 200, body, media=media)
     except AssertionError as failure:
-        return str(failure).splitlines()[1:]
+        head, *violations = str(failure).splitlines()
+        if not head.endswith(" breaks the contract:") or not violations:
+            raise
+        return violations
     return []
 
 
@@ -335,9 +345,17 @@ def test_every_kept_variant_of_the_stream_is_in_a_sample_stream(path):
     assert sorted(set(STREAM.variants[path]) - used) == []
 
 
-def test_every_response_allowed_gap_is_in_a_sample_stream():
-    for allowed in STREAM.allowed + MESSAGE.allowed:
-        assert allowed.path == "" and allowed.value in {_tag(d) for d in _all_events()}, allowed
+def test_every_response_allowed_gap_is_in_a_sample_or_a_recording():
+    """A gap is evidenced by a body that carries it where the contract puts it. A stream gap: an event of a sample's
+    stream or of a committed recording (the provider's real stream; `recorded_exchanges.py`). A message gap: a sample
+    (the recordings hold streams only). A gap nothing carries is dead: the provider no longer sends it."""
+    recorded = [e["data"] for p, n in EXCHANGES if provider_of(p) == "anthropic"
+                for e in recording(p)["exchanges"][n]["response"]["events"]]
+    assert recorded, "no Anthropic recording: the recorded half of the evidence is missing"
+    stream_events = [*_all_events(), *recorded]
+    dead = [a for a in STREAM.allowed if not any(carries(a, d) for d in stream_events)]
+    dead += [a for a in MESSAGE.allowed if not any(carries(a, body) for body in SAMPLES.values())]
+    assert not dead, f"ALLOWED response gaps no sample or recording carries: {dead}"
 
 
 def test_the_not_exercised_list_names_only_kept_variant_paths():

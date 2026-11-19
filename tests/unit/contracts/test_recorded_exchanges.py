@@ -12,20 +12,21 @@ written by `make contract-record` (`scripts/contracts/record.py`). For each one:
 4. no recorded request reaches a request-side `NOT_REACHABLE` entry that is still listed.
 The replay through the real adapter and SDK is `test_recorded_exchanges_replay.py`.
 
-Open defects are strict xfails with their id (TEST_COVERAGE_SYSTEMIC_RFC "Built (P17 recordings replay)"): P17-D1 (a
-replayed block carries `caller: null`, which the request contract lacks), P17-D2 and P17-D3 (the Anthropic and OpenAI
-responses carry fields their response contracts lack). A pin per defect keeps a new violation from hiding behind one.
+The recordings settled what they were recorded for (TEST_COVERAGE_SYSTEMIC_RFC "Built (P17 recordings replay)"): the
+response fields the contracts lacked are ALLOWED gaps, and so is P17-D1, the `caller: null` a replayed `server_tool_use`
+block carries, which the provider answered 200. Its evidence stays pinned below; the meta-tests of the conformance files
+refuse a gap no sample, shape or recording carries.
 """
 from __future__ import annotations
 
 import datetime as _dt
-import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from scripts.contracts import record as rec
+from scripts.contracts.extract_subset import PROVIDERS
 from tests.contracts.openapi_contract import assert_request, assert_response, assert_stream
 from tests.unit.contracts.claude_request_shapes import NOT_REACHABLE
 from tests.unit.contracts.recorded_exchanges import EXCHANGES, RECORDINGS, provider_of, recording
@@ -33,22 +34,19 @@ from tests.unit.contracts.recorded_exchanges import recording_id as _id
 
 META_KEYS = ("provider", "operation", "scenario", "source", "recorded_at", "regenerate", "outcome")
 
-_P17_D1 = pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="P17-D1: a replayed tool block carries caller: null, absent from the request contract")
-# The response fields the recordings carry and the response contracts lack (the violation, its event prefix removed).
-RESPONSE_GAPS = {
-    "anthropic": ("P17-D2", {"$.message.diagnostics: unknown field", "$.message.usage.speed: unknown field",
-                             "$.content_block.content.abort_reason: unknown field"}),
-    "openai": ("P17-D3", {"$.billing: unknown field", "$.frequency_penalty: unknown field",
-                          "$.presence_penalty: unknown field", "$.store: unknown field"}),
-}
+# P17-D1's ALLOWED gap: the null caller of a replayed block, narrowed to one block type.
+(NULL_CALLER,) = [a for a in PROVIDERS["anthropic"].operations[0].allowed
+                  if a.null and a.path == "messages[].content[].caller"]
 
 
-def _has_null_caller(node: Any) -> bool:
+def _null_caller_blocks(node: Any) -> list[dict]:
+    """Every object in `node` that carries `caller: null`."""
     if isinstance(node, dict):
-        return ("caller" in node and node["caller"] is None) or any(_has_null_caller(v) for v in node.values())
-    return isinstance(node, list) and any(_has_null_caller(v) for v in node)
+        own = [node] if "caller" in node and node["caller"] is None else []
+        return own + [b for v in node.values() for b in _null_caller_blocks(v)]
+    if isinstance(node, list):
+        return [b for v in node for b in _null_caller_blocks(v)]
+    return []
 
 
 # ------------------------------------------------------------------------------------------------------------ format
@@ -82,25 +80,21 @@ def _request_problems(path: Path, n: int) -> None:
     assert_request(provider_of(path), request["method"], request["path"], request["headers"], request["body"], query={})
 
 
-@pytest.mark.parametrize("path, n", [
-    pytest.param(p, n, id=f"{_id(p)}#{n}",
-                 marks=[_P17_D1] if _has_null_caller(recording(p)["exchanges"][n]["request"]["body"]) else [])
-    for p, n in EXCHANGES])
+@pytest.mark.parametrize("path, n", [pytest.param(p, n, id=f"{_id(p)}#{n}") for p, n in EXCHANGES])
 def test_every_recorded_request_conforms_to_the_request_contract(path, n):
     _request_problems(path, n)
 
 
-def test_a_null_caller_is_the_only_violation_of_a_recorded_request_p17_d1():
-    """Pins P17-D1's evidence: the requests that carry `caller: null` break the contract by it alone, and the provider
-    answered them 200 (it accepted the null)."""
-    cases = [(p, n) for p, n in EXCHANGES if _has_null_caller(recording(p)["exchanges"][n]["request"]["body"])]
+def test_a_recorded_null_caller_is_on_the_allowed_block_type_and_was_answered_200_p17_d1():
+    """Pins the evidence of P17-D1's ALLOWED gap: a recorded request carries `caller: null` only on the block type the
+    gap is narrowed to, and the provider answered every such request 200 (it accepted the null)."""
+    cases = [(p, n) for p, n in EXCHANGES if _null_caller_blocks(recording(p)["exchanges"][n]["request"]["body"])]
+    assert cases, "no recording sends caller: null: the evidence of P17-D1's ALLOWED gap is gone"
     for path, n in cases:
-        with pytest.raises(AssertionError) as failure:
-            _request_problems(path, n)
-        lines = str(failure.value).splitlines()
-        assert lines[0].endswith("breaks the contract:") and lines[1:]
-        assert all(re.fullmatch(r"\$\..*\.caller: wrong type .*", line) for line in lines[1:]), lines
-        assert recording(path)["exchanges"][n]["response"]["status"] == 200
+        exchange = recording(path)["exchanges"][n]
+        assert {b.get("type") for b in _null_caller_blocks(exchange["request"]["body"])} == {NULL_CALLER.variant}, (
+            _id(path), n)
+        assert exchange["response"]["status"] == 200, (_id(path), n)
 
 
 # -------------------------------------------------------------------------------------------- the response contract
@@ -113,29 +107,9 @@ def _check_response(path: Path, n: int) -> None:
         assert_response(provider, request["method"], request["path"], response["status"], response["body"])
 
 
-def _gap_mark(path: Path) -> pytest.MarkDecorator:
-    defect, gaps = RESPONSE_GAPS[provider_of(path)]
-    return pytest.mark.xfail(
-        strict=True, raises=AssertionError,
-        reason=f"{defect}: the recorded response carries fields the contract lacks: {sorted(gaps)}")
-
-
-@pytest.mark.parametrize("path, n", [pytest.param(p, n, id=f"{_id(p)}#{n}", marks=[_gap_mark(p)])
-                                     for p, n in EXCHANGES])
+@pytest.mark.parametrize("path, n", [pytest.param(p, n, id=f"{_id(p)}#{n}") for p, n in EXCHANGES])
 def test_every_recorded_response_conforms_to_the_response_contract(path, n):
     _check_response(path, n)
-
-
-@pytest.mark.parametrize("path, n", [pytest.param(p, n, id=f"{_id(p)}#{n}") for p, n in EXCHANGES])
-def test_a_recorded_response_breaks_the_contract_only_by_the_known_gaps_p17_d2_d3(path, n):
-    try:
-        _check_response(path, n)
-        return
-    except AssertionError as failure:
-        lines = str(failure).splitlines()
-    assert lines[0].endswith("breaks the contract:"), lines[0]
-    found = {re.sub(r"^event\[\d+\] ", "", line) for line in lines[1:]}
-    assert found <= RESPONSE_GAPS[provider_of(path)][1], sorted(found - RESPONSE_GAPS[provider_of(path)][1])
 
 
 def test_no_recorded_request_reaches_a_not_reachable_entry():
