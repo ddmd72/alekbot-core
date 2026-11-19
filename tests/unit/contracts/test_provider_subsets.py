@@ -98,7 +98,8 @@ def test_every_table_operation_is_in_the_subset(provider):
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_every_allowed_entry_has_a_reason_and_is_in_the_subset(provider):
     extensions = _values(_doc(provider), "x-alek-extension", [])
-    allowed = [a for op in es.PROVIDERS[provider].operations for a in op.allowed]
+    allowed = [a for op in es.PROVIDERS[provider].operations
+               for a in (*op.allowed, *(a for r in op.responses for a in r.allowed))]
     for a in allowed:
         assert a.reason.strip() and a.date, a
         assert es._note(a) in extensions, a
@@ -131,6 +132,10 @@ FREE_FORM = {
         "/components/schemas/ServerToolUseBlockParam/properties/input":
             "a server_tool_use block's input: the model's own JSON arguments",
         "/components/schemas/ToolParam/properties/input_examples/items": "ToolParam.input_examples: example JSON arguments",
+        "/components/schemas/ToolUseBlock/properties/input":
+            "a response tool_use block's input: the model's own JSON arguments",
+        "/components/schemas/ServerToolUseBlock/properties/input":
+            "a response server_tool_use block's input: the model's own JSON arguments",
     },
 }
 
