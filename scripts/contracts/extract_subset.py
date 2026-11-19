@@ -13,7 +13,12 @@ What a subset holds, per operation in `PROVIDERS`:
 - `Operation.allowed`: what our adapter sends although the source lacks it (or marks it deprecated), each injected with
   `x-alek-extension: <reason> (<date>)`. The run refuses to write when the source now has an allowed item: the entry is
   stale and must be removed.
-Transforms (named in the file's `x-transforms`): see `_TRANSFORMS`.
+- `Operation.raw_body`: a request body that is not JSON (an upload's bytes) is kept with its media type and not validated.
+- `Provider.aliases`: the subset's `x-alek-aliases`, the path rewrites `tests/contracts/openapi_contract.py` applies before
+  the lookup (Microsoft Graph's `/me/drive/...` and colon addressing name operations the spec writes only as
+  `/drives/{drive-id}/items/...`). Every alias target must name an operation of the subset.
+Transforms (named in the file's `x-transforms`): see `_TRANSFORMS`; an OData source (`Provider.odata`) adds
+`_ODATA_TRANSFORMS`, applied to its spec before anything is built.
 
 Parameters: every path parameter of a kept operation, the query parameters in `Operation.query` and the headers in
 `Operation.headers`; nothing else. An operation without `fields` sends no body (a GET).
@@ -22,9 +27,10 @@ Sources: an OpenAPI spec on GitHub pinned by commit (`Provider.repo`), a Google 
 same way (`Provider.discovery`, converted to OpenAPI by `discovery_document`), or a Stainless SDK's generated request
 types (`Provider.sdk`, pinned by the installed version; Anthropic publishes no reachable spec).
 
-Usage (make contract-extract PROVIDER=openai|anthropic|gmail [REF=<sha>]):
+Usage (make contract-extract PROVIDER=openai|anthropic|gmail|graph [REF=<sha>]):
     python -m scripts.contracts.extract_subset --provider openai [--ref <sha>]   # no ref: the default branch's head
     python -m scripts.contracts.extract_subset --provider gmail [--ref <sha>]    # a discovery document, same pinning
+    python -m scripts.contracts.extract_subset --provider graph [--ref <sha>]    # 45 MB of YAML: ~20 s, ~1 GB
     python -m scripts.contracts.extract_subset --provider anthropic              # the installed SDK
 """
 from __future__ import annotations
@@ -58,10 +64,10 @@ MAX_BYTES = 100_000
 class Allowed:
     """Something our adapter sends that the source lacks or marks deprecated. Exactly one of three kinds:
     `value` (an enum literal, or the `type` of a union variant, at `path`), `field` + `schema` (a field the object at
-    `path` lacks), `field` alone (a field of the object at `path` the source marks deprecated, which we keep
-    sending)."""
+    `path` lacks; at path "query": a query parameter the operation lacks), `field` alone (a field of the object at
+    `path` the source marks deprecated, which we keep sending)."""
 
-    path: str                                  # body path ("" = the body) or "header:<name>"
+    path: str                                  # body path ("" = the body), "header:<name>" or "query"
     reason: str                                # the fact: what we send, where, why the source lacks it
     date: str                                  # when the gap was verified, YYYY-MM-DD
     value: str | None = None
@@ -84,6 +90,19 @@ class Operation:
     headers: Mapping[str, str] = field(default_factory=dict)        # SDK source: header -> Literal type "module:Name"
     header_aliases: Mapping[str, str] = field(default_factory=dict)  # SDK source: body field -> its header alias
     query: tuple[str, ...] = ()                         # the query parameters we send (path parameters: all kept)
+    raw_body: str = ""                                  # a non-JSON body's media type (kept, never validated)
+
+
+@dataclass(frozen=True)
+class Alias:
+    """A path rewrite applied before the operation lookup: a request path matching `pattern` is looked up as `target`.
+    Both are written like contract paths: `{name}` is one path segment's text (or part of one); a trailing `/**` is
+    the rest of the path, carried over. A `{name}` of the target the pattern does not capture gets a placeholder
+    value. Rules apply in order, the first match wins (`tests/contracts/openapi_contract.py` applies them)."""
+
+    pattern: str
+    target: str
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -98,11 +117,41 @@ class Provider:
     discovery: bool = False   # `spec_file` is a Google discovery document: its kept methods become OpenAPI operations
     sdk: str = ""             # "anthropic": the installed package and its version
     server: str = ""          # the base URL operation paths are relative to (an SDK source has no `servers`)
+    odata: bool = False       # an OData-generated spec (Microsoft Graph): `_ODATA_TRANSFORMS` apply first
+    aliases: tuple[Alias, ...] = ()
 
 
 _OPENAI_ADAPTER = "src/adapters/openai_adapter.py"
 _CLAUDE_ADAPTER = "src/adapters/claude_adapter.py"
 _GMAIL_PATH = "/gmail/v1/users/{userId}/messages"
+_TODO_LISTS = "/me/todo/lists"
+_TODO_LIST = _TODO_LISTS + "/{todoTaskList-id}"
+_TODO_TASKS = _TODO_LIST + "/tasks"
+_TODO_TASK = _TODO_TASKS + "/{todoTask-id}"
+_TODO_CHECKLIST = _TODO_TASK + "/checklistItems"
+_DRIVE_ITEM = "/drives/{drive-id}/items/{driveItem-id}"
+_ONEDRIVE_ADAPTER = "src/adapters/microsoft/onedrive_adapter.py"
+_DRIVEITEM_DOC = "https://learn.microsoft.com/en-us/graph/api/resources/driveitem"
+# The instance annotation @microsoft.graph.conflictBehavior: documented, absent from the OData-generated spec everywhere
+_CONFLICT = {"type": "string", "enum": ["fail", "rename", "replace"]}
+_CONFLICT_QUERY_REASON = (
+    f"the conflict behaviour of a simple upload by name, a URL parameter documented at {_DRIVEITEM_DOC} (instance "
+    f"attributes; microsoft-graph-docs-contrib api-reference/v1.0/resources/driveitem.md:148,153), absent from the spec "
+    f"({_ONEDRIVE_ADAPTER} upload)")
+_CONFLICT_BODY_REASON = (
+    "the instance annotation of a new folder, documented at https://learn.microsoft.com/en-us/graph/api/"
+    "driveitem-post-children (microsoft-graph-docs-contrib driveitem-post-children.md:59,72), absent from the spec "
+    f"({_ONEDRIVE_ADAPTER} create_folder)")
+_CONFLICT_SESSION_REASON = (
+    "the instance annotation of an upload session's item, documented at https://learn.microsoft.com/en-us/graph/api/"
+    "driveitem-createuploadsession (microsoft-graph-docs-contrib driveitem-createuploadsession.md:80), absent from "
+    f"the spec ({_ONEDRIVE_ADAPTER} upload, replace_content)")
+# The documented sizes: small, medium, large and the custom c{width}x{height} with an optional _crop
+_THUMBNAIL_SIZE = {"type": "string", "pattern": "^(small|medium|large|c[1-9][0-9]*x[1-9][0-9]*(_crop)?)$"}
+_THUMBNAIL_SELECT_REASON = (
+    "the unprefixed select naming one thumbnail size (/thumbnails?select=c300x400_crop), documented at "
+    "https://learn.microsoft.com/en-us/graph/api/driveitem-list-thumbnails (microsoft-graph-docs-contrib "
+    f"driveitem-list-thumbnails.md:121,376); the spec declares only $select ({_ONEDRIVE_ADAPTER} get_thumbnail)")
 
 PROVIDERS: dict[str, Provider] = {
     "openai": Provider(
@@ -185,6 +234,72 @@ PROVIDERS: dict[str, Provider] = {
             Operation(method="get", path=_GMAIL_PATH + "/{messageId}/attachments/{id}", fields=()),
         ),
     ),
+    "graph": Provider(
+        name="graph", repo="microsoftgraph/msgraph-metadata", spec_file="openapi/v1.0/openapi.yaml", odata=True,
+        operations=(
+            # MicrosoftToDoAdapter (src/adapters/microsoft/todo_adapter.py)
+            Operation(method="get", path=_TODO_LISTS, fields=()),                         # list_task_lists
+            Operation(method="post", path=_TODO_LISTS, fields=("displayName",)),          # ensure_primary_list
+            Operation(method="get", path=_TODO_LIST, fields=()),                          # the list's name
+            Operation(method="get", path=_TODO_TASKS, fields=(), query=("$filter",)),     # list_tasks
+            Operation(method="post", path=_TODO_TASKS, fields=(                           # create_task
+                "body", "categories", "checklistItems", "dueDateTime", "importance", "isReminderOn",
+                "linkedResources", "recurrence", "reminderDateTime", "startDateTime", "title")),
+            Operation(method="get", path=_TODO_TASK, fields=()),                          # get_task
+            Operation(method="patch", path=_TODO_TASK, fields=(                           # update_task
+                "body", "categories", "dueDateTime", "importance", "isReminderOn", "recurrence", "reminderDateTime",
+                "startDateTime", "status", "title")),
+            Operation(method="delete", path=_TODO_TASK, fields=()),                       # delete_task
+            Operation(method="get", path=_TODO_CHECKLIST, fields=()),                     # _sync_checklist
+            Operation(method="post", path=_TODO_CHECKLIST, fields=("displayName", "isChecked")),
+            Operation(method="patch", path=_TODO_CHECKLIST + "/{checklistItem-id}", fields=("displayName", "isChecked")),
+            Operation(method="delete", path=_TODO_CHECKLIST + "/{checklistItem-id}", fields=()),
+            Operation(method="post", path="/subscriptions", fields=(                      # register_subscription
+                "changeType", "clientState", "expirationDateTime", "notificationUrl", "resource")),
+            Operation(method="patch", path="/subscriptions/{subscription-id}", fields=("expirationDateTime",)),
+            Operation(method="delete", path="/subscriptions/{subscription-id}", fields=()),
+            # MicrosoftOAuthProvider.exchange (src/adapters/microsoft/microsoft_oauth_provider.py): the account identity
+            Operation(method="get", path="/me", fields=()),
+            # OneDriveAdapter (src/adapters/microsoft/onedrive_adapter.py); the adapter's /me/drive/... paths reach
+            # these through the aliases below
+            Operation(method="get", path="/drives/{drive-id}/special/{driveItem-id}", fields=()),   # the App Folder
+            Operation(method="get", path=_DRIVE_ITEM, fields=()),                         # get_item, download, ...
+            Operation(method="patch", path=_DRIVE_ITEM, fields=("name", "parentReference")),         # move
+            Operation(method="delete", path=_DRIVE_ITEM, fields=()),                      # delete
+            Operation(method="get", path=_DRIVE_ITEM + "/children", fields=(), query=("$top",)),     # list_children
+            Operation(method="post", path=_DRIVE_ITEM + "/children",                      # create_folder
+                      fields=("@microsoft.graph.conflictBehavior", "folder", "name"),
+                      allowed=(Allowed(path="", field="@microsoft.graph.conflictBehavior", schema=_CONFLICT,
+                                       date="2026-11-19", reason=_CONFLICT_BODY_REASON),)),
+            Operation(method="get", path=_DRIVE_ITEM + "/thumbnails", fields=(),          # get_thumbnail
+                      allowed=(Allowed(path="query", field="select", schema=_THUMBNAIL_SIZE, date="2026-11-19",
+                                       reason=_THUMBNAIL_SELECT_REASON),)),
+            Operation(method="put", path=_DRIVE_ITEM + "/content", fields=(),             # upload, replace_content
+                      raw_body="application/octet-stream",
+                      allowed=(Allowed(path="query", field="@microsoft.graph.conflictBehavior", schema=_CONFLICT,
+                                       date="2026-11-19", reason=_CONFLICT_QUERY_REASON),)),
+            Operation(method="post", path=_DRIVE_ITEM + "/createUploadSession", fields=("item",),   # large uploads
+                      allowed=(Allowed(path="item", field="@microsoft.graph.conflictBehavior", schema=_CONFLICT,
+                                       date="2026-11-19", reason=_CONFLICT_SESSION_REASON),)),
+            Operation(method="get", path=_DRIVE_ITEM + "/delta()", fields=(), query=("$top",)),     # get_changes
+            Operation(method="get", path=_DRIVE_ITEM + "/search(q='{q}')", fields=(), query=("$top",)),   # search
+        ),
+        aliases=(
+            Alias("/me/drive/items/{driveItem-id}:/{path}:/**", _DRIVE_ITEM + "/**",
+                  "colon addressing: the item at <path> under item <driveItem-id> is an item, so an operation on it "
+                  "(/content, /createUploadSession) is the item's operation"),
+            Alias("/me/drive/items/{driveItem-id}:/{path}:", _DRIVE_ITEM,
+                  "colon addressing: the item at <path> under item <driveItem-id> is an item"),
+            Alias("/me/drive/special/approot/delta", _DRIVE_ITEM + "/delta()",
+                  "the App Folder (the one special folder the adapter uses) is an item; the adapter writes the "
+                  "function without parentheses, which Graph accepts, the spec writes delta()"),
+            Alias("/me/drive/special/approot/search(q='{q}')", _DRIVE_ITEM + "/search(q='{q}')",
+                  "the App Folder (the one special folder the adapter uses) is an item"),
+            Alias("/me/drive/special/approot", "/drives/{drive-id}/special/{driveItem-id}",
+                  "/me/drive is the signed-in user's drive; approot is the one special folder the adapter uses"),
+            Alias("/me/drive/items/**", "/drives/{drive-id}/items/**", "/me/drive is the signed-in user's drive"),
+        ),
+    ),
 }
 
 _TRANSFORMS = (
@@ -215,6 +330,29 @@ _DISCOVERY_TRANSFORMS = (
 _PARAMETER_TRANSFORM = (
     "prune-parameters: every path parameter, only the listed query parameters and headers; $refs inlined, "
     "documentation keys dropped"
+)
+_ODATA_TRANSFORMS = (
+    "odata-strip: discriminator and x-ms-* keys dropped from the source before anything is built (entity's "
+    "discriminator maps every type; the x-ms-* keys are generator annotations)",
+    "odata-type-dropped: the @odata.type property and its required entry dropped from every schema (every complex "
+    "type requires it; a client sends it only to name a derived type, and we never do: sending it fails as unknown)",
+    "odata-integers: {type: number, format: int16|int32|int64} becomes {type: integer} (bounds kept): OData's whole "
+    "numbers, which a fraction must fail",
+    "odata-key-segments: a key path parameter (drive-id, *-id) takes no ':' (pattern ^[^:]+$): a colon in a segment "
+    "is OData's path addressing, never part of a key",
+    "odata-string-literals: a path parameter inside an OData string literal ('{name}') has every quote doubled "
+    "(pattern ^([^']|'')*$)",
+    "nullable-to-3.1: OpenAPI 3.0 nullable becomes JSON Schema 2020-12: {type: T, nullable: true} -> {type: [T, null]} "
+    "(null added to an enum), and the null member of a nullable reference, anyOf [{$ref}, {type: object, nullable: "
+    "true}], becomes {type: null}",
+)
+_RAW_BODY_TRANSFORM = (
+    "raw-body: a request body that is not JSON (Operation.raw_body, e.g. application/octet-stream) is kept with its "
+    "media type and schema as declared; its bytes are not validated"
+)
+_ALIAS_TRANSFORM = (
+    "aliases: x-alek-aliases rewrites a request path (in order, first match) to the contract path it is looked up "
+    "under; every target names a kept operation"
 )
 
 
@@ -249,11 +387,12 @@ def _join(path: str, step: str) -> str:
 class _Builder:
     """Materialises one operation's body schema from a source spec: path-dependent pruning, refs kept as components."""
 
-    def __init__(self, spec: dict, op: Operation):
+    def __init__(self, spec: dict, op: Operation, registry: tuple[dict, dict] | None = None):
+        """`registry` (components, names) is shared by the operations of one subset: a component pruned or closed
+        differently by two operations gets two names (`<name>`, `<name>_2`), the same one is kept once."""
         self.spec = spec
         self.op = op
-        self.components: dict[str, Any] = {}
-        self._names: dict[tuple[str, str], str] = {}
+        self.components, self._names = registry if registry is not None else ({}, {})
         self._stack: list[str] = []
         self.reached: set[str] = set()
         self._found: dict[str, set[str]] = {}
@@ -339,7 +478,7 @@ class _Builder:
     def body(self, node: Any) -> Any:
         self._check_paths()
         root = self.build(node, "")
-        body_allowed = (a.path for a in self.op.allowed if not a.path.startswith("header:"))
+        body_allowed = (a.path for a in self.op.allowed if _is_body_path(a.path))
         missing = sorted({*self.op.variants, *self.op.open, *body_allowed} - self.reached)
         if missing:
             raise ValueError(f"paths never reached (typo, or the source moved them): {missing}")
@@ -351,6 +490,8 @@ class _Builder:
 
     def _check_paths(self) -> None:
         for path in [*self.op.variants, *self.op.open, *(a.path for a in self.op.allowed)]:
+            if path == "query":
+                continue
             if path.startswith("header:"):
                 if path[len("header:"):] not in self.op.headers:
                     raise ValueError(f"allowed header {path!r} is not a declared header")
@@ -515,6 +656,10 @@ def _note(a: Allowed) -> str:
     return f"{a.reason} ({a.date})"
 
 
+def _is_body_path(path: str) -> bool:
+    return path != "query" and not path.startswith("header:")
+
+
 def _check_allowed_kinds(op: Operation) -> None:
     for a in op.allowed:
         if not a.reason.strip() or not a.date:
@@ -523,6 +668,8 @@ def _check_allowed_kinds(op: Operation) -> None:
             raise ValueError(f"ALLOWED at {a.path!r}: exactly one of value / field")
         if a.path.startswith("header:") and a.value is None:
             raise ValueError(f"ALLOWED at {a.path!r}: a header allows values only")
+        if a.path == "query" and (a.field is None or a.schema is None):
+            raise ValueError("ALLOWED at 'query': a query parameter needs a field (its name) and a schema")
 
 
 def _header_parameter(name: str, literals: list[str], op: Operation) -> dict:
@@ -596,6 +743,15 @@ def _parameters(spec: dict, item: dict, source_op: dict, op: Operation) -> list[
             kept.append(param)
         elif where == "path" or where == "query" and name in op.query:
             kept.append(normalize(_plain(_inline(spec, param))))
+    extra = [a for a in op.allowed if a.path == "query"]
+    for a in extra:
+        if ("query", a.field) in declared:
+            raise ValueError(f"stale ALLOWED query parameter {a.field!r} of {op.method} {op.path}: the source now "
+                             f"declares it; remove the entry")
+        kept.append({"name": a.field, "in": "query", "required": False, "schema": _plain(dict(a.schema or {})),
+                     "x-alek-extension": _note(a)})
+    if extra:
+        kept.sort(key=lambda p: (str(p.get("in")), str(p.get("name"))))
     return kept
 
 
@@ -604,7 +760,8 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
     """The subset document of `provider` from `spec` (an OpenAPI document; an SDK or discovery source is converted to
     one first)."""
     paths: dict[str, Any] = {}
-    components: dict[str, Any] = {}
+    registry: tuple[dict, dict] = ({}, {})
+    components = registry[0]
     for op in provider.operations:
         _check_allowed_kinds(op)
         item = (spec.get("paths") or {}).get(op.path) or {}
@@ -612,21 +769,28 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
         if source_op is None:
             raise ValueError(f"operation {op.method} {op.path} absent from the source")
         built_op: dict[str, Any] = {}
+        if op.fields and op.raw_body:
+            raise ValueError(f"{op.method} {op.path}: body fields and a raw body are exclusive")
         if op.fields:
             media = ((source_op.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
             if "schema" not in media:
                 raise ValueError(f"{op.method} {op.path}: no application/json request body")
-            builder = _Builder(spec, op)
-            body = builder.body(media["schema"])
-            for name, schema in builder.components.items():
-                if name in components and _canon(components[name]) != _canon(schema):
-                    raise ValueError(f"component {name} differs between operations")
-                components[name] = schema
+            body = _Builder(spec, op, registry).body(media["schema"])
             built_op["requestBody"] = {"required": True, "content": {"application/json": {"schema": body}}}
+        elif op.raw_body:
+            media = ((source_op.get("requestBody") or {}).get("content") or {}).get(op.raw_body) or {}
+            if "schema" not in media:
+                raise ValueError(f"{op.method} {op.path}: no {op.raw_body} request body")
+            if op.variants or op.open or any(_is_body_path(a.path) for a in op.allowed):
+                raise ValueError(f"{op.method} {op.path}: body paths on an operation with a raw body")
+            built_op["requestBody"] = {
+                "required": bool((source_op.get("requestBody") or {}).get("required")),
+                "content": {op.raw_body: {"schema": normalize(_plain(_inline(spec, media["schema"])))}},
+            }
         else:
             if (source_op.get("requestBody") or {}).get("required"):
                 raise ValueError(f"{op.method} {op.path}: the source requires a request body; list its fields")
-            if op.variants or op.open or any(not a.path.startswith("header:") for a in op.allowed):
+            if op.variants or op.open or any(_is_body_path(a.path) for a in op.allowed):
                 raise ValueError(f"{op.method} {op.path}: body paths on an operation without body fields")
         if source_op.get("operationId"):
             built_op["operationId"] = source_op["operationId"]
@@ -638,6 +802,11 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
     if any(p.get("in") in ("path", "query") for item in paths.values() for o in item.values()
            for p in o.get("parameters") or []):
         transforms = transforms + (_PARAMETER_TRANSFORM,)
+    if any(op.raw_body for op in provider.operations):
+        transforms = transforms + (_RAW_BODY_TRANSFORM,)
+    if provider.aliases:
+        _check_aliases(provider.aliases, paths)
+        transforms = transforms + (_ALIAS_TRANSFORM,)
     servers = spec.get("servers") or ([{"url": provider.server}] if provider.server else [])
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
@@ -647,12 +816,124 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
     }
     if servers:
         doc["servers"] = [{"url": s["url"]} for s in servers]
+    if provider.aliases:
+        doc["x-alek-aliases"] = [{"pattern": a.pattern, "target": a.target, "reason": a.reason}
+                                 for a in provider.aliases]
     return doc
+
+
+def _check_aliases(aliases: tuple[Alias, ...], paths: dict) -> None:
+    """Every alias has a reason and a target that names a kept operation (a `/**` target: some kept path under it)."""
+    for a in aliases:
+        if not a.reason.strip():
+            raise ValueError(f"alias {a.pattern!r} without a reason")
+        if a.pattern.endswith("/**") != a.target.endswith("/**"):
+            raise ValueError(f"alias {a.pattern!r} -> {a.target!r}: both or neither end in /**")
+        if a.target.endswith("/**"):
+            prefix = a.target[:-2]
+            if not any(path.startswith(prefix) for path in paths):
+                raise ValueError(f"alias target {a.target!r}: no kept operation under it")
+        elif a.target not in paths:
+            raise ValueError(f"alias target {a.target!r} is not a kept operation path")
 
 
 def render(doc: dict) -> str:
     """Deterministic YAML: sorted keys, block style."""
     return yaml.safe_dump(doc, sort_keys=True, allow_unicode=True, default_flow_style=False, width=120)
+
+
+# ----------------------------------------------------------------------------------------------- OData source
+_KEY_SEGMENT = "^[^:]+$"
+_STRING_LITERAL = "^([^']|'')*$"
+
+
+def odata_document(spec: dict, operations: tuple[Operation, ...]) -> dict:
+    """The spec with `_ODATA_TRANSFORMS` applied to its component schemas and the kept operations (in place: the
+    source is parsed for this run only). A 45 MB spec: a few seconds."""
+    for path in sorted({op.path for op in operations}):
+        item = (spec.get("paths") or {}).get(path) or {}
+        _odata_schema_walk(item)
+        _odata_path_parameters(spec, path, item)
+    for schema in ((spec.get("components") or {}).get("schemas") or {}).values():
+        _odata_schema_walk(schema)
+    return spec
+
+
+def _odata_path_parameters(spec: dict, path: str, item: dict) -> None:
+    """A key segment's parameter takes no ':'; one inside an OData string literal has its quotes doubled. A parameter
+    given by $ref is inlined first, so the change stays with this path."""
+    literals = set(re.findall(r"'\{([^}]+)\}'", path))
+    for holder in [item, *(item[m] for m in ("get", "put", "post", "patch", "delete") if isinstance(item.get(m), dict))]:
+        params = holder.get("parameters")
+        if not isinstance(params, list):
+            continue
+        for i, raw in enumerate(params):
+            param = _inline(spec, raw) if "$ref" in raw else raw
+            if param.get("in") != "path":
+                continue
+            name = str(param.get("name"))
+            pattern = _STRING_LITERAL if name in literals else _KEY_SEGMENT if name.endswith("-id") else None
+            if pattern is None:
+                continue
+            schema = dict(param.get("schema") or {})
+            if schema.get("type") not in ("string", ["string", "null"]) or "pattern" in schema:
+                raise ValueError(f"{path}: path parameter {name} is not a plain string: {_canon(schema)[:200]}")
+            params[i] = {**param, "schema": {**schema, "pattern": pattern}}
+
+
+def _odata_schema_walk(node: Any) -> None:
+    """Rewrite a schema subtree in place. Property names (the keys of `properties`) are never treated as keywords."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, list):
+            stack.extend(current)
+            continue
+        if not isinstance(current, dict):
+            continue
+        _odata_node(current)
+        for key, value in current.items():
+            if key == "properties" and isinstance(value, dict):
+                stack.extend(value.values())
+            else:
+                stack.append(value)
+
+
+def _odata_node(node: dict) -> None:
+    for key in [k for k in node if k == "discriminator" or k.startswith("x-ms-")]:
+        del node[key]
+    if isinstance(node.get("properties"), dict):
+        node["properties"].pop("@odata.type", None)
+    if node.get("format") in ("int16", "int32", "int64") and node.get("type") == "number":
+        node["type"] = "integer"
+    if isinstance(node.get("required"), list) and "@odata.type" in node["required"]:
+        node["required"] = [r for r in node["required"] if r != "@odata.type"]
+        if not node["required"]:
+            del node["required"]
+    for key in ("anyOf", "oneOf"):
+        if isinstance(node.get(key), list):
+            node[key] = [{"type": "null"} if _null_member(m) else m for m in node[key]]
+    if node.get("nullable") is True:
+        del node["nullable"]
+        kind = node.get("type")
+        if isinstance(kind, str):
+            node["type"] = [kind, "null"]
+            if isinstance(node.get("enum"), list) and None not in node["enum"]:
+                node["enum"] = [*node["enum"], None]
+        elif "$ref" not in node and not any(k in node for k in ("anyOf", "oneOf", "allOf")):
+            raise ValueError(f"nullable without a type: {_canon(node)[:200]}")
+        else:
+            raise ValueError(f"nullable next to a reference or a union: {_canon(node)[:200]}")
+    elif "nullable" in node:
+        del node["nullable"]
+
+
+def _null_member(member: Any) -> bool:
+    """`{type: object, nullable: true}` (documentation keys aside): the null half of a nullable reference."""
+    if not isinstance(member, dict) or member.get("nullable") is not True:
+        return False
+    return {k for k in member if k not in ("description", "title")} == {"type", "nullable"} \
+        and member.get("type") == "object"
 
 
 # ------------------------------------------------------------------------------------------------------ SDK source
@@ -780,6 +1061,9 @@ def openapi_subset(provider: Provider, ref: str, retrieved: str, fetch: Callable
     if provider.discovery:
         spec = discovery_document(spec, provider.operations)
         transforms = _TRANSFORMS + _DISCOVERY_TRANSFORMS
+    if provider.odata:
+        spec = odata_document(spec, provider.operations)
+        transforms = _TRANSFORMS + _ODATA_TRANSFORMS
     version = (spec.get("info") or {}).get("version", "")
     return build_subset(spec, provider, source=url, version=version, retrieved=retrieved, transforms=transforms)
 
