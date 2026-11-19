@@ -8,20 +8,19 @@ from ..adapters.firestore_companion_cache_repository import FirestoreCompanionCa
 from ..adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
 from ..adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from ..config.environment import EnvironmentConfig
-from ..domain.settings import SearchConfig
+from ..ports.fact_search_port import FactSearchPort
 from ..ports.quota_service import QuotaService
 from ..ports.user_repository import UserRepository
 from ..services.call_text_file_service import CallTextFileService
 from ..services.companion_context_assembler_service import CompanionContextAssemblerService
 from ..services.companion_extraction_service import CompanionExtractionService
 from ..services.prompt_builder import PromptBuilder
-from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.user_notification_service import UserNotificationService
 from ..utils.logger import logger
 from .companion_extractor_runner import CompanionExtractorRunner
 from .language_setup import Languages
 
-_COMPANION_SEARCH_TOTAL = 10
+_COMPANION_BIOGRAPHICAL_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -34,27 +33,20 @@ class Companions:
 
 def build_companions(db_client: Any, env_config: EnvironmentConfig, *, container: Any, user_repo: UserRepository,
                      quota_service: QuotaService, extraction_queue: FirestoreCompanionExtractionQueue,
-                     notification_service: UserNotificationService, languages: Languages) -> Companions:
-    """One companion memory store and one cache shared by the assembler and the extraction service; the fact search of
-    the assembler at the system defaults with its own total."""
+                     notification_service: UserNotificationService, languages: Languages,
+                     fact_search: FactSearchPort) -> Companions:
+    """One companion memory store and one cache shared by the assembler and the extraction service; the assembler's
+    biographical slice through the one fact search, cut to its own total."""
     logger.info("🧑‍🏫 Initializing companion memory: context, extraction, call text files...")
     memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
     cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
-    search = SearchConfig()
-    enrichment = SearchEnrichmentService(
-        repository=container.repository,
-        embedding_service=container.embedding_service,
-        keyword_limit=search.DEFAULT_KEYWORD_LIMIT,
-        phrase_one_limit=search.DEFAULT_PHRASE_ONE_LIMIT,
-        phrase_two_limit=search.DEFAULT_PHRASE_TWO_LIMIT,
-        total_limit=_COMPANION_SEARCH_TOTAL,
-    )
     assembler = CompanionContextAssemblerService(
         companion_repo=memory_repo,
         cache_repo=cache_repo,
         embedding_service=container.embedding_service,
-        enrichment_port=enrichment,
+        fact_search=fact_search,
         fact_repo=container.repository,
+        biographical_limit=_COMPANION_BIOGRAPHICAL_LIMIT,
     )
     # repo=None is safe: the tutor extractor builds its prompt with include_biographical=False, the only path that reads it.
     extractor = CompanionExtractorRunner(

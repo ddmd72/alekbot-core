@@ -161,6 +161,17 @@
     "fields": [
       { "fieldPath": "account_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "domain_keys", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "created_at", "order": "DESCENDING" },
+      { "fieldPath": "__name__", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "valid_to", "order": "DESCENDING" }
     ]
   },

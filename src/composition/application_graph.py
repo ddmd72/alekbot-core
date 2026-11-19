@@ -206,10 +206,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     jobs = build_background_jobs(container=container, coordinator=coordinator,
                                  notification_service=notifications.service, task_queue=ops.task_queue,
                                  delivery=delivery, user_repo=identity.user_repo, languages=languages)
+    memory_search = build_memory_search(db_client, env_config, container=container)
     companions = build_companions(db_client, env_config, container=container, user_repo=identity.user_repo,
                                   quota_service=ops.quota_service, extraction_queue=routing.companion_extraction_queue,
-                                  notification_service=notifications.service, languages=languages)
-    memory_search = build_memory_search(db_client, env_config, container=container)
+                                  notification_service=notifications.service, languages=languages,
+                                  fact_search=memory_search.fact_search)
     agents = build_agents(config, db_client, env_config, container=container, coordinator=coordinator, boot=boot,
                           identity=identity, ops=ops, job_registry=job_registry, image_registry=image_registry,
                           video_registry=video_registry, companions=companions,
