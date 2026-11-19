@@ -70,8 +70,6 @@ RENDER_JOB = "installed by the post-merge workflow render.yml (job `render`), wh
 IMAGE_JOB = "built by the post-merge workflow render.yml (job `sandbox-image`), which runs the `docker` tests against it and fails when one skips"
 RULES: Tuple[Rule, ...] = (
     # --- by place -----------------------------------------------------------------------------------------------
-    _r("skip", r"^tests/cloud/test_gcs_parity_cloud\.py$", r".*", "manual",
-       "needs TEST_GCS_BUCKET; `make test-cloud` on the owner's machine only, the weekly workflow does not pass it (P12)"),
     _r(".*", r"^tests/cloud/", r".*", "cloud", "real writes to the Firestore test database: `make test-cloud`, weekly `Firestore parity`"),
     _r(".*", r"^tests/integration/", r".*", "manual", "integration test over real or scripted services: `make test-integration`, no CI job"),
     # --- markers and the switches that turn them into skips -------------------------------------------------------
