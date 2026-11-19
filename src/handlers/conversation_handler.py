@@ -1644,7 +1644,7 @@ class ConversationHandler(ConversationHandlerPort):
             geo_marks = await self._geo_marks_for(context, response_channel)
             if geo_marks is None:
                 return
-            mark = await geo_marks.locate(fix, context.language)
+            mark = await geo_marks.locate(fix)
             try:
                 await geo_marks.record(mark, user_id=context.user_id, session_id=context.session_id,
                                        channel=response_channel, language=context.language)

@@ -183,6 +183,7 @@ class UIMessage(Enum):
     GEO_LINK_LINE = "geo_link_line"
     GEO_LINK_LABEL = "geo_link_label"
     GEO_SAVED = "geo_saved"
+    GEO_SAVED_WITH_LANDMARKS = "geo_saved_with_landmarks"
     GEO_SAVED_NO_ADDRESS = "geo_saved_no_address"
     GEO_NOT_SAVED = "geo_not_saved"
     GEO_UNAVAILABLE = "geo_unavailable"

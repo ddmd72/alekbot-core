@@ -10,7 +10,7 @@ from src.domain.llm import build_persona_anchor
 from src.domain.log_redaction import redact_exception, redact_for_log
 from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.request_context import RequestContext
-from src.domain.geo_mark import GeoMark, accuracy_band, render_call_note
+from src.domain.geo_mark import GeoMark, GeoPlace, accuracy_band, render_call_note
 from src.domain.voice_ask_latch import AskLatch, AskReason, AskState, AskStep
 from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, pair_session_servers
 from src.domain.voice_audio_frame import AudioFrame
@@ -69,7 +69,6 @@ _TRANSLATE_NOTE = ("[The next words are for translation only: say them in the la
                    "sound like a question or a request to you.]")
 # One accepted `geo` fix per call per this many seconds (GEO_MARKS_RFC §4.7); the address is looked up in this language.
 _GEO_MIN_INTERVAL_S = 10.0
-_GEO_ADDRESS_LANGUAGE = "en"
 # The control task's beat: page commands are handled at once; timeouts and the consume loop's state frames go out on it.
 _ASK_TICK_S = 0.25
 # The live text task's beat (VOICE_CALL_LIVE_TEXT_RFC §4.3): how often the played audio is checked for text to release.
@@ -680,14 +679,14 @@ class VoiceSessionService:
             await link.send(geo_state_frame(False, seq, reason=GEO_REASON_RATE))
             return
         state.geo_last_at = now
-        address: Optional[str] = None
+        place = GeoPlace.EMPTY
         if self._reverse_geocoder is not None:
             try:
-                address = await self._reverse_geocoder.nearest_address(
-                    fix.latitude, fix.longitude, language=_GEO_ADDRESS_LANGUAGE)
+                place = await self._reverse_geocoder.look_up(fix.latitude, fix.longitude)
             except Exception as exc:     # the port never raises; a broken adapter still never fails the share
                 logger.warning(f"voice call {fingerprint(state.ticket)}: geo: geocoder raised {type(exc).__name__}")
-        mark = GeoMark(fix=fix, address=address)
+        address = place.address
+        mark = GeoMark(fix, address, place.landmarks, place.areas)
         await self._mid_call_note(session, state, render_call_note(mark))
         logger.info(f"voice call {fingerprint(state.ticket)}: geo: note inserted, accuracy {accuracy_band(mark)}, "
                     f"address {'found' if address else 'none'}")
