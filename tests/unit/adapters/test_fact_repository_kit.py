@@ -20,6 +20,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import (
     ContextPriority, ExpiryKind, FactDomain, FactState, FactVisibility, TemporalClass,
 )
+from src.domain.fact_domains import Domain
 from src.domain.request_context import RequestContext
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
@@ -261,6 +262,49 @@ async def test_ordered_omits_a_document_without_a_priority_rank(store):
     put_raw(store, "ranked", "ranked")
     put_raw(store, "unranked", "unranked", context_priority_rank=DROP)
     assert ids(await store.repo.get_active_facts_ordered(ACC)) == ["ranked"]
+
+
+async def _seed_identity(store):
+    """Identity facts of the account by priority and age, plus everything the identity read must leave out."""
+    for text, identity, priority, age in (
+            ("Alex Doe was born on 1980-01-01 in Springfield", True, "high", 1),
+            ("Alex Doe is a Portuguese citizen", True, "critical", 0),
+            ("Alex's partner is Clara Moreira", True, "high", 2),
+            ("Alex is vegetarian", False, "critical", 3),
+            ("Alex does morning yoga for 30 minutes", None, "critical", 4),
+            ("Alex Doe was born in Springfield", True, "archival", 5)):
+        await store.repo.add_fact(make_fact(text, user_identity=identity, context_priority=ContextPriority(priority),
+                                            age_days=age))
+    await store.repo.add_fact(make_fact("Alex Doe lives in Springfield", account=OTHER, user_identity=True))
+    await store.repo.add_fact(make_fact("Alex Doe is from Springfield", user_identity=True, state=FactState.STALE))
+
+
+async def test_ordered_identity_only_returns_the_identity_facts_by_priority_then_newest_first(store):
+    await _seed_identity(store)
+    got = await store.repo.get_active_facts_ordered(ACC, identity_only=True)
+    assert [f.text for f in got] == ["Alex Doe is a Portuguese citizen", "Alex's partner is Clara Moreira",
+                                     "Alex Doe was born on 1980-01-01 in Springfield"]
+
+
+async def test_ordered_identity_only_limit_keeps_the_head_of_the_order(store):
+    await _seed_identity(store)
+    got = await store.repo.get_active_facts_ordered(ACC, identity_only=True, limit=2)
+    assert [f.text for f in got] == ["Alex Doe is a Portuguese citizen", "Alex's partner is Clara Moreira"]
+
+
+async def test_ordered_identity_only_and_a_domain_together_are_refused(store):
+    with pytest.raises(ValueError):
+        await store.repo.get_active_facts_ordered(ACC, domain="health", identity_only=True)
+
+
+async def test_ordered_returns_primary_domain_sensitivity_and_identity_but_no_other_profile_field(store):
+    await store.repo.add_fact(make_fact(
+        "Alex joined the Acme employees' trade union in November 2026, dues 12 EUR a month",
+        primary_domain=Domain.WORK, sensitivity="discreet", user_identity=False, domain_keys=[Domain.WORK],
+        label_words=["trade union"]))
+    (fact,) = await store.repo.get_active_facts_ordered(ACC)
+    assert (fact.primary_domain, fact.sensitivity, fact.user_identity) == (Domain.WORK, "discreet", False)
+    assert (fact.domain_keys, fact.label_words) == (None, None)
 
 
 # --------------------------------------------------------------------------------------- get_longest_facts

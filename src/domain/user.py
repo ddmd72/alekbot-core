@@ -1,9 +1,10 @@
 from enum import Enum
-from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
 from .entities import FactDomain
+from .fact_domains import config_key, voice_open_default
 from .language import LanguageCode
 from .task_complexity import TaskComplexity
 
@@ -60,10 +61,12 @@ class PromptPreferences(BaseModel):
     language: str = "uk"
     vibe: str = "friendly"  # friendly, professional, witty
 
-# Fact domains Lelik's call-start prompt carries by default (owner decision 2026-10-21):
-# who the user is and how they want to be spoken to. Preference stays because it holds the
-# user's conversational rules (tone, form of address, topics to avoid).
-DEFAULT_VOICE_FACT_DOMAINS = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
+# Registry keys (fact_domains.py) Lelik's call-start prompt carries by default: the registry's
+# `voice_open` domains (FACT_PROFILE_RFC §6 row 4).
+DEFAULT_VOICE_FACT_DOMAINS = voice_open_default()
+# The default stored before the registry (owner decision 2026-10-21); a stored list equal to it
+# reads as DEFAULT_VOICE_FACT_DOMAINS (UserBotConfig.voice_domain_keys).
+LEGACY_DEFAULT_VOICE_FACT_DOMAINS = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
 
 # Default per-agent tiers used as a fallback in get_tier_for_agent.
 # Kept outside the class so it can be referenced by both default_factory and the method
@@ -305,11 +308,11 @@ class UserBotConfig(BaseModel):
     # None = let the provider auto-detect. Set via Cabinet UI.
     voice_languages: Optional[List[str]] = None
 
-    # Fact domains (FactDomain values) that reach Lelik's call-start context: an ALLOWLIST, so a
-    # domain added later stays out of the call until chosen (decisions/lelik_warm_context.md,
-    # revised 2026-10-21). Everything else is still reachable through his search_memory tool.
-    # Plain strings, not FactDomain: a typo in a hand-edited Firestore doc must not fail the
-    # whole config load — LelikPersonaService warns and ignores it. A stored doc carrying the
+    # Registry keys (fact_domains.py) whose ordinary facts reach Lelik's call-start context: an
+    # ALLOWLIST (decisions/lelik_warm_context.md; FACT_PROFILE_RFC §6 row 4). Everything else is
+    # still reachable through his search_memory tool. A stored old FactDomain value is mapped when
+    # read (voice_domain_keys). Plain strings: a typo in a hand-edited Firestore doc must not fail
+    # the whole config load — LelikPersonaService warns and ignores it. A stored doc carrying the
     # retired `voice_excluded_fact_domains` key still loads (pydantic ignores extra keys).
     voice_fact_domains: List[str] = Field(default_factory=lambda: list(DEFAULT_VOICE_FACT_DOMAINS))
 
@@ -399,6 +402,24 @@ class UserBotConfig(BaseModel):
         if not self.agent_thinking:
             return None
         return self.agent_thinking.get(agent_type)
+
+    def voice_domain_keys(self) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+        """Lelik's voice list as registry keys, and the stored values that map to none (fact profile RFC §6 row 4).
+
+        A stored list equal to the old default (in any order) reads as the registry default; any other value maps
+        through `config_key` (a registry key to itself, an old FactDomain value to the keys that replace it).
+        """
+        stored = list(self.voice_fact_domains)
+        if sorted(stored) == sorted(LEGACY_DEFAULT_VOICE_FACT_DOMAINS):
+            return voice_open_default(), ()
+        keys: List[str] = []
+        unknown: List[str] = []
+        for value in stored:
+            mapped = config_key(value)
+            if not mapped:
+                unknown.append(value)
+            keys.extend(key for key in mapped if key not in keys)
+        return tuple(keys), tuple(unknown)
 
 class UsageStats(BaseModel):
     """Resource usage tracking."""

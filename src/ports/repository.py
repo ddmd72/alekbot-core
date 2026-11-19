@@ -79,17 +79,21 @@ class FactRepository(ABC):
         account_id: str,
         domain: Optional[str] = None,
         limit: Optional[int] = None,
+        identity_only: bool = False,
     ) -> List[FactEntity]:
         """Return `state == "current"` facts of `account_id` whose context_priority is not archival.
 
         Args:
-            domain: when set, only facts of that domain (e.g. "biographical").
+            domain: when set, only facts of that domain (e.g. "agent_directive").
             limit: at most this many; None returns all.
+            identity_only: only facts whose profile says `user_identity == true` (the baseline identity block,
+                fact profile RFC §6 row 1); a fact with no profile is absent. Exclusive with `domain` (ValueError).
 
         Order: context_priority critical, high, medium, low; within one priority newest first by
             created_at. The tail is the least essential (the directive cap backstop invalidates it).
         Legacy: a document without a stored priority rank is absent (observed).
-        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
+        Projection: no vectors; of the profile fields only primary_domain, sensitivity and user_identity;
+            temporal_class, context, ttl_days, expires_at, replaces_fact_id and the other profile fields
             keep the model default (observed).
         """
         pass
@@ -409,7 +413,8 @@ class FactRepository(ABC):
         """Return the cached biographical context of account `owner_id` (no fact query).
 
         Tenancy: owner_id None resolves the RequestContext's effective account; no account returns [].
-        Returns: dicts with id, text, domain, tags, context_priority and created_at (ISO string):
+        Returns: dicts with id, text, domain, primary_domain, sensitivity, tags, context_priority and created_at
+            (ISO string); a cache written before the profile fields lacks primary_domain and sensitivity:
             the facts, then the principles, then the directives, as of the last refresh.
         Limit: ignored; the whole cache is returned (observed).
         Errors: a missing or empty cache returns []; a backend failure raises (Lelik fails the call
