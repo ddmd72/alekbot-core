@@ -4,18 +4,23 @@ Concurrent specialist executions increment the SAME account document. A read-mod
 transaction aborted under that contention and exhausted Firestore's 5 attempts, so usage was
 silently lost. The hot path is now one server-side `Increment` update; only a daily/monthly
 window rotation still needs a transaction.
+
+The adapter reads its own clock to decide whether a window rotates, so that clock is pinned (P16) to the reference
+instant the stamps are written with: a "same window" case is the same day and month whatever the wall clock reads.
 """
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import src.adapters.firestore_account_repo as account_repo_module
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.domain.billing import DEFAULT_DAILY_COST_LIMIT
+from tests.support.clock_instants import OCT_END, OCT_NEXT, UTC_MIDNIGHT, pin_datetime
 
-NOW = datetime.now(timezone.utc)
+NOW = UTC_MIDNIGHT.utc + timedelta(hours=12)  # midday: the stamps and the adapter's now sit away from either boundary
 HOT_PATHS = [
     "usage.daily_cost", "usage.daily_tokens", "usage.monthly_cost", "usage.monthly_tokens",
     "usage.total_cost", "usage.total_requests", "usage.total_tokens",
@@ -65,7 +70,18 @@ def _repo(data, write_result=None):
     return FirestoreAccountRepository(db_client, "accounts"), db_client, doc_ref, transaction
 
 
+@pytest.fixture(autouse=True)
+def _adapter_clock(monkeypatch):
+    pin_datetime(monkeypatch, account_repo_module, NOW)
+
+
 class TestLockFreeHotPath:
+
+    def test_the_same_window_stamps_are_same_window_on_the_adapters_clock(self):
+        # The precondition of every test below: a reference instant taken from the wall clock at import made them
+        # take the rotation path when the run crossed 00:00 UTC after the import.
+        now = account_repo_module.datetime.now(timezone.utc)
+        assert FirestoreAccountRepository._rotations_due(_data()["usage"], now) == (False, False)
 
     async def test_same_window_increment_uses_no_transaction(self):
         repo, db_client, doc_ref, _ = _repo(_data())
@@ -152,6 +168,45 @@ class TestRotationStillTransactional:
         doc_ref.update.assert_not_awaited()
         if stale in ("daily", "no_stamps"):
             assert result.daily_cost_before == 0.0  # a new day starts from zero
+
+
+class TestWindowBoundaryFollowsTheAdaptersClock:
+
+    async def test_last_second_of_a_day_and_first_second_of_the_next_rotate(self, monkeypatch):
+        stamp = UTC_MIDNIGHT.utc - timedelta(seconds=1)
+        pin_datetime(monkeypatch, account_repo_module, UTC_MIDNIGHT)
+        repo, _, doc_ref, transaction = _repo(_data(daily_cost=3.0, daily_reset_at=stamp, monthly_reset_at=stamp))
+
+        with patch("src.adapters.firestore_account_repo.firestore.async_transactional", lambda fn: fn):
+            result = await repo.increment_account_usage("acct-1", tokens=10, cost=0.4)
+
+        doc_ref.update.assert_not_awaited()
+        updates = transaction.update.call_args.args[1]
+        assert updates["usage.daily_reset_at"] == UTC_MIDNIGHT.utc
+        assert "usage.monthly_reset_at" not in updates  # the same month
+        assert result.daily_cost_before == 0.0
+
+    async def test_first_and_last_second_of_one_day_are_one_window(self, monkeypatch):
+        pin_datetime(monkeypatch, account_repo_module, UTC_MIDNIGHT.utc + timedelta(days=1, seconds=-1))
+        repo, db_client, doc_ref, _ = _repo(_data(daily_reset_at=UTC_MIDNIGHT.utc, monthly_reset_at=UTC_MIDNIGHT.utc))
+
+        await repo.increment_account_usage("acct-1", tokens=10, cost=0.4)
+
+        db_client.transaction.assert_not_called()
+        doc_ref.update.assert_awaited_once()
+
+    async def test_a_month_end_rotates_the_day_and_the_month(self, monkeypatch):
+        pin_datetime(monkeypatch, account_repo_module, OCT_NEXT)
+        repo, _, doc_ref, transaction = _repo(_data(daily_reset_at=OCT_END.utc, monthly_reset_at=OCT_END.utc))
+
+        with patch("src.adapters.firestore_account_repo.firestore.async_transactional", lambda fn: fn):
+            await repo.increment_account_usage("acct-1", tokens=10, cost=0.4)
+
+        doc_ref.update.assert_not_awaited()
+        updates = transaction.update.call_args.args[1]
+        assert updates["usage.daily_reset_at"] == OCT_NEXT.utc
+        assert updates["usage.monthly_reset_at"] == OCT_NEXT.utc
+        assert updates["usage.prev_monthly_month"] == "2026-10"
 
 
 async def test_missing_account_raises_and_writes_nothing():
