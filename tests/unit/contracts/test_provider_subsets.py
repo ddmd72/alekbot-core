@@ -81,9 +81,21 @@ def test_every_ref_resolves_and_every_schema_is_valid(provider):
         assert ref.startswith("#/components/schemas/") and ref.rsplit("/", 1)[-1] in schemas, ref
     for name, schema in schemas.items():
         jsonschema.Draft202012Validator.check_schema(schema)
-    for path_item in doc["paths"].values():
-        for op in path_item.values():
-            jsonschema.Draft202012Validator.check_schema(op["requestBody"]["content"]["application/json"]["schema"])
+    table = {(o.path, o.method): o for o in es.PROVIDERS[provider].operations}
+    for path, path_item in doc["paths"].items():
+        for method, op in path_item.items():
+            # A body exactly when the table lists body fields or a raw body (neither: no body, e.g. a Gmail GET).
+            row = table[(path, method)]
+            assert ("requestBody" in op) == bool(row.fields or row.raw_body), (method, path)
+            if row.fields:
+                # A JSON body: application/json is its only media type, and its schema is valid.
+                assert list(op["requestBody"]["content"]) == ["application/json"], (method, path)
+                jsonschema.Draft202012Validator.check_schema(op["requestBody"]["content"]["application/json"]["schema"])
+            elif row.raw_body:
+                # A raw body (an upload's bytes, never validated): its media type only, as a binary string.
+                assert list(op["requestBody"]["content"]) == [row.raw_body], (method, path)
+                schema = op["requestBody"]["content"][row.raw_body]["schema"]
+                assert schema == {"type": "string", "format": "binary"}, (method, path, schema)
             for param in op.get("parameters") or []:
                 jsonschema.Draft202012Validator.check_schema(param["schema"])
 
@@ -132,6 +144,8 @@ FREE_FORM = {
             "a server_tool_use block's input: the model's own JSON arguments",
         "/components/schemas/ToolParam/properties/input_examples/items": "ToolParam.input_examples: example JSON arguments",
     },
+    "gmail": {},  # GETs: path and query parameters only, no body and no free-form place
+    "graph": {},  # every JSON body closed; the upload's raw body is a binary string, not an object
 }
 
 

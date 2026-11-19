@@ -1,0 +1,76 @@
+# Invented contract with aliases and an upload body, for tests/unit/contracts/test_openapi_contract_aliases.py (no real API).
+openapi: 3.1.0
+info:
+  title: lockers request subset
+  version: v1.0
+servers:
+  - url: https://api.lockers.example.com/v1.0
+x-alek-aliases:
+  - pattern: "/me/locker/items/{item-id}:/{path}:/**"
+    target: /lockers/{locker-id}/items/{item-id}/**
+    reason: colon addressing names an item by its path under another
+  - pattern: "/me/locker/items/{item-id}:/{path}:"
+    target: /lockers/{locker-id}/items/{item-id}
+    reason: colon addressing names an item by its path under another
+  - pattern: /me/locker/**
+    target: /lockers/{locker-id}/**
+    reason: the user's own locker
+paths:
+  /lockers/{locker-id}/items/{item-id}:
+    get:
+      parameters:
+        - name: locker-id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: item-id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^item-
+    patch:
+      parameters:
+        - name: locker-id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: item-id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+  /lockers/{locker-id}/items/{item-id}/content:
+    put:
+      parameters:
+        - name: locker-id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: item-id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+components:
+  schemas: {}

@@ -1,7 +1,7 @@
 """Every request shape OpenAIAdapter builds conforms to the OpenAI request contract (P17, TEST_COVERAGE_SYSTEMIC_RFC §4a).
 
 The REAL adapter and the REAL SDK run with the HTTP transport replaced (`httpx.MockTransport`): the request the SDK
-would put on the wire is captured and validated by `assert_request`; the sink answers 400, the adapter raises its
+would put on the wire (its query included) is captured and validated by `assert_request`; the sink answers 400, the adapter raises its
 client error, nothing about the response is asserted. No network, no key. `openai_request_shapes.SHAPES` is the table.
 
 Meta-tests: the closed subset rejects an unknown field; every kept field and union variant of the contract is used by a
@@ -37,7 +37,10 @@ SDK_CALLS = {("responses", "create"): ("post", "/responses")}
 _ERROR = {"error": {"message": "captured", "type": "invalid_request_error", "param": None, "code": None}}
 
 
-async def _capture(shape) -> tuple[str, str, dict, object]:
+Query = dict[str, list[str]]   # every query parameter the SDK sent, its values in order
+
+
+async def _capture(shape) -> tuple[str, str, dict, object, Query]:
     seen: list[httpx.Request] = []
 
     def sink(request: httpx.Request) -> httpx.Response:
@@ -51,11 +54,12 @@ async def _capture(shape) -> tuple[str, str, dict, object]:
         await adapter.generate_content(shape.request)
     assert len(seen) == 1, f"{shape.id}: expected exactly one HTTP request, got {len(seen)}"
     request = seen[0]
-    return request.method, request.url.path, dict(request.headers), json.loads(request.content)
+    query = {name: request.url.params.get_list(name) for name in request.url.params.keys()}
+    return request.method, request.url.path, dict(request.headers), json.loads(request.content), query
 
 
 @functools.lru_cache(maxsize=None)
-def _captured(shape_id: str) -> tuple[str, str, dict, object]:
+def _captured(shape_id: str) -> tuple[str, str, dict, object, Query]:
     shape = next(s for s in SHAPES if s.id == shape_id)
     return asyncio.run(_capture(shape))
 
@@ -72,15 +76,23 @@ def test_shape_ids_are_unique():
 
 @pytest.mark.parametrize("shape", SHAPES, ids=[s.id for s in SHAPES])
 def test_the_request_conforms_to_the_contract(shape):
-    method, path, headers, body = _captured(shape.id)
-    assert_request("openai", method, path, headers, body)
+    method, path, headers, body, query = _captured(shape.id)
+    assert_request("openai", method, path, headers, body, query=query)
 
 
 @pytest.mark.parametrize("shape", SHAPES, ids=[s.id for s in SHAPES])
 def test_the_closed_subset_rejects_an_unknown_field(shape):
-    method, path, headers, body = _captured(shape.id)
+    method, path, headers, body, query = _captured(shape.id)
     with pytest.raises(AssertionError, match="zz_unknown_field: unknown field"):
-        assert_request("openai", method, path, headers, {**body, "zz_unknown_field": 1})
+        assert_request("openai", method, path, headers, {**body, "zz_unknown_field": 1}, query=query)
+
+
+@pytest.mark.parametrize("shape", SHAPES, ids=[s.id for s in SHAPES])
+def test_the_closed_subset_rejects_an_unknown_query_parameter(shape):
+    """The query the SDK sent reaches the check: one the contract does not declare fails."""
+    method, path, headers, body, query = _captured(shape.id)
+    with pytest.raises(AssertionError, match="query zz_unknown: unknown query parameter"):
+        assert_request("openai", method, path, headers, body, query={**query, "zz_unknown": ["1"]})
 
 
 DEPTHS = ("input[]", "input[].content[]", "tools[]", "text.format", "reasoning")
@@ -91,14 +103,14 @@ def test_the_closed_subset_rejects_an_unknown_field_at_depth(depth):
     """An unknown field inside an input item, a content part, a tool, the text format and the reasoning object fails."""
     tried = 0
     for shape in SHAPES:
-        method, path, headers, body = _captured(shape.id)
+        method, path, headers, body, query = _captured(shape.id)
         body = copy.deepcopy(body)
         targets = [v for v in _walk(body, depth) if isinstance(v, dict)]
         if not targets:
             continue
         targets[0]["zz_unknown_field"] = 1
         with pytest.raises(AssertionError, match="zz_unknown_field: unknown field"):
-            assert_request("openai", method, path, headers, body)
+            assert_request("openai", method, path, headers, body, query=query)
         tried += 1
     assert tried, f"no shape sends anything at {depth}"
 

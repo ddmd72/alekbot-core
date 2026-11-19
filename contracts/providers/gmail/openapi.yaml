@@ -1,0 +1,109 @@
+components:
+  schemas: {}
+info:
+  title: gmail request subset
+  version: v1-20261106
+openapi: 3.1.0
+paths:
+  /gmail/v1/users/{userId}/messages:
+    get:
+      operationId: gmail.users.messages.list
+      parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          default: me
+          type: string
+      - in: query
+        name: maxResults
+        required: false
+        schema:
+          default: 100
+          format: uint32
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      - in: query
+        name: pageToken
+        required: false
+        schema:
+          type: string
+      - in: query
+        name: q
+        required: false
+        schema:
+          type: string
+  /gmail/v1/users/{userId}/messages/{id}:
+    get:
+      operationId: gmail.users.messages.get
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: userId
+        required: true
+        schema:
+          default: me
+          type: string
+      - in: query
+        name: format
+        required: false
+        schema:
+          default: full
+          enum:
+          - full
+          - metadata
+          - minimal
+          - raw
+          type: string
+      - in: query
+        name: metadataHeaders
+        required: false
+        schema:
+          items:
+            type: string
+          type: array
+  /gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}:
+    get:
+      operationId: gmail.users.messages.attachments.get
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: messageId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: userId
+        required: true
+        schema:
+          default: me
+          type: string
+servers:
+- url: https://gmail.googleapis.com
+x-retrieved: '2026-11-19'
+x-source: https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/997dccfcca932fb7486cf69cf516e88c90d5241b/discoveries/gmail.v1.json
+x-transforms:
+- 'prune: only the listed top-level fields and union variants are kept'
+- 'flatten-allOf: an allOf of objects becomes one object (properties and required merged)'
+- 'oneOf-to-anyOf: variants overlap (a message with list content matches two of them)'
+- 'close-objects: additionalProperties false on every object that declares properties, except the open paths'
+- 'open-paths: our own JSON Schemas (the open paths) are free-form objects'
+- 'drop-redundant-literals: a literal next to a plain {type: T} in a union accepts nothing more (model id lists)'
+- 'drop-doc-keys: documentation keys and vendor doc extensions dropped (spec_drift.normalize); property names kept'
+- 'stringify-dates: YAML dates become ISO strings'
+- 'discovery-to-openapi: each kept method is an operation at /<path> (operationId = the method id) under the server rootUrl
+  + servicePath; the API-wide parameters apply to every method'
+- 'discovery-parameters: location path|query becomes in path|query (a path parameter is required); repeated becomes an array
+  of the type; string-typed default, minimum and maximum take the parameter''s type; an integer format (int32, uint32, int64,
+  uint64) becomes its range as minimum and maximum unless the method states them; deprecated is kept'
+- 'prune-parameters: every path parameter, only the listed query parameters and headers; $refs inlined, documentation keys
+  dropped'
