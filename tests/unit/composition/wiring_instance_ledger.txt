@@ -161,7 +161,7 @@ src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-desi
 src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as profile_step in memory_setup.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (memory_setup.py:65,78,177, FACT_PROFILE_RFC 4.4)
 src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (memory_setup.py, Facts S4 T7b, T10a)
 src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (memory_setup.py, Facts S4 T8a, T10a)
-src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service and the one people-card store (memory_search_setup.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); no caller yet
+src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service and the one people-card store (memory_search_setup.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); held by the agent factory and the companion context assembler (agents_setup.py, companion_setup.py)
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
@@ -193,7 +193,7 @@ src.services.provider_breaker_alerter.ProviderBreakerAlerter 1  # by-design sing
 src.services.provider_registry.ProviderRegistry 4  # by-design LLM, deep-research jobs, image and video registries
 src.services.reminders_service.RemindersService 1  # by-design single instance
 src.services.rich_content_service.RichContentService 2  # by-design one per platform, Slack and Telegram
-src.services.search_enrichment_service.SearchEnrichmentService 3  # by-design the companion context assembler's, the one inside FactAnswerService's FactManagementAdapter (memory_setup.py, Facts S4 T10a) and the per-user one in the agent factory cache (user_agent_factory.py:368)
+src.services.search_enrichment_service.SearchEnrichmentService 2  # by-design the one inside FactAnswerService's FactManagementAdapter (memory_setup.py, Facts S4 T10a) and the per-user one in the agent factory cache (user_agent_factory.py:409); the companion context assembler has none since its slice reads the one FactSearchService (companion_setup.py, FACT_PROFILE_RFC 6 row 7)
 src.services.session_service.SessionService 1  # by-design single instance
 src.services.short_link_service.ShortLinkService 1  # by-design single instance
 src.services.skill_file_resolver.SkillFileResolver 1  # by-design single instance
