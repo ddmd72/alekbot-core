@@ -21,7 +21,7 @@ uploaded_by: local_script
         limit: "Max results to return (default: 20)"
     }
 
-    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], reported_date: str, reported: str, expiry: dict, due: str, similarity: float}"
+    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, primary_domain: str (the subject area a later step computes after a fact is written; null until then), directive: bool, temporal_class: str, state: str, tags: List[str], reported_date: str, reported: str, expiry: dict, due: str, similarity: float}"
 
     result_notes: "expiry is the fact's stored decision in the shape you send it: {kind: date, date}, {kind: horizon, days} or {kind: none}; null when none is recorded. due is the local day a horizon falls due. reported_date is when the owner last said the fact, with his offset; reported is its local day. Copy an expiry back unchanged to keep it, unless its date is before Today (then the fact is history, {kind: none}) or is Today (then a short horizon)."
 
@@ -40,7 +40,7 @@ uploaded_by: local_script
     parameters: {
         content: "Fact text (self-contained sentence)"
         fact_attributes: {
-            domain: "FactDomain (BIOGRAPHICAL, POSSESSION, etc.)"
+            directive: "REQUIRED, true or false. true makes the fact a standing directive, loaded into every prompt of the assistant as a binding rule; only a standing instruction from the owner about how the assistant must behave passes (rule Directive_Maintenance). Every other fact is false"
             temporal_class: "TemporalClass (PERMANENT, STABLE, DYNAMIC, EPHEMERAL)"
             state: "FactState (default: CURRENT). A new fact is CURRENT; a fact closed at birth is ARCHIVED or INVALIDATED and carries no expiry. stale is set by the system; superseded only through update_fact"
             context_priority: "ContextPriority (CRITICAL, HIGH, MEDIUM, LOW, ARCHIVAL)"
@@ -59,7 +59,7 @@ uploaded_by: local_script
     result = create_fact(
         content="User's weight was 64 kg in May 2024 (5 kg loss post-diet)",
         fact_attributes={
-            "domain": "HEALTH",
+            "directive": false,
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
@@ -121,7 +121,7 @@ uploaded_by: local_script
     parameters: {
         fact_ids: "List of UUIDs to merge"
         merged_content: "New combined text"
-        fact_attributes: "Attributes for new fact, the same keys as create_fact (MUST include: domain, temporal_class, state, context_priority, tags, reported_date, expiry); expiry is decided again from the merged text"
+        fact_attributes: "Attributes for new fact, the same keys as create_fact (MUST include: directive, temporal_class, state, context_priority, tags, reported_date, expiry); expiry is decided again from the merged text"
     }
 
     returns: "{new_fact_id, old_fact_ids, old_facts_state: SUPERSEDED, status, message}"
@@ -131,7 +131,7 @@ uploaded_by: local_script
         fact_ids=["car-1", "car-2", "car-3"],
         merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
         fact_attributes={
-            "domain": "POSSESSION",
+            "directive": false,
             "temporal_class": "STABLE",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
