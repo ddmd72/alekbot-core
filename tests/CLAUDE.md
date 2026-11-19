@@ -57,6 +57,35 @@ async def test_content_update_writes_a_new_version(store):        # store = Fact
     assert store.docs[fid]["superseded_by"] == res["fact_id"]       # the old document is closed in the same commit
 ```
 
+## Where a test goes, and what gets no test
+
+Tests here are written by agents faster than anyone prunes them, and every rule of this file adds tests. Without the
+rules below the suite keeps a second and third copy of a behaviour: the old test stays where the code used to live, each
+delivery step opens its own file, and every refactor then breaks all the copies. These rules keep one home per
+behaviour; they never lower what is detected.
+
+- **One primary test file per `src` module** (per behaviour area for a large module). A new assertion goes into it, and
+  the same logic on another input becomes a row of the existing `parametrize` table. A new file needs a reason that
+  still holds in a year: another harness (a kit, a world, a wire test) or another subject. A delivery slice, a review
+  round, a mutation survivor or an added field is not a reason, and neither is the reviewer rule: adding a test to an
+  existing file edits no existing test.
+- **A new field of a codec or a record** extends the every-field round-trip case; it gets no file and no test of its own.
+- **One contract on several subjects** (the same answer contract on several agents, one claim on several task types) is
+  one contract module parametrized by subject, the subject's file holding only its builder. Where the code does not
+  branch on the subject, one subject is enough.
+- **Retire what is superseded** (root `CLAUDE.md` -> "Tests - REVIEWER RULE"): tests move with moved code, and a test
+  whose behaviour a stronger test now asserts is deleted in the same PR, listed with its covering test.
+- **No test for:** the shape of an ABC (an abstract method exists, a signature, an `AsyncMock(spec=Port)` returning what
+  it was told): `mypy --strict` on `src/ports` and the hexagonal test own that; a one-line forward or a piece of wiring
+  that the production graph test and the ledgers already walk ("The production graph"); pydantic, dataclass or stdlib
+  behaviour; a line executed only to raise coverage, whose assertion is `is not None` or `isinstance` (assert the
+  outcome or leave the line to its floor); code with no production caller (delete the code and its tests).
+- **A call assertion is kept only where the call is the outcome** (an argument the unit computed, at a boundary we do
+  not own), and then over a fake where one exists.
+- **Text and value pins.** Exact wording is pinned only where code parses it or it is a contract with a model, once, in
+  one place; presentation wording is not pinned. Values that change by decision (tier to model, deploy flags, version
+  constants) are pinned as one table per adapter or deploy file, not one test per value.
+
 ## Invented cast
 
 The repository is public (root `CLAUDE.md` -> "PERSONAL DATA RULE"). An example about a person's life (a name, a
@@ -208,7 +237,7 @@ The main service's non-web objects are built by `build_application_graph(config,
   - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
 - **Mutation** (`wire-drop` replaces one argument or dict value with `None`; `call-skip` drops one `attach_*`, `register_*` or `set_*`
   call). The weekly run covers the builder and `main.py` (registered targets); each mutant runs the graph tests in a child process (about 950 mutants).
-  A survivor gets a new assertion in a new file; the reviewer alone rules a mutant equivalent in `wiring_equivalent_mutants.txt`.
+  A survivor gets a new assertion in the module's primary test file ("Where a test goes"); the reviewer alone rules a mutant equivalent in `wiring_equivalent_mutants.txt`.
 - **Not covered, by decision:** a wrong but non-None object of the right type; producer and consumer payload fields that disagree;
   an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
   empty in Secret Manager; the four env reads made at import time, before the seal. They are listed in the RFC's "Built (P9)" note.
@@ -368,3 +397,6 @@ is asserted; renaming an identifier or keyword inside an assert after a rename i
 
 Tests of deleted code are deleted in the same PR by the implementer and listed in the PR body; the reviewer checks that each deleted
 test's subject is gone (not a weakening).
+
+Tests of moved or superseded behaviour are retired in the same PR, each listed with the test that now covers it; the reviewer checks
+that the covering test asserts at least as much and that no coverage floor fell ("Where a test goes").
