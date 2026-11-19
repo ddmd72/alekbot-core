@@ -189,7 +189,7 @@ def test_an_openai_recording_keeps_the_exchange_its_cost_legs_and_its_regenerati
                                   cached, written)}
     assert meta["cost_usd"] == exchange["cost"]["usd"] > 0
     assert "input=100 cache_read=600 cache_write=300 output=20" in capsys.readouterr().out
-    assert_response("openai", "POST", "/responses", 200, exchange["response"]["body"])
+    assert_response("openai", "POST", "/v1/responses", 200, exchange["response"]["body"])
 
 
 def test_an_anthropic_recording_keeps_the_stream_as_events(tmp_path):

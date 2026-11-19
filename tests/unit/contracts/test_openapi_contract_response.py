@@ -48,9 +48,9 @@ def test_the_status_may_be_a_string_and_the_url_path_carries_the_base_path():
 
 def test_a_status_or_media_type_absent_from_the_contract_fails():
     with pytest.raises(AssertionError, match=r"no 404 application/json response in the contract"):
-        oc.assert_response("sprockets", "post", "/sprockets", 404, BODY, contracts_dir=FIXTURES)
+        oc.assert_response("sprockets", "post", "/v1/sprockets", 404, BODY, contracts_dir=FIXTURES)
     with pytest.raises(AssertionError, match=r"no 200 text/plain response"):
-        oc.assert_response("sprockets", "post", "/sprockets", 200, BODY, media="text/plain", contracts_dir=FIXTURES)
+        oc.assert_response("sprockets", "post", "/v1/sprockets", 200, BODY, media="text/plain", contracts_dir=FIXTURES)
 
 
 def test_unknown_field_at_the_top_level():

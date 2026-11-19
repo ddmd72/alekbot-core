@@ -66,7 +66,7 @@ def parsed(sample_id: str) -> LLMResponse:
 # ---------------------------------------------------------------------------------------------------- conformance
 @pytest.mark.parametrize("sample_id", sorted(SAMPLES))
 def test_every_sample_conforms_to_the_response_contract(sample_id):
-    assert_response("openai", "POST", "/responses", 200, SAMPLES[sample_id])
+    assert_response("openai", "POST", "/v1/responses", 200, SAMPLES[sample_id])
 
 
 @pytest.mark.parametrize("sample_id", sorted(SAMPLES))
@@ -137,7 +137,7 @@ def _violations(body) -> list[str]:
     """The violations `assert_response` lists ([] when it passes). Any other failure (an operation not found, no
     response for the status) propagates: read as [], it would make a test asserting [] pass vacuously."""
     try:
-        assert_response("openai", "POST", "/responses", 200, body)
+        assert_response("openai", "POST", "/v1/responses", 200, body)
     except AssertionError as failure:
         head, *violations = str(failure).splitlines()
         if not head.endswith(" breaks the contract:") or not violations:
