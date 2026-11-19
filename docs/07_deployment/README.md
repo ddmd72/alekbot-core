@@ -29,7 +29,7 @@ fails when code reachable from an entry point imports a distribution `requiremen
 |------|------|--------|---------|---------|-------------------|-----------------|
 | `alek-bot-dev` | Cloud Run service (gen2: the parser child's limits were measured there) | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL` (the budget alert; the job's identity holds secretAccessor on that one secret) | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
-| `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
+| `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL`, `GOOGLE_SEARCH_API_KEY` (optional: the address lookup of the call page's `geo` button) | `logs-relay`, `fetch-logs-relay` |
 | `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | `logs-indexer`, `fetch-logs-indexer` |
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
 | `alek-bot-sandbox-light-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 900s | min=0, max=5 | **none** (zero-role identity, no secret) | (see Sandbox light (parse) service) |
@@ -160,6 +160,12 @@ relay; only the main service needs credentials, to mint SFU sessions.
    deploy sets it `on` (`cloudbuild-dev.yaml` `--set-env-vars`); the rollback is
    `gcloud run services update <main service> --update-env-vars=VOICE_CONTROL_CHANNEL=off` until the next deploy. Off,
    `/connect` hands out no `control` and the page opens no socket; the relay needs no knob.
+5a. One optional relay secret for the call page's `geo` button (`docs/10_rfcs/GEO_MARKS_RFC.md` §4.7):
+   `GOOGLE_SEARCH_API_KEY`, the same Secret Manager secret the main service mounts, bound to the relay in
+   `cloudbuild-dev.yaml` (`--set-secrets`) and read with `os.getenv` at boot (`relay_main._reverse_geocoder`). The relay's
+   service account needs `roles/secretmanager.secretAccessor` on it before the relay deploys, or the revision fails to
+   start. Unset or empty, the call still takes the shared position and its note names no address. Deploy the relay
+   before the main service when the control channel is first switched on for `geo`.
 6. One optional relay knob for the dead-peer watchdog, read with `os.getenv` when the SFU handler is built:
    `VOICE_DEAD_PEER_TIMEOUT_S` (seconds, default `600`). A web call with no inbound audio packet for that long ends
    itself through the normal end path (`VOICE_CALL_CONTROL_CHANNEL_RFC.md` §7.4); a value that is not a positive number
@@ -286,6 +292,7 @@ are never deleted (nothing breaks).
 | `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h) |
 | `<prefix>drive_model_usage` | monthly drive model-usage documents (the `{user}:initial` document has no `expires_at`) |
 | `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
+| `<prefix>geo_mark_links` | one-time `$geo` location links (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps unused links |
 | `<prefix>event_dedup` | inbound event dedup claims (1 h); reads check expiry themselves |
 | `<prefix>drive_note_erase_requests` | pending drive-note erase requests |
 | `<prefix>short_links` | short links (`resolve` re-checks expiry itself, the sweep lags) |

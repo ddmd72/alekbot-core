@@ -6,6 +6,7 @@ Separates platform adapters from the concrete ConversationHandler
 """
 from abc import ABC, abstractmethod
 
+from ..domain.geo_mark import GeoFix
 from ..domain.messaging import MessageContext, ResponseChannel
 
 
@@ -28,3 +29,12 @@ class ConversationHandlerPort(ABC):
         response_channel: ResponseChannel,
     ) -> None:
         """Process a bot command and send reply via response_channel."""
+
+    @abstractmethod
+    async def handle_geo_mark(
+        self,
+        fix: GeoFix,
+        context: MessageContext,
+        response_channel: ResponseChannel,
+    ) -> None:
+        """Record a geo mark the owner sent as a platform-native share (no text, no turn)."""

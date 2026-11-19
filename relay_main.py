@@ -51,7 +51,7 @@ import logging
 import os
 import signal
 from pathlib import Path
-from typing import Callable, Dict, FrozenSet, Type
+from typing import Callable, Dict, FrozenSet, Optional, Type
 from urllib.parse import urlsplit
 
 import websockets
@@ -68,8 +68,10 @@ from src.handlers.call_control_handler import CallControlHandler
 from src.handlers.media_stream_handler import MediaStreamHandler
 from src.handlers.sfu_stream_handler import DEAD_PEER_TIMEOUT_S, SfuStreamHandler
 from src.ports.realtime_session_port import RealtimeSessionPort
+from src.adapters.google_geocoding_adapter import GoogleGeocodingAdapter
+from src.ports.reverse_geocoding_port import ReverseGeocodingPort
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import VoiceSessionService
+from src.services.voice_session_service import VoiceControl, VoiceSessionService
 from src.utils.logger import logger, quiet_third_party_loggers
 
 quiet_third_party_loggers()
@@ -126,6 +128,14 @@ def _live_text_lag_ms() -> int:
         logger.warning("relay: LIVE_TEXT_LAG_MS is not an integer >= 0, using 0")
         return 0
     return value
+
+
+def _reverse_geocoder() -> Optional[ReverseGeocodingPort]:
+    """The nearest-address lookup of the call page's `geo` button (GEO_MARKS_RFC §4.7), built from
+    `GOOGLE_SEARCH_API_KEY` (an optional knob, read with `os.getenv`: root CLAUDE.md). Unset or empty: no geocoder,
+    and the call's position note names no address."""
+    api_key = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
+    return GoogleGeocodingAdapter(api_key) if api_key else None
 
 
 def _voice_debug_transcript_users() -> FrozenSet[str]:
@@ -246,7 +256,7 @@ async def main() -> None:
         # Owner's call 2026-09-28: same 300 s as the phone path.
         delegation_timeout_s=300.0,
         # Web calls only (VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): the phone service gets no hub.
-        control_hub=control_hub,
+        control=VoiceControl(control_hub, reverse_geocoder=_reverse_geocoder()),
         web_pickup_max_wait_s=_WEB_PICKUP_MAX_WAIT_S,
         call_options=VoiceRelayCallOptions(live_text_lag_ms=_live_text_lag_ms(), debug_transcript_users=debug_users),
     )

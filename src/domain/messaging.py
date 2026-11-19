@@ -49,6 +49,8 @@ class MessageContext:
     thread_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)  # Platform-specific extras
     language: str = "uk"  # Effective UI language (RFC: MULTILINGUAL_SUPPORT_RFC.md §13.3)
+    # The rendered geo mark a queued `$geo` turn carries (GEO_MARKS_RFC §4.5): a user-message part before the owner's text.
+    geo_mark_note: Optional[str] = None
 
 
 # Rich-content types delivered as a real file/image (fetch + platform upload), not by the channel's Block Kit renderer.

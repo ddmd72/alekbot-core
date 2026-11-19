@@ -164,6 +164,17 @@ memory pipeline as a phone call.
 
 ---
 
+*Sharing where you are*
+Tell me your position on purpose, and I keep it in our conversation so I can relate to it later ("if you are still at the gym").
+
+How to use:
+- Slack: send `$geo`. I reply with a one-time link (valid for 10 minutes). Open it on your phone or computer, and the page shares your position with me. `$geo is the Iron Temple gym still open?` asks that question together with the place
+- Telegram: send a location pin (the attachment menu → Location). I note the point, its accuracy and the nearest address, and answer if you wrote text with it
+- Lelik: during a web call, press the geo button on the call page to share where you are
+- Your home location is not changed by any of this
+
+---
+
 *Documents*
 I create formatted documents delivered directly in the chat.
 

@@ -28,6 +28,7 @@ from src.domain.messaging import MessageContext
 from src.domain.settings import ConsolidationSettings
 from src.domain.skill import Skill
 from src.domain.ui_messages import UIMessage
+from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.locales import uk as uk_locale
 
@@ -73,7 +74,7 @@ def _make_handler(skill_service=None) -> ConversationHandler:
         coordinator=coordinator,
         agent_factory=agent_factory,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
-        skill_service=skill_service,
+        commands=CommandServices(skills=skill_service),
     )
 
 

@@ -196,6 +196,12 @@ async def main():
                     )
                     logger.info("✅ Short link blueprint registered at /s/<code>")
 
+                # /geo/<link_id>: the Slack `$geo` page and its fix route (GEO_MARKS_RFC §4.5)
+                if app.geo_marks:
+                    from src.web.geo_mark_app import create_geo_mark_blueprint
+                    main_app.register_blueprint(create_geo_mark_blueprint(app.geo_marks))
+                    logger.info("✅ Geo mark blueprint registered at /geo/<link_id>")
+
                 # /voice/session-config, /voice/submit-transcript — main-service
                 # control-plane endpoints consumed by the relay's
                 # CallControlPlanePort (Task 6). OIDC-protected the same way

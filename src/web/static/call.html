@@ -275,6 +275,42 @@
         .ask-btn.busy { animation: none; }
       }
 
+      /* "Share my location": created by script on every call page that gets a control channel; shown only when the call offers `geo`. */
+      .geo-btn {
+        width: 280px;
+        max-width: 100%;
+        min-height: 48px;
+        margin-top: 12px;
+        padding: 10px 20px;
+        border-radius: 24px;
+        border: 2px solid var(--accent);
+        background: var(--bg-panel-solid);
+        color: var(--accent);
+        font-family: var(--font-sans);
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: var(--transition-fast);
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      .geo-btn[hidden],
+      .geo-status[hidden] {
+        display: none;
+      }
+      .geo-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .geo-status {
+        max-width: 280px;
+        margin-top: 8px;
+        font-size: 14px;
+        color: var(--text-main);
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+
       /* Interpreter page only: the script wraps the call button into [left slot] [call] [right slot]. */
       .call-row {
         display: flex;
@@ -821,6 +857,14 @@
           "ask.button": "Ask Lelik",
           "ask.armed": "Speak now · tap to cancel",
           "ask.busy": "Lelik is answering…",
+          "geo.button": "Share my location",
+          "geo.locating": "Locating…",
+          "geo.no_address": "address unavailable",
+          "geo.denied": "Location is blocked for this page",
+          "geo.unavailable": "Could not get your location",
+          "geo.insecure": "This browser cannot share a location",
+          "geo.rate": "Wait a few seconds and try again",
+          "geo.failed": "Could not share the location",
           "text.panel": "Call text",
           "text.you": "You",
           "text.lelik": "Lelik",
@@ -869,6 +913,14 @@
           "ask.button": "Спитати Леліка",
           "ask.armed": "Говоріть · натисніть, щоб скасувати",
           "ask.busy": "Лелік відповідає…",
+          "geo.button": "Поділитися місцем",
+          "geo.locating": "Визначаю місце…",
+          "geo.no_address": "адреса недоступна",
+          "geo.denied": "Доступ до місця заблоковано для цієї сторінки",
+          "geo.unavailable": "Не вдалося визначити місце",
+          "geo.insecure": "Цей браузер не може поділитися місцем",
+          "geo.rate": "Зачекайте кілька секунд і спробуйте ще раз",
+          "geo.failed": "Не вдалося поділитися місцем",
           "text.panel": "Текст розмови",
           "text.you": "Ви",
           "text.lelik": "Лелік",
@@ -917,6 +969,14 @@
           "ask.button": "Demander à Lelik",
           "ask.armed": "Parlez · touchez pour annuler",
           "ask.busy": "Lelik répond…",
+          "geo.button": "Partager ma position",
+          "geo.locating": "Localisation…",
+          "geo.no_address": "adresse indisponible",
+          "geo.denied": "La position est bloquée pour cette page",
+          "geo.unavailable": "Impossible d'obtenir votre position",
+          "geo.insecure": "Ce navigateur ne peut pas partager la position",
+          "geo.rate": "Patientez quelques secondes et réessayez",
+          "geo.failed": "Impossible de partager la position",
           "text.panel": "Texte de l'appel",
           "text.you": "Vous",
           "text.lelik": "Lelik",
@@ -965,6 +1025,14 @@
           "ask.button": "Preguntar a Lelik",
           "ask.armed": "Habla · toca para cancelar",
           "ask.busy": "Lelik está respondiendo…",
+          "geo.button": "Compartir mi ubicación",
+          "geo.locating": "Localizando…",
+          "geo.no_address": "dirección no disponible",
+          "geo.denied": "La ubicación está bloqueada para esta página",
+          "geo.unavailable": "No se pudo obtener tu ubicación",
+          "geo.insecure": "Este navegador no puede compartir la ubicación",
+          "geo.rate": "Espera unos segundos e inténtalo de nuevo",
+          "geo.failed": "No se pudo compartir la ubicación",
           "text.panel": "Texto de la llamada",
           "text.you": "Tú",
           "text.lelik": "Lelik",
@@ -1073,6 +1141,7 @@
         document.getElementById("back-link").textContent = t("back.cabinet");
         document.getElementById("mic-summary").textContent = `⚙ ${t("mic.label")}`;
         document.getElementById("mic-hint").textContent = t("mic.hint");
+        renderGeo();
       }
 
       /* ── Call state ──────────────────────────────────── */
@@ -1768,6 +1837,116 @@
       }
 
       onControl(onAskFrame);
+
+      /* ── Geo ─────────────────────────────────────────── */
+      // Every call page that gets the control channel (GEO_MARKS_RFC §4.7): a button shared by the caller on purpose.
+      // It exists only while the call's `welcome.features` lists `geo`. A tap takes one fix with getCurrentPosition
+      // (high accuracy, fresh, 15 s) and sends it as `geo {seq, latitude, longitude, accuracy}`; the relay answers
+      // `geo_state`. The Permissions API is never used: the browser's own prompt is the only permission step.
+      const GEO_TIMEOUT_MS = 15000;
+      const geo = { offered: false, seq: 0, busy: false, btn: null, status: null, visible: false,
+                    result: null /* { key | text } of the status line */ };
+
+      function geoSetResult(result) {
+        geo.result = result;
+        renderGeo();
+      }
+
+      function renderGeo() {
+        if (!geo.btn) {
+          if (!geo.visible) return;
+          const btnEl = document.createElement("button");
+          btnEl.id = "geo-btn";
+          btnEl.type = "button";
+          btnEl.className = "geo-btn";
+          btnEl.addEventListener("click", pressGeo);
+          const statusEl = document.createElement("div");
+          statusEl.id = "geo-status";
+          statusEl.className = "geo-status";
+          statusEl.setAttribute("role", "status");
+          const host = document.querySelector(".controls");
+          host.append(btnEl);
+          host.append(statusEl);
+          geo.btn = btnEl;
+          geo.status = statusEl;
+        }
+        const shown = geo.visible && geo.offered;
+        geo.btn.hidden = !shown;
+        geo.btn.disabled = geo.busy;
+        geo.btn.textContent = t(geo.busy ? "geo.locating" : "geo.button");
+        const result = shown ? geo.result : null;
+        geo.status.hidden = !result;
+        geo.status.textContent = !result ? "" : result.address ? `✓ ${result.address}`
+          : result.ok ? `✓ ${t("geo.no_address")}` : t(result.key);
+      }
+
+      function onGeoFrame(msg) {
+        if (!geo.visible) return;
+        if (msg === null || msg.type === "bye") {
+          geo.offered = false;
+          geo.busy = false;
+          geo.result = null;
+          renderGeo();
+        } else if (msg.type === "welcome") {
+          geo.offered = Array.isArray(msg.features) && msg.features.includes("geo");
+          renderGeo();
+        } else if (msg.type === "geo_state" && geo.offered && msg.seq === geo.seq) {
+          geo.busy = false;
+          if (msg.ok === true) {
+            geoSetResult({ ok: true, address: typeof msg.address === "string" ? msg.address : "" });
+          } else {
+            geoSetResult({ ok: false, key: msg.reason === "rate" ? "geo.rate" : "geo.failed" });
+          }
+        }
+      }
+
+      function pressGeo() {
+        if (!geo.visible || !geo.offered || geo.busy) return;
+        if (!navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== "function") {
+          geoSetResult({ ok: false, key: "geo.insecure" });
+          return;
+        }
+        geo.busy = true;
+        geo.seq += 1;
+        const seq = geo.seq;
+        geo.result = null;
+        renderGeo();
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (!geo.busy || geo.seq !== seq) return;
+            const c = pos.coords;
+            const frame = { type: "geo", seq, latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy };
+            if (!sendControl(frame)) {
+              geo.busy = false;
+              geoSetResult({ ok: false, key: "geo.failed" });
+            }
+          },
+          (err) => {
+            if (!geo.busy || geo.seq !== seq) return;
+            geo.busy = false;
+            geoSetResult({ ok: false, key: err && err.code === 1 ? "geo.denied" : "geo.unavailable" });
+          },
+          { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: 0 }
+        );
+      }
+
+      function showGeo() {
+        geo.visible = true;
+        geo.offered = false;
+        geo.busy = false;
+        geo.result = null;
+        renderGeo();
+      }
+
+      function hideGeo() {
+        geo.visible = false;
+        geo.offered = false;
+        geo.busy = false;
+        geo.result = null;
+        if (geo.btn) renderGeo();
+      }
+
+      onControl(onGeoFrame);
 
       /* ── Speaker route ───────────────────────────────── */
       // Interpreter page only: moves Lelik's voice from the headphones to the phone's loudspeaker and back.
@@ -2715,6 +2894,7 @@
         setAudioSessionType("auto");
         stopStatusPolling();
         hideAsk();
+        hideGeo();
         hideSpeaker();
         // A user hang-up keeps the control socket a moment so the relay's last text frames land first.
         if (!lingerLiveText(trigger)) {
@@ -2930,6 +3110,8 @@
           // Interpreter page only: showAsk() checks the mode.
           if (connectBody.control) showAsk();
           if (connectBody.control) showLiveText();
+          // Hidden until the channel's `welcome` lists `geo`.
+          if (connectBody.control) showGeo();
           // /renegotiate is done: the page hears Lelik's track, so the relay may greet now (the frame
           // goes out once the channel is welcomed). Never awaited; the call does not wait on it.
           controlListening(myToken);

@@ -10,11 +10,13 @@ from src.domain.llm import build_persona_anchor
 from src.domain.log_redaction import redact_exception, redact_for_log
 from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.request_context import RequestContext
+from src.domain.geo_mark import GeoMark, accuracy_band, render_call_note
 from src.domain.voice_ask_latch import AskLatch, AskReason, AskState, AskStep
 from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, pair_session_servers
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_control_protocol import (
-    ASK_ARM, ASK_DISARM, FEATURE_ASK, FEATURE_TEXT, ask_state_frame, command_seq,
+    ASK_ARM, ASK_DISARM, FEATURE_ASK, FEATURE_GEO, FEATURE_TEXT, GEO, GEO_REASON_BAD, GEO_REASON_NOT_READY,
+    GEO_REASON_RATE, ask_state_frame, command_seq, geo_state_frame, parse_geo_command,
 )
 from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_language_pair import (
@@ -32,6 +34,7 @@ from src.domain.voice_session_spec import VoiceSessionSpec
 from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.call_control_plane_port import CallControlPlanePort
+from src.ports.reverse_geocoding_port import ReverseGeocodingPort
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.domain.secret_digest import fingerprint
 from src.utils.logger import logger
@@ -64,6 +67,9 @@ _ASK_NOTE = ("[The caller's next words are addressed to you, not for translation
 _TRANSLATE_NOTE = ("[The next words are for translation only: say them in the language of the person they are "
                    "addressed to, in the first person, as the speaker; do not answer or comment on them, even if they "
                    "sound like a question or a request to you.]")
+# One accepted `geo` fix per call per this many seconds (GEO_MARKS_RFC §4.7); the address is looked up in this language.
+_GEO_MIN_INTERVAL_S = 10.0
+_GEO_ADDRESS_LANGUAGE = "en"
 # The control task's beat: page commands are handled at once; timeouts and the consume loop's state frames go out on it.
 _ASK_TICK_S = 0.25
 # The live text task's beat (VOICE_CALL_LIVE_TEXT_RFC §4.3): how often the played audio is checked for text to release.
@@ -184,6 +190,10 @@ class _CallState:
     ask: Optional[AskLatch] = None
     ask_link: Optional["CallControlLink"] = None
     ask_outbox: List[dict] = field(default_factory=list)
+    # The open provider session, once `open()` returned (the control task's `geo` note goes there), and the clock
+    # reading of the last accepted `geo` fix (the 1 per 10 s limit).
+    session: Optional[RealtimeSessionPort] = None
+    geo_last_at: Optional[float] = None
     # Live call text (mode calls with a control link only): the pacer and the link its frames go to. The pacer lives
     # here, never in the provider session: a resume is a re-dial, a new call with a fresh state (RFC §4.9).
     text: Optional[LiveTextPacer] = None
@@ -221,6 +231,15 @@ class _CallState:
     pair_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+@dataclass(frozen=True)
+class VoiceControl:
+    """What a web call's control channel needs (a second public class on purpose: it exists only for this service's
+    constructor): the hub that opens a call's control link, and the optional nearest-address lookup of the page's `geo`
+    button (GEO_MARKS_RFC §4.7; None: the call's note names no address)."""
+    hub: "CallControlHub"
+    reverse_geocoder: Optional[ReverseGeocodingPort] = None
+
+
 class VoiceSessionService:
     """The relay's session loop (RFC §4.5). Not an agent - REQ-ARCH-03/-30
     forbid naming this *Agent (RFC §4.4)."""
@@ -240,7 +259,7 @@ class VoiceSessionService:
         caller_opening: Optional[str] = None,
         waiting_gap_max_s: Optional[float] = None,
         greeting_guard_s: float = 0.0,
-        control_hub: Optional["CallControlHub"] = None,
+        control: Optional["VoiceControl"] = None,
         ask_clock: Optional[Callable[[], float]] = None,
         ask_tick_s: float = _ASK_TICK_S,
         remote_tool_wait_s: float = _REMOTE_TOOL_WAIT_S,
@@ -257,10 +276,12 @@ class VoiceSessionService:
         waiting notes, and on barge-in only drops the queued audio. It still starts the greeting
         and delivers delegation answers.
 
-        `control_hub` (web calls only, VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): a call whose session config carries
+        `control` (web calls only; its `hub` is VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): a call whose session config carries
         `control_token_sha256` opens its control link there for the call's life. An interpreter call's link offers
         "Ask Lelik" (RFC §5): `ask_clock` is the latch's clock (the event loop's time when None; tests pass their
-        own), `ask_tick_s` the control task's beat.
+        own), `ask_tick_s` the control task's beat. `control.reverse_geocoder` (optional): the nearest street address of a
+        position the caller shares with the page's `geo` button (GEO_MARKS_RFC §4.7); without it the call's note names
+        no address.
 
         `remote_tool_wait_s`: how long the reply after a response's remote MCP calls waits for the provider to report
         them finished before it starts anyway.
@@ -287,7 +308,8 @@ class VoiceSessionService:
         self._caller_opening = caller_opening
         self._waiting_gap_max_s = waiting_gap_max_s
         self._greeting_guard_s = greeting_guard_s
-        self._control_hub = control_hub
+        self._control_hub = control.hub if control is not None else None
+        self._reverse_geocoder = control.reverse_geocoder if control is not None else None
         self._ask_clock = ask_clock
         self._ask_tick_s = ask_tick_s
         self._remote_tool_wait_s = remote_tool_wait_s
@@ -407,7 +429,7 @@ class VoiceSessionService:
             # call offers "Ask Lelik" (RFC §4.2 "Features per call"); its state is set before any socket can attach,
             # so the first `welcome` already carries `ask: "idle"`.
             if self._control_hub is not None and config.get("control_token_sha256"):
-                features = {FEATURE_ASK} if interpreter else set()
+                features = {FEATURE_ASK, FEATURE_GEO} if interpreter else {FEATURE_GEO}
                 live_text = config.get("mode") in {mode.value for mode in VOICE_MODES_WITH_LIVE_TEXT}
                 if live_text:
                     features.add(FEATURE_TEXT)
@@ -415,7 +437,8 @@ class VoiceSessionService:
                 if FEATURE_ASK in features and state.ask is not None:
                     state.ask_link = control_link
                     control_link.set_state(ask=AskState.IDLE.wire)
-                    control_task = asyncio.ensure_future(self._run_ask_control(control_link, state))
+                # One control task per call: the page's commands by type (`ask_*` to the latch, `geo` to the note).
+                control_task = asyncio.ensure_future(self._run_control(control_link, state))
                 if live_text:
                     # Before any socket can attach: the first `welcome` is followed by this call's snapshot.
                     state.text = LiveTextPacer(state.playback.bytes_per_ms, self._live_text_lag_ms)
@@ -447,6 +470,7 @@ class VoiceSessionService:
                 logger.error(f"voice call {fingerprint(ticket)}: failed to open realtime session: "
                              f"{redact_exception(exc, secrets=secrets)}")
                 raise
+            state.session = session
             if state.ask is not None:
                 # From here the language pair tool can be offered; a press made while the session opened is offered now.
                 state.pair_session = session
@@ -604,19 +628,21 @@ class VoiceSessionService:
 
     # ------------------------------------------------------------------ "Ask Lelik" (VOICE_CALL_CONTROL_CHANNEL_RFC §5)
 
-    async def _run_ask_control(self, link: "CallControlLink", state: _CallState) -> None:
-        """The control task of an interpreter call: page commands drive the latch, its timeouts are checked on every
-        beat, and every `ask_state` (its own and the consume loop's) goes to the page. Never ends on its own; the
-        call's teardown cancels it."""
+    async def _run_control(self, link: "CallControlLink", state: _CallState) -> None:
+        """The control task of a web call, one per call: page commands are dispatched by type. `geo` goes to
+        `_handle_geo`. On an interpreter call `ask_*` drive the latch, its timeouts are checked on every beat, and every
+        `ask_state` (its own and the consume loop's) goes to the page. Never ends on its own; the call's teardown
+        cancels it."""
         latch = state.ask
-        if latch is None:
-            return
         while True:
             try:
-                command: Optional[dict] = await asyncio.wait_for(link.commands.get(), timeout=self._ask_tick_s)
+                command: Optional[dict] = await asyncio.wait_for(
+                    link.commands.get(), timeout=self._ask_tick_s if latch is not None else None)
             except asyncio.TimeoutError:
                 command = None
-            if command is not None:
+            if command is not None and command.get("type") == GEO:
+                await self._handle_geo(link, state, command)
+            elif command is not None and latch is not None:
                 before = latch.state
                 seq = command_seq(command)
                 if command.get("type") == ASK_ARM:
@@ -631,10 +657,43 @@ class VoiceSessionService:
                     state.pair_items_since_arm = []
                     state.pair_accepted_since_arm = False
                 self._apply_ask(state, step)
-            self._apply_ask(state, latch.tick())
-            # Offered on arm, withdrawn when the cycle is over (a cancel, a timeout).
-            await self._sync_pair_tool_offer(state)
-            await self._flush_ask(link, state)
+            if latch is not None:
+                self._apply_ask(state, latch.tick())
+                # Offered on arm, withdrawn when the cycle is over (a cancel, a timeout).
+                await self._sync_pair_tool_offer(state)
+                await self._flush_ask(link, state)
+
+    async def _handle_geo(self, link: "CallControlLink", state: _CallState, command: dict) -> None:
+        """One `geo` frame (GEO_MARKS_RFC §4.7): a position the caller shared on purpose becomes one system note of the
+        running call, and the page gets `geo_state`. A bad fix, a second one within `_GEO_MIN_INTERVAL_S` and a fix
+        before the provider session is open are refused with a reason. Never logs coordinates or the address."""
+        seq = command_seq(command)
+        try:
+            fix = parse_geo_command(command)
+        except ValueError:
+            await link.send(geo_state_frame(False, seq, reason=GEO_REASON_BAD))
+            return
+        session = state.session
+        if session is None:
+            await link.send(geo_state_frame(False, seq, reason=GEO_REASON_NOT_READY))
+            return
+        now = (self._ask_clock or asyncio.get_running_loop().time)()
+        if state.geo_last_at is not None and now - state.geo_last_at < _GEO_MIN_INTERVAL_S:
+            await link.send(geo_state_frame(False, seq, reason=GEO_REASON_RATE))
+            return
+        state.geo_last_at = now
+        address: Optional[str] = None
+        if self._reverse_geocoder is not None:
+            try:
+                address = await self._reverse_geocoder.nearest_address(
+                    fix.latitude, fix.longitude, language=_GEO_ADDRESS_LANGUAGE)
+            except Exception as exc:     # the port never raises; a broken adapter still never fails the share
+                logger.warning(f"voice call {fingerprint(state.ticket)}: geo: geocoder raised {type(exc).__name__}")
+        mark = GeoMark(fix=fix, address=address)
+        await self._system_note(session, state, render_call_note(mark))
+        logger.info(f"voice call {fingerprint(state.ticket)}: geo: note inserted, accuracy {accuracy_band(mark)}, "
+                    f"address {'found' if address else 'none'}")
+        await link.send(geo_state_frame(True, seq, address=address, accuracy=fix.accuracy_m))
 
     async def _run_live_text(self, link: "CallControlLink", state: _CallState) -> None:
         """The live text task of a mode call: each beat sends the frames of the text whose audio has been played.

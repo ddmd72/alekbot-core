@@ -244,6 +244,19 @@ The HTML report agent task `deliver_deep_research` enqueues for a finished job (
 
 ---
 
+## Geo Mark Turn (task, no schedule)
+
+| Field | Value |
+|-------|-------|
+| **Payload** | `{"task_type": "geo_mark_turn", "platform", "user_id", "account_id", "channel_id", "session_id", "platform_user_id", "text", "mark_text", "language", "link_fp"}` (all strings) |
+| **Enqueued by** | `POST /geo/<link_id>` (`GeoMarkService.redeem_link`) when the owner wrote text after `$geo`; a failed enqueue appends the question and the mark to the session instead |
+| **Handler** | `GeoMarkTurnTask` (`services/geo_mark_turn_task.py`) hands the payload to the Slack adapter's turn runner (`handle_geo_mark_turn`), which re-authorizes the user and runs the chat turn with the mark; 400 on a missing key or another platform, 501 without a runner |
+| **Schedule** | none |
+
+Design: `docs/10_rfcs/GEO_MARKS_RFC.md` §4.5.
+
+---
+
 ## Cost
 
 Each scheduler job invocation costs ~$0.10/month per job (first 3 jobs free).

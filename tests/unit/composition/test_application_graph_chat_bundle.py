@@ -14,6 +14,7 @@ SHARED = (
     "coordinator", "agent_factory", "consolidation_queue", "global_config", "audio_service", "_notification_service",
     "_localization", "_file_conversion_service", "_fallback_service", "_short_link_service", "_skill_service",
     "_memory_facts", "_fact_answers", "_drive_notes", "_long_turns", "_doc_delivery_service",
+    "_geo_marks",
 )
 
 
