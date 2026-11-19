@@ -1170,11 +1170,13 @@ so a new recording is covered without a test edit. Tests, plus the extractor's t
   stale once the source accepts null). `Allowed.variant`: a null, value or new-field gap applies only where the nearest typed
   object (the object at the path for a field, the object holding the node for a value) has that `type`, since a path reaches
   every kept variant of a union; a narrowed entry never applied fails the run.
-- **Left for a reviewer** (the strict xfails and meta-tests written before the gaps, unchanged): the recorded-exchange xfails
-  now pass, and the "every ALLOWED gap is exercised" meta-tests of the request shapes and the response samples do not see the
-  new gaps. The response-conformance samples still replay a `tool_use` and server-tool result blocks with `caller: null`, which
-  no recording shows and which stays outside the contract.
-- **Still open for P17:** the reviewer's decisions above, the other providers (Slack, Twilio, Telegram, Cloudflare SFU, Google
+- **Tests decided by a reviewer:** the strict xfails written before the gaps were closed are gone (every recorded request and
+  response must conform outright); the "every ALLOWED gap is exercised" meta-tests count a gap as live when a sample, a shape or
+  a committed recording carries it (`tests/unit/contracts/allowed_gaps.py`); the hand-written Claude samples carry the `caller`
+  the recordings show (`{type: direct}` on `tool_use` and the search result; the code-execution caller on a fetch run by code
+  execution), so every replayed sample conforms; `test_the_replayed_tool_block_carries_caller_null_p17_d1` still pins the SDK
+  assembling a missing caller as null, the mechanism the gap rests on.
+- **Still open for P17:** the other providers (Slack, Twilio, Telegram, Cloudflare SFU, Google
   OAuth, and Microsoft's identity platform: the token POST of `src/adapters/microsoft/graph_auth.py` and the token endpoint of
   `microsoft_oauth_provider.py`, both on `login.microsoftonline.com`; that file's Graph `GET /me` is in the Graph slice),
   WebSocket event schemas, and the low-coverage adapters listed in the table.
