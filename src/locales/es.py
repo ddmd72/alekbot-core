@@ -238,6 +238,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_LINK_LINE.value: "📍 Abre el enlace de abajo en el dispositivo que llevas contigo para compartir dónde estás. Funciona una vez, durante {minutes} minutos.",
     UIMessage.GEO_LINK_LABEL.value: "Compartir mi ubicación",
     UIMessage.GEO_SAVED.value: "📍 Ubicación guardada: {address} ({accuracy}, {time})",
+    UIMessage.GEO_SAVED_WITH_LANDMARKS.value: "📍 Ubicación guardada: {address}; cerca: {landmarks} ({accuracy}, {time})",
     UIMessage.GEO_SAVED_NO_ADDRESS.value: "📍 Ubicación guardada, sin dirección encontrada ({accuracy}, {time})",
     UIMessage.GEO_NOT_SAVED.value: "⚠️ La ubicación no se guardó. Compártela de nuevo.",
     UIMessage.GEO_UNAVAILABLE.value: "Compartir la ubicación no está disponible ahora mismo.",

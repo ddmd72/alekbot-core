@@ -11,7 +11,7 @@ from quart import Quart
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
-from src.domain.geo_mark import LINK_TTL_S, GeoLinkBinding
+from src.domain.geo_mark import LINK_TTL_S, GeoLinkBinding, GeoPlace
 from src.domain.ui_messages import UIMessage
 from src.locales import uk
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
@@ -34,8 +34,8 @@ class Geocoder(ReverseGeocodingPort):
     def __init__(self, address: Optional[str]) -> None:
         self.address = address
 
-    async def nearest_address(self, latitude: float, longitude: float, *, language: str) -> Optional[str]:
-        return self.address
+    async def look_up(self, latitude: float, longitude: float) -> GeoPlace:
+        return GeoPlace(self.address, (), ())
 
 
 class Channel:

@@ -1,6 +1,6 @@
 """GeoMarkService — the whole geo mark flow every entry point calls (GEO_MARKS_RFC §4.4, §4.5).
 
-`locate` geocodes a fix (never raises). `record` renders the mark, posts the confirmation line to the channel and
+`locate` geocodes a fix (address, landmarks, areas) (never raises). `record` renders the mark, posts the confirmation line to the channel and
 appends one user/model pair to the session (user: the mark text; model: the posted line), so roles keep alternating.
 The Slack `$geo` link is a bot-issued capability: `issue_link` stores a `GeoLinkBinding` under the keyed digest of a
 128-bit opaque id for ten minutes and returns the URL; `peek_link` reads it without consuming it (the page's GET);
@@ -17,7 +17,8 @@ from enum import Enum
 from typing import Callable, Dict, Optional
 
 from src.domain.geo_mark import (
-    LINK_DIGEST_PURPOSE, LINK_ID_PATTERN, LINK_TTL_S, GeoFix, GeoLinkBinding, GeoMark, accuracy_band,
+    LINK_DIGEST_PURPOSE, LINK_ID_PATTERN, LINK_TTL_S, GeoFix, GeoLinkBinding, GeoMark, GeoPlace,
+    accuracy_band,
     local_shared_at, render_mark_text,
 )
 from src.domain.language import LanguageCode
@@ -36,6 +37,7 @@ from src.utils.logger import logger
 
 TURN_DEADLINE_S = 1800
 LINK_PATH = "/geo/"
+MAX_CONFIRMATION_LANDMARKS = 2
 _KEY_PREFIX = "geo_link:"
 
 PAGE_MESSAGES = (
@@ -83,16 +85,17 @@ class GeoMarkService:
 
     # ------------------------------------------------------------------ marks
 
-    async def locate(self, fix: GeoFix, language: str) -> GeoMark:
-        """The fix and its nearest street address; no geocoder, or a lookup that fails, gives a mark without one."""
-        address: Optional[str] = None
+    async def locate(self, fix: GeoFix) -> GeoMark:
+        """The fix with the lookup's address, landmarks and areas; no geocoder, or a lookup that fails, gives a mark
+        without them."""
+        place = GeoPlace.EMPTY
         if self._geocoder is not None:
             try:
-                address = await self._geocoder.nearest_address(fix.latitude, fix.longitude, language=language)
+                place = await self._geocoder.look_up(fix.latitude, fix.longitude)
             except Exception as exc:     # the port never raises; a broken adapter still never fails a mark
                 logger.warning("[GeoMark] geocoder raised: %s", type(exc).__name__)
-                address = None
-        return GeoMark(fix=fix, address=address)
+                place = GeoPlace.EMPTY
+        return GeoMark(fix, place.address, place.landmarks, place.areas)
 
     async def record(self, mark: GeoMark, *, user_id: str, session_id: str, channel: ResponseChannel,
                      language: str) -> str:
@@ -134,7 +137,7 @@ class GeoMarkService:
         if binding is None:
             logger.info("[GeoMark] link gone: link=%s", fingerprint(digest))
             return GeoRedeem(GeoRedeemStatus.GONE)
-        mark = await self.locate(fix, binding.language)
+        mark = await self.locate(fix)
         zone = await self._zone(binding.user_id)
         confirmation = self._confirmation(mark, zone, binding.language)
         mark_text = render_mark_text(mark, zone)
@@ -194,6 +197,10 @@ class GeoMarkService:
         accuracy = "±?" if mark.fix.accuracy_m is None else f"±{round(mark.fix.accuracy_m)} m"
         time = local_shared_at(mark, zone).strftime("%H:%M")
         if mark.address:
+            names = [x.name for x in mark.landmarks if x.name not in mark.address][:MAX_CONFIRMATION_LANDMARKS]
+            if names:
+                template = self._localization.get_ui_string(lang, UIMessage.GEO_SAVED_WITH_LANDMARKS)
+                return template.format(address=mark.address, landmarks=", ".join(names), accuracy=accuracy, time=time)
             template = self._localization.get_ui_string(lang, UIMessage.GEO_SAVED)
             return template.format(address=mark.address, accuracy=accuracy, time=time)
         template = self._localization.get_ui_string(lang, UIMessage.GEO_SAVED_NO_ADDRESS)
@@ -229,5 +236,6 @@ class GeoMarkService:
 
     @staticmethod
     def _log(what: str, mark: GeoMark, user_id: str) -> None:
-        logger.info("[GeoMark] %s: source=%s accuracy=%s address=%s user=%s", what, mark.fix.source.value,
-                    accuracy_band(mark), "yes" if mark.address else "no", user_id[:8])
+        logger.info("[GeoMark] %s: source=%s accuracy=%s address=%s landmarks=%d areas=%d user=%s", what,
+                    mark.fix.source.value, accuracy_band(mark), "yes" if mark.address else "no", len(mark.landmarks),
+                    len(mark.areas), user_id[:8])
