@@ -31,7 +31,7 @@ async def test_with_the_key_marks_get_the_google_address(monkeypatch):
     service = _build({"GOOGLE_SEARCH_API_KEY": "geo-key-test"})
 
     assert service is not None
-    assert (await service.locate(FIX, "en")).address == "Main Street, Springfield"
+    assert (await service.locate(FIX)).address == "Main Street, Springfield"
     assert fake.requests[0].params["key"] == "geo-key-test"
 
 
@@ -41,7 +41,7 @@ async def test_without_the_key_marks_have_no_address_and_nothing_is_requested(mo
     service = _build({"GOOGLE_SEARCH_API_KEY": None})
 
     assert service is not None
-    assert (await service.locate(FIX, "en")).address is None
+    assert (await service.locate(FIX)).address is None
     assert fake.requests == []
 
 

@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, List, Optional
 
 import pytest
 
-from src.domain.geo_mark import GeoFix, GeoMark, GeoSource, render_call_note
+from src.domain.geo_mark import GeoFix, GeoMark, GeoPlace, GeoSource, render_call_note
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_control_protocol import control_token_digest
 from src.domain.voice_playback_tracker import PlaybackTracker
@@ -98,11 +98,11 @@ class _Geocoder(ReverseGeocodingPort):
     def __init__(self, address: Optional[str] = ADDRESS, raises: bool = False) -> None:
         self.address, self.raises, self.asked = address, raises, []
 
-    async def nearest_address(self, latitude: float, longitude: float, *, language: str) -> Optional[str]:
-        self.asked.append((latitude, longitude, language))
+    async def look_up(self, latitude: float, longitude: float) -> GeoPlace:
+        self.asked.append((latitude, longitude))
         if self.raises:
             raise RuntimeError("geocoder down")
-        return self.address
+        return GeoPlace(self.address, (), ())
 
 
 class _Call:

@@ -12,7 +12,7 @@ import pytest
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
-from src.domain.geo_mark import LINK_DIGEST_PURPOSE, LINK_TTL_S, GeoFix, GeoLinkBinding, GeoMark, GeoSource
+from src.domain.geo_mark import LINK_DIGEST_PURPOSE, LINK_TTL_S, GeoFix, GeoLinkBinding, GeoMark, GeoPlace, GeoSource
 from src.domain.secret_digest import fingerprint, keyed_digest
 from src.domain.ui_messages import UIMessage
 from src.locales import en, uk
@@ -46,13 +46,13 @@ def _fix(accuracy: Optional[float] = 5.0, source: GeoSource = GeoSource.SLACK_LI
 class Geocoder(ReverseGeocodingPort):
     def __init__(self, address: Optional[str] = ADDRESS, raises: bool = False) -> None:
         self.address, self.raises = address, raises
-        self.asked: List[Tuple[float, float, str]] = []
+        self.asked: List[Tuple[float, float]] = []
 
-    async def nearest_address(self, latitude: float, longitude: float, *, language: str) -> Optional[str]:
-        self.asked.append((latitude, longitude, language))
+    async def look_up(self, latitude: float, longitude: float) -> GeoPlace:
+        self.asked.append((latitude, longitude))
         if self.raises:
             raise RuntimeError("broken adapter")
-        return self.address
+        return GeoPlace(self.address, (), ())
 
 
 class Channel:
@@ -333,7 +333,7 @@ class TestRecord:
     async def test_record_posts_appends_the_pair_and_returns_the_line(self):
         w = World()
         channel = Channel()
-        mark = await w.service.locate(_fix(source=GeoSource.TELEGRAM_PIN), "en")
+        mark = await w.service.locate(_fix(source=GeoSource.TELEGRAM_PIN))
 
         line = await w.service.record(mark, user_id="usr-1", session_id=SESSION, channel=channel, language="en")
 
@@ -343,14 +343,14 @@ class TestRecord:
 
     async def test_a_failed_post_still_appends(self):
         w = World()
-        mark = await w.service.locate(_fix(), "en")
+        mark = await w.service.locate(_fix())
         await w.service.record(mark, user_id="usr-1", session_id=SESSION, channel=Channel(fail=True), language="en")
         assert len(await w.history()) == 2
 
     async def test_a_failed_append_raises(self, caplog):
         w = World()
         w.sessions.fail = True
-        mark = await w.service.locate(_fix(), "en")
+        mark = await w.service.locate(_fix())
         with pytest.raises(Exception):
             await w.service.record(mark, user_id="usr-1", session_id=SESSION, channel=Channel(), language="en")
         assert any("history append failed" in r.getMessage() for r in caplog.records)
@@ -359,7 +359,7 @@ class TestRecord:
                              ids=["unreadable", "no-user", "unknown-zone"])
     async def test_an_unreadable_time_zone_is_utc(self, users):
         w = World(users=users)
-        mark = await w.service.locate(_fix(), "en")
+        mark = await w.service.locate(_fix())
 
         line = await w.service.record(mark, user_id="usr-1", session_id=SESSION, channel=Channel(), language="en")
 
@@ -369,7 +369,7 @@ class TestRecord:
 
     async def test_without_an_address_the_line_says_so(self):
         w = World(geocoder=Geocoder(address=None))
-        mark = await w.service.locate(_fix(accuracy=None, source=GeoSource.TELEGRAM_PIN), "en")
+        mark = await w.service.locate(_fix(accuracy=None, source=GeoSource.TELEGRAM_PIN))
 
         line = await w.service.record(mark, user_id="usr-1", session_id=SESSION, channel=Channel(), language="en")
 
@@ -383,10 +383,10 @@ class TestLocate:
         service = GeoMarkService(
             links=w.links, geocoder=None, sessions=w.sessions, channels=w.channels, task_queue=w.queue,
             users=w.users, localization=FileLocalizationAdapter(), digest_key=DIGEST_KEY, base_url=BASE_URL)
-        assert await service.locate(_fix(), "en") == GeoMark(_fix(), None)
+        assert await service.locate(_fix()) == GeoMark(_fix(), None)
 
     async def test_a_raising_geocoder_gives_no_address(self):
-        assert (await World(geocoder=Geocoder(raises=True)).service.locate(_fix(), "en")).address is None
+        assert (await World(geocoder=Geocoder(raises=True)).service.locate(_fix())).address is None
 
 
 class TestPageStrings:
@@ -407,7 +407,7 @@ async def test_no_log_line_holds_the_position_the_address_or_the_question(caplog
         await w.service.peek_link(raw_id)
         await w.service.redeem_link(raw_id, _fix())
         await w.service.redeem_link(raw_id, _fix())
-    mark = await w.service.locate(_fix(), "en")
+    mark = await w.service.locate(_fix())
     await w.service.record(mark, user_id="usr-1", session_id=SESSION, channel=Channel(fail=True), language="en")
 
     assert any("[GeoMark]" in r.getMessage() for r in caplog.records)
