@@ -475,3 +475,44 @@ def test_the_discovery_source_url_is_pinned_by_the_ref_and_names_the_transforms(
     assert fetched == ["https://raw.githubusercontent.com/example/discovery/0123abc/discoveries/parcels.v1.json"]
     assert doc["x-source"] == fetched[0] and doc["info"]["version"] == "v1-20261101"
     assert doc["x-transforms"] == [*es._TRANSFORMS, *es._DISCOVERY_TRANSFORMS, es._PARAMETER_TRANSFORM]
+
+
+@pytest.mark.parametrize("fmt, low, high", [
+    ("int32", -2147483648, 2147483647), ("uint32", 0, 4294967295),
+    ("int64", -9223372036854775808, 9223372036854775807), ("uint64", 0, 18446744073709551615),
+])
+def test_a_discovery_integer_format_becomes_its_range(fmt, low, high):
+    spec = _discovery()
+    params = spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]
+    params["page"] = {"location": "query", "type": "integer", "format": fmt}
+    params["limit"]["format"] = fmt  # the method's own minimum and maximum win over the format's range
+    op = replace(LIST_PARCELS, query=("limit", "page"))
+    doc = es.build_subset(es.discovery_document(spec, (op,)), replace(PARCELS_D, operations=(op,)), source="s",
+                          version="v", retrieved="2026-11-19")
+    by_name = _params(doc, "/depots/{depotId}/parcels")
+    assert by_name[("query", "page")]["schema"] == {"type": "integer", "format": fmt, "minimum": low, "maximum": high}
+    assert (by_name[("query", "limit")]["schema"]["minimum"], by_name[("query", "limit")]["schema"]["maximum"]) == (1, 500)
+
+
+def test_a_string_typed_64_bit_discovery_parameter_gets_no_range():
+    spec = _discovery()
+    params = spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]
+    params["since"] = {"location": "query", "type": "string", "format": "uint64"}
+    op = replace(LIST_PARCELS, query=("since",))
+    doc = es.build_subset(es.discovery_document(spec, (op,)), replace(PARCELS_D, operations=(op,)), source="s",
+                          version="v", retrieved="2026-11-19")
+    assert _params(doc, "/depots/{depotId}/parcels")[("query", "since")]["schema"] == {"type": "string",
+                                                                                      "format": "uint64"}
+
+
+def test_a_deprecated_discovery_parameter_keeps_its_mark():
+    spec = _discovery()
+    spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]["tag"]["deprecated"] = True
+    params = _params(_from_discovery_spec(spec), "/depots/{depotId}/parcels")
+    assert params[("query", "tag")]["deprecated"] is True
+    assert "deprecated" not in params[("query", "limit")]
+
+
+def _from_discovery_spec(spec: dict) -> dict:
+    return es.build_subset(es.discovery_document(spec, (LIST_PARCELS,)), PARCELS_D, source="s", version="v",
+                           retrieved="2026-11-19")

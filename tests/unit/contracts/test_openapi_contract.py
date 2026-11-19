@@ -208,3 +208,90 @@ def test_one_validator_serves_every_concrete_path_of_a_template():
     _query_problems(None, path="/v1/parcels/2")
     after = oc._operation.cache_info()
     assert after.misses == before.misses and after.hits == before.hits + 1
+
+
+# --------------------------------------------------------------------------- no vacuous pass (reviewer probes p1-p3)
+def _contract_at(tmp_path: Path, server: str, paths: dict) -> Path:
+    """A one-off invented contract `tmp/<provider "tmp">/openapi.yaml`; returns the contracts directory."""
+    import yaml
+
+    (tmp_path / "tmp").mkdir()
+    doc = {"openapi": "3.1.0", "info": {"title": "tmp", "version": "1"}, "servers": [{"url": server}],
+           "components": {"schemas": {}}, "paths": paths}
+    (tmp_path / "tmp" / "openapi.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    return tmp_path
+
+
+def test_the_query_keyword_is_required_and_none_is_refused():
+    with pytest.raises(TypeError, match="query"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/7", {}, None, contracts_dir=FIXTURES)
+    with pytest.raises(TypeError, match=r"pass \{\} when the request carries no query"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/7", {}, None, query=None, contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("path", ["/v1/parcels/7?zz_unknown=1", "/v1/parcels/7#top", "/v1/parcels?limit=5"])
+def test_a_query_or_fragment_left_in_the_path_is_refused(path):
+    with pytest.raises(ValueError, match="pass the URL path alone"):
+        oc.assert_request("parcels", "GET", path, {}, None, query={"limit": ["5"]}, contracts_dir=FIXTURES)
+    with pytest.raises(ValueError, match="pass the URL path alone"):
+        oc.operation_path("parcels", "GET", path, contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("path", ["/parcels/7", "/parcels/tracked", "/v10/parcels/7", "/v1parcels/7"])
+def test_the_server_base_path_is_required_when_the_server_has_one(path):
+    with pytest.raises(AssertionError, match="is not in"):
+        oc.operation_path("parcels", "GET", path, contracts_dir=FIXTURES)
+
+
+def test_a_server_without_a_base_path_takes_the_path_as_sent(tmp_path):
+    root = _contract_at(tmp_path, "https://api.example.com", {"/parcels": {"get": {}}})
+    oc.assert_request("tmp", "GET", "/parcels", {}, None, query={}, contracts_dir=root)
+    with pytest.raises(AssertionError, match="is not in"):
+        oc.assert_request("tmp", "GET", "/v1/parcels", {}, None, query={}, contracts_dir=root)
+
+
+def test_the_contract_form_names_an_operation_by_its_paths_key_only_when_asked():
+    oc.assert_request("parcels", "GET", "/parcels/tracked", {}, None, query={}, contract_form=True,
+                      contracts_dir=FIXTURES)
+    with pytest.raises(AssertionError, match="is not in"):
+        oc.assert_request("parcels", "GET", "/parcels/tracked", {}, None, query={}, contracts_dir=FIXTURES)
+    with pytest.raises(AssertionError, match="is not in"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/tracked", {}, None, query={}, contract_form=True,
+                          contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("value", ["٥", "５", "+5", "05", " 5"])
+def test_an_integer_value_must_be_canonical_ascii_digits(value):
+    with pytest.raises(AssertionError, match=r"query limit: wrong type \(expected integer\)"):
+        oc.assert_request("parcels", "GET", "/v1/parcels", {}, None, query={"limit": [value]}, contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("value", ["٠.5", "+0.5", "00.5", ".5"])
+def test_a_number_value_must_be_canonical_ascii_digits(value):
+    with pytest.raises(AssertionError, match=r"query ratio: wrong type \(expected number\)"):
+        oc.assert_request("parcels", "GET", "/v1/parcels", {}, None, query={"limit": ["5"], "ratio": [value]},
+                          contracts_dir=FIXTURES)
+
+
+def _deprecated_paths() -> dict:
+    return {"/items/{kind}": {"get": {"parameters": [
+        {"in": "path", "name": "kind", "required": True, "deprecated": True, "schema": {"type": "string"}},
+        {"in": "query", "name": "$top", "required": False, "deprecated": True, "schema": {"type": "integer"}},
+        {"in": "query", "name": "$skip", "required": False, "deprecated": True, "x-alek-extension": "still sent (2026-11-19)",
+         "schema": {"type": "integer"}},
+    ]}}}
+
+
+def test_a_deprecated_parameter_fails_when_sent_unless_the_contract_allows_it(tmp_path):
+    root = _contract_at(tmp_path, "https://api.example.com/v1.0", _deprecated_paths())
+    with pytest.raises(AssertionError) as failure:
+        oc.assert_request("tmp", "GET", "/v1.0/items/full", {}, None, query={"$top": ["5"], "$skip": ["5"]},
+                          contracts_dir=root)
+    assert str(failure.value).splitlines()[1:] == ["path kind: deprecated", "query $top: deprecated"]
+
+
+def test_a_path_segment_is_not_decoded_a_second_time():
+    """`path` is already the decoded URL path: `%6F` in it is the three characters, not an `o`."""
+    with pytest.raises(AssertionError, match=r"path labelId: value not allowed \('fr%6Fnt'\)"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/7/labels/fr%6Fnt.pdf", {}, None, query={},
+                          contracts_dir=FIXTURES)

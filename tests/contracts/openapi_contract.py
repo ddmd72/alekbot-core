@@ -6,10 +6,16 @@ validator per operation is compiled once per process. A field the schema marks `
 allows it (`x-alek-extension`, from the extractor's ALLOWED table).
 JSON Schema `format` keywords (date-time, uri, ...) are not enforced: no FormatChecker is passed.
 
-Path and query parameters: the operation is found by its literal path, else by a templated one matched segment by
-segment (`/messages/{id}`; a literal match wins); the matched segments are the path parameters. Query values arrive as
-strings and are read per the parameter's schema (integer, number, boolean; an array is a repeated parameter, or one
-comma-separated value when the parameter says `explode: false`) before validation.
+Paths: a request's path is the decoded URL path the client sent (`yarl.URL.path`, `httpx.URL.path`), never with a query
+or fragment. When the contract's server has a base path (`/v1`), the path must start with it and it is stripped; a path
+without it is accepted only for a server with an empty base path. The operation is found by its literal path, else by a
+templated one matched segment by segment (`/messages/{id}`; a literal match wins); the matched segments are the path
+parameters. `contract_form=True` names an operation by its own `paths` key instead (a test of the contract itself).
+
+Query: the caller always says what was sent (`{}` for nothing). Values arrive as strings and are read per the
+parameter's schema (integer and number in their canonical ASCII form, boolean; an array is a repeated parameter, or one
+comma-separated value when the parameter says `explode: false`) before validation. A path or query parameter the
+contract marks `deprecated` fails when sent, unless it carries the extension.
 
 A failure lists every violation, one per line: `<where>: unknown field | unknown query parameter | wrong type | missing
 required | value not allowed | deprecated`. `<where>` is a JSON path into the body (`$.input[1].content[0].type`),
@@ -22,7 +28,7 @@ import functools
 import re
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import jsonschema
 import yaml
@@ -40,27 +46,37 @@ def assert_request(
     headers: Mapping[str, str],
     body: Any,
     *,
-    query: Mapping[str, Sequence[str]] | None = None,
+    query: Mapping[str, Sequence[str]],
+    contract_form: bool = False,
     contracts_dir: Path = CONTRACTS_DIR,
 ) -> None:
     """Fail (AssertionError, every violation on its own line) unless the request conforms to the provider's contract.
 
-    `path` is the operation's path as the contract writes it, or the URL path the client sent (the base path of the
-    contract's server, e.g. `/v1`, is stripped; a templated contract path matches it segment by segment). Only the
-    headers the operation declares are checked: the SDK adds its own (auth, user agent, retries). `query` maps each
-    query parameter sent to its values in order, as strings (`None`: no query was sent). `body` is None for a request
-    without one. `contracts_dir` is for the extractor's own tests."""
+    `path` is the decoded URL path the client sent, the server's base path included (see the module docstring), or with
+    `contract_form` the operation's own `paths` key. Only the headers the operation declares are checked: the SDK adds
+    its own (auth, user agent, retries). `query` maps each query parameter sent to its values in order, as strings;
+    `{}` when none was sent. `body` is None for a request without one. `contracts_dir` is for the tests of this module
+    and of the extractor."""
+    if query is None:
+        raise TypeError("query: pass {} when the request carries no query")
     contract = contracts_dir / provider / "openapi.yaml"
-    template, path_params = _match(contract, method.lower(), path)
+    template, path_params = _match(contract, method.lower(), _plain_path(path), contract_form)
     op = _operation(contract, method.lower(), template)
-    problems = sorted(set(op.problems(headers, body, dict(path_params), query or {})))
+    problems = sorted(set(op.problems(headers, body, dict(path_params), query)))
     if problems:
         raise AssertionError(f"{provider} {method.upper()} {path} breaks the contract:\n" + "\n".join(problems))
 
 
 def operation_path(provider: str, method: str, path: str, *, contracts_dir: Path = CONTRACTS_DIR) -> str:
-    """The contract path (`paths` key) a request's method and URL path resolve to; AssertionError when none does."""
-    return _match(contracts_dir / provider / "openapi.yaml", method.lower(), path)[0]
+    """The contract path (`paths` key) a request's method and decoded URL path resolve to; AssertionError when none
+    does."""
+    return _match(contracts_dir / provider / "openapi.yaml", method.lower(), _plain_path(path), False)[0]
+
+
+def _plain_path(path: str) -> str:
+    if "?" in path or "#" in path:
+        raise ValueError(f"{path!r}: pass the URL path alone; the query goes in `query`")
+    return path
 
 
 # ------------------------------------------------------------------------------------------------------- loading
@@ -80,12 +96,17 @@ def _document(contract: Path) -> dict:
 
 
 @functools.lru_cache(maxsize=None)
-def _match(contract: Path, method: str, path: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+def _match(contract: Path, method: str, path: str, contract_form: bool) -> tuple[str, tuple[tuple[str, str], ...]]:
     """The `paths` key the request resolves to and its path parameters. A literal path wins; otherwise the templated
     path with the most literal segments (a tie between two templates is ambiguous and fails)."""
     doc = _document(contract)
     paths = doc.get("paths") or {}
-    candidates = [path] + [path[len(base):] for base in _base_paths(doc) if base and path.startswith(base)]
+    if contract_form:
+        if method not in (paths.get(path) or {}):
+            raise AssertionError(f"{method.upper()} {path} is not in {contract} (operations: {sorted(paths)})")
+        return path, ()
+    bases = _base_paths(doc) or [""]
+    candidates = [path[len(base):] if base else path for base in bases if not base or path.startswith(base + "/")]
     for candidate in candidates:
         if method in (paths.get(candidate) or {}):
             return candidate, ()
@@ -106,7 +127,8 @@ def _match(contract: Path, method: str, path: str) -> tuple[str, tuple[tuple[str
 
 
 def _template_params(template: str, path: str) -> tuple[tuple[str, str], ...] | None:
-    """The `{name}` values of `path` under `template`, segment by segment (a value never spans a `/`); None: no match."""
+    """The `{name}` values of `path` (already decoded) under `template`, segment by segment (a value never spans a
+    `/`); None: no match."""
     want, got = template.split("/"), path.split("/")
     if len(want) != len(got):
         return None
@@ -120,7 +142,7 @@ def _template_params(template: str, path: str) -> tuple[tuple[str, str], ...] | 
         hit = re.fullmatch("".join("(.+?)" if i % 2 else re.escape(p) for i, p in enumerate(parts)), segment)
         if hit is None or not all(hit.groups()):
             return None
-        params += [(name, unquote(value)) for name, value in zip(parts[1::2], hit.groups())]
+        params += list(zip(parts[1::2], hit.groups()))
     return tuple(params)
 
 
@@ -177,6 +199,7 @@ class _Operation:
             if name not in path_params:
                 yield f"path {name}: missing required"
                 continue
+            yield from _deprecated_parameter(param, f"path {name}")
             yield from self._explain_all(validator, _scalar(path_params[name], param["schema"]), f"path {name}")
         known = {param["name"] for param, _ in self.params["query"]}
         for name in sorted(set(query) - known):
@@ -199,6 +222,7 @@ class _Operation:
                 continue
             else:
                 instance = _scalar(values[0], schema)
+            yield from _deprecated_parameter(param, f"query {name}")
             yield from self._explain_all(validator, instance, f"query {name}")
 
     def _explain_all(self, validator: Any, instance: Any, root: str) -> Iterator[str]:
@@ -251,13 +275,23 @@ class _Operation:
         return schema
 
 
+def _deprecated_parameter(param: Mapping[str, Any], where: str) -> Iterator[str]:
+    """A sent parameter the contract marks deprecated (OpenAPI puts the mark on the Parameter Object), unless allowed."""
+    if param.get("deprecated") is True and EXTENSION not in param:
+        yield f"{where}: deprecated"
+
+
+_INTEGER = re.compile(r"-?(0|[1-9][0-9]*)")                       # as a client writes an int: no sign, no zero padding
+_NUMBER = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?")
+
+
 def _scalar(text: str, schema: Mapping[str, Any]) -> Any:
-    """A path or query value (a string on the wire) as the schema's type, when it reads as one; else the string, which
-    then fails as a wrong type."""
+    """A path or query value (a string on the wire) as the schema's type, when it reads as one in canonical ASCII
+    form; else the string, which then fails as a wrong type."""
     kind = schema.get("type")
-    if kind == "integer" and re.fullmatch(r"[+-]?\d+", text):
+    if kind == "integer" and _INTEGER.fullmatch(text):
         return int(text)
-    if kind == "number" and re.fullmatch(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?", text):
+    if kind == "number" and _NUMBER.fullmatch(text):
         return float(text)
     if kind == "boolean" and text in ("true", "false"):
         return text == "true"
