@@ -145,9 +145,9 @@ not read stays by name as `x-alek-unread`, any value, so the object stays closed
 wire (`text/event-stream`, one schema per event's data; the adapter always streams) and the message the SDK assembles from it
 (`application/json`).
 - **Check.** `assert_response(provider, method, path, status, body, media=...)` and `assert_stream(provider, method, path,
-  status, events)` (`events` = `[{"event", "data"}]`, each violation prefixed `event[i]`). `path` names the operation: its
-  `paths` key, or the request's URL path resolved as `assert_request` resolves it. A field the source marks deprecated is
-  accepted in a response.
+  status, events)` (`events` = `[{"event", "data"}]`, each violation prefixed `event[i]`). `path` (and `raw_path=` for a
+  contract with aliases) is the request's, resolved exactly as `assert_request` resolves it: the server's base path is
+  required, the contract's bare `paths` key names no request. A field the source marks deprecated is accepted in a response.
 - **Samples.** `tests/unit/contracts/<provider>_response_samples.py`: response bodies as the wire carries them (Claude: rendered
   as a stream by `events()`). Each conforms, is answered by the transport so the REAL SDK and adapter read it (the test pins
   what the adapter makes of it), and is replayed as `raw_content` in the next request, which must conform to the request

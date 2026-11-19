@@ -90,6 +90,7 @@ def assert_response(
     body: Any,
     *,
     media: str = "application/json",
+    raw_path: str | None = None,
     contracts_dir: Path = CONTRACTS_DIR,
 ) -> None:
     """Fail (AssertionError, every violation on its own line) unless a response body conforms to the provider's
@@ -97,9 +98,10 @@ def assert_response(
 
     For `text/event-stream` the body is ONE event's data JSON (see `assert_stream` for a whole stream). A field the
     source marks deprecated is accepted in a response (the provider may still send it); a top-level field the contract
-    keeps as `x-alek-unread` accepts any value. `path` names the operation: its `paths` key, or the URL path of the
-    request it answers (the server's base path included)."""
-    op = _response_operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
+    keeps as `x-alek-unread` accepts any value. `path` and `raw_path` are those of the request the response answers,
+    resolved exactly as `assert_request` resolves them (the decoded URL path, the server's base path included; the
+    raw path required by a contract with aliases, refused by any other)."""
+    op = _response_operation(contracts_dir / provider / "openapi.yaml", method.lower(), path, raw_path)
     problems = sorted(set(op.response_problems(str(status), media, body, "$")))
     if problems:
         raise AssertionError(
@@ -113,12 +115,13 @@ def assert_stream(
     status: int | str,
     events: list[Mapping[str, Any]],
     *,
+    raw_path: str | None = None,
     contracts_dir: Path = CONTRACTS_DIR,
 ) -> None:
     """Fail unless every event of a server-sent-event stream conforms: `events` is `[{"event": <name>, "data":
     <JSON>}]` in wire order. Each violation is prefixed `event[i]`; an event whose name differs from its data's
-    `type` is a violation too (the SDK dispatches on the name)."""
-    op = _response_operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
+    `type` is a violation too (the SDK dispatches on the name). `path` and `raw_path` as for `assert_response`."""
+    op = _response_operation(contracts_dir / provider / "openapi.yaml", method.lower(), path, raw_path)
     problems: list[str] = []
     for i, event in enumerate(events):
         data = event.get("data")
@@ -158,12 +161,10 @@ def _plain_path(path: str) -> str:
     return path
 
 
-def _response_operation(contract: Path, method: str, path: str) -> "_Operation":
-    """The operation a response answers: `path` is the contract's `paths` key itself, else the request's URL path
-    resolved as `assert_request` resolves it."""
-    if method in ((_document(contract).get("paths") or {}).get(path) or {}):
-        return _operation(contract, method, path)
-    return _operation(contract, method, _match(contract, method, _plain_path(path))[0])
+def _response_operation(contract: Path, method: str, path: str, raw_path: str | None) -> "_Operation":
+    """The operation a response answers, resolved from its request's paths exactly as `assert_request` does."""
+    template, _ = _match(contract, method, _plain_path(path), _raw(contract, path, raw_path))
+    return _operation(contract, method, template)
 
 
 # ------------------------------------------------------------------------------------------------------- loading
