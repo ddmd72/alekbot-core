@@ -34,7 +34,8 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/api/user/link-telegram` | Link Telegram |
 | `POST` | `/api/user/request-phone-otp`, `/api/user/verify-phone-otp` | Prove a phone number (Twilio Verify) for voice calls |
 | `GET` | `/api/user/facts` | Latest facts |
-| `GET` | `/api/user/facts/browse` | Cursor-paginated facts (`limit`, `cursor`, `domain`) |
+| `GET` | `/api/user/fact-domains` | The fact registry's domains in Cabinet order, labelled in `lang` (`{key, label, order}`) |
+| `GET` | `/api/user/facts/browse` | Cursor-paginated facts (`limit`, `cursor`, `state`, `domain` = one registry key, matched against `domain_keys`) |
 | `POST` | `/api/user/facts/search` | Semantic search over facts |
 | `POST` | `/api/user/facts/<fact_id>/invalidate` | Invalidate a fact (no LLM; the baseline cache is rebuilt) |
 | `GET`, `POST` | `/api/user/invite-codes` | List codes / create one (**owner**) |
