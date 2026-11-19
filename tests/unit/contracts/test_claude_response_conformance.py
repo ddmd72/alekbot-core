@@ -12,7 +12,8 @@ The grounded loop's pause_turn continuation runs offline too: its second request
 `NOT_REACHABLE` entry) and is checked against the request contract.
 
 Meta-tests: an unknown field and a wrong-typed field fail at the top level and at depth, in a message and in an event;
-every kept top-level field, union variant and ALLOWED gap of both responses is exercised (a dead keep-list entry fails).
+every kept top-level field and union variant of both responses is exercised (a dead keep-list entry fails), and every
+ALLOWED gap is carried by a sample or, for the stream, a committed recording.
 """
 from __future__ import annotations
 
@@ -32,7 +33,9 @@ from src.domain.llm import FinishReason
 from src.ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart
 from tests.contracts.openapi_contract import assert_request, assert_response, assert_stream
 from tests.unit.contracts import claude_response_samples as cs
+from tests.unit.contracts.allowed_gaps import carries
 from tests.unit.contracts.claude_response_samples import SAMPLES, events, sse
+from tests.unit.contracts.recorded_exchanges import EXCHANGES, provider_of, recording
 
 OPERATION = PROVIDERS["anthropic"].operations[0]
 MESSAGE, STREAM = OPERATION.responses
@@ -156,17 +159,12 @@ def test_the_grounded_loop_continues_a_paused_turn_in_its_container():
                    query={k: sent[0].url.params.get_list(k) for k in sent[0].url.params.keys()})
 
 
-# P17-D1: the SDK's stream accumulator builds every block of content_block_start with `model_dump()` (not
-# exclude_unset; anthropic/lib/streaming/_messages.py accumulate_event), so a tool_use or server_tool_use block whose
-# start event has no `caller` gets `caller: None` set, and replaying the block (raw_content, the pause_turn
-# continuation) sends `"caller": null`. The request contract (the SDK's request types) has no null there. Whether the
-# API accepts null is settled by a recording (`make contract-record PROVIDER=anthropic`, scenarios
-# replay_thinking_and_tool_use and grounding_dynamic_container): accepted -> an ALLOWED gap; refused -> an adapter fix.
-_P17_D1 = pytest.mark.xfail(strict=True, raises=AssertionError,
-                            reason="P17-D1: a replayed tool block carries caller: null, absent from the request contract")
-
-
-@_P17_D1
+# P17-D1 (an ALLOWED gap since the recordings): the SDK's stream accumulator builds every block of content_block_start
+# with `model_dump()` (not exclude_unset; anthropic/lib/streaming/_messages.py accumulate_event), so a block whose start
+# event has no `caller` gets `caller: None` set, and replaying it (raw_content, the pause_turn continuation) sends
+# `"caller": null`. On the real wire only a `server_tool_use` the model calls itself arrives without a caller
+# (replay_server_tool_blocks: null sent back, answered 200); the samples carry the callers the recordings show
+# (claude_response_samples.py), so every replay below conforms.
 def test_the_continuation_of_a_paused_turn_conforms_to_the_request_contract():
     _, (_, second), sent = _grounded_run()
     require("container" in second and len(second["messages"][-1]["content"]) == len(
@@ -175,12 +173,7 @@ def test_the_continuation_of_a_paused_turn_conforms_to_the_request_contract():
                    query={k: sent[1].url.params.get_list(k) for k in sent[1].url.params.keys()})
 
 
-def _has_tool_block(sample_id: str) -> bool:
-    return any(b["type"] in ("tool_use", "server_tool_use") for b in SAMPLES[sample_id]["content"])
-
-
-@pytest.mark.parametrize("sample_id", [
-    pytest.param(s, marks=_P17_D1) if _has_tool_block(s) else s for s in READABLE])
+@pytest.mark.parametrize("sample_id", READABLE)
 def test_the_message_replayed_as_raw_content_conforms_to_the_request_contract(sample_id):
     """The delegation loop sends the assistant turn back unchanged (raw_content) with the tool results after it."""
     response = parsed(sample_id)
@@ -212,17 +205,31 @@ def test_the_message_replayed_as_raw_content_conforms_to_the_request_contract(sa
 
 
 def test_the_replayed_tool_block_carries_caller_null_p17_d1():
-    """Pins the mechanism of P17-D1 (flips when the SDK or the adapter stops sending it)."""
+    """Pins the mechanism of P17-D1 (flips when the SDK or the adapter stops sending it): a `server_tool_use` whose
+    start event has no caller, as the model's own calls arrive, is assembled with `caller` set to None."""
+    block = parsed("grounded_with_citations").raw_content.content[0]
+    require("caller" not in SAMPLES["grounded_with_citations"]["content"][0], "the start event carries no caller")
+    assert block.type == "server_tool_use" and "caller" in block.model_fields_set and block.caller is None
+
+
+def test_a_received_caller_is_kept_for_the_replay():
+    """The other half of P17-D1: a caller the stream carries is assembled as received, so the replay sends it back
+    (replay_thinking_and_tool_use: a tool_use's `{type: direct}` sent back, answered 200)."""
     block = parsed("tool_use_after_thinking").raw_content.content[3]
-    assert block.type == "tool_use" and "caller" in block.model_fields_set and block.caller is None
+    assert block.type == "tool_use" and block.caller.model_dump() == cs.DIRECT
 
 
 # ----------------------------------------------------------------------------------------- unknown and wrong fields
 def _violations(body, media: str = "application/json") -> list[str]:
+    """The violations `assert_response` lists ([] when it passes). Any other failure (an operation not found, no
+    response for the status or media type) propagates: read as [], it would make a test asserting [] pass vacuously."""
     try:
         assert_response("anthropic", "POST", PATH, 200, body, media=media)
     except AssertionError as failure:
-        return str(failure).splitlines()[1:]
+        head, *violations = str(failure).splitlines()
+        if not head.endswith(" breaks the contract:") or not violations:
+            raise
+        return violations
     return []
 
 
@@ -240,8 +247,8 @@ def _set(body: dict, path: tuple, key: str, value) -> dict:
     ("text", ("content", 0), "$.content[0]"),
     ("grounded_with_citations", ("content", 2, "citations", 0), "$.content[2].citations[0]"),
     ("grounded_with_citations", ("content", 1, "content", 0), "$.content[1].content[0]"),
-    ("grounded_server_tools_paused", ("content", 1, "content", "content", "source"),
-     "$.content[1].content.content.source"),
+    ("grounded_server_tools_paused", ("content", 2, "content", "content", "source"),
+     "$.content[2].content.content.source"),
     ("grounded_server_tools_paused", ("content", 5, "content"), "$.content[5].content"),
     ("tool_use_after_thinking", ("content", 0), "$.content[0]"),
     ("cache_read_and_write", ("usage",), "$.usage"),
@@ -335,9 +342,17 @@ def test_every_kept_variant_of_the_stream_is_in_a_sample_stream(path):
     assert sorted(set(STREAM.variants[path]) - used) == []
 
 
-def test_every_response_allowed_gap_is_in_a_sample_stream():
-    for allowed in STREAM.allowed + MESSAGE.allowed:
-        assert allowed.path == "" and allowed.value in {_tag(d) for d in _all_events()}, allowed
+def test_every_response_allowed_gap_is_in_a_sample_or_a_recording():
+    """A gap is evidenced by a body that carries it where the contract puts it. A stream gap: an event of a sample's
+    stream or of a committed recording (the provider's real stream; `recorded_exchanges.py`). A message gap: a sample
+    (the recordings hold streams only). A gap nothing carries is dead: the provider no longer sends it."""
+    recorded = [e["data"] for p, n in EXCHANGES if provider_of(p) == "anthropic"
+                for e in recording(p)["exchanges"][n]["response"]["events"]]
+    assert recorded, "no Anthropic recording: the recorded half of the evidence is missing"
+    stream_events = [*_all_events(), *recorded]
+    dead = [a for a in STREAM.allowed if not any(carries(a, d) for d in stream_events)]
+    dead += [a for a in MESSAGE.allowed if not any(carries(a, body) for body in SAMPLES.values())]
+    assert not dead, f"ALLOWED response gaps no sample or recording carries: {dead}"
 
 
 def test_the_not_exercised_list_names_only_kept_variant_paths():

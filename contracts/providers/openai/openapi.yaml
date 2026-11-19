@@ -780,6 +780,16 @@ components:
           x-alek-unread: 'not read by our adapter: any value'
         background:
           x-alek-unread: 'not read by our adapter: any value'
+        billing:
+          additionalProperties: false
+          properties:
+            payer:
+              type: string
+          required:
+          - payer
+          type: object
+          x-alek-extension: every recorded response carries billing (tests/fixtures/providers/openai/*.json); the spec's Response
+            lacks it; not read by the adapter (2026-11-19)
         completed_at:
           x-alek-unread: 'not read by our adapter: any value'
         conversation:
@@ -788,6 +798,10 @@ components:
           x-alek-unread: 'not read by our adapter: any value'
         error:
           x-alek-unread: 'not read by our adapter: any value'
+        frequency_penalty:
+          type: number
+          x-alek-extension: every recorded response carries frequency_penalty (tests/fixtures/providers/openai/*.json); the
+            spec's Response lacks it; not read by the adapter (2026-11-19)
         id:
           x-alek-unread: 'not read by our adapter: any value'
         image:
@@ -833,6 +847,10 @@ components:
           x-alek-unread: 'not read by our adapter: any value'
         parallel_tool_calls:
           x-alek-unread: 'not read by our adapter: any value'
+        presence_penalty:
+          type: number
+          x-alek-extension: every recorded response carries presence_penalty (tests/fixtures/providers/openai/*.json); the
+            spec's Response lacks it; not read by the adapter (2026-11-19)
         previous_response_id:
           x-alek-unread: 'not read by our adapter: any value'
         prompt:
@@ -860,6 +878,10 @@ components:
           - incomplete
           - queued
           type: string
+        store:
+          type: boolean
+          x-alek-extension: every recorded response carries store (tests/fixtures/providers/openai/*.json); the spec's Response
+            lacks it; not read by the adapter (2026-11-19)
         temperature:
           x-alek-unread: 'not read by our adapter: any value'
         text:

@@ -7,7 +7,8 @@
 - passed back as `raw_content` in the next request (what the delegation loop does), conforms to the REQUEST contract.
 
 Meta-tests: an unknown field and a wrong-typed field fail at the top level and at depth; every kept top-level field and
-every kept union variant of the response is exercised by a sample (a dead keep-list entry fails).
+every kept union variant of the response is exercised by a sample (a dead keep-list entry fails); every ALLOWED
+response gap is carried by a sample or a committed recording.
 """
 from __future__ import annotations
 
@@ -27,7 +28,9 @@ from src.domain.exceptions import LLMClientError
 from src.domain.llm import FinishReason
 from src.ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart
 from tests.contracts.openapi_contract import assert_request, assert_response
+from tests.unit.contracts.allowed_gaps import carries
 from tests.unit.contracts.openai_response_samples import CACHE_USAGE, MODEL, SAMPLES
+from tests.unit.contracts.recorded_exchanges import EXCHANGES, provider_of, recording
 
 OPERATION = PROVIDERS["openai"].operations[0]
 (RESPONSE,) = OPERATION.responses
@@ -63,7 +66,7 @@ def parsed(sample_id: str) -> LLMResponse:
 # ---------------------------------------------------------------------------------------------------- conformance
 @pytest.mark.parametrize("sample_id", sorted(SAMPLES))
 def test_every_sample_conforms_to_the_response_contract(sample_id):
-    assert_response("openai", "POST", "/responses", 200, SAMPLES[sample_id])
+    assert_response("openai", "POST", "/v1/responses", 200, SAMPLES[sample_id])
 
 
 @pytest.mark.parametrize("sample_id", sorted(SAMPLES))
@@ -131,10 +134,15 @@ def test_the_output_items_passed_back_conform_to_the_request_contract(sample_id)
 
 # ----------------------------------------------------------------------------------------- unknown and wrong fields
 def _violations(body) -> list[str]:
+    """The violations `assert_response` lists ([] when it passes). Any other failure (an operation not found, no
+    response for the status) propagates: read as [], it would make a test asserting [] pass vacuously."""
     try:
-        assert_response("openai", "POST", "/responses", 200, body)
+        assert_response("openai", "POST", "/v1/responses", 200, body)
     except AssertionError as failure:
-        return str(failure).splitlines()[1:]
+        head, *violations = str(failure).splitlines()
+        if not head.endswith(" breaks the contract:") or not violations:
+            raise
+        return violations
     return []
 
 
@@ -220,8 +228,12 @@ def test_every_kept_variant_is_in_a_sample(path):
     assert sorted(set(RESPONSE.variants[path]) - used) == [], f"variants at {path} no sample carries"
 
 
-def test_every_response_allowed_gap_is_in_a_sample():
-    for allowed in RESPONSE.allowed:
-        found = [v for body in SAMPLES.values() for v in _values_at(body, allowed.path)] if allowed.path else []
-        assert allowed.field in {k for body in SAMPLES.values() for k in body} or any(
-            isinstance(v, dict) and v.get("type") == allowed.value for v in found), allowed
+def test_every_response_allowed_gap_is_in_a_sample_or_a_recording():
+    """A response gap is evidenced by a body that carries it where the contract puts it: a sample, or a committed
+    recording (the provider's real answer; `recorded_exchanges.py`). A gap no body carries is dead: the provider no
+    longer sends it, so the entry goes."""
+    recorded = [recording(p)["exchanges"][n]["response"]["body"] for p, n in EXCHANGES if provider_of(p) == "openai"]
+    assert recorded, "no OpenAI recording: the recorded half of the evidence is missing"
+    bodies = [*SAMPLES.values(), *recorded]
+    dead = [allowed for allowed in RESPONSE.allowed if not any(carries(allowed, body) for body in bodies)]
+    assert not dead, f"ALLOWED response gaps no sample or recording carries: {dead}"

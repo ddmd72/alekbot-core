@@ -10,6 +10,10 @@ message_stop; a ping after message_start.
 the events through the REAL SDK and `ClaudeAdapter`. A sample is a test input that exercises the contract's kept fields
 and variants; it is not a recording (recordings come from `make contract-record PROVIDER=anthropic` and live under
 `tests/fixtures/providers/anthropic/`). Examples come from the invented universe (tests/CLAUDE.md "Invented cast").
+A block's `caller` is what the recordings show for its type: `{type: direct}` on a `tool_use` and a
+`web_search_tool_result`, none on a `server_tool_use` the model calls itself, and on a web fetch the code execution runs
+(`grounding_dynamic_container`) `{type: code_execution_20260120, tool_id: <that code_execution block>}` on both its
+`server_tool_use` and its `web_fetch_tool_result`.
 """
 from __future__ import annotations
 
@@ -47,16 +51,27 @@ def text(value: str, citations: list[dict[str, Any]] | None = None) -> dict[str,
     return {"type": "text", "text": value, "citations": citations}
 
 
+DIRECT = {"type": "direct"}
+
+
+def by_code_execution(block_id: str) -> dict[str, Any]:
+    """The caller of a server tool the code execution block `block_id` runs."""
+    return {"type": "code_execution_20260120", "tool_id": block_id}
+
+
 def tool_use(name: str, args: dict[str, Any], block_id: str = "toolu_sample") -> dict[str, Any]:
-    return {"type": "tool_use", "id": block_id, "name": name, "input": args}
+    return {"type": "tool_use", "id": block_id, "name": name, "input": args, "caller": DIRECT}
 
 
-def server_tool_use(name: str, args: dict[str, Any], block_id: str) -> dict[str, Any]:
-    return {"type": "server_tool_use", "id": block_id, "name": name, "input": args}
+def server_tool_use(name: str, args: dict[str, Any], block_id: str,
+                    caller: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A server tool call; `caller` only when another server tool runs it (none when the model calls it)."""
+    block = {"type": "server_tool_use", "id": block_id, "name": name, "input": args}
+    return block if caller is None else {**block, "caller": caller}
 
 
 _PORTO = "https://example.com/festivals/porto"
-_SEARCH_RESULT = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": [
+_SEARCH_RESULT = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "caller": DIRECT, "content": [
     {"type": "web_search_result", "url": _PORTO, "title": "Porto festivals", "encrypted_content": "enc-1",
      "page_age": "June 2026"}]}
 _CITED = text("Sao Joao is celebrated in Porto on 24 June.", citations=[
@@ -79,12 +94,13 @@ SAMPLES: dict[str, dict[str, Any]] = {
          _CITED],
         use=usage(2400, 60, searches=1)),
     "grounded_server_tools_paused": message(
-        [server_tool_use("web_fetch", {"url": _PORTO}, "srvtoolu_2"),
-         {"type": "web_fetch_tool_result", "tool_use_id": "srvtoolu_2", "content": {
+        [server_tool_use("code_execution", {"code": "print(24)"}, "srvtoolu_3"),
+         server_tool_use("web_fetch", {"url": _PORTO}, "srvtoolu_2", caller=by_code_execution("srvtoolu_3")),
+         {"type": "web_fetch_tool_result", "tool_use_id": "srvtoolu_2", "caller": by_code_execution("srvtoolu_3"),
+          "content": {
              "type": "web_fetch_result", "url": _PORTO, "retrieved_at": "2026-11-19T10:00:00Z", "content": {
                  "type": "document", "title": "Porto festivals", "citations": {"enabled": True},
                  "source": {"type": "text", "media_type": "text/plain", "data": "Sao Joao, 24 June, Porto."}}}},
-         server_tool_use("code_execution", {"code": "print(24)"}, "srvtoolu_3"),
          {"type": "code_execution_tool_result", "tool_use_id": "srvtoolu_3", "content": {
              "type": "code_execution_result", "stdout": "24\n", "stderr": "", "return_code": 0, "content": []}},
          server_tool_use("bash_code_execution", {"command": "ls"}, "srvtoolu_4"),

@@ -145,16 +145,20 @@ not read stays by name as `x-alek-unread`, any value, so the object stays closed
 wire (`text/event-stream`, one schema per event's data; the adapter always streams) and the message the SDK assembles from it
 (`application/json`).
 - **Check.** `assert_response(provider, method, path, status, body, media=...)` and `assert_stream(provider, method, path,
-  status, events)` (`events` = `[{"event", "data"}]`, each violation prefixed `event[i]`). `path` names the operation: its
-  `paths` key, or the request's URL path resolved as `assert_request` resolves it. A field the source marks deprecated is
-  accepted in a response.
+  status, events)` (`events` = `[{"event", "data"}]`, each violation prefixed `event[i]`). `path` (and `raw_path=` for a
+  contract with aliases) is the request's, resolved exactly as `assert_request` resolves it: the server's base path is
+  required, the contract's bare `paths` key names no request. A field the source marks deprecated is accepted in a response.
 - **Samples.** `tests/unit/contracts/<provider>_response_samples.py`: response bodies as the wire carries them (Claude: rendered
   as a stream by `events()`). Each conforms, is answered by the transport so the REAL SDK and adapter read it (the test pins
   what the adapter makes of it), and is replayed as `raw_content` in the next request, which must conform to the request
   contract. Meta-tests: an unknown or wrong-typed field fails at the top level and at depth; every kept top-level field, variant
   and `Allowed` gap of the responses is in a sample. A sample is a test input, not a recording.
-- **Open defects** are strict xfails with their id (`P17-D1`: a replayed Claude tool block carries `caller: null`, which the
-  request contract lacks; a recording settles whether the API accepts it).
+- **Open defects** are strict xfails with their id. A recording that shows the provider sending or accepting what the
+  contract lacks closes the gap as an `Allowed` entry naming the recording (`null=True` for a null, `variant=` to keep it
+  to the one block type the evidence shows), as P17-D1 was closed.
+- **Recordings replayed** (`test_recorded_exchanges.py`, `test_recorded_exchanges_replay.py`): every committed recording (below) is
+  checked against both contracts and its scenario re-run through the real adapter and SDK, answered from the recording; the adapter
+  must send the recorded requests and read what the derivation from the recording says, else the scenario is re-recorded.
 
 **Recordings** (`make contract-record PROVIDER=openai|anthropic [ONLY=<scenario>] [MAX_USD=1.0] [DRY_RUN=1] [ENV_FILE=<path>]`,
 `scripts/contracts/record.py`). The regeneration command of every recorded fixture; a recording is never edited by hand.

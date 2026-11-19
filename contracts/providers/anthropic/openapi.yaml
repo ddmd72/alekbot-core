@@ -603,6 +603,33 @@ components:
       - stdout
       - type
       type: object
+    CodeExecutionResultBlock_2:
+      additionalProperties: false
+      properties:
+        abort_reason:
+          type: 'null'
+          x-alek-extension: a code_execution_tool_result block's code_execution_result carries abort_reason (null) (tests/fixtures/providers/anthropic/grounding_dynamic_container.json);
+            the SDK's CodeExecutionResultBlock lacks it (2026-11-19)
+        content:
+          items:
+            $ref: '#/components/schemas/CodeExecutionOutputBlock'
+          type: array
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        stdout:
+          type: string
+        type:
+          const: code_execution_result
+          type: string
+      required:
+      - content
+      - return_code
+      - stderr
+      - stdout
+      - type
+      type: object
     CodeExecutionToolResultBlock:
       additionalProperties: false
       properties:
@@ -633,6 +660,24 @@ components:
           - $ref: '#/components/schemas/CodeExecutionToolResultErrorParam'
           - $ref: '#/components/schemas/CodeExecutionResultBlockParam'
           - $ref: '#/components/schemas/EncryptedCodeExecutionResultBlockParam'
+        tool_use_id:
+          type: string
+        type:
+          const: code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
+    CodeExecutionToolResultBlock_2:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/CodeExecutionToolResultError'
+          - $ref: '#/components/schemas/CodeExecutionResultBlock_2'
+          - $ref: '#/components/schemas/EncryptedCodeExecutionResultBlock'
         tool_use_id:
           type: string
         type:
@@ -1103,6 +1148,10 @@ components:
             - $ref: '#/components/schemas/BashCodeExecutionToolResultBlock'
             - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultBlock'
           type: array
+        diagnostics:
+          type: 'null'
+          x-alek-extension: message_start's message carries diagnostics (null) in every recorded stream (tests/fixtures/providers/anthropic/*.json);
+            the SDK's Message lacks it (2026-11-19)
         id:
           type: string
         model:
@@ -1137,7 +1186,7 @@ components:
           const: message
           type: string
         usage:
-          $ref: '#/components/schemas/Usage'
+          $ref: '#/components/schemas/Usage_2'
       required:
       - content
       - id
@@ -1234,7 +1283,7 @@ components:
           - $ref: '#/components/schemas/ServerToolUseBlock'
           - $ref: '#/components/schemas/WebSearchToolResultBlock'
           - $ref: '#/components/schemas/WebFetchToolResultBlock'
-          - $ref: '#/components/schemas/CodeExecutionToolResultBlock'
+          - $ref: '#/components/schemas/CodeExecutionToolResultBlock_2'
           - $ref: '#/components/schemas/BashCodeExecutionToolResultBlock'
           - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultBlock'
         index:
@@ -1472,9 +1521,14 @@ components:
           - type: 'null'
         caller:
           anyOf:
-          - $ref: '#/components/schemas/DirectCallerParam'
-          - $ref: '#/components/schemas/ServerToolCallerParam'
-          - $ref: '#/components/schemas/ServerToolCaller20260120Param'
+          - anyOf:
+            - $ref: '#/components/schemas/DirectCallerParam'
+            - $ref: '#/components/schemas/ServerToolCallerParam'
+            - $ref: '#/components/schemas/ServerToolCaller20260120Param'
+          - const: null
+            x-alek-extension: 'P17-D1: a server_tool_use block replayed as raw_content carries caller: null (the SDK''s stream
+              accumulator sets it when the block''s start event has none); the API answered 200 to it (tests/fixtures/providers/anthropic/replay_server_tool_blocks.json,
+              second request); the SDK''s ServerToolUseBlockParam has no null caller (2026-11-19)'
         id:
           type: string
         input:
@@ -2119,6 +2173,60 @@ components:
             type: string
           - type: 'null'
           default: null
+      required:
+      - input_tokens
+      - output_tokens
+      type: object
+    Usage_2:
+      additionalProperties: false
+      properties:
+        cache_creation:
+          anyOf:
+          - $ref: '#/components/schemas/CacheCreation'
+          - type: 'null'
+          default: null
+        cache_creation_input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        cache_read_input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        inference_geo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        output_tokens_details:
+          anyOf:
+          - $ref: '#/components/schemas/OutputTokensDetails'
+          - type: 'null'
+          default: null
+        server_tool_use:
+          anyOf:
+          - $ref: '#/components/schemas/ServerToolUsage'
+          - type: 'null'
+          default: null
+        service_tier:
+          anyOf:
+          - enum:
+            - batch
+            - priority
+            - standard
+            type: string
+          - type: 'null'
+          default: null
+        speed:
+          type: string
+          x-alek-extension: message_start's usage carries speed (a string, "standard") in every recorded stream (tests/fixtures/providers/anthropic/*.json);
+            the SDK's Usage lacks it (2026-11-19)
       required:
       - input_tokens
       - output_tokens
