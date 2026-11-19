@@ -105,4 +105,4 @@ def test_factory_forwards_skill_service_to_conversation_handler():
             deploy_topology=build_deploy_topology(config, env_config),
             db_client=MagicMock(),
         )
-        assert mock_handler.call_args.kwargs["skill_service"] is sentinel_skill_service
+        assert mock_handler.call_args.kwargs["commands"].skills is sentinel_skill_service

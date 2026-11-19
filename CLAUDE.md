@@ -152,6 +152,7 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
 | Sessions (`session_id = f"{user_id}:{channel_id}"`, one history per channel) | `docs/08_concepts/DATABASE_SCHEMA.md` |
 | Localization (response language vs UI language) | `docs/05_building_blocks/localization_system/README.md`, `docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md` |
 | System-turn fingerprint (turn key, provenance rule, scrub) | `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md` |
+| Geo marks (owner-shared position: `$geo`, Telegram pin, Lelik geo button) | `docs/10_rfcs/GEO_MARKS_RFC.md` |
 | Observability (logs, `prompt_content`, Logfire, memory telemetry) | `docs/05_building_blocks/observability_strategy/README.md`, `docs/07_deployment/LOGGING.md`, `docs/05_building_blocks/memory_telemetry/README.md` |
 
 `decisions/` = `docs/04_solution_strategy/decisions/`. Area traps live in the `CLAUDE.md` of the narrowest folder holding

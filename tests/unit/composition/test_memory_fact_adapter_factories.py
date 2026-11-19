@@ -44,10 +44,10 @@ def _telegram(**extra):
 @pytest.mark.parametrize("build", [_slack, _telegram])
 def test_factory_forwards_memory_fact_service(build):
     sentinel = MagicMock(name="memory_fact_service")
-    assert build(memory_fact_service=sentinel)["memory_fact_service"] is sentinel
+    assert build(memory_fact_service=sentinel)["commands"].memory_facts is sentinel
 
 
 @pytest.mark.requirement("REQ-CORE-09")
 @pytest.mark.parametrize("build", [_slack, _telegram])
 def test_factory_defaults_memory_fact_service_to_none(build):
-    assert build()["memory_fact_service"] is None
+    assert build()["commands"].memory_facts is None

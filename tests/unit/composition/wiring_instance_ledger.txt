@@ -27,7 +27,7 @@ src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
-src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 2  # by-design one per collection: the drive notes' erase requests (drive_note_setup.py) and the connect flows, {prefix}oauth_flows (oauth_connect_setup.py, MULTI_DRIVE_RFC 5.2)
+src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 3  # by-design one per collection (the store is bound to its collection at construction): the drive notes' erase requests (drive_note_setup.py), the connect flows, {prefix}oauth_flows (oauth_connect_setup.py, MULTI_DRIVE_RFC 5.2), and the geo mark links, {prefix}geo_mark_links (geo_mark_setup.py, GEO_MARKS_RFC 4.5)
 src.adapters.firestore_email_card_index.FirestoreEmailCardIndex 1  # by-design the one card search reader, built once by build_email_card_search and held by the container's one EmailCardSearchService (email_search_setup.py:16)
 src.adapters.firestore_email_card_store.FirestoreEmailCardStore 1  # by-design the one card store, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py:43)
 src.adapters.firestore_email_reader_budget.FirestoreEmailReaderBudget 1  # by-design the one scan-reader page budget, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py)
@@ -65,6 +65,7 @@ src.adapters.gmail_provider_adapter.GmailProviderAdapter 1  # by-design single i
 src.adapters.google.google_oauth_provider.GoogleOAuthProvider 1  # by-design the Google realm's one OAuth edge, held by the ConnectorRegistry (oauth_connect_setup.py build_oauth_edges, MULTI_DRIVE_RFC 5.1)
 src.adapters.google.google_drive_adapter.GoogleDriveAdapter 1  # by-design the Google Drive kind, built by the ServiceContainer when the Google OAuth client is configured (GOOGLE_DRIVE_RFC GE-31)
 src.adapters.google.google_drive_tokens.GoogleDriveTokenProvider 1  # by-design the Google Drive adapter's own token provider, with its credentials record and token cache (google_drive_adapter.py)
+src.adapters.google_geocoding_adapter.GoogleGeocodingAdapter 1  # by-design the one reverse geocoder of geo marks, built by build_geo_mark_service (geo_mark_setup.py) when GOOGLE_SEARCH_API_KEY is set
 src.adapters.grok_adapter.GrokAdapter 1  # by-design single instance
 src.adapters.grok_image_adapter.GrokImageAdapter 1  # by-design single instance
 src.adapters.grok_video_adapter.GrokVideoAdapter 1  # by-design single instance
@@ -165,6 +166,8 @@ src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
 src.services.file_link_service.FileLinkService 1  # by-design single instance
+src.services.geo_mark_service.GeoMarkService 1  # by-design the one geo mark flow, built by build_geo_mark_service (geo_mark_setup.py) and shared by both chat handlers through ChatServices
+src.services.geo_mark_turn_task.GeoMarkTurnTask 1  # by-design the one geo_mark_turn runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.gmail_reconnect_flag.GmailReconnectFlag 1  # by-design the one Gmail reconnect flag, held by WorkerHandler (email indexing) and by the daily_email_review runner
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance

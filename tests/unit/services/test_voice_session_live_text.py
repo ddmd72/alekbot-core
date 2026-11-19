@@ -17,7 +17,7 @@ from src.domain.voice_turn_ownership import TurnOwnership
 from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import VoiceSessionService
+from src.services.voice_session_service import VoiceSessionService, VoiceControl
 from tests.support.control_socket_fake import FakeControlSocket
 
 TOKEN = "token-0001-invented"
@@ -104,7 +104,7 @@ class _Call:
             "control_token_sha256": control_token_digest(TOKEN)}
         self.service = VoiceSessionService(
             realtime_session_factory=lambda spec: self.provider, control_plane=_ControlPlane(config),
-            alert_sink=_Alerts(), control_hub=self.hub, ask_tick_s=0.005, live_text_tick_s=0.005)
+            alert_sink=_Alerts(), control=VoiceControl(self.hub), ask_tick_s=0.005, live_text_tick_s=0.005)
         self.page = FakeControlSocket()
         self._tasks: List[asyncio.Task] = []
 
@@ -166,7 +166,8 @@ def _text_of(page: FakeControlSocket, line: str) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode,features", [("interpreter", ["ask", "text"]), ("tutor", ["text"])])
+# reviewer edit, geo marks v1 (GEO_MARKS_RFC §4.7): `geo` is offered on every web call, beside `text`.
+@pytest.mark.parametrize("mode,features", [("interpreter", ["ask", "geo", "text"]), ("tutor", ["geo", "text"])])
 async def test_mode_calls_offer_text_and_send_a_snapshot_right_after_welcome(mode, features):
     call = await _Call(mode).start()
     await call.end()

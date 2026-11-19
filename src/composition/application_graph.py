@@ -54,6 +54,7 @@ from src.composition.platform_kit import PlatformKit, register_late_platform
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.composition.user_agent_factory import UserAgentFactory
+from src.composition.geo_mark_setup import build_geo_mark_service
 from src.composition.worker_setup import build_worker_tasks
 from src.config.auth import AuthConfig
 from src.config.environment import EnvironmentConfig, validate_telegram_config
@@ -84,6 +85,7 @@ from src.composition.deploy_topology import DeployTopology
 from src.ports.fact_search_port import FactSearchPort
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.drive_disconnect_service import DriveDisconnectService
+from src.services.geo_mark_service import GeoMarkService
 from src.services.oauth_connect_service import OAuthConnectService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.user_notification_service import UserNotificationService
@@ -129,6 +131,7 @@ class ApplicationGraph:
     short_link_service: Optional[ShortLinkService]
     companion_extractor_runner: CompanionExtractorRunner
     call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
+    geo_marks: Optional[GeoMarkService]     # the `$geo` page's routes (GEO_MARKS_RFC §4.5); None without a task queue
     language_service: LanguageResolver
     language_preferences: LanguagePreferenceService
     localization: _LocalizationService
@@ -245,6 +248,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         task_dispatch=jobs.task_dispatch, file_token_service=delivery.file_token_service,
         media_storage=delivery.media_storage, short_link_service=delivery.short_link_service,
         companion_extractor_runner=companions.extractor_runner, call_text_files=companions.call_text_files,
+        geo_marks=chat.geo_mark_service,
         language_service=languages.resolver, language_preferences=agents.language_preferences,
         localization=languages.localization, cipher=boot.cipher, digest_key=boot.digest_key,
         agent_task_queue=ops.task_queue, billing_agent=ops.billing_agent, logger_agent=ops.logger_agent,
@@ -315,6 +319,11 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
     here for the chat handlers only."""
     logger.info("🔌 Initializing Slack Adapter...")
     _consolidation_service = memory.consolidation_service
+    geo_marks = build_geo_mark_service(
+        config, db_client, config["ENVIRONMENT_CONFIG"], digest_key=boot.digest_key,
+        service_url=boot.deploy_topology.service_url, session_store=container.session_store,
+        channel_factory=notifications.channel_factory, task_queue=ops.task_queue, user_repo=identity.user_repo,
+        localization_port=languages.localization_port)
     chat = ChatServices(
         coordinator=coordinator,
         agent_factory=agents.factory,
@@ -333,6 +342,7 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
         drive_note_service=command_drive_note_service(container.drive_note_service, container.drive_notes_enabled),
         long_turn_service=agents.long_turn_service,
         doc_delivery_service=delivery.doc_delivery_service,
+        geo_mark_service=geo_marks,
     )
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=notifications.slack_app,
@@ -395,7 +405,8 @@ def _build_worker_handler(db_client: Any, env_config: EnvironmentConfig, *, cont
                 collection_name=env_config.worker_task_dedup_collection,
                 ttl_seconds=172800,
             ),
-            gmail_reconnect_flag=integrations.gmail_reconnect_flag, account_repo=identity.account_repo),
+            gmail_reconnect_flag=integrations.gmail_reconnect_flag, account_repo=identity.account_repo,
+            geo_mark_turn=slack_adapter.handle_geo_mark_turn),
     )
 
 

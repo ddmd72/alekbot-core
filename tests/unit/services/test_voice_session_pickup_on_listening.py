@@ -17,7 +17,7 @@ from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent as E
 from src.services import voice_session_service as vss
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import VoiceSessionService
+from src.services.voice_session_service import VoiceSessionService, VoiceControl
 from tests.support.control_socket_fake import FakeControlSocket
 
 _REAL_WAIT = asyncio.wait
@@ -77,7 +77,7 @@ class _Call:
             **({"control_token_sha256": DIGEST} if digest else {})}
         self.service = VoiceSessionService(
             realtime_session_factory=MagicMock(return_value=self.session), control_plane=self.control_plane,
-            alert_sink=AsyncMock(), control_hub=self.hub, web_pickup_max_wait_s=cap)
+            alert_sink=AsyncMock(), control=VoiceControl(self.hub), web_pickup_max_wait_s=cap)
 
     async def _inbound(self):
         await self.inbound_ends.wait()

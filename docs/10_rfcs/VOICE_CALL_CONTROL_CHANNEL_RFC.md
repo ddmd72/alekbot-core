@@ -91,12 +91,14 @@ JSON text frames, each `{"type": …}`; unknown types are ignored (forward-compa
 | page → relay | `listening` | once per call, every call (no feature needed): the page hears Lelik's track (§4.4) |
 | page → relay | `ask_arm {seq}` / `ask_disarm {seq}` | press / press again before speaking |
 | relay → page | `ask_state {state, seq?, reason?}` | every transition; `reason`: `answered`, `cancelled`, `timeout`, `call_ended` |
+| page → relay | `geo {seq, latitude, longitude, accuracy}` | the caller tapped the `geo` button: one fix, taken on that tap (`GEO_MARKS_RFC.md` §4.7) |
+| relay → page | `geo_state {ok, seq?, address?, accuracy?, reason?}` | the answer to one `geo`: ok (with the nearest address when one was found) or not ok with `reason` `bad` (invalid fix), `rate` (a second fix within 10 s), `not_ready` (the provider session is not open yet) |
 | both | `ping` / `pong` | every 20 s from the page; keeps proxies and Cloud Run from idling the socket |
 
 - **Versioning.** `hello.v` is the page's version; the relay answers `welcome` with the version it speaks or
   `bye{version}`. New capability = a new `features` entry, never a changed meaning of an old message.
 - **Features per call.** `ask` is offered only when the session config's `mode` is `interpreter`. `text` (relay → page `line` and
-  `snapshot`, `VOICE_CALL_LIVE_TEXT_RFC.md` §4.7) is offered on mode calls (interpreter, tutor). Future: `mode` (page → relay `switch_mode`).
+  `snapshot`, `VOICE_CALL_LIVE_TEXT_RFC.md` §4.7) is offered on mode calls (interpreter, tutor). `geo` is offered on every web call with a control link; it is the only feature of the plain `/cabinet/call` page. Future: `mode` (page → relay `switch_mode`).
 - **Reconnect.** The page re-dials with the same token (backoff 1, 2, 4 … 10 s) while the call is live. A new socket
   replaces the old one (`bye{replaced}` to the old). `welcome` carries the current `ask` state, so the button re-syncs.
 - **Relay is authoritative.** The page shows "pressed" on tap (optimistic) and rolls back if no `ask_state` arrives in 2 s.

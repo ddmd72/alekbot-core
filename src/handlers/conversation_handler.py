@@ -38,6 +38,8 @@ from ..domain.exceptions import (
 from ..domain.drive_note import (
     DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY, DriveNoteRefused, NoteRefusal,
 )
+from ..domain.chat_text import unwrapped
+from ..domain.geo_mark import LINK_TTL_S, GeoFix, GeoLinkBinding
 from ..domain.history_context_block import history_context_block
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
 from ..domain.memory_fact import (
@@ -54,6 +56,7 @@ from ..domain.skill import (
     skill_saved_note,
 )
 from ..infrastructure.agent_coordinator import AgentCoordinator
+from .command_services import CommandServices
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
 
@@ -62,11 +65,10 @@ if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..services.file_conversion_service import FileConversionService
     from ..services.short_link_service import ShortLinkService
-    from ..services.skill_service import SkillService
     from ..services.long_turn_service import LongTurnService
-    from ..services.memory_fact_service import MemoryFactService
     from ..services.fact_answer_service import FactAnswerService
     from ..services.drive_note_service import DriveNoteService
+    from ..services.geo_mark_service import GeoMarkService
 from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
     download_alert, storage_unavailable_alert, transcription_alert,
@@ -156,12 +158,11 @@ class ConversationHandler(ConversationHandlerPort):
         channel_history_source: Optional[Any] = None,
         short_link_service: Optional["ShortLinkService"] = None,
         fallback_service: Optional[Any] = None,
-        skill_service: Optional["SkillService"] = None,
         long_turn_service: Optional["LongTurnService"] = None,
-        memory_fact_service: Optional["MemoryFactService"] = None,
         fact_answers: Optional["FactAnswerService"] = None,
-        drive_note_service: Optional["DriveNoteService"] = None,
+        commands: Optional[CommandServices] = None,   # the services behind the `$` commands
     ):
+        commands = commands or CommandServices()
         self.coordinator = coordinator
         self.agent_factory = agent_factory
         self._file_conversion_service = file_conversion_service
@@ -177,13 +178,15 @@ class ConversationHandler(ConversationHandlerPort):
         self._channel_binding = channel_binding_service
         self._channel_history = channel_history_source
         self._short_link_service = short_link_service
-        self._skill_service = skill_service
+        self._skill_service = commands.skills
         self._long_turns = long_turn_service
-        self._memory_facts = memory_fact_service
+        self._memory_facts = commands.memory_facts
         self._fact_answers = fact_answers
         # owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` erase commands; None with the
         # notes kill switch off (the command then answers that notes are unavailable)
-        self._drive_notes = drive_note_service
+        self._drive_notes = commands.drive_notes
+        # geo marks (GEO_MARKS_RFC §4.5, §4.6): `$geo` and the platform-native share; None answers "unavailable"
+        self._geo_marks = commands.geo_marks
         # turn_ids whose long-turn flow runs in this process (final review C1). With one
         # instance, a RUNNING record not in here belongs to an attempt that died. Plain
         # set ops with no await between test and change, so no lock is needed.
@@ -799,6 +802,9 @@ class ConversationHandler(ConversationHandlerPort):
                         context.text = uk.FILE_FALLBACK_GENERIC
                 logger.info(f"📎 File without text ({mime_type}) - using fallback: '{context.text}'")
             
+            # A queued `$geo` turn: the mark is the context of the question, so it goes first (GEO_MARKS_RFC §4.2).
+            if context.geo_mark_note:
+                message_parts.append(MessagePart(text=context.geo_mark_note))
             if context.text:
                 message_parts.append(MessagePart(text=context.text))
 
@@ -1607,6 +1613,9 @@ class ConversationHandler(ConversationHandlerPort):
             elif command == "primary":
                 await self._handle_primary_command(context, response_channel)
 
+            elif command.split()[:1] == ["geo"]:
+                await self._handle_geo_command(context, response_channel)
+
             elif command in ("new", "reset"):
                 # Topic marker — acknowledged by bot. SlackChannelHistorySource
                 # uses these as history boundaries (fetch stops at marker).
@@ -1620,6 +1629,83 @@ class ConversationHandler(ConversationHandlerPort):
                     self._ui_string(context, UIMessage.UNKNOWN_COMMAND, command=command),
                     thread_id=context.thread_id
                 )
+
+    async def handle_geo_mark(
+        self,
+        fix: GeoFix,
+        context: MessageContext,
+        response_channel: ResponseChannel,
+    ) -> None:
+        """A platform-native share (a Telegram pin): locate and record the mark on the context's session and channel.
+        No text, no turn; the owner's follow-up is an ordinary turn that sees the pair in history."""
+        from ..domain.request_context import RequestContext
+
+        async with RequestContext(user_id=context.user_id, account_id=context.account_id):
+            geo_marks = await self._geo_marks_for(context, response_channel)
+            if geo_marks is None:
+                return
+            mark = await geo_marks.locate(fix, context.language)
+            try:
+                await geo_marks.record(mark, user_id=context.user_id, session_id=context.session_id,
+                                       channel=response_channel, language=context.language)
+            except Exception as e:
+                logger.error("❌ [ConversationHandler] geo mark not saved for user %s: %s",
+                             context.user_id[:8], type(e).__name__)
+                await response_channel.send_message(
+                    self._ui_string(context, UIMessage.GEO_NOT_SAVED), thread_id=context.thread_id)
+
+    # ------------------------------------------------------------------
+    # Geo marks (GEO_MARKS_RFC §4.5)
+    # ------------------------------------------------------------------
+
+    async def _geo_marks_for(
+        self, context: MessageContext, response_channel: ResponseChannel,
+    ) -> Optional["GeoMarkService"]:
+        """The service, when a mark may be taken here. Marks live in the default session only: without the service, or
+        in a bound channel, a line says why and None is returned."""
+        if self._geo_marks is None:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.GEO_UNAVAILABLE), thread_id=context.thread_id)
+            return None
+        channel_id = context.metadata.get("channel")
+        if self._channel_binding and channel_id and await self._channel_binding.get(channel_id):
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.GEO_BOUND_CHANNEL), thread_id=context.thread_id)
+            return None
+        return self._geo_marks
+
+    async def _handle_geo_command(self, context: MessageContext, response_channel: ResponseChannel) -> None:
+        """`$geo [text]` on Slack: a one-time link to the location page; the text after `$geo` (original case) is the
+        question the mark will carry. On Telegram the native location pin is the way."""
+        geo_marks = await self._geo_marks_for(context, response_channel)
+        if geo_marks is None:
+            return
+        if context.metadata.get("platform") == "telegram":
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.GEO_USE_TELEGRAM_PIN), thread_id=context.thread_id)
+            return
+        if context.metadata.get("channel_type") != "im":
+            # A shared channel's member could post forged coordinates first and the owner's address would be public.
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.GEO_DM_ONLY), thread_id=context.thread_id)
+            return
+        body = unwrapped(context.text).lstrip("$").lstrip()
+        owner_text = body[len("geo"):].strip()      # the command matched `geo` as its first word
+        try:
+            url = await geo_marks.issue_link(GeoLinkBinding(
+                user_id=context.user_id, account_id=context.account_id, platform="slack",
+                channel_id=context.metadata["channel"], session_id=context.session_id,
+                platform_user_id=context.metadata["slack_user_id"], language=context.language, text=owner_text))
+        except Exception as e:
+            logger.error("❌ [ConversationHandler] geo link not issued for user %s: %s",
+                         context.user_id[:8], type(e).__name__, exc_info=True)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.GEO_UNAVAILABLE), thread_id=context.thread_id)
+            return
+        await response_channel.send_message(
+            self._ui_string(context, UIMessage.GEO_LINK_LINE, minutes=LINK_TTL_S // 60), thread_id=context.thread_id)
+        await response_channel.send_document_link(
+            url, self._ui_string(context, UIMessage.GEO_LINK_LABEL), thread_id=context.thread_id)
 
     # ------------------------------------------------------------------
     # Channel Binding commands

@@ -11,7 +11,7 @@ from src.domain.voice_playback_tracker import PlaybackTracker
 from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent as E
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import VoiceSessionService
+from src.services.voice_session_service import VoiceSessionService, VoiceControl
 from tests.support.control_socket_fake import FakeControlSocket
 
 TOKEN = "token-0001-invented"
@@ -39,7 +39,7 @@ def _service(hub, config_extra, call_ends: asyncio.Event):
         yield  # pragma: no cover
 
     service = VoiceSessionService(realtime_session_factory=MagicMock(return_value=session),
-                                  control_plane=control_plane, alert_sink=AsyncMock(), control_hub=hub)
+                                  control_plane=control_plane, alert_sink=AsyncMock(), control=VoiceControl(hub))
     call = service.handle_call(ticket=TICKET, inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
                                clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
     return call, control_plane
@@ -98,7 +98,7 @@ async def test_a_failed_provider_open_still_closes_the_link():
         "instructions": "you are Lelik", "user_id": "usr-1", "account_id": "acc-1", "tools": [],
         "control_token_sha256": control_token_digest(TOKEN)}
     service = VoiceSessionService(realtime_session_factory=MagicMock(return_value=failing),
-                                  control_plane=control_plane, alert_sink=AsyncMock(), control_hub=hub)
+                                  control_plane=control_plane, alert_sink=AsyncMock(), control=VoiceControl(hub))
 
     async def inbound():
         return

@@ -345,6 +345,52 @@ class HTTPModeAdapter(SlackAdapter):
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)
             return {"error": str(e)}, 500
 
+    async def handle_geo_mark_turn(self, turn: Dict[str, Any], headers: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+        """The `geo_mark_turn` worker task (GEO_MARKS_RFC §4.5): the owner's `$geo <text>` question as one chat turn
+        with the mark in front of it. `turn` is the payload `GeoMarkTurnTask` validated. The Slack user is
+        re-authorized (the link may outlive a revoked access); the turn runs under the session lock. A lock still
+        held after BUSY_WAIT_S answers 503 so the queue retries the task later."""
+        try:
+            ctx = extract_context(headers)
+            session_id = turn["session_id"]
+            with start_span("worker.geo_mark_turn", {"session_id": session_id}, ctx=ctx):
+                decision = await self.iam_service.authorize("slack", platform_user_id=turn["platform_user_id"])
+                if decision.action == "reject" or decision.user is None:
+                    logger.warning("⛔ geo_mark_turn: Slack user not authorized, no turn")
+                    return {"ok": True, "dropped": "unauthorized"}, 200
+                if decision.user.user_id != turn["user_id"]:
+                    logger.error("❌ geo_mark_turn: the authorized user is not the link's owner, no turn")
+                    return {"ok": True, "dropped": "user_mismatch"}, 200
+                lock = self._session_locks.get(session_id)
+                if lock is None:
+                    lock = asyncio.Lock()
+                    self._session_locks[session_id] = lock
+                try:
+                    await asyncio.wait_for(lock.acquire(), BUSY_WAIT_S)
+                except asyncio.TimeoutError:
+                    logger.info(f"⏭️ geo_mark_turn: session {session_id[:8]} busy, left to the queue's retry")
+                    return {"error": "session busy"}, 503
+                released = False
+
+                def release_lock() -> None:
+                    nonlocal released
+                    if not released:
+                        released = True
+                        lock.release()
+
+                try:
+                    await self._run_authorized_turn(
+                        decision.user, decision.action, slack_user_id=turn["platform_user_id"],
+                        channel=turn["channel_id"], text=turn["text"], turn_id=f"geo:{turn['link_fp']}",
+                        release_lock=release_lock, session_id=session_id, geo_mark_note=turn["mark_text"],
+                    )
+                finally:
+                    release_lock()
+            return {"ok": True}, 200
+        except Exception as e:
+            logger.error(f"❌ Error in geo_mark_turn: {e}", exc_info=True)
+            return {"error": str(e)}, 500
+
     @staticmethod
     def _ignored_before_lock(event: Dict[str, Any]) -> bool:
         # Mirrors _process_message_event: only plain and file_share messages are handled.
@@ -425,6 +471,86 @@ class HTTPModeAdapter(SlackAdapter):
     def _resolve_session_id(self, user_id: str, channel_id: str) -> str:
         return session_id_for(user_id, channel_id)
 
+    async def _run_authorized_turn(
+        self,
+        user_profile: Any,
+        action: str,
+        *,
+        slack_user_id: str,
+        channel: str,
+        text: str,
+        attachments: Optional[list] = None,
+        thread_id: Optional[str] = None,
+        event_metadata: Optional[Dict[str, Any]] = None,
+        turn_id: Optional[str] = None,
+        release_lock: Optional[Callable[[], None]] = None,
+        session_id: Optional[str] = None,
+        geo_mark_note: Optional[str] = None,
+    ) -> None:
+        """The turn tail every message entry shares (IAM already passed): language, response channel, `$` command or
+        chat turn. `session_id` None: the channel's default session. `geo_mark_note` (a queued `$geo` question): the
+        text is the owner's question, never a command, and the mark rides on the context."""
+        if user_profile is None:
+            logger.error(f"❌ IAM decision '{action}' for {slack_user_id} carries no user, skipping")
+            return
+        user_id = user_profile.user_id
+        account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
+        session_id = session_id or self._resolve_session_id(user_id, channel)
+        set_request_context(user_id=user_id, session_id=session_id)
+        set_log_context(user_id=user_id, session_id=session_id)
+        logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
+
+        ui_lang, preferred_language, agent_mirror = await self._resolve_language(user_id)
+
+        response_channel = SlackResponseChannel(
+            self.app.client,
+            channel,
+            self.slack_bot_token,
+            language=ui_lang,
+            localization=self._localization,
+            on_long_turn=release_lock,
+        )
+
+        # A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`).
+        stripped = unwrapped(text)
+
+        if stripped.startswith("$") and geo_mark_note is None:
+            command = stripped.lstrip("$").strip().lower()
+            context = MessageContext(
+                text=text,
+                session_id=session_id,
+                user_id=user_id,
+                account_id=account_id,  # SESSION_26
+                language=ui_lang.value,
+                metadata={"event_type": "command", "platform": "slack", "slack_user_id": slack_user_id, "channel": channel,
+                          "channel_type": (event_metadata or {}).get("channel_type", "im")}
+            )
+            await self.conversation_handler.handle_command(command, context, response_channel)
+            return
+
+        context = MessageContext(
+            text=text,
+            session_id=session_id,
+            user_id=user_id,
+            account_id=account_id,  # SESSION_26
+            language=ui_lang.value,
+            attachments=attachments or [],
+            thread_id=thread_id,
+            geo_mark_note=geo_mark_note,
+            metadata={
+                "event_type": "message",
+                "channel_type": "im",
+                "channel": channel,
+                "slack_user_id": slack_user_id,
+                "preferred_language": preferred_language,
+                "agent_mirror": agent_mirror,
+                "turn_id": turn_id,
+                **(event_metadata or {}),
+            }
+        )
+
+        await self.conversation_handler.handle_message(context, response_channel)
+
     async def _process_message_event(
         self,
         event: Dict[str, Any],
@@ -470,68 +596,14 @@ class HTTPModeAdapter(SlackAdapter):
                     await response_channel.send_message(decision.message)
                 return
 
-            # User authorized → continue
-            user_profile = decision.user
-            if user_profile is None:
-                logger.error(f"❌ IAM decision '{decision.action}' for {slack_user_id} carries no user, skipping")
-                return
-            user_id = user_profile.user_id
-            account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
-            session_id = self._resolve_session_id(user_id, channel)
-            set_request_context(user_id=user_id, session_id=session_id)
-            set_log_context(user_id=user_id, session_id=session_id)
-            logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
-
-            ui_lang, preferred_language, agent_mirror = await self._resolve_language(user_id)
-
-            response_channel = SlackResponseChannel(
-                self.app.client,
-                channel,
-                self.slack_bot_token,
-                language=ui_lang,
-                localization=self._localization,
-                on_long_turn=release_lock,
+            await self._run_authorized_turn(
+                decision.user, decision.action, slack_user_id=slack_user_id, channel=channel, text=text,
+                attachments=self._translate_files(event.get("files", [])), thread_id=event.get("thread_ts"),
+                event_metadata={"channel_type": event.get("channel_type", "im"), "origin_message_id": event.get("ts"),
+                                "event_time": float(event["ts"]) if event.get("ts") else None,
+                                **_reply_to_metadata(event)},
+                turn_id=turn_id, release_lock=release_lock,
             )
-
-            # A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`).
-            stripped = unwrapped(text)
-
-            if stripped.startswith("$"):
-                command = stripped.lstrip("$").strip().lower()
-                context = MessageContext(
-                    text=text,
-                    session_id=session_id,
-                    user_id=user_id,
-                    account_id=account_id,  # SESSION_26
-                    language=ui_lang.value,
-                    metadata={"event_type": "command", "platform": "slack", "slack_user_id": slack_user_id, "channel": channel}
-                )
-                await self.conversation_handler.handle_command(command, context, response_channel)
-                return
-
-            context = MessageContext(
-                text=text,
-                session_id=session_id,
-                user_id=user_id,
-                account_id=account_id,  # SESSION_26
-                language=ui_lang.value,
-                attachments=self._translate_files(event.get("files", [])),
-                thread_id=event.get("thread_ts"),
-                metadata={
-                    "event_type": "message",
-                    "channel_type": event.get("channel_type", "im"),
-                    "channel": channel,
-                    "slack_user_id": slack_user_id,
-                    "preferred_language": preferred_language,
-                    "agent_mirror": agent_mirror,
-                    "turn_id": turn_id,
-                    "origin_message_id": event.get("ts"),
-                    "event_time": float(event["ts"]) if event.get("ts") else None,
-                    **_reply_to_metadata(event),
-                }
-            )
-
-            await self.conversation_handler.handle_message(context, response_channel)
 
         except Exception as e:
             logger.error(f"❌ Error processing message: {e}", exc_info=True)

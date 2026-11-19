@@ -20,8 +20,11 @@ in `l<n>`. Nothing goes page -> relay, so the feature has no `FEATURE_COMMANDS` 
 """
 import hashlib
 import json
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional, Sequence
+
+from .geo_mark import GeoFix, GeoSource
 
 PROTOCOL_VERSION = 1
 
@@ -34,6 +37,7 @@ PING_INTERVAL_S = 20.0
 
 # Feature names offered in `welcome.features`. Only features a call actually serves are offered.
 FEATURE_ASK = "ask"  # slice 4: the "Ask Lelik" latch, interpreter mode only (RFC §5)
+FEATURE_GEO = "geo"  # the "share my position" button, every web call with a control link (GEO_MARKS_RFC §4.7)
 FEATURE_TEXT = "text"  # live call text, mode calls only (VOICE_CALL_LIVE_TEXT_RFC §4.7); relay -> page only
 
 # "Ask Lelik" frames (RFC §4.2): the page presses (`ask_arm {seq}`) or presses again before speaking
@@ -41,6 +45,15 @@ FEATURE_TEXT = "text"  # live call text, mode calls only (VOICE_CALL_LIVE_TEXT_R
 ASK_ARM = "ask_arm"
 ASK_DISARM = "ask_disarm"
 ASK_STATE = "ask_state"
+
+# Geo frames (GEO_MARKS_RFC §4.7): the page sends one fix (`geo {seq, latitude, longitude, accuracy}`); the relay answers
+# with `geo_state {seq?, ok, address?, accuracy?, reason?}`: ok with the nearest address (absent when none was found),
+# or not ok with a reason (`bad`, `rate`, `not_ready`).
+GEO = "geo"
+GEO_STATE = "geo_state"
+GEO_REASON_BAD = "bad"
+GEO_REASON_RATE = "rate"
+GEO_REASON_NOT_READY = "not_ready"
 
 # Live text frames, relay -> page (VOICE_CALL_LIVE_TEXT_RFC §4.7).
 LINE = "line"
@@ -58,6 +71,7 @@ KIND_ASK = "ask"  # both lines of an "Ask Lelik" exchange
 # Everything else the page sends, apart from the core frames, is ignored.
 FEATURE_COMMANDS: Mapping[str, FrozenSet[str]] = {
     FEATURE_ASK: frozenset({ASK_ARM, ASK_DISARM}),
+    FEATURE_GEO: frozenset({GEO}),
 }
 
 # Core frame types, handled by the `/ctl` handler itself and never queued.
@@ -136,6 +150,33 @@ def ask_state_frame(state: str, seq: Optional[int] = None, reason: Optional[str]
     frame: Dict[str, Any] = {"type": ASK_STATE, "state": state}
     if seq is not None:
         frame["seq"] = seq
+    if reason is not None:
+        frame["reason"] = reason
+    return frame
+
+
+def parse_geo_command(frame: Mapping[str, Any], now: Optional[datetime] = None) -> GeoFix:
+    """The fix a `geo` frame carries, validated by `GeoFix.parse`; the page's `accuracy` is optional. `now` is the
+    instant the fix counts as shared (the relay's clock when None). ValueError for anything else: a missing or
+    non-numeric coordinate, a value out of range, a negative accuracy."""
+    if frame.get("type") != GEO:
+        raise ValueError("not a geo frame")
+    shared_at = now if now is not None else datetime.now(timezone.utc)
+    return GeoFix.parse(frame.get("latitude"), frame.get("longitude"), frame.get("accuracy"), shared_at,
+                        GeoSource.LELIK_BUTTON)
+
+
+def geo_state_frame(ok: bool, seq: Optional[int] = None, address: Optional[str] = None,
+                    accuracy: Optional[float] = None, reason: Optional[str] = None) -> Dict[str, Any]:
+    """`geo_state {ok, seq?, address?, accuracy?, reason?}`: the relay's answer to one `geo` frame. `seq` echoes the
+    command; an ok answer carries the address when one was found and the fix's accuracy in metres when it had one."""
+    frame: Dict[str, Any] = {"type": GEO_STATE, "ok": ok}
+    if seq is not None:
+        frame["seq"] = seq
+    if address:
+        frame["address"] = address
+    if accuracy is not None:
+        frame["accuracy"] = accuracy
     if reason is not None:
         frame["reason"] = reason
     return frame

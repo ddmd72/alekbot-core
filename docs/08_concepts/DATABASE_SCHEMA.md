@@ -121,6 +121,7 @@ How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
 | Collection | Holds | Doc id | Model / code |
 | :--- | :--- | :--- | :--- |
 | `{p}voice_tickets` | call tickets and the one-call-per-user marker (TTL on `expires_at`) | ticket or marker key | `src/adapters/firestore_ephemeral_store.py` |
+| `{p}geo_mark_links` | one-time `$geo` links (`GEO_MARKS_RFC` §4.5): the record binds a link to the owner's channel and language; consumed by `get_and_delete` when the page posts a fix. Lives 10 minutes (`LINK_TTL_S`, `expires_at`; the store re-checks it on read, a TTL policy sweeps unused links) | keyed digest of the link id | `src/adapters/firestore_ephemeral_store.py`, `src/services/geo_mark_service.py`; name `EnvironmentConfig.geo_mark_links_collection` |
 | `{p}companion_records` | companion memory records, scoped by session | record id | `src/adapters/firestore_companion_memory_repository.py` |
 | `{p}companion_context_cache` | cached context summary per companion session | session id | `src/adapters/firestore_companion_cache_repository.py` |
 | `{p}mcp_clients` | MCP OAuth clients (dynamic registration); `client_secret` is KMS ciphertext | `client_id` | `src/adapters/firestore_mcp_client_repository.py` |

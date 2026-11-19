@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from ..domain.settings import ConsolidationSettings
+from ..handlers.command_services import CommandServices
 from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..services.channel_binding_service import ChannelBindingService
 from ..services.consolidation_service import ConsolidationService
 from ..services.document_delivery_service import DocumentDeliveryService
+from ..services.geo_mark_service import GeoMarkService
 from ..services.localization_service import LocalizationService
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
@@ -36,6 +38,7 @@ class ChatServices:
     drive_note_service: Optional[Any] = None   # `$drive-notes` (DRIVE_FILE_NOTES_RFC §4.8)
     long_turn_service: Optional[Any] = None
     doc_delivery_service: Optional[DocumentDeliveryService] = None
+    geo_mark_service: Optional[GeoMarkService] = None   # `$geo` and the Telegram pin (GEO_MARKS_RFC §4.5, §4.6)
 
 
 def build_conversation_handler(chat: ChatServices, rich_content: RichContentService, *,
@@ -58,10 +61,9 @@ def build_conversation_handler(chat: ChatServices, rich_content: RichContentServ
         channel_history_source=channel_history,
         fallback_service=chat.fallback_service,
         short_link_service=chat.short_link_service,
-        skill_service=chat.skill_service,
-        memory_fact_service=chat.memory_fact_service,
         fact_answers=chat.fact_answers,
-        drive_note_service=chat.drive_note_service,
         long_turn_service=chat.long_turn_service,
         doc_delivery_service=chat.doc_delivery_service,
+        commands=CommandServices(skills=chat.skill_service, memory_facts=chat.memory_fact_service,
+                                 drive_notes=chat.drive_note_service, geo_marks=chat.geo_mark_service),
     )

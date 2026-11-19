@@ -106,6 +106,9 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "interactive_choice": {"binding": {"kind": "fact_question", "id": "q1"}, "option_id": "still_true", "platform": "slack",
                            "platform_user_id": "U1", "message_ref": {"platform": "slack", "channel_id": "C1", "message_id": "1.1"},
                            "at": "2026-10-24T09:00:00+00:00"},
+    "geo_mark_turn": {"platform": "slack", "user_id": "u1", "account_id": "a1", "channel_id": "C1", "session_id": "u1:C1",
+                      "platform_user_id": "U1", "text": "Is the Iron Temple gym open?", "mark_text": "[Shared location]",
+                      "language": "en", "link_fp": "18e09df9"},
 }
 
 # The pinned answer of every task type, from the boot with the deploy's environment, an empty database and the rows' seed
@@ -162,6 +165,9 @@ MATRIX: Dict[str, Expect] = {
     # No platform user is seeded: the click is refused at the identity check, before any handler (never a 501).
     "interactive_choice": Expect(200, {"status": "unknown_user"},
                                  log="[InteractiveChoice] a choice from an unknown slack user; ignored"),
+    # No platform user is seeded: the queued $geo question is dropped at the identity check, no turn runs (never a 501).
+    "geo_mark_turn": Expect(200, {"ok": True, "dropped": "unauthorized"},
+                            log="geo_mark_turn: Slack user not authorized, no turn"),
 }
 
 

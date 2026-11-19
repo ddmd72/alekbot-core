@@ -177,3 +177,28 @@ class UIMessage(Enum):
     DRIVE_NOTE_ERASE_ALL_PARTIAL = "drive_note_erase_all_partial"
     # Name of the drive Inbox subfolder that holds saved voice-call text files (VOICE_CALL_LIVE_TEXT_RFC §4.11).
     CALL_FILES_DRIVE_FOLDER = "call_files_drive_folder"
+    # Geo marks (GEO_MARKS_RFC §4.4–4.6): the `$geo` link line (`{minutes}`) and its label, the confirmation the bot
+    # posts and keeps as the model message of the pair (`{address}`, `{accuracy}`, `{time}`), the refusals, and the
+    # Slack page's strings (`GeoMarkService.page_strings`; the page fills `{address}` and `{accuracy}` itself).
+    GEO_LINK_LINE = "geo_link_line"
+    GEO_LINK_LABEL = "geo_link_label"
+    GEO_SAVED = "geo_saved"
+    GEO_SAVED_NO_ADDRESS = "geo_saved_no_address"
+    GEO_NOT_SAVED = "geo_not_saved"
+    GEO_UNAVAILABLE = "geo_unavailable"
+    GEO_BOUND_CHANNEL = "geo_bound_channel"
+    GEO_DM_ONLY = "geo_dm_only"
+    GEO_USE_TELEGRAM_PIN = "geo_use_telegram_pin"
+    GEO_TELEGRAM_VENUE = "geo_telegram_venue"
+    GEO_TELEGRAM_LIVE = "geo_telegram_live"
+    GEO_PAGE_LOCATING = "geo_page_locating"
+    GEO_PAGE_SAVED = "geo_page_saved"
+    GEO_PAGE_SAVED_NO_ADDRESS = "geo_page_saved_no_address"
+    GEO_PAGE_QUESTION_SENT = "geo_page_question_sent"
+    GEO_PAGE_QUESTION_NOT_SENT = "geo_page_question_not_sent"
+    GEO_PAGE_DENIED = "geo_page_denied"
+    GEO_PAGE_DENIED_HOWTO = "geo_page_denied_howto"
+    GEO_PAGE_UNAVAILABLE = "geo_page_unavailable"
+    GEO_PAGE_RETRY = "geo_page_retry"
+    GEO_PAGE_GONE = "geo_page_gone"
+    GEO_PAGE_NOT_SAVED = "geo_page_not_saved"

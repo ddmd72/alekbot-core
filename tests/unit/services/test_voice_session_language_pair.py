@@ -30,6 +30,7 @@ from src.services.voice_session_service import (
     _ASK_NOTE,
     _CANCELLED_TOOL_CALL,
     _TRANSLATE_NOTE,
+    VoiceControl,
     VoiceSessionService,
 )
 from tests.support.control_socket_fake import FakeControlSocket
@@ -178,7 +179,7 @@ class _Call:
             "control_token_sha256": control_token_digest(TOKEN)})
         self.service = VoiceSessionService(
             realtime_session_factory=lambda spec: self.provider, control_plane=self.control_plane,
-            alert_sink=_Alerts(), control_hub=self.hub, ask_clock=self.clock, ask_tick_s=0.005)
+            alert_sink=_Alerts(), control=VoiceControl(self.hub), ask_clock=self.clock, ask_tick_s=0.005)
         self.page = FakeControlSocket()
         self._tasks: List[asyncio.Task] = []
 
