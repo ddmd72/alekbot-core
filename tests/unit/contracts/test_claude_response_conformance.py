@@ -159,19 +159,12 @@ def test_the_grounded_loop_continues_a_paused_turn_in_its_container():
                    query={k: sent[0].url.params.get_list(k) for k in sent[0].url.params.keys()})
 
 
-# P17-D1: the SDK's stream accumulator builds every block of content_block_start with `model_dump()` (not
-# exclude_unset; anthropic/lib/streaming/_messages.py accumulate_event), so a tool_use or server_tool_use block whose
-# start event has no `caller` gets `caller: None` set, and replaying the block (raw_content, the pause_turn
-# continuation) sends `"caller": null`. The recordings settled it for `server_tool_use` only (replay_server_tool_blocks:
-# null sent, answered 200), now an ALLOWED gap narrowed to that block. On the real wire a `tool_use` and a server-tool
-# result block arrive with `caller: {type: direct}` (replay_thinking_and_tool_use, replay_server_tool_blocks), so no
-# recording shows null there and the contract keeps refusing it; these samples' start events carry no caller, which is
-# why the cases below still fail, on those blocks alone.
-_P17_D1 = pytest.mark.xfail(strict=True, raises=AssertionError,
-                            reason="P17-D1: a replayed tool block carries caller: null, absent from the request contract")
-
-
-@_P17_D1
+# P17-D1 (an ALLOWED gap since the recordings): the SDK's stream accumulator builds every block of content_block_start
+# with `model_dump()` (not exclude_unset; anthropic/lib/streaming/_messages.py accumulate_event), so a block whose start
+# event has no `caller` gets `caller: None` set, and replaying it (raw_content, the pause_turn continuation) sends
+# `"caller": null`. On the real wire only a `server_tool_use` the model calls itself arrives without a caller
+# (replay_server_tool_blocks: null sent back, answered 200); the samples carry the callers the recordings show
+# (claude_response_samples.py), so every replay below conforms.
 def test_the_continuation_of_a_paused_turn_conforms_to_the_request_contract():
     _, (_, second), sent = _grounded_run()
     require("container" in second and len(second["messages"][-1]["content"]) == len(
@@ -180,12 +173,7 @@ def test_the_continuation_of_a_paused_turn_conforms_to_the_request_contract():
                    query={k: sent[1].url.params.get_list(k) for k in sent[1].url.params.keys()})
 
 
-def _has_tool_block(sample_id: str) -> bool:
-    return any(b["type"] in ("tool_use", "server_tool_use") for b in SAMPLES[sample_id]["content"])
-
-
-@pytest.mark.parametrize("sample_id", [
-    pytest.param(s, marks=_P17_D1) if _has_tool_block(s) else s for s in READABLE])
+@pytest.mark.parametrize("sample_id", READABLE)
 def test_the_message_replayed_as_raw_content_conforms_to_the_request_contract(sample_id):
     """The delegation loop sends the assistant turn back unchanged (raw_content) with the tool results after it."""
     response = parsed(sample_id)
@@ -217,9 +205,18 @@ def test_the_message_replayed_as_raw_content_conforms_to_the_request_contract(sa
 
 
 def test_the_replayed_tool_block_carries_caller_null_p17_d1():
-    """Pins the mechanism of P17-D1 (flips when the SDK or the adapter stops sending it)."""
+    """Pins the mechanism of P17-D1 (flips when the SDK or the adapter stops sending it): a `server_tool_use` whose
+    start event has no caller, as the model's own calls arrive, is assembled with `caller` set to None."""
+    block = parsed("grounded_with_citations").raw_content.content[0]
+    require("caller" not in SAMPLES["grounded_with_citations"]["content"][0], "the start event carries no caller")
+    assert block.type == "server_tool_use" and "caller" in block.model_fields_set and block.caller is None
+
+
+def test_a_received_caller_is_kept_for_the_replay():
+    """The other half of P17-D1: a caller the stream carries is assembled as received, so the replay sends it back
+    (replay_thinking_and_tool_use: a tool_use's `{type: direct}` sent back, answered 200)."""
     block = parsed("tool_use_after_thinking").raw_content.content[3]
-    assert block.type == "tool_use" and "caller" in block.model_fields_set and block.caller is None
+    assert block.type == "tool_use" and block.caller.model_dump() == cs.DIRECT
 
 
 # ----------------------------------------------------------------------------------------- unknown and wrong fields
@@ -250,8 +247,8 @@ def _set(body: dict, path: tuple, key: str, value) -> dict:
     ("text", ("content", 0), "$.content[0]"),
     ("grounded_with_citations", ("content", 2, "citations", 0), "$.content[2].citations[0]"),
     ("grounded_with_citations", ("content", 1, "content", 0), "$.content[1].content[0]"),
-    ("grounded_server_tools_paused", ("content", 1, "content", "content", "source"),
-     "$.content[1].content.content.source"),
+    ("grounded_server_tools_paused", ("content", 2, "content", "content", "source"),
+     "$.content[2].content.content.source"),
     ("grounded_server_tools_paused", ("content", 5, "content"), "$.content[5].content"),
     ("tool_use_after_thinking", ("content", 0), "$.content[0]"),
     ("cache_read_and_write", ("usage",), "$.usage"),
