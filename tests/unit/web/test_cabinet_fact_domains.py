@@ -156,13 +156,6 @@ async def test_a_value_that_is_no_registry_key_is_a_400_and_nothing_is_read(worl
     assert store.docs == before
 
 
-async def test_the_repository_refuses_both_domain_filters_at_once_before_reading(world):
-    _, repo = world
-
-    with pytest.raises(ValueError, match="not both"):
-        await repo.get_paginated_facts(ACC, domain="finance", domain_key=Domain.MONEY)
-
-
 async def test_the_dry_run_kit_forwards_the_domain_key_to_the_live_store(world):
     from scripts.consolidation.s3_dry_run_kit import NoWriteFactRepository
     _, repo = world

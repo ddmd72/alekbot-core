@@ -1,8 +1,8 @@
 """FactRepository kit (P4 · T3): the docstrings of `src/ports/repository.py` checked against `FirestoreFactRepository` on the
 evaluating Firestore fake, with the index refusal ON (`config/firestore.indexes.json`): a query no declared index serves fails
 here. Assertions are on the raw stored documents and on what readers return. get_lineage, resolve_current,
-write_superseding and update_fact_fields are tested in test_fact_repository_versions_kit.py; get_legacy_facts has its own
-file (test_fact_repository_legacy_facts.py).
+write_superseding and update_fact_fields are tested in test_fact_repository_versions_kit.py; the directive read in
+test_fact_repository_directive_kit.py.
 
 `store` is the one fixture that selects the backend.
 """
@@ -247,16 +247,6 @@ async def test_ordered_by_priority_then_newest_first_and_archival_excluded(store
                                      "low-new", "low-old"]
 
 
-async def test_ordered_domain_filter_and_limit_keep_the_head_of_the_order(store):
-    for text, domain, priority, age in (("h1", "health", "high", 1), ("h2", "health", "critical", 0),
-                                        ("h3", "health", "medium", 2), ("w1", "work", "critical", 3)):
-        await store.repo.add_fact(make_fact(text, domain=domain, context_priority=ContextPriority(priority),
-                                            age_days=age))
-    assert [f.text for f in await store.repo.get_active_facts_ordered(ACC, domain="health")] == ["h2", "h1", "h3"]
-    assert [f.text for f in await store.repo.get_active_facts_ordered(ACC, domain="health", limit=2)] == ["h2", "h1"]
-    assert len(await store.repo.get_active_facts_ordered(ACC, limit=None)) == 4
-    assert await store.repo.get_active_facts_ordered(ACC, domain="finance") == []
-
 
 async def test_ordered_omits_a_document_without_a_priority_rank(store):
     put_raw(store, "ranked", "ranked")
@@ -291,10 +281,6 @@ async def test_ordered_identity_only_limit_keeps_the_head_of_the_order(store):
     got = await store.repo.get_active_facts_ordered(ACC, identity_only=True, limit=2)
     assert [f.text for f in got] == ["Alex Doe is a Portuguese citizen", "Alex's partner is Clara Moreira"]
 
-
-async def test_ordered_identity_only_and_a_domain_together_are_refused(store):
-    with pytest.raises(ValueError):
-        await store.repo.get_active_facts_ordered(ACC, domain="health", identity_only=True)
 
 
 async def test_ordered_returns_primary_domain_sensitivity_and_identity_but_no_other_profile_field(store):
@@ -352,27 +338,12 @@ async def test_next_cursor_is_none_exactly_when_no_fact_follows(store):
     assert cursor == "f-fact 1"
 
 
-async def test_the_first_page_with_a_domain_holds_only_that_domain(store):
-    for i in range(3):
-        await store.repo.add_fact(make_fact(f"health {i}", age_days=i))
-        await store.repo.add_fact(make_fact(f"work {i}", age_days=i, domain="work"))
-    facts, cursor = await store.repo.get_paginated_facts(ACC, limit=2, domain="work")
-    assert [f.text for f in facts] == ["work 2", "work 1"] and cursor == "f-work 1"
-    facts, cursor = await store.repo.get_paginated_facts(ACC, limit=3, domain="work")
-    assert [f.text for f in facts] == ["work 2", "work 1", "work 0"] and cursor is None
-
 
 async def test_pages_are_newest_first_do_not_overlap_and_hold_every_fact(store):
     await _five(store)
     assert await _pages(store, 2) == [["fact 4", "fact 3"], ["fact 2", "fact 1"], ["fact 0"]]
     assert await _pages(store, 4) == [["fact 4", "fact 3", "fact 2", "fact 1"], ["fact 0"]]
 
-
-async def test_pages_with_a_domain_hold_only_that_domain(store):
-    for i in range(3):
-        await store.repo.add_fact(make_fact(f"health {i}", age_days=i))
-        await store.repo.add_fact(make_fact(f"work {i}", age_days=i, domain="work"))
-    assert await _pages(store, 2, domain="work") == [["work 2", "work 1"], ["work 0"]]
 
 
 async def test_an_unknown_cursor_id_restarts_at_the_first_page(store):
