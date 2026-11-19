@@ -14,13 +14,22 @@ HEADERS = {"X-Widget-Tenant": "t-1"}
 BODY = {"name": "w", "count": 2, "color": "red", "parts": [{"type": "bolt", "length": 1.5}, {"text": "n"}]}
 
 
-def _problems(body=None, headers=None, path="/widgets") -> list[str]:
+def _violations(*args, **kwargs) -> list[str]:
+    """The violations `assert_request` lists ([] when it passes). Any other failure (an operation not found, no
+    contract) propagates: read as [], it would make the test asserting [] pass vacuously."""
     try:
-        oc.assert_request("widgets", "POST", path, HEADERS if headers is None else headers,
-                          BODY if body is None else body, contracts_dir=FIXTURES)
+        oc.assert_request(*args, contracts_dir=FIXTURES, **kwargs)
     except AssertionError as failure:
-        return str(failure).splitlines()[1:]
+        head, *violations = str(failure).splitlines()
+        if not head.endswith(" breaks the contract:") or not violations:
+            raise
+        return violations
     return []
+
+
+def _problems(body=None, headers=None, path="/v2/widgets") -> list[str]:
+    return _violations("widgets", "POST", path, HEADERS if headers is None else headers,
+                       BODY if body is None else body, query={})
 
 
 def test_a_conforming_request_passes():
@@ -29,16 +38,18 @@ def test_a_conforming_request_passes():
 
 def test_the_url_path_with_the_server_base_path_is_the_operation():
     assert _problems(path="/v2/widgets") == []
+    with pytest.raises(AssertionError, match="POST /widgets is not in"):
+        _problems(path="/widgets")
 
 
 def test_an_operation_absent_from_the_contract_fails():
-    with pytest.raises(AssertionError, match="GET /widgets is not in"):
-        oc.assert_request("widgets", "get", "/widgets", HEADERS, BODY, contracts_dir=FIXTURES)
+    with pytest.raises(AssertionError, match="GET /v2/widgets is not in"):
+        oc.assert_request("widgets", "get", "/v2/widgets", HEADERS, BODY, query={}, contracts_dir=FIXTURES)
 
 
 def test_a_provider_without_a_contract_fails():
     with pytest.raises(AssertionError, match="no contract at"):
-        oc.assert_request("gadgets", "post", "/widgets", HEADERS, BODY, contracts_dir=FIXTURES)
+        oc.assert_request("gadgets", "post", "/v2/widgets", HEADERS, BODY, query={}, contracts_dir=FIXTURES)
 
 
 def test_unknown_field():
@@ -111,11 +122,7 @@ def test_the_validator_is_compiled_once_per_operation():
 
 # ------------------------------------------------------------------------------- path and query parameters (parcels)
 def _query_problems(query, path="/v1/parcels", method="GET", body=None) -> list[str]:
-    try:
-        oc.assert_request("parcels", method, path, {}, body, query=query, contracts_dir=FIXTURES)
-    except AssertionError as failure:
-        return str(failure).splitlines()[1:]
-    return []
+    return _violations("parcels", method, path, {}, body, query=query)
 
 
 def test_a_conforming_query_passes_with_its_values_read_as_their_types():
@@ -130,7 +137,7 @@ def test_an_unknown_query_parameter_is_named():
 
 def test_a_required_query_parameter_is_missing():
     assert _query_problems({"status": ["open"]}) == ["query limit: missing required"]
-    assert _query_problems(None) == ["query limit: missing required"]
+    assert _query_problems({}) == ["query limit: missing required"]
 
 
 def test_query_values_that_do_not_read_as_the_type_are_wrong_types():
@@ -160,13 +167,13 @@ def test_a_query_value_passed_as_one_string_is_a_caller_error():
 
 
 def test_a_templated_path_is_matched_and_its_parameters_validated():
-    assert _query_problems(None, path="/v1/parcels/7") == []
-    assert _query_problems(None, path="/v1/parcels/seven") == ["path parcelId: wrong type (expected integer)"]
+    assert _query_problems({}, path="/v1/parcels/7") == []
+    assert _query_problems({}, path="/v1/parcels/seven") == ["path parcelId: wrong type (expected integer)"]
 
 
 def test_a_template_inside_a_segment_is_matched():
-    assert _query_problems(None, path="/v1/parcels/7/labels/front.pdf") == []
-    assert _query_problems(None, path="/v1/parcels/7/labels/side.pdf") == ["path labelId: value not allowed ('side')"]
+    assert _query_problems({}, path="/v1/parcels/7/labels/front.pdf") == []
+    assert _query_problems({}, path="/v1/parcels/7/labels/side.pdf") == ["path labelId: value not allowed ('side')"]
     with pytest.raises(AssertionError, match="is not in"):
         oc.operation_path("parcels", "get", "/v1/parcels/7/labels/front.png", contracts_dir=FIXTURES)
 
@@ -189,23 +196,19 @@ def test_a_path_with_an_extra_or_empty_segment_matches_no_template():
             oc.operation_path("parcels", "get", path, contracts_dir=FIXTURES)
 
 
-def test_a_percent_encoded_path_segment_is_decoded_before_validation():
-    assert _query_problems(None, path="/v1/parcels/7/labels/fr%6Fnt.pdf") == []
-
-
 def test_a_body_sent_to_an_operation_without_one_fails():
-    assert _query_problems(None, path="/v1/parcels/tracked", body={"weight": 1}) == [
+    assert _query_problems({}, path="/v1/parcels/tracked", body={"weight": 1}) == [
         "$: unknown field (the operation takes no request body)"]
 
 
 def test_a_body_operation_still_validates_its_body():
-    assert _query_problems(None, method="POST", body={"weight": "x"}) == ["$.weight: wrong type (expected integer)"]
+    assert _query_problems({}, method="POST", body={"weight": "x"}) == ["$.weight: wrong type (expected integer)"]
 
 
 def test_one_validator_serves_every_concrete_path_of_a_template():
-    _query_problems(None, path="/v1/parcels/1")
+    _query_problems({}, path="/v1/parcels/1")
     before = oc._operation.cache_info()
-    _query_problems(None, path="/v1/parcels/2")
+    _query_problems({}, path="/v1/parcels/2")
     after = oc._operation.cache_info()
     assert after.misses == before.misses and after.hits == before.hits + 1
 

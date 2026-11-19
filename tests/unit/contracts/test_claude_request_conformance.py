@@ -1,7 +1,7 @@
 """Every request ClaudeAdapter builds conforms to Anthropic's request contract (TEST_COVERAGE_SYSTEMIC_RFC §4a, P17).
 
 The REAL `ClaudeAdapter` and the REAL Anthropic SDK run with the HTTP transport replaced (`httpx.MockTransport`): no
-network, no key. The sink records method, URL path, headers and the JSON body of each request, and answers 400
+network, no key. The sink records method, URL path, query, headers and the JSON body of each request, and answers 400
 `invalid_request_error`, so the adapter raises its client error (the capture short-circuits the call; nothing is
 asserted about a response). A shape with `fallback` is answered 529 first, so the adapter's same-provider model fallback
 sends its second request, which is checked too. The transport, not the SDK call's kwargs, is the boundary: a kwarg
@@ -46,6 +46,7 @@ class Sent:
     path: str
     headers: Mapping[str, str]
     body: Any
+    query: Mapping[str, tuple[str, ...]]   # every query parameter the SDK sent, its values in order
 
 
 _OVERLOADED = {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
@@ -59,7 +60,9 @@ def sent(shape_id: str) -> tuple[Sent, ...]:
     captured: list[Sent] = []
 
     def sink(request: httpx.Request) -> httpx.Response:
-        captured.append(Sent(request.method, request.url.path, dict(request.headers), json.loads(request.content)))
+        params = request.url.params
+        captured.append(Sent(request.method, request.url.path, dict(request.headers), json.loads(request.content),
+                             {name: tuple(params.get_list(name)) for name in params.keys()}))
         if shape.fallback and len(captured) == 1:
             return httpx.Response(529, json=_OVERLOADED)
         return httpx.Response(400, json=_REJECTED)
@@ -83,11 +86,18 @@ def all_sent() -> list[Sent]:
     return [s for shape_id in SHAPES for s in sent(shape_id)]
 
 
+def _check(request: Sent, body: Any = None, query: Mapping[str, tuple[str, ...]] | None = None) -> None:
+    """assert_request on what the SDK sent, the query included; `body`/`query` replace the sent ones."""
+    assert_request("anthropic", request.method, request.path, request.headers,
+                   request.body if body is None else body,
+                   query={name: list(values) for name, values in (request.query if query is None else query).items()})
+
+
 # ---------------------------------------------------------------------------------------------------- conformance
 @pytest.mark.parametrize("shape_id", sorted(SHAPES))
 def test_every_request_the_adapter_builds_conforms_to_the_contract(shape_id):
     for request in sent(shape_id):
-        assert_request("anthropic", request.method, request.path, request.headers, request.body)
+        _check(request)
 
 
 @pytest.mark.parametrize("shape_id", sorted(SHAPES))
@@ -95,11 +105,19 @@ def test_the_subset_is_closed_an_unknown_field_fails(shape_id):
     request = sent(shape_id)[0]
     top = {**request.body, "not_a_field_of_the_contract": 1}
     with pytest.raises(AssertionError, match=r"\$\.not_a_field_of_the_contract: unknown field"):
-        assert_request("anthropic", request.method, request.path, request.headers, top)
+        _check(request, body=top)
     nested = copy.deepcopy(request.body)
     nested["messages"][0]["content"][0]["not_a_field_of_the_contract"] = 1
     with pytest.raises(AssertionError, match=r"messages\[0\]\.content\[0\]\.not_a_field_of_the_contract: unknown field"):
-        assert_request("anthropic", request.method, request.path, request.headers, nested)
+        _check(request, body=nested)
+
+
+@pytest.mark.parametrize("shape_id", sorted(SHAPES))
+def test_the_subset_is_closed_an_unknown_query_parameter_fails(shape_id):
+    """The query the SDK sent reaches the check: one the contract does not declare fails."""
+    for request in sent(shape_id):
+        with pytest.raises(AssertionError, match="query zz_unknown: unknown query parameter"):
+            _check(request, query={**request.query, "zz_unknown": ("1",)})
 
 
 def test_a_shape_with_a_fallback_sends_the_next_model_down():
