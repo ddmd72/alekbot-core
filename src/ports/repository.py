@@ -15,8 +15,8 @@ class FactRepository(ABC):
       `account_id`.
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
-    - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts and
-      search_facts_by_domain read it from the stored `id` field, which every
+    - Identity: `id` is the document id. get_fact_by_id and get_paginated_facts
+      read it from the stored `id` field, which every
       writer sets equal to the document id; a document written outside this port with a different or
       missing `id` reads back with that value (or a fresh uuid). resolve_current, get_lineage and
       get_latest_fact_by_lineage take it from the document id.
@@ -156,25 +156,6 @@ class FactRepository(ABC):
             tags_vector, metadata_vector and replaces_fact_id are None, is_current is True and last_updated is now
             (model defaults, observed).
         Errors: no user id (argument or RequestContext) raises ValueError.
-        """
-        pass
-
-    @abstractmethod
-    async def search_facts_by_domain(
-        self,
-        domains: List[str],
-        limit: int = 10,
-        account_id: Optional[str] = None,
-        user_id: Optional[str] = None
-    ) -> List[FactEntity]:
-        """Return `state == "current"` facts of one account whose domain is in `domains` (no vectors searched).
-
-        Tenancy: account_id, else the RequestContext account; `user_id` is unused (observed).
-        Order: newest first by created_at.
-        Limit: at most `limit`.
-        Legacy: a document without created_at is absent (observed).
-        Errors: no account raises ValueError; empty `domains` returns []; more than 30 domains
-            raises (Firestore `in` limit, observed).
         """
         pass
 

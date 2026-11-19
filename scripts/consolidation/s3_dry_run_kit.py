@@ -469,11 +469,6 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
         kept = [h for h in hits if (doc := self._docs.get(h.id)) is None or doc.state is FactState.CURRENT]
         return kept[:limit]
 
-    async def search_facts_by_domain(
-        self, domains: List[str], limit: int = 10, account_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> List[FactEntity]:
-        return await self._real.search_facts_by_domain(domains, limit, account_id, user_id)
-
     async def get_lineage(self, account_id: str, lineage_id: str) -> List[FactEntity]:
         return await self._real.get_lineage(account_id, lineage_id)
 
