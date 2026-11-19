@@ -1,0 +1,1109 @@
+components:
+  schemas:
+    microsoft.graph.bodyType:
+      enum:
+      - html
+      - text
+      type: string
+    microsoft.graph.checklistItem:
+      additionalProperties: false
+      properties:
+        checkedDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type:
+          - string
+          - 'null'
+        createdDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type: string
+        displayName:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+        isChecked:
+          type:
+          - boolean
+          - 'null'
+      type: object
+    microsoft.graph.checklistItem_2:
+      additionalProperties: false
+      properties:
+        displayName:
+          type:
+          - string
+          - 'null'
+        isChecked:
+          type:
+          - boolean
+          - 'null'
+      type: object
+    microsoft.graph.dateTimeTimeZone:
+      additionalProperties: false
+      properties:
+        dateTime:
+          type: string
+        timeZone:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.dayOfWeek:
+      enum:
+      - friday
+      - monday
+      - saturday
+      - sunday
+      - thursday
+      - tuesday
+      - wednesday
+      type: string
+    microsoft.graph.driveItem:
+      additionalProperties: false
+      properties:
+        name:
+          type:
+          - string
+          - 'null'
+        parentReference:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.itemReference'
+          - type: 'null'
+      type: object
+    microsoft.graph.driveItemSource:
+      additionalProperties: false
+      properties:
+        application:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.driveItemSourceApplication'
+          - type: 'null'
+        externalId:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.driveItemSourceApplication:
+      enum:
+      - loki
+      - loop
+      - office
+      - oneDrive
+      - other
+      - powerPoint
+      - sharePoint
+      - stream
+      - teams
+      - unknownFutureValue
+      - yammer
+      type: string
+    microsoft.graph.driveItemUploadableProperties:
+      additionalProperties: false
+      properties:
+        '@microsoft.graph.conflictBehavior':
+          enum:
+          - fail
+          - rename
+          - replace
+          type: string
+          x-alek-extension: the instance annotation of an upload session's item, documented at https://learn.microsoft.com/en-us/graph/api/driveitem-createuploadsession
+            (microsoft-graph-docs-contrib driveitem-createuploadsession.md:80), absent from the spec (src/adapters/microsoft/onedrive_adapter.py
+            upload, replace_content) (2026-11-19)
+        description:
+          type:
+          - string
+          - 'null'
+        driveItemSource:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.driveItemSource'
+          - type: 'null'
+        fileSize:
+          format: int64
+          type:
+          - integer
+          - 'null'
+        fileSystemInfo:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.fileSystemInfo'
+          - type: 'null'
+        mediaSource:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.mediaSource'
+          - type: 'null'
+        name:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.driveItem_2:
+      additionalProperties: false
+      properties:
+        '@microsoft.graph.conflictBehavior':
+          enum:
+          - fail
+          - rename
+          - replace
+          type: string
+          x-alek-extension: the instance annotation of a new folder, documented at https://learn.microsoft.com/en-us/graph/api/driveitem-post-children
+            (microsoft-graph-docs-contrib driveitem-post-children.md:59,72), absent from the spec (src/adapters/microsoft/onedrive_adapter.py
+            create_folder) (2026-11-19)
+        folder:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.folder'
+          - type: 'null'
+        name:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.fileSystemInfo:
+      additionalProperties: false
+      properties:
+        createdDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type:
+          - string
+          - 'null'
+        lastAccessedDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type:
+          - string
+          - 'null'
+        lastModifiedDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.folder:
+      additionalProperties: false
+      properties:
+        childCount:
+          format: int32
+          maximum: 2147483647
+          minimum: -2147483648
+          type:
+          - integer
+          - 'null'
+        view:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.folderView'
+          - type: 'null'
+      type: object
+    microsoft.graph.folderView:
+      additionalProperties: false
+      properties:
+        sortBy:
+          type:
+          - string
+          - 'null'
+        sortOrder:
+          type:
+          - string
+          - 'null'
+        viewType:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.importance:
+      enum:
+      - high
+      - low
+      - normal
+      type: string
+    microsoft.graph.itemBody:
+      additionalProperties: false
+      properties:
+        content:
+          type:
+          - string
+          - 'null'
+        contentType:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.bodyType'
+          - type: 'null'
+      type: object
+    microsoft.graph.itemReference:
+      additionalProperties: false
+      properties:
+        driveId:
+          type:
+          - string
+          - 'null'
+        driveType:
+          type:
+          - string
+          - 'null'
+        id:
+          type:
+          - string
+          - 'null'
+        name:
+          type:
+          - string
+          - 'null'
+        path:
+          type:
+          - string
+          - 'null'
+        shareId:
+          type:
+          - string
+          - 'null'
+        sharepointIds:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.sharepointIds'
+          - type: 'null'
+        siteId:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.linkedResource:
+      additionalProperties: false
+      properties:
+        applicationName:
+          type:
+          - string
+          - 'null'
+        displayName:
+          type:
+          - string
+          - 'null'
+        externalId:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+        webUrl:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.mediaSource:
+      additionalProperties: false
+      properties:
+        contentCategory:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.mediaSourceContentCategory'
+          - type: 'null'
+      type: object
+    microsoft.graph.mediaSourceContentCategory:
+      enum:
+      - chat
+      - comment
+      - liveStream
+      - meeting
+      - note
+      - presentation
+      - profile
+      - screenRecording
+      - story
+      - unknownFutureValue
+      type: string
+    microsoft.graph.patternedRecurrence:
+      additionalProperties: false
+      properties:
+        pattern:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.recurrencePattern'
+          - type: 'null'
+        range:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.recurrenceRange'
+          - type: 'null'
+      type: object
+    microsoft.graph.recurrencePattern:
+      additionalProperties: false
+      properties:
+        dayOfMonth:
+          format: int32
+          maximum: 2147483647
+          minimum: -2147483648
+          type: integer
+        daysOfWeek:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/microsoft.graph.dayOfWeek'
+            - type: 'null'
+          type: array
+        firstDayOfWeek:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dayOfWeek'
+          - type: 'null'
+        index:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.weekIndex'
+          - type: 'null'
+        interval:
+          format: int32
+          maximum: 2147483647
+          minimum: -2147483648
+          type: integer
+        month:
+          format: int32
+          maximum: 2147483647
+          minimum: -2147483648
+          type: integer
+        type:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.recurrencePatternType'
+          - type: 'null'
+      type: object
+    microsoft.graph.recurrencePatternType:
+      enum:
+      - absoluteMonthly
+      - absoluteYearly
+      - daily
+      - relativeMonthly
+      - relativeYearly
+      - weekly
+      type: string
+    microsoft.graph.recurrenceRange:
+      additionalProperties: false
+      properties:
+        endDate:
+          format: date
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])$
+          type:
+          - string
+          - 'null'
+        numberOfOccurrences:
+          format: int32
+          maximum: 2147483647
+          minimum: -2147483648
+          type: integer
+        recurrenceTimeZone:
+          type:
+          - string
+          - 'null'
+        startDate:
+          format: date
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])$
+          type:
+          - string
+          - 'null'
+        type:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.recurrenceRangeType'
+          - type: 'null'
+      type: object
+    microsoft.graph.recurrenceRangeType:
+      enum:
+      - endDate
+      - noEnd
+      - numbered
+      type: string
+    microsoft.graph.sharepointIds:
+      additionalProperties: false
+      properties:
+        listId:
+          type:
+          - string
+          - 'null'
+        listItemId:
+          type:
+          - string
+          - 'null'
+        listItemUniqueId:
+          type:
+          - string
+          - 'null'
+        siteId:
+          type:
+          - string
+          - 'null'
+        siteUrl:
+          type:
+          - string
+          - 'null'
+        tenantId:
+          type:
+          - string
+          - 'null'
+        webId:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.subscription:
+      additionalProperties: false
+      properties:
+        changeType:
+          type: string
+        clientState:
+          type:
+          - string
+          - 'null'
+        expirationDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type: string
+        notificationUrl:
+          type: string
+        resource:
+          type: string
+      type: object
+    microsoft.graph.subscription_2:
+      additionalProperties: false
+      properties:
+        expirationDateTime:
+          format: date-time
+          pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
+          type: string
+      type: object
+    microsoft.graph.taskStatus:
+      enum:
+      - completed
+      - deferred
+      - inProgress
+      - notStarted
+      - waitingOnOthers
+      type: string
+    microsoft.graph.todoTask:
+      additionalProperties: false
+      properties:
+        body:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.itemBody'
+          - type: 'null'
+        categories:
+          items:
+            type:
+            - string
+            - 'null'
+          type: array
+        checklistItems:
+          items:
+            $ref: '#/components/schemas/microsoft.graph.checklistItem'
+          type: array
+        dueDateTime:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dateTimeTimeZone'
+          - type: 'null'
+        importance:
+          $ref: '#/components/schemas/microsoft.graph.importance'
+        isReminderOn:
+          type: boolean
+        linkedResources:
+          items:
+            $ref: '#/components/schemas/microsoft.graph.linkedResource'
+          type: array
+        recurrence:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.patternedRecurrence'
+          - type: 'null'
+        reminderDateTime:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dateTimeTimeZone'
+          - type: 'null'
+        startDateTime:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dateTimeTimeZone'
+          - type: 'null'
+        title:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.todoTaskList:
+      additionalProperties: false
+      properties:
+        displayName:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.todoTask_2:
+      additionalProperties: false
+      properties:
+        body:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.itemBody'
+          - type: 'null'
+        categories:
+          items:
+            type:
+            - string
+            - 'null'
+          type: array
+        dueDateTime:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dateTimeTimeZone'
+          - type: 'null'
+        importance:
+          $ref: '#/components/schemas/microsoft.graph.importance'
+        isReminderOn:
+          type: boolean
+        recurrence:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.patternedRecurrence'
+          - type: 'null'
+        reminderDateTime:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dateTimeTimeZone'
+          - type: 'null'
+        startDateTime:
+          anyOf:
+          - $ref: '#/components/schemas/microsoft.graph.dateTimeTimeZone'
+          - type: 'null'
+        status:
+          $ref: '#/components/schemas/microsoft.graph.taskStatus'
+        title:
+          type:
+          - string
+          - 'null'
+      type: object
+    microsoft.graph.weekIndex:
+      enum:
+      - first
+      - fourth
+      - last
+      - second
+      - third
+      type: string
+info:
+  title: graph request subset
+  version: v1.0
+openapi: 3.1.0
+paths:
+  /drives/{drive-id}/items/{driveItem-id}:
+    delete:
+      operationId: drives.DeleteItems
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    get:
+      operationId: drives.GetItems
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    patch:
+      operationId: drives.UpdateItems
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.driveItem'
+        required: true
+  /drives/{drive-id}/items/{driveItem-id}/children:
+    get:
+      operationId: drives.items.ListChildren
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - explode: false
+        in: query
+        name: $top
+        schema:
+          minimum: 0
+          type: integer
+        style: form
+    post:
+      operationId: drives.items.CreateChildren
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.driveItem_2'
+        required: true
+  /drives/{drive-id}/items/{driveItem-id}/content:
+    put:
+      operationId: drives.UpdateItemsContent
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: query
+        name: '@microsoft.graph.conflictBehavior'
+        required: false
+        schema:
+          enum:
+          - fail
+          - rename
+          - replace
+          type: string
+        x-alek-extension: the conflict behaviour of a simple upload by name, a URL parameter documented at https://learn.microsoft.com/en-us/graph/api/resources/driveitem
+          (instance attributes; microsoft-graph-docs-contrib api-reference/v1.0/resources/driveitem.md:148,153), absent from
+          the spec (src/adapters/microsoft/onedrive_adapter.py upload) (2026-11-19)
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              format: binary
+              type: string
+        required: true
+  /drives/{drive-id}/items/{driveItem-id}/createUploadSession:
+    post:
+      operationId: drives.drive.items.driveItem.createUploadSession
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                item:
+                  anyOf:
+                  - $ref: '#/components/schemas/microsoft.graph.driveItemUploadableProperties'
+                  - type: 'null'
+              type: object
+        required: true
+  /drives/{drive-id}/items/{driveItem-id}/delta():
+    get:
+      operationId: drives.drive.items.driveItem.delta-fa14
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - explode: false
+        in: query
+        name: $top
+        schema:
+          minimum: 0
+          type: integer
+        style: form
+  /drives/{drive-id}/items/{driveItem-id}/search(q='{q}'):
+    get:
+      operationId: drives.drive.items.driveItem.search
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: q
+        required: true
+        schema:
+          pattern: ^([^']|'')*$
+          type:
+          - string
+          - 'null'
+      - explode: false
+        in: query
+        name: $top
+        schema:
+          minimum: 0
+          type: integer
+        style: form
+  /drives/{drive-id}/items/{driveItem-id}/thumbnails:
+    get:
+      operationId: drives.items.ListThumbnails
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: query
+        name: select
+        required: false
+        schema:
+          pattern: ^(small|medium|large|c[1-9][0-9]*x[1-9][0-9]*(_crop)?)$
+          type: string
+        x-alek-extension: the unprefixed select naming one thumbnail size (/thumbnails?select=c300x400_crop), documented at
+          https://learn.microsoft.com/en-us/graph/api/driveitem-list-thumbnails (microsoft-graph-docs-contrib driveitem-list-thumbnails.md:121,376);
+          the spec declares only $select (src/adapters/microsoft/onedrive_adapter.py get_thumbnail) (2026-11-19)
+  /drives/{drive-id}/special/{driveItem-id}:
+    get:
+      operationId: drives.GetSpecial
+      parameters:
+      - in: path
+        name: drive-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: driveItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+  /me:
+    get:
+      operationId: me.user.GetUser
+  /me/todo/lists:
+    get:
+      operationId: me.todo.ListLists
+    post:
+      operationId: me.todo.CreateLists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.todoTaskList'
+        required: true
+  /me/todo/lists/{todoTaskList-id}:
+    get:
+      operationId: me.todo.GetLists
+      parameters:
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+  /me/todo/lists/{todoTaskList-id}/tasks:
+    get:
+      operationId: me.todo.lists.ListTasks
+      parameters:
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - explode: false
+        in: query
+        name: $filter
+        schema:
+          type: string
+        style: form
+    post:
+      operationId: me.todo.lists.CreateTasks
+      parameters:
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.todoTask'
+        required: true
+  /me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}:
+    delete:
+      operationId: me.todo.lists.DeleteTasks
+      parameters:
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    get:
+      operationId: me.todo.lists.GetTasks
+      parameters:
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    patch:
+      operationId: me.todo.lists.UpdateTasks
+      parameters:
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.todoTask_2'
+        required: true
+  /me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/checklistItems:
+    get:
+      operationId: me.todo.lists.tasks.ListChecklistItems
+      parameters:
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    post:
+      operationId: me.todo.lists.tasks.CreateChecklistItems
+      parameters:
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.checklistItem_2'
+        required: true
+  /me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/checklistItems/{checklistItem-id}:
+    delete:
+      operationId: me.todo.lists.tasks.DeleteChecklistItems
+      parameters:
+      - in: path
+        name: checklistItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    patch:
+      operationId: me.todo.lists.tasks.UpdateChecklistItems
+      parameters:
+      - in: path
+        name: checklistItem-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTask-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      - in: path
+        name: todoTaskList-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.checklistItem_2'
+        required: true
+  /subscriptions:
+    post:
+      operationId: subscriptions.subscription.CreateSubscription
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.subscription'
+        required: true
+  /subscriptions/{subscription-id}:
+    delete:
+      operationId: subscriptions.subscription.DeleteSubscription
+      parameters:
+      - in: path
+        name: subscription-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+    patch:
+      operationId: subscriptions.subscription.UpdateSubscription
+      parameters:
+      - in: path
+        name: subscription-id
+        required: true
+        schema:
+          pattern: ^[^:]+$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/microsoft.graph.subscription_2'
+        required: true
+servers:
+- url: https://graph.microsoft.com/v1.0
+x-alek-aliases:
+- pattern: /me/drive/items/{driveItem-id}:/{path}:/**
+  reason: 'colon addressing: the item at <path> under item <driveItem-id> is an item, so an operation on it (/content, /createUploadSession)
+    is the item''s operation'
+  target: /drives/{drive-id}/items/{driveItem-id}/**
+- pattern: '/me/drive/items/{driveItem-id}:/{path}:'
+  reason: 'colon addressing: the item at <path> under item <driveItem-id> is an item'
+  target: /drives/{drive-id}/items/{driveItem-id}
+- pattern: /me/drive/special/approot/delta
+  reason: the App Folder (the one special folder the adapter uses) is an item; the adapter writes the function without parentheses,
+    which Graph accepts, the spec writes delta()
+  target: /drives/{drive-id}/items/{driveItem-id}/delta()
+- pattern: /me/drive/special/approot/search(q='{q}')
+  reason: the App Folder (the one special folder the adapter uses) is an item
+  target: /drives/{drive-id}/items/{driveItem-id}/search(q='{q}')
+- pattern: /me/drive/special/approot
+  reason: /me/drive is the signed-in user's drive; approot is the one special folder the adapter uses
+  target: /drives/{drive-id}/special/{driveItem-id}
+- pattern: /me/drive/items/**
+  reason: /me/drive is the signed-in user's drive
+  target: /drives/{drive-id}/items/**
+x-retrieved: '2026-11-19'
+x-source: https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/cf55999152ccd93960b5ba2062f5e2bcbef714b5/openapi/v1.0/openapi.yaml
+x-transforms:
+- 'prune: only the listed top-level fields and union variants are kept'
+- 'flatten-allOf: an allOf of objects becomes one object (properties and required merged)'
+- 'oneOf-to-anyOf: variants overlap (a message with list content matches two of them)'
+- 'close-objects: additionalProperties false on every object that declares properties, except the open paths'
+- 'open-paths: our own JSON Schemas (the open paths) are free-form objects'
+- 'drop-redundant-literals: a literal next to a plain {type: T} in a union accepts nothing more (model id lists)'
+- 'drop-doc-keys: documentation keys and vendor doc extensions dropped (spec_drift.normalize); property names kept'
+- 'stringify-dates: YAML dates become ISO strings'
+- 'odata-strip: discriminator and x-ms-* keys dropped from the source before anything is built (entity''s discriminator maps
+  every type; the x-ms-* keys are generator annotations)'
+- 'odata-type-dropped: the @odata.type property and its required entry dropped from every schema (every complex type requires
+  it; a client sends it only to name a derived type, and we never do: sending it fails as unknown)'
+- 'odata-integers: {type: number, format: int16|int32|int64} becomes {type: integer} (bounds kept): OData''s whole numbers,
+  which a fraction must fail'
+- 'odata-key-segments: a key path parameter (drive-id, *-id) takes no '':'' (pattern ^[^:]+$): a colon in a segment is OData''s
+  path addressing, never part of a key'
+- 'odata-string-literals: a path parameter inside an OData string literal (''{name}'') has every quote doubled (pattern ^([^'']|'''')*$)'
+- 'nullable-to-3.1: OpenAPI 3.0 nullable becomes JSON Schema 2020-12: {type: T, nullable: true} -> {type: [T, null]} (null
+  added to an enum), and the null member of a nullable reference, anyOf [{$ref}, {type: object, nullable: true}], becomes
+  {type: null}'
+- 'prune-parameters: every path parameter, only the listed query parameters and headers; $refs inlined, documentation keys
+  dropped'
+- 'raw-body: a request body that is not JSON (Operation.raw_body, e.g. application/octet-stream) is kept with its media type
+  and schema as declared; its bytes are not validated'
+- 'aliases: x-alek-aliases rewrites a request path (in order, first match) to the contract path it is looked up under; every
+  target names a kept operation'
