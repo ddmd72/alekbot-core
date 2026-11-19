@@ -1,6 +1,6 @@
 from src.domain.companion import CompanionRecord
 from src.domain.companion_context import CompanionContext
-from src.domain.entities import FactDomain, FactEntity, FactType
+from src.domain.entities import FactEntity, FactType
 from src.domain.search import EnrichedFact
 
 
@@ -21,7 +21,7 @@ def test_construction_with_all_fields():
     directive = FactEntity(
         account_id="acc1", created_by_user_id="acc1", lineage_id="l1",
         text="Never give partial answers", type=FactType.STATE,
-        domain=FactDomain.AGENT_DIRECTIVE,
+        directive=True,
     )
 
     ctx = CompanionContext(

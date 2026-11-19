@@ -11,7 +11,6 @@ import pytest
 from scripts.validation import drive_intent_text_scan as script
 from scripts.validation.drive_intent_text_scan_logic import (
     NEW_INTENT, OLD_INTENTS, ScanItem, backup_payload, render_report, scan, scan_item, skill_markdown)
-from src.domain.entities import FactDomain
 from src.domain.prompt_v3.slot import OwnerType
 from src.infrastructure.agent_manifest import Intent
 from src.utils.skill_md import parse_skill_md
@@ -108,7 +107,7 @@ async def test_collect_reads_every_store_read_only():
     assert skipped == ["prompt_override account:GONE (token missing)"]
     # R2 (plan_arbiter_xcut): directives are read from agent_directive and from preference, in that order
     assert src.facts.get_active_facts_ordered.await_args_list == [
-        call("a1", domain=FactDomain.AGENT_DIRECTIVE.value), call("a1", domain=FactDomain.PREFERENCE.value)]
+        call("a1", domain="agent_directive"), call("a1", domain="preference")]
     assert [c.args[1] for c in src.workspace.list.await_args_list] == ["projects/", "references/", "scratch/", "binary_files/"]
     src.notes.list_active_notes.assert_awaited_once_with("u1", NOW)
     src.drafts.list_drafts.assert_awaited_once_with("u1", NOW)

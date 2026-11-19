@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactType
+from src.domain.entities import ExpiryKind, FactType
 from src.domain.exceptions import FactExpiryError
 from src.adapters.firestore_repo import _expiry_kind
 from src.domain.fact_expiry import NOTHING_WRITTEN, Expiry, expiry_view, parse_expiry
@@ -75,7 +75,7 @@ def test_pinning_reads_domain_and_type_given_as_strings():
     assert expiry_pinned("agent_directive", FactType.EVENT, []) is True
     assert expiry_pinned(None, "principle", []) is True
     assert expiry_pinned("work", "event", []) is False
-    assert expiry_pinned(FactDomain.AGENT_DIRECTIVE, FactType.EVENT, []) is True
+    assert expiry_pinned(True, FactType.EVENT, []) is True
 
 
 # --- F2: overflow is a tool error --------------------------------------------------------------------------------

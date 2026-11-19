@@ -123,12 +123,11 @@ async def test_browse_by_state_lists_only_the_sessions_account(world):
 
 async def test_the_domain_filter_still_narrows_a_stale_list(world):
     # The filter takes a registry key and reads the profile's `domain_keys` (fact profile RFC §6 row 9).
-    from src.domain.entities import FactDomain
     from src.domain.fact_domains import Domain
     store, repo = world
-    await repo.add_fact(make_fact("a", state=FactState.STALE, domain=FactDomain.HEALTH,
+    await repo.add_fact(make_fact("a", state=FactState.STALE,
                                   primary_domain=Domain.HEALTH, domain_keys=[Domain.HEALTH]))
-    await repo.add_fact(make_fact("b", state=FactState.STALE, domain=FactDomain.FINANCE,
+    await repo.add_fact(make_fact("b", state=FactState.STALE,
                                   primary_domain=Domain.MONEY, domain_keys=[Domain.MONEY]))
 
     _, body = await _get(repo, f"/api/user/facts/browse?state=stale&domain={Domain.MONEY}")

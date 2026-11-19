@@ -8,7 +8,7 @@ refresh_cache over this repository) forwards the limits it is given to the selec
 import pytest
 
 from src.adapters.firestore_repo import FirestoreFactRepository
-from src.domain.entities import ContextPriority, FactDomain
+from src.domain.entities import ContextPriority
 from src.services.biographical_context_service import BiographicalContextService
 from tests.support.fact_kit import ACC, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
@@ -51,14 +51,14 @@ async def test_cached_read_of_a_missing_or_empty_cache_is_still_empty_not_an_err
 
 async def test_refresh_forwards_facts_limit_to_the_context_service(store):
     for i in range(4):
-        await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
+        await store.repo.add_fact(make_fact(f"bio {i}", age_days=i))
     await _cache_refresher(store).refresh_cache(ACC, facts_limit=3)
     assert _cache(store)["facts_count"] == 3
 
 
 async def test_refresh_forwards_principles_limit_to_the_context_service(store):
     for i in range(3):
-        await store.repo.add_fact(make_fact(f"mindset {i}", domain=FactDomain.BIOGRAPHICAL, tags=["mindset"],
+        await store.repo.add_fact(make_fact(f"mindset {i}", tags=["mindset"],
                                             age_days=i))
     await _cache_refresher(store).refresh_cache(ACC, principles_limit=1)
     cache = _cache(store)
@@ -67,9 +67,9 @@ async def test_refresh_forwards_principles_limit_to_the_context_service(store):
 
 async def test_refresh_without_limits_keeps_the_service_resolution(store):
     for i in range(4):
-        await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
+        await store.repo.add_fact(make_fact(f"bio {i}", age_days=i))
     for i in range(3):
-        await store.repo.add_fact(make_fact(f"mindset {i}", domain=FactDomain.BIOGRAPHICAL, tags=["mindset"],
+        await store.repo.add_fact(make_fact(f"mindset {i}", tags=["mindset"],
                                             age_days=10 + i))
     await _cache_refresher(store).refresh_cache(ACC)
     cache = _cache(store)
@@ -79,9 +79,9 @@ async def test_refresh_without_limits_keeps_the_service_resolution(store):
 async def test_refresh_keeps_exactly_principles_limit_principles_highest_priority_first(store):
     for i, priority in enumerate((ContextPriority.LOW, ContextPriority.CRITICAL, ContextPriority.MEDIUM,
                                   ContextPriority.HIGH)):
-        await store.repo.add_fact(make_fact(f"mindset {i}", domain=FactDomain.BIOGRAPHICAL, tags=["mindset"],
+        await store.repo.add_fact(make_fact(f"mindset {i}", tags=["mindset"],
                                             context_priority=priority, age_days=i))
-    await store.repo.add_fact(make_fact("plain", domain=FactDomain.BIOGRAPHICAL, age_days=9))
+    await store.repo.add_fact(make_fact("plain", age_days=9))
     await _cache_refresher(store).refresh_cache(ACC, principles_limit=2)
     cache = _cache(store)
     assert [p["text"] for p in cache["principles"]] == ["mindset 1", "mindset 3"]

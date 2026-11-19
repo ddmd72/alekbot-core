@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from src.domain.entities import ContextPriority, FactDomain
+from src.domain.entities import ContextPriority
 from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.services.biographical_context_service import BiographicalContextService
 from tests.support.fact_kit import ACC, OTHER, make_fact
@@ -25,9 +25,9 @@ async def seed(store: FactStore, account: str = ACC) -> None:
     for text, priority, tags, age in (("a fact", ContextPriority.HIGH, [], 1), ("b fact", ContextPriority.LOW, [], 2),
                                       ("a principle", ContextPriority.MEDIUM, ["mindset"], 3),
                                       ("b principle", ContextPriority.MEDIUM, ["mindset"], 4)):
-        await store.repo.add_fact(make_fact(f"{account} {text}", account=account, domain=FactDomain.BIOGRAPHICAL,
+        await store.repo.add_fact(make_fact(f"{account} {text}", account=account,
                                             context_priority=priority, tags=tags, age_days=age))
-    await store.repo.add_fact(make_fact(f"{account} a rule", account=account, domain=FactDomain.AGENT_DIRECTIVE))
+    await store.repo.add_fact(make_fact(f"{account} a rule", account=account, directive=True))
 
 
 def cache(store: FactStore, account: str = ACC) -> Any:
@@ -87,7 +87,7 @@ async def test_a_failed_save_never_raises_and_the_previous_cache_stays(store, mo
     service = BiographicalContextService(store.repo)
     await service.refresh_cache(ACC)
     before = copy.deepcopy(cache(store))
-    await store.repo.add_fact(make_fact("a newer fact", domain=FactDomain.BIOGRAPHICAL,
+    await store.repo.add_fact(make_fact("a newer fact",
                                         context_priority=ContextPriority.CRITICAL))
 
     async def save_down(owner_id: str, context: Any) -> None:

@@ -6,7 +6,6 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from src.domain import fact_domains as fd
-from src.domain.entities import FactDomain
 from src.domain.fact_domains import Domain
 
 _ORDER = (
@@ -138,7 +137,12 @@ def test_label_of_an_unknown_key_is_none():
 
 # ── Legacy configuration map ─────────────────────────────────────────────────
 
-@pytest.mark.parametrize("old", [d.value for d in FactDomain])
+# The 16 values of the removed `FactDomain` enum (fact profile RFC PR 13), as stored configuration may still hold them.
+OLD_DOMAIN_VALUES = ("biographical", "possession", "health", "medical_records", "location", "work", "network", "preference",
+              "agent_directive", "skill", "project", "finance", "education", "legal", "entertainment", "communication")
+
+
+@pytest.mark.parametrize("old", OLD_DOMAIN_VALUES)
 def test_every_old_value_maps_to_known_keys_only(old):
     keys = fd.config_key(old)
     assert keys and all(fd.is_known(k) for k in keys)
@@ -157,7 +161,7 @@ def test_an_unknown_value_maps_to_nothing(value):
 
 
 def test_the_old_voice_default_maps_to_the_new_default():
-    old_default = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
+    old_default = ("biographical", "preference")
     mapped = {k for v in old_default for k in fd.config_key(v)}
     assert mapped == _VOICE_OPEN
 
@@ -167,5 +171,5 @@ def test_the_old_directive_value_maps_to_agent_directives_only():
 
 
 def test_legacy_values_are_only_old_domain_values():
-    old = {d.value for d in FactDomain}
+    old = set(OLD_DOMAIN_VALUES)
     assert {v for e in fd.FACT_DOMAINS for v in e.legacy_config_values} == old

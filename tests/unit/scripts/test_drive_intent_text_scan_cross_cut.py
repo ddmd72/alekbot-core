@@ -6,14 +6,13 @@ from unittest.mock import AsyncMock
 
 from scripts.validation import drive_intent_text_scan as script
 from scripts.validation.drive_intent_text_scan_logic import STORES, scan
-from src.domain.entities import FactDomain
 
 NOW = datetime(2026, 10, 22, tzinfo=timezone.utc)
 
 
 def _facts():
-    by_domain = {FactDomain.AGENT_DIRECTIVE.value: [SimpleNamespace(id="d1", text="Be brief")],
-                 FactDomain.PREFERENCE.value: [SimpleNamespace(id="p1", text="When filing scans call save_file_to_drive")]}
+    by_domain = {"agent_directive": [SimpleNamespace(id="d1", text="Be brief")],
+                 "preference": [SimpleNamespace(id="p1", text="When filing scans call save_file_to_drive")]}
     return SimpleNamespace(get_active_facts_ordered=AsyncMock(side_effect=lambda account, domain: by_domain[domain]))
 
 

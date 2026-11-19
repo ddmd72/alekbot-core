@@ -7,7 +7,7 @@ import pytest
 
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, ConsolidationPassStats
-from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.entities import ExpiryKind, FactEntity, FactState, FactType, TemporalClass
 from src.domain.exceptions import FactBornDueError
 from src.domain.fact_lifecycle import (
     CABINET_ACCEPTS, CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS, horizon_from_now, resolves_too_soon,
@@ -191,7 +191,7 @@ def old_fact():
     reported = NOW - timedelta(days=90)
     return FactEntity(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="meeting with Ana", type=FactType.EVENT,
-        tags=["work"], metadata={}, domain=FactDomain.NETWORK, temporal_class=TemporalClass.DYNAMIC, version=2,
+        tags=["work"], metadata={}, temporal_class=TemporalClass.DYNAMIC, version=2,
         reported_date=reported, last_updated=reported, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None,
         vector=[0.1], tags_vector=[0.2], metadata_vector=[0.3])
 

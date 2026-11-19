@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.entities import (
-    ContextPriority, ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass,
+    ContextPriority, ExpiryKind, FactEntity, FactState, FactType, TemporalClass,
 )
 from src.domain.fact_expiry import EXPIRY_NONE
 from src.domain.fact_review_answers import ARCHIVE_ONLY, ended_text, history_fact, history_refusal, history_trail
@@ -21,7 +21,7 @@ NOW = SAID + timedelta(minutes=3)
 def old_fact(**over):
     base = dict(
         id="f-old", account_id="acc", created_by_user_id="u1", lineage_id="lin-old", text="works at Acme",
-        type=FactType.STATE, domain=FactDomain.WORK,
+        type=FactType.STATE,
         tags=["job", "consolidated"], metadata={"employer": "Acme"}, temporal_class=TemporalClass.DYNAMIC,
         context_priority=ContextPriority.HIGH, state=FactState.STALE, reported_date=SAID - timedelta(days=400),
         expiry_kind=ExpiryKind.HORIZON, ttl_days=180, expires_at=SAID - timedelta(days=220),

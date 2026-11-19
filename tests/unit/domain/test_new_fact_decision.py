@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactType, TemporalClass
+from src.domain.entities import ExpiryKind, FactEntity, FactType, TemporalClass
 from src.domain.exceptions import FactBornDueError, FactExpiryError
 from src.domain.fact_expiry import EXPIRY_NONE as NONE_DECISION
 from src.domain.fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN
@@ -90,7 +90,7 @@ def test_a_due_horizon_follows_the_pass_of_the_context():
 def stored_fact():
     return FactEntity(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="meeting with Ana", type=FactType.EVENT,
-        tags=["work"], metadata={}, domain=FactDomain.NETWORK, temporal_class=TemporalClass.DYNAMIC, version=2,
+        tags=["work"], metadata={}, temporal_class=TemporalClass.DYNAMIC, version=2,
         reported_date=REPORTED, last_updated=REPORTED, expiry_kind=ExpiryKind.HORIZON, ttl_days=30,
         expires_at=REPORTED + timedelta(days=30), vector=[0.1], tags_vector=[0.2], metadata_vector=[0.3],
     )

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ContextPriority, ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.entities import ContextPriority, ExpiryKind, FactEntity, FactState, FactType, TemporalClass
 from src.domain.exceptions import FactResolutionError
 from src.domain.fact_lifecycle import archive_fields, cabinet_invalidation, walked_to_unseen_text
 from src.domain.fact_review_answers import history_fact, history_moved_refusal
@@ -29,7 +29,7 @@ ENDED = answer_reason(AnswerKind.ENDED, "q7", "digit")
 def fact(state=FactState.STALE, **over):
     base = dict(
         id="f-a", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="works at Acme",
-        type=FactType.STATE, domain=FactDomain.WORK, tags=["job"], temporal_class=TemporalClass.EPHEMERAL,
+        type=FactType.STATE, tags=["job"], temporal_class=TemporalClass.EPHEMERAL,
         context_priority=ContextPriority.CRITICAL, state=state, reported_date=NOW - timedelta(days=200),
         expiry_kind=ExpiryKind.HORIZON, ttl_days=90, expires_at=NOW - timedelta(days=110),
         stale_since=NOW - timedelta(days=9) if state is FactState.STALE else None,

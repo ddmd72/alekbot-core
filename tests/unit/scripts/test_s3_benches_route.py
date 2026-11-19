@@ -26,7 +26,7 @@ from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycl
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.llm import ToolCall
-from src.domain.entities import FactDomain, FactState
+from src.domain.entities import FactState
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_write import EXPIRY_NONE, horizon
@@ -112,7 +112,7 @@ def test_load_env_is_the_only_place_a_bench_reads_dotenv(monkeypatch):
 
 async def test_bench_1_sends_a_stage_1_consolidate_and_the_run_passes_are_stage1_stage2a_stage2b(store, tmp_path):
     await seed(store, "walks daily and reads at night")
-    rule = await seed(store, "always answer in English", domain="agent_directive")
+    rule = await seed(store, "always answer in English", directive=True)
     agent, kit = await kit_agent(
         store, tmp_path,
         metered(calls(create("flight booked", expiry=horizon(30)))), answered(),
@@ -254,8 +254,8 @@ async def test_written_entries_leave_out_what_was_retired_and_what_failed(store,
 
 
 async def test_bench_4_calls_review_directives_with_the_stage2b_context_and_the_owner_zone(store, tmp_path):
-    first = await seed(store, "always answer in English", domain="agent_directive")
-    second = await seed(store, "never use tables", domain="agent_directive", context_priority="high")
+    first = await seed(store, "always answer in English", directive=True)
+    second = await seed(store, "never use tables", directive=True, context_priority="high")
     agent, kit = await kit_agent(store, tmp_path, metered(calls(invalidate(first))), answered(),
                                  metered(calls(invalidate(first))), answered())
     kit.timezone = MADRID
@@ -273,14 +273,14 @@ async def test_bench_4_calls_review_directives_with_the_stage2b_context_and_the_
     assert bench4.classify_run(rulebook, recorder.operations)[first]["verdict"] == "INVALIDATED"
 
     # run 2 must see the live rulebook again, not run 1's changes
-    assert [f.id for f in await agent._repo.get_active_facts_ordered(ACC, domain=FactDomain.AGENT_DIRECTIVE.value)] == [second]
+    assert [f.id for f in await agent._repo.get_active_facts_ordered(ACC, directive_only=True)] == [second]
     kit.new_run()
-    assert {f.id for f in await agent._repo.get_active_facts_ordered(ACC, domain=FactDomain.AGENT_DIRECTIVE.value)} == {first, second}
+    assert {f.id for f in await agent._repo.get_active_facts_ordered(ACC, directive_only=True)} == {first, second}
     assert [w["kind"] for w in kit.repo.writes] == ["update_fact_fields"]                    # the record of writes stays
 
 
 async def test_forgetting_the_overlay_keeps_the_record_of_writes_and_the_live_store_untouched(store, tmp_path):
-    fact = await seed(store, "always answer in English", domain="agent_directive")
+    fact = await seed(store, "always answer in English", directive=True)
     agent, kit = await kit_agent(store, tmp_path, answered())
     await agent._fact_management.update_fact(fact, {"state": "invalidated"}, ACC, context=kit.write_context("stage2b"))
     assert (await kit.repo.get_fact_by_id(fact)).state is FactState.INVALIDATED
@@ -544,8 +544,8 @@ async def test_bench_3_has_no_stage_2_step_when_stage_1_wrote_nothing(store, tmp
 
 
 async def test_bench_4_run_s3_kit_starts_every_run_from_the_live_rulebook(store, tmp_path, kit_files):
-    first = await seed(store, "always answer in English", domain="agent_directive")
-    second = await seed(store, "never use tables", domain="agent_directive", context_priority="high")
+    first = await seed(store, "always answer in English", directive=True)
+    second = await seed(store, "never use tables", directive=True, context_priority="high")
     agent = bench_agent(store, metered(calls(invalidate(first))), answered(), metered(calls(invalidate(first))), answered())
 
     await bench4.run_s3_kit(handles_for(agent, store), runs=2, provider=None, tier="performance", args=bench_args())

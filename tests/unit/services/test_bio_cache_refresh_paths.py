@@ -27,7 +27,7 @@ from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from src.domain.billing import BillingAccount
 from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
-from src.domain.entities import ContextPriority, ExpiryKind, FactDomain
+from src.domain.entities import ContextPriority, ExpiryKind
 from src.domain.fact_answer_result import AnswerResult
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_profile_run_limits import FactProfileRunLimits
@@ -119,13 +119,13 @@ def worlds(monkeypatch):
 
 async def seed_background(repo: Any) -> None:
     for text, priority, tags, age in BACKGROUND:
-        await repo.add_fact(make_fact(text, domain=FactDomain.BIOGRAPHICAL, context_priority=priority, tags=tags,
+        await repo.add_fact(make_fact(text, context_priority=priority, tags=tags,
                                       age_days=age))
 
 
 def subject(**over: Any) -> Dict[str, Any]:
     """The fields of a high-priority biographical fact: the one the path under test changes."""
-    return dict(domain=FactDomain.BIOGRAPHICAL, context_priority=ContextPriority.HIGH, age_days=4, **over)
+    return dict(context_priority=ContextPriority.HIGH, age_days=4, **over)
 
 
 def plant(db: Any) -> None:

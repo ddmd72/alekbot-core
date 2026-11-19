@@ -15,7 +15,6 @@ import pytest
 from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.entities import FactDomain
 from src.domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
 from src.domain.fact_write_context import as_utc
 from src.domain.llm import LLMRequest, LLMResponse
@@ -129,8 +128,8 @@ def store() -> FactStore:
     return FactStore(indexes=INDEXES_FILE)
 
 
-def seed(store: FactStore, doc_id: str, text: str, domain: FactDomain, **over: Any) -> str:
-    return put_raw(store, doc_id, text, entity={"domain": domain, "reported_date": SEEDED_AT, **over})
+def seed(store: FactStore, doc_id: str, text: str, **over: Any) -> str:
+    return put_raw(store, doc_id, text, entity={"reported_date": SEEDED_AT, **over})
 
 
 class Pass:
@@ -184,7 +183,7 @@ def script_spent(llm: RoutedLLM) -> None:
 
 
 async def test_create_fact_writes_every_attribute(store):
-    seed(store, "seed-fitlife", "User trains at the FitLife gym.", FactDomain.HEALTH)
+    seed(store, "seed-fitlife", "User trains at the FitLife gym.")
     script = Pass(tools(("create_fact", CREATE_CURRENT), ("create_fact", CREATE_ARCHIVED)))
 
     response = await run(store, script)
@@ -211,7 +210,7 @@ async def test_create_fact_writes_every_attribute(store):
 
 
 async def test_update_fact_content_change_writes_a_version_with_every_field(store):
-    seed(store, "seed-job", "User works at Acme.", FactDomain.WORK, tags=["work", "anchor"],
+    seed(store, "seed-job", "User works at Acme.", tags=["work", "anchor"],
          metadata={"employer": "Acme"})
     script = Pass(tools(("update_fact", UPDATE_VERSION)))
 
@@ -233,9 +232,9 @@ async def test_update_fact_content_change_writes_a_version_with_every_field(stor
 
 
 async def test_update_fact_supersede_and_close(store):
-    seed(store, "seed-fitlife", "User trains at the FitLife gym.", FactDomain.HEALTH)
-    seed(store, "seed-iron", "User trains at the Iron Temple gym.", FactDomain.HEALTH)
-    seed(store, "seed-car", "User's car service is on 2026-11-05.", FactDomain.POSSESSION)
+    seed(store, "seed-fitlife", "User trains at the FitLife gym.")
+    seed(store, "seed-iron", "User trains at the Iron Temple gym.")
+    seed(store, "seed-car", "User's car service is on 2026-11-05.")
     script = Pass(tools(("update_fact", UPDATE_SUPERSEDE), ("update_fact", UPDATE_CLOSE)))
 
     response = await run(store, script)
@@ -251,10 +250,10 @@ async def test_update_fact_supersede_and_close(store):
 
 
 async def test_merge_facts_writes_every_attribute(store):
-    seed(store, "seed-passport-a", "User has a passport.", FactDomain.LEGAL)
-    seed(store, "seed-passport-b", "User's passport expires on 2031-03-04.", FactDomain.LEGAL)
-    seed(store, "seed-gym-a", "User trains at the Iron Temple gym.", FactDomain.HEALTH)
-    seed(store, "seed-gym-b", "User left the FitLife gym.", FactDomain.HEALTH)
+    seed(store, "seed-passport-a", "User has a passport.")
+    seed(store, "seed-passport-b", "User's passport expires on 2031-03-04.")
+    seed(store, "seed-gym-a", "User trains at the Iron Temple gym.")
+    seed(store, "seed-gym-b", "User left the FitLife gym.")
     script = Pass(tools(("merge_facts", MERGE_DATE), ("merge_facts", MERGE_HORIZON)))
 
     response = await run(store, script)
@@ -281,8 +280,8 @@ async def test_merge_facts_writes_every_attribute(store):
 
 async def test_merge_facts_into_a_closed_fact(store):
     """`fact_attributes.state` of a merge is stored: the merged fact is written archived, and both sources point to it."""
-    seed(store, "seed-fitlife-a", "User trains at the FitLife gym.", FactDomain.HEALTH)
-    seed(store, "seed-fitlife-b", "User's gym is FitLife on Main Street.", FactDomain.HEALTH)
+    seed(store, "seed-fitlife-a", "User trains at the FitLife gym.")
+    seed(store, "seed-fitlife-b", "User's gym is FitLife on Main Street.")
     script = Pass(tools(("merge_facts", MERGE_CLOSED)))
 
     response = await run(store, script)
@@ -295,7 +294,7 @@ async def test_merge_facts_into_a_closed_fact(store):
 
 
 async def test_search_and_count_write_nothing(store):
-    seed(store, "seed-iron", "User trains at the Iron Temple gym.", FactDomain.HEALTH)
+    seed(store, "seed-iron", "User trains at the Iron Temple gym.")
     before = copy.deepcopy(store.docs)
     script = Pass(tools(("search_existing_facts", SEARCH_ALL), ("count_words", COUNT)))
 
@@ -315,7 +314,7 @@ async def test_an_update_of_only_unknown_keys_is_not_reported_as_updated(store):
     `context`) without a word, so the model is told `updated` for a call that changed nothing it asked for.
     Fix: `parse_fact_update` adds a note naming the keys it ignored; parser notes already reach `note` through
     `finish_fact_update` (src/domain/fact_update_lifecycle.py) and `with_notes` (src/domain/fact_tool_result.py)."""
-    seed(store, "seed-job", "User works at Acme.", FactDomain.WORK)
+    seed(store, "seed-job", "User works at Acme.")
     script = Pass(tools(("update_fact", UPDATE_UNKNOWN)))
 
     await run(store, script)
@@ -329,7 +328,7 @@ async def test_an_update_of_only_unknown_keys_is_not_reported_as_updated(store):
 
 
 async def test_an_update_with_a_known_key_is_reported_as_updated(store):
-    seed(store, "seed-job", "User works at Acme.", FactDomain.WORK)
+    seed(store, "seed-job", "User works at Acme.")
     script = Pass(tools(("update_fact", UPDATE_KNOWN)))
 
     await run(store, script)

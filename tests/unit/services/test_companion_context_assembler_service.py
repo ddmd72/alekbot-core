@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.domain.companion import CompanionRecord
-from src.domain.entities import FactDomain, FactEntity, FactType
+from src.domain.entities import FactEntity, FactType
 from src.domain.settings import SearchConfig
 from src.ports.companion_cache_repository import CompanionCacheRepository
 from src.ports.companion_memory_repository import CompanionMemoryRepository
@@ -173,7 +173,7 @@ class TestStandingDirectives:
         directive = FactEntity(
             account_id="acc1", created_by_user_id="acc1", lineage_id="l1",
             text="Never give partial answers", type=FactType.STATE,
-            domain=FactDomain.AGENT_DIRECTIVE,
+            directive=True,
         )
         fact_repo.get_active_facts_ordered = AsyncMock(return_value=[directive])
 
@@ -184,7 +184,7 @@ class TestStandingDirectives:
 
         fact_repo.get_active_facts_ordered.assert_called_once_with(
             "acc1",
-            domain=FactDomain.AGENT_DIRECTIVE.value,
+            directive_only=True,
             limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
         )
         assert ctx.standing_directives == [directive]

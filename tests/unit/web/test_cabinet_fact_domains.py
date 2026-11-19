@@ -13,7 +13,7 @@ from quart import Quart
 
 from src.composition.connector_registry import ConnectorRegistry
 from src.domain import fact_domains
-from src.domain.entities import FactDomain, FactState
+from src.domain.entities import FactState
 from src.domain.fact_domains import Domain
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
@@ -48,9 +48,8 @@ def world():
     return store, repo
 
 
-YOGA = dict(primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT], domain=FactDomain.PREFERENCE)
-INSURANCE = dict(primary_domain=Domain.TRANSPORT, domain_keys=[Domain.TRANSPORT, Domain.MONEY],
-                 domain=FactDomain.FINANCE)
+YOGA = dict(primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT])
+INSURANCE = dict(primary_domain=Domain.TRANSPORT, domain_keys=[Domain.TRANSPORT, Domain.MONEY])
 
 
 # --------------------------------------------------------------------------------------------- the domains route
@@ -107,7 +106,7 @@ async def test_the_filter_lists_the_facts_whose_domain_keys_hold_the_key(world):
     _, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", age_days=1, **YOGA))
     await repo.add_fact(make_fact("Alex's car insurance with Example Mutual Insurance", age_days=2, **INSURANCE))
-    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=3, domain=FactDomain.PREFERENCE))  # no profile
+    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=3))  # no profile
 
     _, money = await _get(f"/api/user/facts/browse?domain={Domain.MONEY}", repo)
     _, sport = await _get(f"/api/user/facts/browse?domain={Domain.SPORT}", repo)
@@ -180,7 +179,7 @@ async def test_the_dry_run_kit_forwards_the_domain_key_to_the_live_store(world):
 async def test_browse_carries_the_profile_domain_and_the_old_domain_while_it_is_absent(world):
     _, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", age_days=2, **YOGA))
-    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=1, domain=FactDomain.PREFERENCE))
+    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=1))
 
     _, body = await _get("/api/user/facts/browse", repo)
 
@@ -207,7 +206,7 @@ async def test_the_recently_closed_list_carries_the_profile_domain(world):
 async def test_the_search_list_carries_the_profile_domain(world):
     store, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", **YOGA))
-    await repo.add_fact(make_fact("plays tennis on Sundays", domain=FactDomain.PREFERENCE))
+    await repo.add_fact(make_fact("plays tennis on Sundays"))
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
     app = Quart("test_cabinet_fact_domains_search")

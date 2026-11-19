@@ -3,7 +3,6 @@ import logging
 from typing import Any, Dict
 from unittest.mock import AsyncMock
 
-from src.domain.entities import FactDomain
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.fact_management_port import FactManagementPort
 from tests.support.fact_kit import make_fact
@@ -11,7 +10,7 @@ from tests.unit.agents.test_consolidation_agent import _ACCOUNT_ID, _make_agent
 
 
 def directive(fact_id: str):
-    return make_fact(f"rule {fact_id}", id=fact_id, domain=FactDomain.AGENT_DIRECTIVE)
+    return make_fact(f"rule {fact_id}", id=fact_id, directive=True)
 
 
 def build(statuses: Dict[str, Any]):

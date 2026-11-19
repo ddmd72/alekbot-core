@@ -6,7 +6,7 @@ The real service over the real repository on the evaluating Firestore fake with 
 serves fails here); assertions are on what the refreshed context and the stored cache hold."""
 import pytest
 
-from src.domain.entities import ContextPriority, FactDomain
+from src.domain.entities import ContextPriority
 from src.domain.fact_domains import Domain
 from src.services.biographical_context_service import BiographicalContextService
 from tests.support.fact_kit import ACC, make_fact
@@ -29,10 +29,10 @@ def store(kit_db):
 
 
 async def _put(store, text, *, priority="medium", age=0, identity=None, primary=None, sensitivity=None,
-               domain=FactDomain.HEALTH, tags=None):
+               directive=False, tags=None):
     await store.repo.add_fact(make_fact(
         text, age_days=age, context_priority=ContextPriority(priority), user_identity=identity,
-        primary_domain=primary, sensitivity=sensitivity, domain=domain, tags=tags or []))
+        primary_domain=primary, sensitivity=sensitivity, directive=directive, tags=tags or []))
 
 
 async def _profiled_account(store):
@@ -44,7 +44,7 @@ async def _profiled_account(store):
     await _put(store, VEGETARIAN, priority="critical", age=5, identity=False, primary=Domain.FOOD, sensitivity="ordinary")
     await _put(store, UNION, priority="critical", age=4, identity=False, primary=Domain.WORK, sensitivity="discreet")
     await _put(store, YOGA, priority="critical", age=6)                          # no profile at all
-    await _put(store, DIRECTIVE, priority="critical", age=9, domain=FactDomain.AGENT_DIRECTIVE)
+    await _put(store, DIRECTIVE, priority="critical", age=9, directive=True)
 
 
 def _texts(items):

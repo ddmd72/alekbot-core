@@ -23,7 +23,6 @@ from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.consolidation import EMAIL_PROFILE_ID
 from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
-from src.domain.entities import FactDomain
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
@@ -68,7 +67,7 @@ class TenantPrompts:
         if biographical_facts is None:
             biographical_facts = list(self.CACHE.get(account_id, [])) if account_id else []
         facts = [f["text"] for f in biographical_facts
-                 if include_directives or f.get("domain") != FactDomain.AGENT_DIRECTIVE.value]
+                 if include_directives or not f.get("directive")]
         return "\n".join([
             f"class {agent_type}",
             self.ACCOUNT_OVERRIDES.get(account_id or "", "no account override"),
@@ -144,7 +143,7 @@ def prompt_of(agent: ConsolidationAgent, marker: str) -> str:
 
 
 async def test_stage_1_2a_and_2b_prompts_are_the_tenants_and_carry_the_facts_passed(store):
-    put_raw(store, "d-1", "never use emojis", entity={"domain": FactDomain.AGENT_DIRECTIVE})
+    put_raw(store, "d-1", "never use emojis", entity={"directive": True})
     agent = make_agent(store)
     agent.INLINE_CLUSTER_REVIEW = True
     batch = [{"role": "user", "text": "remind me to read the Springfield news every morning", "created_at": "2026-10-22T10:00:00Z"}]
@@ -158,7 +157,7 @@ async def test_stage_1_2a_and_2b_prompts_are_the_tenants_and_carry_the_facts_pas
 
 
 async def test_stage_2b_renders_an_empty_fact_list_as_passed_not_the_accounts_cache(store):
-    put_raw(store, "d-1", "never use emojis", entity={"domain": FactDomain.AGENT_DIRECTIVE})
+    put_raw(store, "d-1", "never use emojis", entity={"directive": True})
     agent = make_agent(store)
     with RequestContext(user_id=USER, account_id=ACC):
         await agent._review_directives(USER, ACC, [], agent._write_context("stage2b"))

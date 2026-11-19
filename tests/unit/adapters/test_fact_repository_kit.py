@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import (
-    ContextPriority, ExpiryKind, FactDomain, FactState, FactVisibility, TemporalClass,
+    ContextPriority, ExpiryKind, FactState, FactVisibility, TemporalClass,
 )
 from src.domain.fact_domains import Domain
 from src.domain.request_context import RequestContext
@@ -250,7 +250,7 @@ async def test_ordered_by_priority_then_newest_first_and_archival_excluded(store
 async def test_ordered_domain_filter_and_limit_keep_the_head_of_the_order(store):
     for text, domain, priority, age in (("h1", "health", "high", 1), ("h2", "health", "critical", 0),
                                         ("h3", "health", "medium", 2), ("w1", "work", "critical", 3)):
-        await store.repo.add_fact(make_fact(text, domain=FactDomain(domain), context_priority=ContextPriority(priority),
+        await store.repo.add_fact(make_fact(text, domain=domain, context_priority=ContextPriority(priority),
                                             age_days=age))
     assert [f.text for f in await store.repo.get_active_facts_ordered(ACC, domain="health")] == ["h2", "h1", "h3"]
     assert [f.text for f in await store.repo.get_active_facts_ordered(ACC, domain="health", limit=2)] == ["h2", "h1"]
@@ -355,7 +355,7 @@ async def test_next_cursor_is_none_exactly_when_no_fact_follows(store):
 async def test_the_first_page_with_a_domain_holds_only_that_domain(store):
     for i in range(3):
         await store.repo.add_fact(make_fact(f"health {i}", age_days=i))
-        await store.repo.add_fact(make_fact(f"work {i}", age_days=i, domain=FactDomain.WORK))
+        await store.repo.add_fact(make_fact(f"work {i}", age_days=i, domain="work"))
     facts, cursor = await store.repo.get_paginated_facts(ACC, limit=2, domain="work")
     assert [f.text for f in facts] == ["work 2", "work 1"] and cursor == "f-work 1"
     facts, cursor = await store.repo.get_paginated_facts(ACC, limit=3, domain="work")
@@ -371,7 +371,7 @@ async def test_pages_are_newest_first_do_not_overlap_and_hold_every_fact(store):
 async def test_pages_with_a_domain_hold_only_that_domain(store):
     for i in range(3):
         await store.repo.add_fact(make_fact(f"health {i}", age_days=i))
-        await store.repo.add_fact(make_fact(f"work {i}", age_days=i, domain=FactDomain.WORK))
+        await store.repo.add_fact(make_fact(f"work {i}", age_days=i, domain="work"))
     assert await _pages(store, 2, domain="work") == [["work 2", "work 1"], ["work 0"]]
 
 
@@ -484,7 +484,7 @@ async def test_search_returns_vectors_as_lists_of_floats(store):
 async def test_by_domain_returns_newest_first_within_limit_for_the_domains_only(store):
     for text, domain, age in (("h0", "health", 0), ("h1", "health", 1), ("w2", "work", 2), ("p3", "possession", 3),
                               ("h4", "health", 4)):
-        await store.repo.add_fact(make_fact(text, domain=FactDomain(domain), age_days=age))
+        await store.repo.add_fact(make_fact(text, domain=domain, age_days=age))
     await store.repo.add_fact(make_fact("foreign", account=OTHER, age_days=9))
     await store.repo.add_fact(make_fact("archived", state=FactState.ARCHIVED, age_days=8))
     got = await store.repo.search_facts_by_domain(["health", "work"], limit=3, account_id=ACC)
@@ -681,7 +681,7 @@ async def _seed_account_for_cache(store, account=ACC):
             ("health high", "health", "high", [], 9), ("be calm", "biographical", "high", ["mindset"], 2),
             ("never apologise", "agent_directive", "critical", [], 4)):
         profile = profiles.get(text, {})
-        await store.repo.add_fact(make_fact(f"{account} {text}", account=account, domain=FactDomain(domain), tags=tags,
+        await store.repo.add_fact(make_fact(f"{account} {text}", account=account, domain=domain, tags=tags,
                                             context_priority=ContextPriority(priority), age_days=age, **profile))
     await store.repo.add_fact(make_fact(f"{account} archived", account=account, state=FactState.ARCHIVED))
     await store.repo.add_fact(make_fact(f"{account} archival", account=account, context_priority=ContextPriority.ARCHIVAL))
@@ -733,7 +733,7 @@ async def test_refresh_never_raises_and_keeps_the_previous_cache_on_a_failure(st
 
 async def test_refresh_holds_at_most_facts_limit_facts(store):
     for i in range(4):
-        await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
+        await store.repo.add_fact(make_fact(f"bio {i}", domain="biographical", age_days=i))
     await _cache_refresher(store).refresh_cache(ACC, facts_limit=2)
     assert _cache(store)["facts_count"] == 2
 
@@ -741,9 +741,9 @@ async def test_refresh_holds_at_most_facts_limit_facts(store):
 async def test_refresh_keeps_directives_separately_up_to_15_highest_priority_first(store):
     for i in range(15):
         priority = ContextPriority.CRITICAL if i < 8 else ContextPriority.HIGH
-        await store.repo.add_fact(make_fact(f"directive {i}", domain=FactDomain.AGENT_DIRECTIVE,
+        await store.repo.add_fact(make_fact(f"directive {i}", directive=True,
                                             context_priority=priority, age_days=i))
-    await store.repo.add_fact(make_fact("directive low", domain=FactDomain.AGENT_DIRECTIVE,
+    await store.repo.add_fact(make_fact("directive low", directive=True,
                                         context_priority=ContextPriority.LOW, age_days=99))
     await _cache_refresher(store).refresh_cache(ACC)
     cache = _cache(store)

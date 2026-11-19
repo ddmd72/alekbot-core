@@ -3,14 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import FactDomain, FactEntity, FactState, FactType
+from src.domain.entities import FactEntity, FactState, FactType
 from tests.support.fact_store import FactStore, embed
 
 ACC = "acc-1"
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _fact(text, *, account=ACC, domain=FactDomain.HEALTH, state=FactState.CURRENT, age_days=0, context=None):
+def _fact(text, *, account=ACC, domain="health", state=FactState.CURRENT, age_days=0, context=None):
     return FactEntity(
         account_id=account, created_by_user_id="usr", lineage_id=f"lin-{text}", text=text, type=FactType.EVENT,
         domain=domain, state=state, context=context,
@@ -29,8 +29,8 @@ def store():
 async def test_search_by_domain_returns_newest_current_facts_first_within_limit(store):
     for i in range(5):
         await store.repo.add_fact(_fact(f"health {i}", age_days=i))
-    await store.repo.add_fact(_fact("work 9", domain=FactDomain.WORK, age_days=9))
-    await store.repo.add_fact(_fact("poss 10", domain=FactDomain.POSSESSION, age_days=10))
+    await store.repo.add_fact(_fact("work 9", domain="work", age_days=9))
+    await store.repo.add_fact(_fact("poss 10", domain="possession", age_days=10))
     await store.repo.add_fact(_fact("archived health", state=FactState.ARCHIVED, age_days=20))
     await store.repo.add_fact(_fact("foreign health", account="acc-2", age_days=30))
     got = await store.repo.search_facts_by_domain(["health", "work"], limit=3, account_id=ACC)

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ContextPriority, ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.entities import ContextPriority, ExpiryKind, FactEntity, FactState, FactType, TemporalClass
 from src.domain.fact_embedding import fact_embedding_texts
 from src.domain.fact_expiry import EXPIRY_NONE, Expiry
 from src.domain.fact_review_basis import ReviewBasis
@@ -32,8 +32,7 @@ ON_REPLY = basis_reason("rewrite", ReviewBasis("reply", question_id="q7", quote=
 def plan_fact(state=FactState.STALE, **over) -> FactEntity:
     base = dict(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text=PLAN, type=FactType.EVENT,
-        tags=["travel"], metadata={"city": "Berlin"}, context="said while packing",
-        domain=FactDomain.WORK, temporal_class=TemporalClass.DYNAMIC, context_priority=ContextPriority.HIGH,
+        tags=["travel"], metadata={"city": "Berlin"}, context="said while packing", temporal_class=TemporalClass.DYNAMIC, context_priority=ContextPriority.HIGH,
         version=1, reported_date=REPORTED, created_at=CREATED, last_updated=REPORTED, expiry_kind=ExpiryKind.DATE,
         expires_at=datetime(2026, 11, 21, tzinfo=UTC), state=state,
         stale_since=NOW - timedelta(days=1) if state is FactState.STALE else None,

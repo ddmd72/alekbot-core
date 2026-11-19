@@ -16,7 +16,6 @@ from src.agents.base_agent import BaseAgent
 from src.agents.consolidation_agent import ConsolidationAgent, _session_time
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
-from src.domain.entities import FactDomain
 from src.domain.fact_write_context import as_utc
 from src.domain.llm import LLMResponse, Message, MessagePart, ToolCall
 from src.domain.local_time import local_day, local_stamp
@@ -145,7 +144,7 @@ def email_candidates(text: str) -> List[Dict[str, Any]]:
 
 
 async def test_every_pass_message_ends_with_the_today_line_in_the_owner_zone(store):
-    put_raw(store, "d-1", "never use emojis", entity={"domain": FactDomain.AGENT_DIRECTIVE})
+    put_raw(store, "d-1", "never use emojis", entity={"directive": True})
     agent = make_agent(store, once({STAGE1: calls(create("seed fact about Rome"))}), email_repo=await stored_emails())
     agent.INLINE_CLUSTER_REVIEW = True
     batch = [{"role": "user", "text": "hello", "created_at": utc(20, 8).timestamp()}]

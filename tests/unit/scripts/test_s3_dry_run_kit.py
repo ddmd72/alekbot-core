@@ -261,19 +261,19 @@ async def test_stale_due_fact_and_add_fact_if_unique_write_the_overlay_only(stor
 
 
 async def test_the_current_lists_show_the_passes_own_writes_so_the_directive_cap_backstop_sees_the_trimmed_rulebook(store):
-    rule = lambda text, **o: seed(store, text, domain="agent_directive", **o)       # noqa: E731
+    rule = lambda text, **o: seed(store, text, directive=True, **o)       # noqa: E731
     kept, dropped = await rule("always answer in English", context_priority="high"), await rule("never use tables")
     repo, adapter = kit_adapter(store)
     context = ctx(actor="stage2b", timezone="UTC")
 
     await adapter.update_fact(dropped, {"state": "invalidated"}, ACC, context=context)
-    added = await adapter.create_fact("cite sources", meta(domain="agent_directive", context_priority="critical"), context=context)
+    added = await adapter.create_fact("cite sources", meta(directive=True, context_priority="critical"), context=context)
 
-    ordered = await repo.get_active_facts_ordered(ACC, domain="agent_directive")
+    ordered = await repo.get_active_facts_ordered(ACC, directive_only=True)
     assert [f.id for f in ordered] == [added["fact_id"], kept]
-    assert [f.id for f in await repo.get_active_facts_ordered(ACC, domain="agent_directive", limit=1)] == [added["fact_id"]]
+    assert [f.id for f in await repo.get_active_facts_ordered(ACC, directive_only=True, limit=1)] == [added["fact_id"]]
     assert {f.id for f in await repo.get_active_facts(ACC)} == {kept, added["fact_id"]}
-    assert (await store.repo.get_active_facts_ordered(ACC, domain="agent_directive")) != ordered      # the live list is untouched
+    assert (await store.repo.get_active_facts_ordered(ACC, directive_only=True)) != ordered      # the live list is untouched
 
 
 async def test_the_real_adapter_on_the_kit_still_refuses_a_missing_expiry(store):

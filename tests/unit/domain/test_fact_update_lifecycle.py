@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.entities import (
-    ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass)
+    ExpiryKind, FactEntity, FactState, FactType, TemporalClass)
 from src.domain.exceptions import FactExpiryError
 from src.domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE, NOTHING_WRITTEN
 from src.domain.fact_lifecycle import LIFECYCLE_EVENTS_CAP, lifecycle_event
@@ -26,7 +26,7 @@ GENERIC_PIN_TEXT = "expiry is required for this fact"
 def fact(**overrides):
     base = dict(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="meeting with Ana", type=FactType.EVENT,
-        tags=["work", "consolidated"], metadata={"who": "Ana"}, domain=FactDomain.NETWORK,
+        tags=["work", "consolidated"], metadata={"who": "Ana"},
         temporal_class=TemporalClass.DYNAMIC, version=2, reported_date=STORED_REPORTED, last_updated=STORED_REPORTED,
         expiry_kind=ExpiryKind.HORIZON, ttl_days=30, expires_at=STORED_REPORTED + timedelta(days=30),
         vector=[0.1], tags_vector=[0.2], metadata_vector=[0.3])
@@ -92,7 +92,7 @@ def test_a_version_without_expiry_gets_the_call_specific_text_never_the_generic_
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"domain": FactDomain.AGENT_DIRECTIVE},
+        {"directive": True},
         {"type": FactType.PRINCIPLE},
         {"tags": ["mindset", "consolidated"]},
     ],
@@ -233,7 +233,7 @@ def test_an_expiry_only_update_is_born_due_checked():
 
 
 def test_a_pinned_fact_in_place_takes_none_and_refuses_the_rest():
-    pinned = fact(domain=FactDomain.AGENT_DIRECTIVE)
+    pinned = fact(directive=True)
     assert finish({"expiry": EXPIRY_NONE}, current=pinned).plan.fields["expiry_kind"] is ExpiryKind.NONE
     with pytest.raises(FactExpiryError, match="take {kind: none}"):
         finish({"expiry": on("2026-12-01")}, current=pinned)
