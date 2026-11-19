@@ -158,6 +158,7 @@ class Sent:
     headers: Mapping[str, str]
     body: Any
     query: Mapping[str, tuple[str, ...]]
+    raw_path: str = ""                      # the same path as sent, still percent-encoded
 
 
 def _sent(request: http_boundary_fake.RecordedRequest) -> Sent:
@@ -166,7 +167,7 @@ def _sent(request: http_boundary_fake.RecordedRequest) -> Sent:
         url = url.extend_query(request.params)
     query = {name: tuple(url.query.getall(name)) for name in dict.fromkeys(url.query)}
     body = request.json if request.json is not None else request.data
-    return Sent(request.method, url.host or "", url.path, dict(request.headers or {}), body, query)
+    return Sent(request.method, url.host or "", url.path, dict(request.headers or {}), body, query, url.raw_path)
 
 
 async def _run(shape: shapes.Shape) -> Any:
@@ -205,13 +206,15 @@ def _all_graph() -> list[Sent]:
 
 
 def _check(sent: Sent, **over: Any) -> None:
+    """`path` overridden alone: an ASCII path whose raw form is itself."""
     fields = {"path": sent.path, "query": sent.query, "body": sent.body, **over}
+    raw = over.get("raw_path", over["path"] if "path" in over else sent.raw_path)
     assert_request("graph", sent.method, fields["path"], sent.headers, fields["body"],
-                   query={k: list(v) for k, v in fields["query"].items()})
+                   query={k: list(v) for k, v in fields["query"].items()}, raw_path=raw)
 
 
 def _op(sent: Sent) -> tuple[str, str]:
-    return sent.method.lower(), operation_path("graph", sent.method, sent.path)
+    return sent.method.lower(), operation_path("graph", sent.method, sent.path, raw_path=sent.raw_path)
 
 
 # ------------------------------------------------------------------------------------------------------ the shapes
@@ -351,7 +354,7 @@ def test_every_listed_body_field_is_sent_by_a_shape():
 
 
 def test_every_alias_rule_is_used_by_a_shape():
-    used = {applied_alias("graph", request.path) for request in _all_graph()}
+    used = {applied_alias("graph", request.path, raw_path=request.raw_path) for request in _all_graph()}
     patterns = [rule["pattern"] for rule in _contract()["x-alek-aliases"]]
     assert sorted(set(patterns) - used) == [], "alias rules no shape's path goes through"
 
@@ -507,7 +510,7 @@ def _site_operation(site: str) -> tuple[str, str] | None:
     if url.host != GRAPH_HOST:
         return None
     try:
-        return verb.lower(), operation_path("graph", verb, url.path)
+        return verb.lower(), operation_path("graph", verb, url.path, raw_path=url.raw_path)
     except AssertionError:
         return None
 

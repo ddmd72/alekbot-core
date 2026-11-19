@@ -5,8 +5,10 @@ Over an invented mini contract (tests/fixtures/openapi_contract/lockers/openapi.
 with the server's base path, queries passed explicitly.
 """
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
+from yarl import URL
 
 from tests.contracts import openapi_contract as oc
 
@@ -16,18 +18,23 @@ FIXTURES = REPO_ROOT / "tests" / "fixtures" / "openapi_contract"
 
 def _problems(method: str, path: str, body=None) -> list[str]:
     try:
-        oc.assert_request("lockers", method, path, {}, body, query={}, contracts_dir=FIXTURES)
+        oc.assert_request("lockers", method, path, {}, body, query={}, raw_path=_raw(path), contracts_dir=FIXTURES)
     except AssertionError as failure:
         return str(failure).splitlines()[1:]
     return []
 
 
+def _raw(path: str) -> str:
+    """The path as aiohttp sends it (yarl's requoting), still percent-encoded."""
+    return URL("https://api.lockers.example.com" + quote(path, safe="/:'()&")).raw_path
+
+
 def _operation(method: str, path: str) -> str:
-    return oc.operation_path("lockers", method, path, contracts_dir=FIXTURES)
+    return oc.operation_path("lockers", method, path, raw_path=_raw(path), contracts_dir=FIXTURES)
 
 
 def _alias(path: str) -> str | None:
-    return oc.applied_alias("lockers", path, contracts_dir=FIXTURES)
+    return oc.applied_alias("lockers", path, raw_path=_raw(path), contracts_dir=FIXTURES)
 
 
 # ------------------------------------------------------------------------------------------------------- aliases
@@ -67,7 +74,7 @@ def test_a_path_no_rule_matches_is_looked_up_as_it_is():
 
 
 def test_a_contract_without_aliases_matches_as_before():
-    assert oc.applied_alias("widgets", "/v2/widgets", contracts_dir=FIXTURES) is None
+    assert oc.applied_alias("widgets", "/v2/widgets", raw_path=None, contracts_dir=FIXTURES) is None
 
 
 def test_an_aliased_body_is_still_validated():
