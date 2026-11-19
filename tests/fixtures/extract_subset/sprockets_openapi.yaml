@@ -1,0 +1,138 @@
+# Invented OpenAPI 3.1 fragment with responses for tests/unit/scripts/test_extract_subset_responses.py (shaped like a
+# provider spec; no real API).
+openapi: 3.1.0
+info:
+  title: Sprockets
+  version: 9.9.9
+servers:
+  - url: https://api.sprockets.example.com/v1
+paths:
+  /sprockets:
+    post:
+      operationId: createSprocket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSprocket'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sprocket'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SprocketEvent'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  responses:
+    RateLimited:
+      description: Too many requests.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    CreateSprocket:
+      type: object
+      properties:
+        name:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Part'
+      required: [name]
+    Sprocket:
+      allOf:
+        - type: object
+          properties:
+            id:
+              type: string
+              description: Unique id.
+            created_at:
+              type: number
+            echo:
+              $ref: '#/components/schemas/CreateSprocket'
+        - type: object
+          properties:
+            teeth:
+              type: integer
+            parts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Part'
+            usage:
+              $ref: '#/components/schemas/Usage'
+          required: [id, teeth]
+    Part:
+      oneOf:
+        - $ref: '#/components/schemas/Cog'
+        - $ref: '#/components/schemas/Spacer'
+        - $ref: '#/components/schemas/Chain'
+    Cog:
+      type: object
+      properties:
+        type:
+          const: cog
+        size:
+          type: integer
+      required: [type]
+    Spacer:
+      type: object
+      properties:
+        type:
+          const: spacer
+      required: [type]
+    Chain:
+      type: object
+      properties:
+        type:
+          const: chain
+        links:
+          type: integer
+      required: [type]
+    Usage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+        legacy_tokens:
+          type: integer
+          deprecated: true
+    SprocketEvent:
+      oneOf:
+        - $ref: '#/components/schemas/StartEvent'
+        - $ref: '#/components/schemas/DeltaEvent'
+        - $ref: '#/components/schemas/DoneEvent'
+    StartEvent:
+      type: object
+      properties:
+        type:
+          const: start
+        sprocket:
+          $ref: '#/components/schemas/Sprocket'
+      required: [type, sprocket]
+    DeltaEvent:
+      type: object
+      properties:
+        type:
+          const: delta
+        text:
+          type: string
+      required: [type, text]
+    DoneEvent:
+      type: object
+      properties:
+        type:
+          const: done
+      required: [type]
+    Error:
+      type: object
+      properties:
+        message:
+          type: string

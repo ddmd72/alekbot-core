@@ -1,0 +1,159 @@
+{
+  "_meta": {
+    "provider": "openai",
+    "operation": "POST /responses",
+    "scenario": "plain_text",
+    "purpose": "a text answer, thinking off",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:23Z",
+    "model": "gpt-6-luna",
+    "sdk": "openai 2.53.0",
+    "outcome": "ok",
+    "cost_usd": 6e-06,
+    "regenerate": "make contract-record PROVIDER=openai ONLY=plain_text"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "input": [
+            {
+              "role": "user",
+              "content": "Clara Moreira and Alex Doe spend Mar 6-8 in Coimbra. Which city? One word."
+            }
+          ],
+          "max_output_tokens": 50,
+          "model": "gpt-6-luna",
+          "reasoning": {
+            "effort": "none"
+          },
+          "store": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_04998b343a3953b0006aff30c5318887d29d1329c294197918",
+          "object": "response",
+          "created_at": 1795109061,
+          "status": "completed",
+          "access_programs": null,
+          "background": false,
+          "billing": {
+            "payer": "developer"
+          },
+          "completed_at": 1795109062,
+          "error": null,
+          "frequency_penalty": 0.0,
+          "image": {
+            "context_compression": "disabled"
+          },
+          "incomplete_details": null,
+          "input_transformations": [],
+          "instructions": null,
+          "max_output_tokens": 50,
+          "max_tool_calls": null,
+          "model": "gpt-6-luna",
+          "moderation": null,
+          "output": [
+            {
+              "id": "msg_04998b343a3953b0006aff30c65b1c87d297f5a9f65c9e6841",
+              "type": "message",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "output_text",
+                  "annotations": [],
+                  "logprobs": [],
+                  "text": "Coimbra"
+                }
+              ],
+              "phase": "final_answer",
+              "role": "assistant"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "presence_penalty": 0.0,
+          "previous_response_id": null,
+          "prompt_cache_key": null,
+          "prompt_cache_retention": "24h",
+          "reasoning": {
+            "context": "all_turns",
+            "effort": "none",
+            "mode": "standard",
+            "summary": null
+          },
+          "safety_identifier": null,
+          "service_tier": "default",
+          "store": true,
+          "temperature": 1.0,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "auto",
+          "tool_usage": {
+            "image_gen": {
+              "input_tokens": 0,
+              "input_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "output_tokens": 0,
+              "output_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "total_tokens": 0
+            },
+            "web_search": {
+              "num_requests": 0
+            }
+          },
+          "tools": [],
+          "top_logprobs": 0,
+          "top_p": 0.98,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 28,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_12h_tokens": 0,
+                "ttl_30m_tokens": 0
+              },
+              "cached_tokens": 0
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 34
+          },
+          "user": null,
+          "metadata": {}
+        }
+      },
+      "estimate_usd": 5.2e-05,
+      "cost": {
+        "input": 28,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 6,
+        "searches": 0,
+        "usd": 6e-06
+      }
+    }
+  ]
+}

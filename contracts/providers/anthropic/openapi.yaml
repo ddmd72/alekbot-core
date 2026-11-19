@@ -23,6 +23,22 @@ components:
       - media_type
       - type
       type: object
+    Base64PDFSource:
+      additionalProperties: false
+      properties:
+        data:
+          type: string
+        media_type:
+          const: application/pdf
+          type: string
+        type:
+          const: base64
+          type: string
+      required:
+      - data
+      - media_type
+      - type
+      type: object
     Base64PDFSourceParam:
       additionalProperties: false
       properties:
@@ -42,6 +58,18 @@ components:
       - media_type
       - type
       type: object
+    BashCodeExecutionOutputBlock:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        type:
+          const: bash_code_execution_output
+          type: string
+      required:
+      - file_id
+      - type
+      type: object
     BashCodeExecutionOutputBlockParam:
       additionalProperties: false
       properties:
@@ -52,6 +80,29 @@ components:
           type: string
       required:
       - file_id
+      - type
+      type: object
+    BashCodeExecutionResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          items:
+            $ref: '#/components/schemas/BashCodeExecutionOutputBlock'
+          type: array
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        stdout:
+          type: string
+        type:
+          const: bash_code_execution_result
+          type: string
+      required:
+      - content
+      - return_code
+      - stderr
+      - stdout
       - type
       type: object
     BashCodeExecutionResultBlockParam:
@@ -77,6 +128,23 @@ components:
       - stdout
       - type
       type: object
+    BashCodeExecutionToolResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/BashCodeExecutionToolResultError'
+          - $ref: '#/components/schemas/BashCodeExecutionResultBlock'
+        tool_use_id:
+          type: string
+        type:
+          const: bash_code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
     BashCodeExecutionToolResultBlockParam:
       additionalProperties: false
       properties:
@@ -96,6 +164,24 @@ components:
       required:
       - content
       - tool_use_id
+      - type
+      type: object
+    BashCodeExecutionToolResultError:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - execution_time_exceeded
+          - invalid_tool_input
+          - output_file_too_large
+          - too_many_requests
+          - unavailable
+          type: string
+        type:
+          const: bash_code_execution_tool_result_error
+          type: string
+      required:
+      - error_code
       - type
       type: object
     BashCodeExecutionToolResultErrorParam:
@@ -130,6 +216,48 @@ components:
       required:
       - type
       type: object
+    CacheCreation:
+      additionalProperties: false
+      properties:
+        ephemeral_1h_input_tokens:
+          type: integer
+        ephemeral_5m_input_tokens:
+          type: integer
+      required:
+      - ephemeral_1h_input_tokens
+      - ephemeral_5m_input_tokens
+      type: object
+    CitationCharLocation:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        document_index:
+          type: integer
+        document_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        end_char_index:
+          type: integer
+        file_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        start_char_index:
+          type: integer
+        type:
+          const: char_location
+          type: string
+      required:
+      - cited_text
+      - document_index
+      - end_char_index
+      - start_char_index
+      - type
+      type: object
     CitationCharLocationParam:
       additionalProperties: false
       properties:
@@ -156,6 +284,37 @@ components:
       - start_char_index
       - type
       type: object
+    CitationContentBlockLocation:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        document_index:
+          type: integer
+        document_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        end_block_index:
+          type: integer
+        file_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        start_block_index:
+          type: integer
+        type:
+          const: content_block_location
+          type: string
+      required:
+      - cited_text
+      - document_index
+      - end_block_index
+      - start_block_index
+      - type
+      type: object
     CitationContentBlockLocationParam:
       additionalProperties: false
       properties:
@@ -180,6 +339,37 @@ components:
       - document_title
       - end_block_index
       - start_block_index
+      - type
+      type: object
+    CitationPageLocation:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        document_index:
+          type: integer
+        document_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        end_page_number:
+          type: integer
+        file_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        start_page_number:
+          type: integer
+        type:
+          const: page_location
+          type: string
+      required:
+      - cited_text
+      - document_index
+      - end_page_number
+      - start_page_number
       - type
       type: object
     CitationPageLocationParam:
@@ -260,11 +450,100 @@ components:
       - type
       - url
       type: object
+    CitationsConfig:
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
+      type: object
     CitationsConfigParam:
       additionalProperties: false
       properties:
         enabled:
           type: boolean
+      type: object
+    CitationsDelta:
+      additionalProperties: false
+      properties:
+        citation:
+          anyOf:
+          - $ref: '#/components/schemas/CitationCharLocation'
+          - $ref: '#/components/schemas/CitationPageLocation'
+          - $ref: '#/components/schemas/CitationContentBlockLocation'
+          - $ref: '#/components/schemas/CitationsWebSearchResultLocation'
+          - $ref: '#/components/schemas/CitationsSearchResultLocation'
+        type:
+          const: citations_delta
+          type: string
+      required:
+      - citation
+      - type
+      type: object
+    CitationsSearchResultLocation:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        end_block_index:
+          type: integer
+        search_result_index:
+          type: integer
+        source:
+          type: string
+        start_block_index:
+          type: integer
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: search_result_location
+          type: string
+      required:
+      - cited_text
+      - end_block_index
+      - search_result_index
+      - source
+      - start_block_index
+      - type
+      type: object
+    CitationsWebSearchResultLocation:
+      additionalProperties: false
+      properties:
+        cited_text:
+          type: string
+        encrypted_index:
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: web_search_result_location
+          type: string
+        url:
+          type: string
+      required:
+      - cited_text
+      - encrypted_index
+      - type
+      - url
+      type: object
+    CodeExecutionOutputBlock:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        type:
+          const: code_execution_output
+          type: string
+      required:
+      - file_id
+      - type
       type: object
     CodeExecutionOutputBlockParam:
       additionalProperties: false
@@ -276,6 +555,29 @@ components:
           type: string
       required:
       - file_id
+      - type
+      type: object
+    CodeExecutionResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          items:
+            $ref: '#/components/schemas/CodeExecutionOutputBlock'
+          type: array
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        stdout:
+          type: string
+        type:
+          const: code_execution_result
+          type: string
+      required:
+      - content
+      - return_code
+      - stderr
+      - stdout
       - type
       type: object
     CodeExecutionResultBlockParam:
@@ -301,6 +603,24 @@ components:
       - stdout
       - type
       type: object
+    CodeExecutionToolResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/CodeExecutionToolResultError'
+          - $ref: '#/components/schemas/CodeExecutionResultBlock'
+          - $ref: '#/components/schemas/EncryptedCodeExecutionResultBlock'
+        tool_use_id:
+          type: string
+        type:
+          const: code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
     CodeExecutionToolResultBlockParam:
       additionalProperties: false
       properties:
@@ -323,6 +643,23 @@ components:
       - tool_use_id
       - type
       type: object
+    CodeExecutionToolResultError:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - execution_time_exceeded
+          - invalid_tool_input
+          - too_many_requests
+          - unavailable
+          type: string
+        type:
+          const: code_execution_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
     CodeExecutionToolResultErrorParam:
       additionalProperties: false
       properties:
@@ -339,6 +676,18 @@ components:
       required:
       - error_code
       - type
+      type: object
+    Container:
+      additionalProperties: false
+      properties:
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+      required:
+      - expires_at
+      - id
       type: object
     ContentBlockSourceParam:
       additionalProperties: false
@@ -358,6 +707,47 @@ components:
       - content
       - type
       type: object
+    Delta:
+      additionalProperties: false
+      properties:
+        container:
+          anyOf:
+          - $ref: '#/components/schemas/Container'
+          - type: 'null'
+          default: null
+        stop_details:
+          anyOf:
+          - $ref: '#/components/schemas/RefusalStopDetails'
+          - type: 'null'
+          default: null
+        stop_reason:
+          anyOf:
+          - enum:
+            - end_turn
+            - max_tokens
+            - model_context_window_exceeded
+            - pause_turn
+            - refusal
+            - stop_sequence
+            - tool_use
+            type: string
+          - type: 'null'
+          default: null
+        stop_sequence:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+      type: object
+    DirectCaller:
+      additionalProperties: false
+      properties:
+        type:
+          const: direct
+          type: string
+      required:
+      - type
+      type: object
     DirectCallerParam:
       additionalProperties: false
       properties:
@@ -365,6 +755,30 @@ components:
           const: direct
           type: string
       required:
+      - type
+      type: object
+    DocumentBlock:
+      additionalProperties: false
+      properties:
+        citations:
+          anyOf:
+          - $ref: '#/components/schemas/CitationsConfig'
+          - type: 'null'
+          default: null
+        source:
+          anyOf:
+          - $ref: '#/components/schemas/Base64PDFSource'
+          - $ref: '#/components/schemas/PlainTextSource'
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: document
+          type: string
+      required:
+      - source
       - type
       type: object
     DocumentBlockParam:
@@ -397,6 +811,29 @@ components:
           type: string
       required:
       - source
+      - type
+      type: object
+    EncryptedCodeExecutionResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          items:
+            $ref: '#/components/schemas/CodeExecutionOutputBlock'
+          type: array
+        encrypted_stdout:
+          type: string
+        return_code:
+          type: integer
+        stderr:
+          type: string
+        type:
+          const: encrypted_code_execution_result
+          type: string
+      required:
+      - content
+      - encrypted_stdout
+      - return_code
+      - stderr
       - type
       type: object
     EncryptedCodeExecutionResultBlockParam:
@@ -440,6 +877,18 @@ components:
       - source
       - type
       type: object
+    InputJSONDelta:
+      additionalProperties: false
+      properties:
+        partial_json:
+          type: string
+        type:
+          const: input_json_delta
+          type: string
+      required:
+      - partial_json
+      - type
+      type: object
     JSONOutputFormatParam:
       additionalProperties: false
       properties:
@@ -451,6 +900,63 @@ components:
       required:
       - schema
       - type
+      type: object
+    Message:
+      additionalProperties: false
+      properties:
+        container:
+          x-alek-unread: 'not read by our adapter: any value'
+        content:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/TextBlock'
+            - $ref: '#/components/schemas/ThinkingBlock'
+            - $ref: '#/components/schemas/RedactedThinkingBlock'
+            - $ref: '#/components/schemas/ToolUseBlock'
+            - $ref: '#/components/schemas/ServerToolUseBlock'
+            - $ref: '#/components/schemas/WebSearchToolResultBlock'
+            - $ref: '#/components/schemas/WebFetchToolResultBlock'
+            - $ref: '#/components/schemas/CodeExecutionToolResultBlock'
+            - $ref: '#/components/schemas/BashCodeExecutionToolResultBlock'
+            - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultBlock'
+          type: array
+        id:
+          x-alek-unread: 'not read by our adapter: any value'
+        model:
+          type: string
+        role:
+          x-alek-unread: 'not read by our adapter: any value'
+        stop_details:
+          anyOf:
+          - $ref: '#/components/schemas/RefusalStopDetails'
+          - type: 'null'
+          default: null
+        stop_reason:
+          anyOf:
+          - enum:
+            - end_turn
+            - max_tokens
+            - model_context_window_exceeded
+            - pause_turn
+            - refusal
+            - stop_sequence
+            - tool_use
+            type: string
+          - type: 'null'
+          default: null
+        stop_sequence:
+          x-alek-unread: 'not read by our adapter: any value'
+        type:
+          x-alek-unread: 'not read by our adapter: any value'
+        usage:
+          $ref: '#/components/schemas/Usage'
+      required:
+      - content
+      - id
+      - model
+      - role
+      - type
+      - usage
       type: object
     MessageCreateParamsStreaming:
       additionalProperties: false
@@ -510,6 +1016,39 @@ components:
       - model
       - stream
       type: object
+    MessageDeltaUsage:
+      additionalProperties: false
+      properties:
+        cache_creation_input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        cache_read_input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        output_tokens:
+          type: integer
+        output_tokens_details:
+          anyOf:
+          - $ref: '#/components/schemas/OutputTokensDetails'
+          - type: 'null'
+          default: null
+        server_tool_use:
+          anyOf:
+          - $ref: '#/components/schemas/ServerToolUsage'
+          - type: 'null'
+          default: null
+      required:
+      - output_tokens
+      type: object
     MessageParam:
       additionalProperties: false
       properties:
@@ -542,6 +1081,71 @@ components:
       - content
       - role
       type: object
+    Message_2:
+      additionalProperties: false
+      properties:
+        container:
+          anyOf:
+          - $ref: '#/components/schemas/Container'
+          - type: 'null'
+          default: null
+        content:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/TextBlock'
+            - $ref: '#/components/schemas/ThinkingBlock'
+            - $ref: '#/components/schemas/RedactedThinkingBlock'
+            - $ref: '#/components/schemas/ToolUseBlock'
+            - $ref: '#/components/schemas/ServerToolUseBlock'
+            - $ref: '#/components/schemas/WebSearchToolResultBlock'
+            - $ref: '#/components/schemas/WebFetchToolResultBlock'
+            - $ref: '#/components/schemas/CodeExecutionToolResultBlock'
+            - $ref: '#/components/schemas/BashCodeExecutionToolResultBlock'
+            - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultBlock'
+          type: array
+        id:
+          type: string
+        model:
+          type: string
+        role:
+          const: assistant
+          type: string
+        stop_details:
+          anyOf:
+          - $ref: '#/components/schemas/RefusalStopDetails'
+          - type: 'null'
+          default: null
+        stop_reason:
+          anyOf:
+          - enum:
+            - end_turn
+            - max_tokens
+            - model_context_window_exceeded
+            - pause_turn
+            - refusal
+            - stop_sequence
+            - tool_use
+            type: string
+          - type: 'null'
+          default: null
+        stop_sequence:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: message
+          type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+      required:
+      - content
+      - id
+      - model
+      - role
+      - type
+      - usage
+      type: object
     OutputConfigParam:
       additionalProperties: false
       properties:
@@ -557,6 +1161,30 @@ components:
           - type: 'null'
         format:
           $ref: '#/components/schemas/JSONOutputFormatParam'
+      type: object
+    OutputTokensDetails:
+      additionalProperties: false
+      properties:
+        thinking_tokens:
+          type: integer
+      required:
+      - thinking_tokens
+      type: object
+    PlainTextSource:
+      additionalProperties: false
+      properties:
+        data:
+          type: string
+        media_type:
+          const: text/plain
+          type: string
+        type:
+          const: text
+          type: string
+      required:
+      - data
+      - media_type
+      - type
       type: object
     PlainTextSourceParam:
       additionalProperties: false
@@ -574,6 +1202,111 @@ components:
       - media_type
       - type
       type: object
+    RawContentBlockDeltaEvent:
+      additionalProperties: false
+      properties:
+        delta:
+          anyOf:
+          - $ref: '#/components/schemas/TextDelta'
+          - $ref: '#/components/schemas/InputJSONDelta'
+          - $ref: '#/components/schemas/CitationsDelta'
+          - $ref: '#/components/schemas/ThinkingDelta'
+          - $ref: '#/components/schemas/SignatureDelta'
+        index:
+          type: integer
+        type:
+          const: content_block_delta
+          type: string
+      required:
+      - delta
+      - index
+      - type
+      type: object
+    RawContentBlockStartEvent:
+      additionalProperties: false
+      properties:
+        content_block:
+          anyOf:
+          - $ref: '#/components/schemas/TextBlock'
+          - $ref: '#/components/schemas/ThinkingBlock'
+          - $ref: '#/components/schemas/RedactedThinkingBlock'
+          - $ref: '#/components/schemas/ToolUseBlock'
+          - $ref: '#/components/schemas/ServerToolUseBlock'
+          - $ref: '#/components/schemas/WebSearchToolResultBlock'
+          - $ref: '#/components/schemas/WebFetchToolResultBlock'
+          - $ref: '#/components/schemas/CodeExecutionToolResultBlock'
+          - $ref: '#/components/schemas/BashCodeExecutionToolResultBlock'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultBlock'
+        index:
+          type: integer
+        type:
+          const: content_block_start
+          type: string
+      required:
+      - content_block
+      - index
+      - type
+      type: object
+    RawContentBlockStopEvent:
+      additionalProperties: false
+      properties:
+        index:
+          type: integer
+        type:
+          const: content_block_stop
+          type: string
+      required:
+      - index
+      - type
+      type: object
+    RawMessageDeltaEvent:
+      additionalProperties: false
+      properties:
+        delta:
+          $ref: '#/components/schemas/Delta'
+        type:
+          const: message_delta
+          type: string
+        usage:
+          $ref: '#/components/schemas/MessageDeltaUsage'
+      required:
+      - delta
+      - type
+      - usage
+      type: object
+    RawMessageStartEvent:
+      additionalProperties: false
+      properties:
+        message:
+          $ref: '#/components/schemas/Message_2'
+        type:
+          const: message_start
+          type: string
+      required:
+      - message
+      - type
+      type: object
+    RawMessageStopEvent:
+      additionalProperties: false
+      properties:
+        type:
+          const: message_stop
+          type: string
+      required:
+      - type
+      type: object
+    RedactedThinkingBlock:
+      additionalProperties: false
+      properties:
+        data:
+          type: string
+        type:
+          const: redacted_thinking
+          type: string
+      required:
+      - data
+      - type
+      type: object
     RedactedThinkingBlockParam:
       additionalProperties: false
       properties:
@@ -584,6 +1317,31 @@ components:
           type: string
       required:
       - data
+      - type
+      type: object
+    RefusalStopDetails:
+      additionalProperties: false
+      properties:
+        category:
+          anyOf:
+          - enum:
+            - bio
+            - cyber
+            - frontier_llm
+            - general_harms
+            - reasoning_extraction
+            type: string
+          - type: 'null'
+          default: null
+        explanation:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: refusal
+          type: string
+      required:
       - type
       type: object
     SearchResultBlockParam:
@@ -612,6 +1370,30 @@ components:
       - title
       - type
       type: object
+    ServerToolCaller:
+      additionalProperties: false
+      properties:
+        tool_id:
+          type: string
+        type:
+          const: code_execution_20250825
+          type: string
+      required:
+      - tool_id
+      - type
+      type: object
+    ServerToolCaller20260120:
+      additionalProperties: false
+      properties:
+        tool_id:
+          type: string
+        type:
+          const: code_execution_20260120
+          type: string
+      required:
+      - tool_id
+      - type
+      type: object
     ServerToolCaller20260120Param:
       additionalProperties: false
       properties:
@@ -634,6 +1416,51 @@ components:
           type: string
       required:
       - tool_id
+      - type
+      type: object
+    ServerToolUsage:
+      additionalProperties: false
+      properties:
+        web_fetch_requests:
+          type: integer
+        web_search_requests:
+          type: integer
+      required:
+      - web_fetch_requests
+      - web_search_requests
+      type: object
+    ServerToolUseBlock:
+      additionalProperties: false
+      properties:
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCaller'
+          - $ref: '#/components/schemas/ServerToolCaller'
+          - $ref: '#/components/schemas/ServerToolCaller20260120'
+          - type: 'null'
+          default: null
+        id:
+          type: string
+        input:
+          additionalProperties: true
+          type: object
+        name:
+          enum:
+          - bash_code_execution
+          - code_execution
+          - text_editor_code_execution
+          - tool_search_tool_bm25
+          - tool_search_tool_regex
+          - web_fetch
+          - web_search
+          type: string
+        type:
+          const: server_tool_use
+          type: string
+      required:
+      - id
+      - input
+      - name
       - type
       type: object
     ServerToolUseBlockParam:
@@ -672,6 +1499,42 @@ components:
       - name
       - type
       type: object
+    SignatureDelta:
+      additionalProperties: false
+      properties:
+        signature:
+          type: string
+        type:
+          const: signature_delta
+          type: string
+      required:
+      - signature
+      - type
+      type: object
+    TextBlock:
+      additionalProperties: false
+      properties:
+        citations:
+          anyOf:
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/CitationCharLocation'
+              - $ref: '#/components/schemas/CitationPageLocation'
+              - $ref: '#/components/schemas/CitationContentBlockLocation'
+              - $ref: '#/components/schemas/CitationsWebSearchResultLocation'
+              - $ref: '#/components/schemas/CitationsSearchResultLocation'
+            type: array
+          - type: 'null'
+          default: null
+        text:
+          type: string
+        type:
+          const: text
+          type: string
+      required:
+      - text
+      - type
+      type: object
     TextBlockParam:
       additionalProperties: false
       properties:
@@ -699,6 +1562,30 @@ components:
       - text
       - type
       type: object
+    TextDelta:
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+        type:
+          const: text_delta
+          type: string
+      required:
+      - text
+      - type
+      type: object
+    TextEditorCodeExecutionCreateResultBlock:
+      additionalProperties: false
+      properties:
+        is_file_update:
+          type: boolean
+        type:
+          const: text_editor_code_execution_create_result
+          type: string
+      required:
+      - is_file_update
+      - type
+      type: object
     TextEditorCodeExecutionCreateResultBlockParam:
       additionalProperties: false
       properties:
@@ -709,6 +1596,42 @@ components:
           type: string
       required:
       - is_file_update
+      - type
+      type: object
+    TextEditorCodeExecutionStrReplaceResultBlock:
+      additionalProperties: false
+      properties:
+        lines:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          default: null
+        new_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        new_start:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        old_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        old_start:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        type:
+          const: text_editor_code_execution_str_replace_result
+          type: string
+      required:
       - type
       type: object
     TextEditorCodeExecutionStrReplaceResultBlockParam:
@@ -742,6 +1665,25 @@ components:
       required:
       - type
       type: object
+    TextEditorCodeExecutionToolResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/TextEditorCodeExecutionToolResultError'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionViewResultBlock'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionCreateResultBlock'
+          - $ref: '#/components/schemas/TextEditorCodeExecutionStrReplaceResultBlock'
+        tool_use_id:
+          type: string
+        type:
+          const: text_editor_code_execution_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
     TextEditorCodeExecutionToolResultBlockParam:
       additionalProperties: false
       properties:
@@ -765,6 +1707,29 @@ components:
       - tool_use_id
       - type
       type: object
+    TextEditorCodeExecutionToolResultError:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - execution_time_exceeded
+          - file_not_found
+          - invalid_tool_input
+          - too_many_requests
+          - unavailable
+          type: string
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: text_editor_code_execution_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
     TextEditorCodeExecutionToolResultErrorParam:
       additionalProperties: false
       properties:
@@ -785,6 +1750,40 @@ components:
           type: string
       required:
       - error_code
+      - type
+      type: object
+    TextEditorCodeExecutionViewResultBlock:
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+        file_type:
+          enum:
+          - image
+          - pdf
+          - text
+          type: string
+        num_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        start_line:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        total_lines:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        type:
+          const: text_editor_code_execution_view_result
+          type: string
+      required:
+      - content
+      - file_type
       - type
       type: object
     TextEditorCodeExecutionViewResultBlockParam:
@@ -816,6 +1815,21 @@ components:
       required:
       - content
       - file_type
+      - type
+      type: object
+    ThinkingBlock:
+      additionalProperties: false
+      properties:
+        signature:
+          type: string
+        thinking:
+          type: string
+        type:
+          const: thinking
+          type: string
+      required:
+      - signature
+      - thinking
       - type
       type: object
     ThinkingBlockParam:
@@ -856,6 +1870,18 @@ components:
           const: disabled
           type: string
       required:
+      - type
+      type: object
+    ThinkingDelta:
+      additionalProperties: false
+      properties:
+        thinking:
+          type: string
+        type:
+          const: thinking_delta
+          type: string
+      required:
+      - thinking
       - type
       type: object
     ToolChoiceAnyParam:
@@ -969,6 +1995,32 @@ components:
       - tool_use_id
       - type
       type: object
+    ToolUseBlock:
+      additionalProperties: false
+      properties:
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCaller'
+          - $ref: '#/components/schemas/ServerToolCaller'
+          - $ref: '#/components/schemas/ServerToolCaller20260120'
+          - type: 'null'
+          default: null
+        id:
+          type: string
+        input:
+          additionalProperties: true
+          type: object
+        name:
+          type: string
+        type:
+          const: tool_use
+          type: string
+      required:
+      - id
+      - input
+      - name
+      - type
+      type: object
     ToolUseBlockParam:
       additionalProperties: false
       properties:
@@ -1021,6 +2073,56 @@ components:
       - type
       - url
       type: object
+    Usage:
+      additionalProperties: false
+      properties:
+        cache_creation:
+          anyOf:
+          - $ref: '#/components/schemas/CacheCreation'
+          - type: 'null'
+          default: null
+        cache_creation_input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        cache_read_input_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          default: null
+        inference_geo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        output_tokens_details:
+          anyOf:
+          - $ref: '#/components/schemas/OutputTokensDetails'
+          - type: 'null'
+          default: null
+        server_tool_use:
+          anyOf:
+          - $ref: '#/components/schemas/ServerToolUsage'
+          - type: 'null'
+          default: null
+        service_tier:
+          anyOf:
+          - enum:
+            - batch
+            - priority
+            - standard
+            type: string
+          - type: 'null'
+          default: null
+      required:
+      - input_tokens
+      - output_tokens
+      type: object
     UserLocationParam:
       additionalProperties: false
       properties:
@@ -1045,6 +2147,26 @@ components:
           type: string
       required:
       - type
+      type: object
+    WebFetchBlock:
+      additionalProperties: false
+      properties:
+        content:
+          $ref: '#/components/schemas/DocumentBlock'
+        retrieved_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        type:
+          const: web_fetch_result
+          type: string
+        url:
+          type: string
+      required:
+      - content
+      - type
+      - url
       type: object
     WebFetchBlockParam:
       additionalProperties: false
@@ -1173,6 +2295,30 @@ components:
       - name
       - type
       type: object
+    WebFetchToolResultBlock:
+      additionalProperties: false
+      properties:
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCaller'
+          - $ref: '#/components/schemas/ServerToolCaller'
+          - $ref: '#/components/schemas/ServerToolCaller20260120'
+          - type: 'null'
+          default: null
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/WebFetchToolResultErrorBlock'
+          - $ref: '#/components/schemas/WebFetchBlock'
+        tool_use_id:
+          type: string
+        type:
+          const: web_fetch_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
     WebFetchToolResultBlockParam:
       additionalProperties: false
       properties:
@@ -1199,6 +2345,28 @@ components:
       - tool_use_id
       - type
       type: object
+    WebFetchToolResultErrorBlock:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - invalid_tool_input
+          - max_uses_exceeded
+          - too_many_requests
+          - unavailable
+          - unsupported_content_type
+          - url_not_accessible
+          - url_not_allowed
+          - url_not_in_prior_context
+          - url_too_long
+          type: string
+        type:
+          const: web_fetch_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
     WebFetchToolResultErrorBlockParam:
       additionalProperties: false
       properties:
@@ -1220,6 +2388,29 @@ components:
       required:
       - error_code
       - type
+      type: object
+    WebSearchResultBlock:
+      additionalProperties: false
+      properties:
+        encrypted_content:
+          type: string
+        page_age:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+        title:
+          type: string
+        type:
+          const: web_search_result
+          type: string
+        url:
+          type: string
+      required:
+      - encrypted_content
+      - title
+      - type
+      - url
       type: object
     WebSearchResultBlockParam:
       additionalProperties: false
@@ -1362,6 +2553,32 @@ components:
       - error_code
       - type
       type: object
+    WebSearchToolResultBlock:
+      additionalProperties: false
+      properties:
+        caller:
+          anyOf:
+          - $ref: '#/components/schemas/DirectCaller'
+          - $ref: '#/components/schemas/ServerToolCaller'
+          - $ref: '#/components/schemas/ServerToolCaller20260120'
+          - type: 'null'
+          default: null
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/WebSearchToolResultError'
+          - items:
+              $ref: '#/components/schemas/WebSearchResultBlock'
+            type: array
+        tool_use_id:
+          type: string
+        type:
+          const: web_search_tool_result
+          type: string
+      required:
+      - content
+      - tool_use_id
+      - type
+      type: object
     WebSearchToolResultBlockParam:
       additionalProperties: false
       properties:
@@ -1390,8 +2607,27 @@ components:
       - tool_use_id
       - type
       type: object
+    WebSearchToolResultError:
+      additionalProperties: false
+      properties:
+        error_code:
+          enum:
+          - invalid_tool_input
+          - max_uses_exceeded
+          - query_too_long
+          - request_too_large
+          - too_many_requests
+          - unavailable
+          type: string
+        type:
+          const: web_search_tool_result_error
+          type: string
+      required:
+      - error_code
+      - type
+      type: object
 info:
-  title: anthropic request subset
+  title: anthropic request and response subset
   version: 0.121.0
 openapi: 3.1.0
 paths:
@@ -1452,6 +2688,33 @@ paths:
             schema:
               $ref: '#/components/schemas/MessageCreateParamsStreaming'
         required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+            text/event-stream:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RawMessageStartEvent'
+                - $ref: '#/components/schemas/RawMessageDeltaEvent'
+                - $ref: '#/components/schemas/RawMessageStopEvent'
+                - $ref: '#/components/schemas/RawContentBlockStartEvent'
+                - $ref: '#/components/schemas/RawContentBlockDeltaEvent'
+                - $ref: '#/components/schemas/RawContentBlockStopEvent'
+                - additionalProperties: false
+                  properties:
+                    type:
+                      const: ping
+                  required:
+                  - type
+                  type: object
+                  x-alek-extension: 'Anthropic''s streaming documentation: a stream may carry any number of ping events (data
+                    {"type": "ping"}); the SDK passes on only the event names it knows (anthropic/_streaming.py Stream.__stream__)
+                    and drops ping, so its event types lack it (2026-11-19)'
+          description: 'the parts our adapter reads: src/adapters/claude_adapter.py:627-639, 709-742, 1277-1387 (_raise_on_refusal,
+            _grounded_stream_loop, _map_finish_reason, _parse_response)'
 servers:
 - url: https://api.anthropic.com
 x-retrieved: '2026-11-19'
@@ -1470,3 +2733,9 @@ x-transforms:
 - 'drop-sdk-response-models: union members that are SDK response models (accepted as input for convenience) are dropped; the
   request types (*Param) are the wire contract'
 - 'header-literals: a header''s allowed values are its SDK type''s Literal values'
+- 'sdk-response-schema: pydantic TypeAdapter(<response model>).json_schema(), $defs as components'
+- 'sdk-response-closed: the SDK''s response models accept extra fields (additionalProperties true); the subset closes every
+  one that declares properties'
+- 'response-unread: a top-level response field the adapter does not read is kept by name with an any-value schema (x-alek-unread);
+  the object stays closed'
+- 'response-stream-item: a text/event-stream schema is one event''s data JSON (OpenAPI 3.1 has no item schema)'

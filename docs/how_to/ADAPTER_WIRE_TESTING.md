@@ -24,6 +24,8 @@ Adapter wire tests  mock at SDK level       ✅ test LLMRequest → SDK translat
 Integration tests   stub + contract rule    ✅ test full adapter path vs named rule
 ────────────────────────────────────────────────────────────────────────
 Request conformance real SDK, HTTP replaced ✅ test the request on the wire vs the provider's contract
+Response conformance real SDK, HTTP replaced ✅ test what the provider returns vs its contract, and what the adapter reads
+Recordings          real SDK, real provider ✅ the provider's actual exchanges (make contract-record, paid, never in CI)
 ```
 
 ### Layer 1 — Adapter Wire Tests (`tests/unit/adapters/`)
@@ -131,10 +133,39 @@ records the request, and checks it against the provider's request contract
   input only, the contract says what it must produce. The conformance test also fails when a kept field or union variant of
   the provider's operation is reached by no shape (a dead keep-list entry), when an adapter file has an SDK call site
   `self.client.<a>.<b>(` that no operation covers, and when the closed subset accepts an unknown field.
-- **No recordings.** Nothing here is a recorded response. What needs a provider response (a replayed `raw_content`, the
-  grounded loop's `container` continuation) is out of the slice; the shapes file names each as `NOT_REACHABLE`.
+- **Request shapes need no provider.** What needs a provider response (a replayed `raw_content` of a real answer, the
+  grounded loop's `container` continuation) is named in the shapes file's `NOT_REACHABLE` and recorded by the recorder
+  (below); the response-conformance tests also run the continuation offline over a scripted stream.
 - **The Anthropic subset comes from the SDK's request types** (Anthropic publishes no reachable OpenAPI), pinned by the installed
   SDK version: a pin bump fails `test_provider_subsets.py` until `make contract-extract PROVIDER=anthropic` is re-run.
+
+**Response conformance** (same folder, `test_<provider>_response_conformance.py`). The contract also carries the responses
+the adapter reads (`Operation.responses` in `PROVIDERS`: the top-level fields read, the union variants kept; a top-level field
+not read stays by name as `x-alek-unread`, any value, so the object stays closed). Anthropic has two: the SSE stream on the
+wire (`text/event-stream`, one schema per event's data; the adapter always streams) and the message the SDK assembles from it
+(`application/json`).
+- **Check.** `assert_response(provider, method, path, status, body, media=...)` and `assert_stream(provider, method, path,
+  status, events)` (`events` = `[{"event", "data"}]`, each violation prefixed `event[i]`). `path` names the operation: its
+  `paths` key, or the request's URL path resolved as `assert_request` resolves it. A field the source marks deprecated is
+  accepted in a response.
+- **Samples.** `tests/unit/contracts/<provider>_response_samples.py`: response bodies as the wire carries them (Claude: rendered
+  as a stream by `events()`). Each conforms, is answered by the transport so the REAL SDK and adapter read it (the test pins
+  what the adapter makes of it), and is replayed as `raw_content` in the next request, which must conform to the request
+  contract. Meta-tests: an unknown or wrong-typed field fails at the top level and at depth; every kept top-level field, variant
+  and `Allowed` gap of the responses is in a sample. A sample is a test input, not a recording.
+- **Open defects** are strict xfails with their id (`P17-D1`: a replayed Claude tool block carries `caller: null`, which the
+  request contract lacks; a recording settles whether the API accepts it).
+
+**Recordings** (`make contract-record PROVIDER=openai|anthropic [ONLY=<scenario>] [MAX_USD=1.0] [DRY_RUN=1] [ENV_FILE=<path>]`,
+`scripts/contracts/record.py`). The regeneration command of every recorded fixture; a recording is never edited by hand.
+Named scenarios (one per response kind, plus the request side's `NOT_REACHABLE` entries; `UNREACHABLE` names what no real
+call can produce) run through the real adapter and SDK with a recording transport that forwards to the provider and writes
+`tests/fixtures/providers/<provider>/<scenario>.json`: `_meta` (source `recorded`, date, model, SDK, outcome, cost, the
+regeneration command) and every HTTP exchange (headers scrubbed to an allowlist, bodies kept, a stream as its events). Money is
+enforced in the script: a pessimistic estimate before each call against `MAX_USD` (the call is not sent when it could pass it),
+the token legs and their `billing.py` cost after it, a stop when a call with tokens costs $0 (unpriced model). Run `DRY_RUN=1`
+first: it prints the plan and the estimate without network or key. Keys come from the environment (`.env` via the Makefile) or
+`ENV_FILE`. A scenario that ends in a provider error is written with that outcome: it is a finding.
 
 When a shape fails: the adapter sends something the contract lacks. If it is known to work (probed, or documented elsewhere),
 add an `Allowed` entry to that provider's `PROVIDERS` entry in `scripts/contracts/extract_subset.py` (a factual reason and the
@@ -179,17 +210,25 @@ When a new LLM adapter is added, **mandatory checklist:**
       fields, union variants, open paths), `make contract-extract PROVIDER=<p>`, commit the regenerated
       `contracts/providers/<p>/openapi.yaml`, then `tests/unit/contracts/<p>_request_shapes.py` and
       `test_<p>_request_conformance.py` (Layer 3)
+- [ ] Add the responses the adapter reads to that `PROVIDERS` entry (`Operation.responses`), regenerate, then
+      `<p>_response_samples.py` and `test_<p>_response_conformance.py`, and the provider's scenarios in
+      `scripts/contracts/record.py` (`SCENARIOS`)
 
 **A new request field in an existing adapter** (a new key in the SDK call, a new tool or content-block type, a new header):
 it fails Layer 3 until it is in `PROVIDERS`. Add it to the operation's `fields` / `variants`, run `make contract-extract
 PROVIDER=<p>`, commit the regenerated subset with the change, and add a shape that sends it.
 
+**A response field or block the adapter starts reading** (or one a recording shows the provider sends): add it to the
+response's `fields` / `variants` (or an `Allowed` with a schema when the source lacks it), regenerate, and add a sample that
+carries it.
+
 ## What NOT to Do
 
 - **Do not mock at the Port level** in adapter wire tests — that is what the existing
   agent tests already do; it cannot detect translation regressions.
-- **Do not intercept HTTP anywhere except Layer 3.** Layers 1 and 2 test our translation at the SDK boundary. The one allowed
-  HTTP interception is `httpx.MockTransport` in `tests/unit/contracts/`, where the request on the wire is what is under test;
+- **Do not intercept HTTP anywhere except Layer 3.** Layers 1 and 2 test our translation at the SDK boundary. The allowed
+  HTTP interception is `httpx.MockTransport` in `tests/unit/contracts/`, where the request or response on the wire is what is
+  under test, and as the scripted provider of the recorder's own tests (`tests/unit/scripts/test_contract_record.py`);
   `respx` and ad-hoc transport patches elsewhere stay out (fragile, SDK-version-dependent).
 - **Do not define ContractRule validators inside individual test files** — they must live
   in `tests/contracts/` where they serve as the shared specification.

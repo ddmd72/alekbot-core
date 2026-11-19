@@ -1,0 +1,389 @@
+{
+  "_meta": {
+    "provider": "openai",
+    "operation": "POST /responses",
+    "scenario": "replay_thinking_and_tool_use",
+    "purpose": "a tool call after thinking, replayed as raw_content with the tool result (request-side replay)",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:50Z",
+    "model": "gpt-6-luna",
+    "sdk": "openai 2.53.0",
+    "outcome": "ok",
+    "cost_usd": 3.8e-05,
+    "regenerate": "make contract-record PROVIDER=openai ONLY=replay_thinking_and_tool_use"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "input": [
+            {
+              "role": "user",
+              "content": "Use the lookup_value tool to find the date of the car service, then answer in one sentence."
+            }
+          ],
+          "max_output_tokens": 2048,
+          "model": "gpt-6-luna",
+          "reasoning": {
+            "effort": "low"
+          },
+          "store": true,
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "type": "function",
+              "name": "lookup_value",
+              "description": "Look a value up in the household notes by its key.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "the note's key"
+                  }
+                },
+                "required": [
+                  "key"
+                ]
+              },
+              "strict": false
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_0112d49b69892b32006aff30db45a087d2a36e45421ed05e95",
+          "object": "response",
+          "created_at": 1795109083,
+          "status": "completed",
+          "access_programs": null,
+          "background": false,
+          "billing": {
+            "payer": "developer"
+          },
+          "completed_at": 1795109086,
+          "error": null,
+          "frequency_penalty": 0.0,
+          "image": {
+            "context_compression": "disabled"
+          },
+          "incomplete_details": null,
+          "input_transformations": [],
+          "instructions": null,
+          "max_output_tokens": 2048,
+          "max_tool_calls": null,
+          "model": "gpt-6-luna",
+          "moderation": null,
+          "output": [
+            {
+              "id": "fc_0112d49b69892b32006aff30ddf2a887d283b4332d9eaf5dcd",
+              "type": "function_call",
+              "status": "completed",
+              "arguments": "{\"key\":\"date of the car service\"}",
+              "call_id": "call_07YxhR8VFZVawTJPvBJgQJJW",
+              "name": "lookup_value"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "presence_penalty": 0.0,
+          "previous_response_id": null,
+          "prompt_cache_key": null,
+          "prompt_cache_retention": "24h",
+          "reasoning": {
+            "context": "all_turns",
+            "effort": "low",
+            "mode": "standard",
+            "summary": null
+          },
+          "safety_identifier": null,
+          "service_tier": "default",
+          "store": true,
+          "temperature": 1.0,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "auto",
+          "tool_usage": {
+            "image_gen": {
+              "input_tokens": 0,
+              "input_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "output_tokens": 0,
+              "output_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "total_tokens": 0
+            },
+            "web_search": {
+              "num_requests": 0
+            }
+          },
+          "tools": [
+            {
+              "type": "function",
+              "description": "Look a value up in the household notes by its key.",
+              "name": "lookup_value",
+              "output_schema": null,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "the note's key"
+                  }
+                },
+                "required": [
+                  "key"
+                ]
+              },
+              "strict": false
+            }
+          ],
+          "top_logprobs": 0,
+          "top_p": 0.98,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 74,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_12h_tokens": 0,
+                "ttl_30m_tokens": 0
+              },
+              "cached_tokens": 0
+            },
+            "output_tokens": 22,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 96
+          },
+          "user": null,
+          "metadata": {}
+        }
+      },
+      "estimate_usd": 0.00109,
+      "cost": {
+        "input": 74,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 22,
+        "searches": 0,
+        "usd": 1.8e-05
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "input": [
+            {
+              "role": "user",
+              "content": "Use the lookup_value tool to find the date of the car service, then answer in one sentence."
+            },
+            {
+              "arguments": "{\"key\":\"date of the car service\"}",
+              "call_id": "call_07YxhR8VFZVawTJPvBJgQJJW",
+              "name": "lookup_value",
+              "type": "function_call",
+              "id": "fc_0112d49b69892b32006aff30ddf2a887d283b4332d9eaf5dcd",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call_07YxhR8VFZVawTJPvBJgQJJW",
+              "output": "2026-11-05"
+            }
+          ],
+          "max_output_tokens": 2048,
+          "model": "gpt-6-luna",
+          "reasoning": {
+            "effort": "low"
+          },
+          "store": true,
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "type": "function",
+              "name": "lookup_value",
+              "description": "Look a value up in the household notes by its key.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "the note's key"
+                  }
+                },
+                "required": [
+                  "key"
+                ]
+              },
+              "strict": false
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_0112d49b69892b32006aff30df10d887d294cf7046d756728e",
+          "object": "response",
+          "created_at": 1795109087,
+          "status": "completed",
+          "access_programs": null,
+          "background": false,
+          "billing": {
+            "payer": "developer"
+          },
+          "completed_at": 1795109089,
+          "error": null,
+          "frequency_penalty": 0.0,
+          "image": {
+            "context_compression": "disabled"
+          },
+          "incomplete_details": null,
+          "input_transformations": [],
+          "instructions": null,
+          "max_output_tokens": 2048,
+          "max_tool_calls": null,
+          "model": "gpt-6-luna",
+          "moderation": null,
+          "output": [
+            {
+              "id": "msg_0112d49b69892b32006aff30e1673087d2be299129669fcbfb",
+              "type": "message",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "output_text",
+                  "annotations": [],
+                  "logprobs": [],
+                  "text": "The car service is scheduled for November 5, 2026."
+                }
+              ],
+              "phase": "final_answer",
+              "role": "assistant"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "presence_penalty": 0.0,
+          "previous_response_id": null,
+          "prompt_cache_key": null,
+          "prompt_cache_retention": "24h",
+          "reasoning": {
+            "context": "all_turns",
+            "effort": "low",
+            "mode": "standard",
+            "summary": null
+          },
+          "safety_identifier": null,
+          "service_tier": "default",
+          "store": true,
+          "temperature": 1.0,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "auto",
+          "tool_usage": {
+            "image_gen": {
+              "input_tokens": 0,
+              "input_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "output_tokens": 0,
+              "output_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "total_tokens": 0
+            },
+            "web_search": {
+              "num_requests": 0
+            }
+          },
+          "tools": [
+            {
+              "type": "function",
+              "description": "Look a value up in the household notes by its key.",
+              "name": "lookup_value",
+              "output_schema": null,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "the note's key"
+                  }
+                },
+                "required": [
+                  "key"
+                ]
+              },
+              "strict": false
+            }
+          ],
+          "top_logprobs": 0,
+          "top_p": 0.98,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 113,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_12h_tokens": 0,
+                "ttl_30m_tokens": 0
+              },
+              "cached_tokens": 0
+            },
+            "output_tokens": 18,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 131
+          },
+          "user": null,
+          "metadata": {}
+        }
+      },
+      "estimate_usd": 0.001132,
+      "cost": {
+        "input": 113,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 18,
+        "searches": 0,
+        "usd": 2e-05
+      }
+    }
+  ]
+}
