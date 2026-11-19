@@ -5,7 +5,8 @@ flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11) a
 the owner: §4.7, §12 OD-12, OD-13), and a third time (search v2: a scored ranking in place of the list fusion, the
 owner's location in the query slots, one search entry point taking several phrases: §5, §9, §12 OD-14). Implementation
 in progress (§9 PR series; PR 11, the identity block, formatter labels and voice filter, implemented; PR 12, the
-`is_directive` predicate, Cabinet domain filter and domains API, companion slice and channel-binding load, implemented).
+`is_directive` predicate, Cabinet domain filter and domains API, companion slice and channel-binding load, implemented;
+PR 13, the consolidator's `directive` flag in place of the old domain, implemented: §12 OD-6 amended).
 **Owner:** Dmytro Deleur.
 **Design inputs:** the design inputs (taxonomy, indexing rules, profiler prompt drafts, code survey, offline prototype)
 are private working documents; measured numbers quoted here are aggregates from those runs.
@@ -85,9 +86,12 @@ sensitivity `ordinary`, and labels that are not in the text (the word "insurance
 ### 2.2 What does not change
 
 `text`, `metadata`, `vector`, `tags`, `tags_vector`, `metadata_vector`, `type`, `temporal_class`, the lifecycle and
-expiry fields and the old `domain` field keep their writers and values. The profiler never writes them (a test pins
-`PROFILE_FIELDS` disjoint from them and from `IN_PLACE_FIELDS`, `fact_lifecycle.py:48`). The old `domain` keeps being
-written by the consolidator until PR 13 (§9) and is read only as the directive marker after PR 12.
+expiry fields and the consolidator's `directive` flag keep their writers and values. The profiler never writes them (a
+test pins `PROFILE_FIELDS` disjoint from them and from `IN_PLACE_FIELDS`, `fact_lifecycle.py:48`). Until PR 13 (§9) the
+consolidator wrote the old 16-value `domain`, read after PR 12 only as the directive marker. From PR 13 it writes a
+boolean `directive` (top level, default false) and nothing reads the old `domain`: `is_directive(fact)` reads only the
+flag, and every read of directives filters `directive == true`. A stored document that still carries `domain` loads as
+before (the entity ignores the key); an owner-run script marks the old directives with the flag (§11 step 7).
 The confirmed people list (§4.5) is not a fact field: it lives in its own collection and the profiler step never writes it.
 Nor are the owner's profile answers (§4.7): one document per account, read by the step, written only from an answer.
 
@@ -112,9 +116,12 @@ version keeps text and metadata, so its profile stays fresh (code survey surpris
 | `account_id` ASC, `state` ASC, `label_vector` VECTOR(768, flat) | labels list `find_nearest` | PR 8 (first search caller) |
 | `account_id` ASC, `state` ASC, `user_identity` ASC, `context_priority_rank` ASC, `created_at` DESC | baseline identity block | PR 11 |
 | `account_id` ASC, `state` ASC, `domain_keys` CONTAINS, `created_at` DESC, `__name__` DESC | Cabinet domain filter | PR 12 |
+| `account_id` ASC, `state` ASC, `directive` ASC, `context_priority_rank` ASC, `created_at` DESC | every read of the standing directives (the baseline's rulebook, Stage 2b, the cap, the companion slice) | PR 13 |
 
 The profile scan and the search snapshot (§5.2) read `account_id == X AND state == current` with a projection; the
-existing `(account_id, state, __name__)` index serves them. The old `domain` indexes stay until PR 13.
+existing `(account_id, state, __name__)` index serves them. PR 13 removes five of the six old `domain` indexes; the one
+that serves `search_facts_by_domain` (`account_id`, `state`, `domain`, `created_at` DESC, `__name__` DESC) stays while that
+method has a caller in `src/` (the `relevant_domains` channel of `enrich_context`, which no caller passes).
 
 ## 3. Domain registry
 
@@ -555,12 +562,12 @@ Every reader of today's `FactDomain` (code survey + taxonomy), its new rule and 
 | 11 | `search_enrichment_service.py:135,363`, `firestore_repo.py:909-953` | domain channel `domain IN`, newest first | domain list of §5.3; old method kept for `enrich_context` users | 8–10 |
 | 12 | `router_agent.py:310-338` | prefetch from triage `semantic_lens`/`search_phrase`/`relevant_domains` | P1 slots + `FactSearchService`; the triage search fields are removed in the same PR (OD-14) | 9 |
 | 13 | `memory_search_agent.py:108-153, 241-247, 295-352` | `MEMORYSEARCH_*` decomposer, old domains, fallback vector search | `queries` (1–4 phrases); P1 slots per phrase; one multi-phrase search; a failed slots call = one semantic list for that phrase; no legacy payload | 8 |
-| 14 | `consolidation_agent.py:105-116` (+ tokens) | model supplies one of 16 domains | unchanged until PR 13, then the directive decision only (OD-6) | 13 |
-| 15 | `fact_lifecycle.py:332`, `consolidation_agent.py:1664,1706` | directive = `domain == AGENT_DIRECTIVE` or principle or `mindset` | one predicate `is_directive(fact)` in `fact_lifecycle.py`, reading the old domain until PR 13 and the consolidator's flag after | 12 |
-| 16 | `domain/search.py:114-129`, `consolidation_pass_stats.py:135` | consolidator sees and compares the old domain | unchanged until PR 13; then shows `primary_domain`, compares the directive flag | 13 |
-| 17 | `fact_review_answers.py:149` | history fact copies `old.domain` | unchanged (legacy field); its profile comes from the step | — |
-| 18 | `fact_management_adapter.py:172` | refuses a create without a domain | unchanged until PR 13 | 13 |
-| 19 | `firestore_repo.py:1028` `get_legacy_facts` | "domain missing = legacy" (scripts only) | unchanged; it still means the old field | — |
+| 14 | `consolidation_agent.py:105-116` (+ tokens) | model supplies one of 16 domains | the directive decision only: a required boolean `directive` on `create_fact` and `merge_facts`, the tokens teach that one decision (OD-6) | 13 |
+| 15 | `fact_lifecycle.py:332`, `consolidation_agent.py:1664,1706` | directive = `domain == AGENT_DIRECTIVE` or principle or `mindset` | one predicate `is_directive(fact)` in `fact_lifecycle.py`, reading the old domain in PR 12 and only the `directive` flag from PR 13; the reads of directives take `directive_only` (the expiry pin still adds principles and `mindset`) | 12, 13 |
+| 16 | `domain/search.py:114-129`, `consolidation_pass_stats.py:135` | consolidator sees and compares the old domain | a search hit shows `primary_domain` and `directive`, the review line `primary_domain`; the pass stats compare the directive flag | 13 |
+| 17 | `fact_review_answers.py:149` | history fact copies `old.domain` | copies `old.directive`; its profile comes from the step | 13 |
+| 18 | `fact_management_adapter.py:172` | refuses a create without a domain | takes `directive` (missing reads as false; the tool schema requires it) | 13 |
+| 19 | `firestore_repo.py:1028` `get_legacy_facts` | "domain missing = legacy" (scripts only) | removed with the old field (no caller in `src/`) | 13 |
 | 20 | `firestore_repo.py:253`, `:359-440`, `:702-740`, `fact_review_service.py:591` | tags filter, three vector fields, write dedup, review neighbours | unchanged | — |
 
 ## 7. People cards
@@ -595,11 +602,11 @@ A card is a retrieval index entry: never a fact, never in a prompt, never read b
    repository refuses any other key).
 5. **Scope: both live accounts** (owner, 2026-11-09). Ids come from `.env` / local memory, never from tracked files.
    The second account's fact count is measured first and the estimate printed before its run.
-6. **Backup (owner, 2026-11-09).** Before the backfill, and again before PR 13, a read-only script exports every fact
-   document of both accounts (all versions, all fields, vectors included) to a dated, gitignored local backup directory,
-   with per-account counts. A restore script ships with it; it is verified by a dry run that compares the backup with the
-   live store field by field and reports differences, never by a real restore. The backup is the reason PR 13 needs no
-   waiting period.
+6. **Backup (owner, 2026-11-09).** Before the backfill, a read-only script exports every fact document of both accounts
+   (all versions, all fields, vectors included) to a dated, gitignored local backup directory, with per-account counts. A
+   restore script ships with it; it is verified by a dry run that compares the backup with the live store field by field
+   and reports differences, never by a real restore. PR 13 takes no backup step of its own (owner, 2026-11-17): its net is
+   the database's point-in-time recovery (7 days) and the daily backups.
 
 ## 9. PR series
 
@@ -627,7 +634,7 @@ Each PR is small, deploys on its own and changes no behaviour a later PR needs u
 | 10 | Connector `get_user_context(queries)` through the memory search agent (claude.ai and the voice token) | owner reconnects claude.ai (the schema changes) | `tests/unit/composition/test_mcp_get_user_context_v2.py` |
 | 11 | Baseline identity block, formatter labels, Lelik filter | identity index READY; scan shows 0 unprofiled | `tests/unit/services/test_biographical_identity_block.py`, `tests/unit/services/test_lelik_voice_filter.py`, `tests/unit/services/prompt_v3/test_biographical_formatter_labels.py` |
 | 12 | `is_directive` predicate, Cabinet filter + domains API, companion slice, channel-binding load | Cabinet index READY | `tests/unit/domain/test_is_directive.py`, `tests/unit/web/test_cabinet_fact_domains.py`, `tests/unit/services/test_companion_slice_v2.py`, `tests/unit/adapters/test_channel_binding_legacy_domains.py` |
-| 13 | Consolidator writes the directive decision only; `FactDomain` and old domain indexes removed (OD-6); the Router triage part moved to PR 9 | consolidation bench dry run clean | consolidation vocabulary tests updated by a reviewer; `tests/unit/agents/test_consolidation_directive_flag.py` |
+| 13 | Consolidator writes the directive decision only (a boolean `directive` field); `FactDomain`, the old `domain` field and its indexes removed except the one `search_facts_by_domain` still needs (OD-6); the token `date_rules` keep a past plan that happened as an event; the owner-run mark script; the Router triage part moved to PR 9 | consolidation bench dry run clean; directive index READY; the mark script run before the deploy and once right after | consolidation vocabulary tests updated by a reviewer; `tests/unit/agents/test_consolidation_directive_flag.py`, `tests/unit/scripts/test_fact_directive_flag_mark.py` |
 
 An existing test that fails under any PR goes to a reviewer (REVIEWER RULE); tests of deleted code are deleted in that PR
 and listed in its body.
@@ -694,16 +701,20 @@ PR 8. A fresh, truly unseen question set, labelled from two weeks of use, runs o
    a day in `[FactSearch]` lines and turn latency. PR 8 and its tokens go live together: the agent accepts no other
    request shape.
 6. PR 11 (identity index READY first), PR 12 (Cabinet index READY first).
-7. PR 13 right after PR 12, no waiting period (owner, 2026-11-09), preceded by the second backup (§8 step 6). Memory map, multi-vector RRF concept and `capabilities.py` are updated in
-   the PR that changes the behaviour they describe.
+7. PR 13 right after PR 12, no waiting period (owner, 2026-11-09). The directive index is READY first; the owner runs the
+   mark script (`directive: true` on every fact document, all states and versions, whose old `domain` is
+   `agent_directive`; dry run first) before the deploy and once right after, and uploads the consolidation tokens with the
+   deploy. No backup step: the net is the database's point-in-time recovery (7 days) and the daily backups (owner,
+   2026-11-17). Memory map, multi-vector RRF concept and `capabilities.py` are updated in the PR that changes the
+   behaviour they describe.
 
 ## 12. Decisions
 
 **Owner, 2026-11-09: every recommendation below is accepted** — OD-1 (a), OD-2 (a), OD-3 (a), OD-4 (a) behind its
 measurement, OD-5 (a), OD-6 (a), OD-7 (a), OD-8 (a). The owner also allowed adding ONE discreet example to the invented
 universe for the sensitivity tests (§10.1). Delivery: the PR series runs back to back, not spread over time; independent
-PRs may run in parallel sessions. OD-6 amended: PR 13 follows PR 12 with no week of waiting — a facts backup covers the
-risk (§8 step 6). Backfill and backup cover both live accounts.
+PRs may run in parallel sessions. OD-6 amended: PR 13 follows PR 12 with no week of waiting; its net is the database's
+point-in-time recovery (7 days) and the daily backups (owner, 2026-11-17). Backfill and backup cover both live accounts.
 
 **OD-1 Key lists: account snapshot vs Firestore array queries.** (a) Snapshot (§5.2): one projected read per change,
 pure code identical to the validated engine, no 30-value limits, no index per list; per-instance memory of a few hundred
@@ -734,6 +745,14 @@ until a wrong card is seen.
 
 **OD-6 Consolidator domain.** (a) PR 13 in this series: the consolidator decides only "directive or not", the 16-value
 domain and its tokens go; (b) a later RFC. **Recommend (a)** one week after PR 12, behind a consolidation bench dry run.
+*Amended by the owner, 2026-11-17 and 2026-11-19:* (1) the decision is stored as a new boolean fact field `directive`
+(default false), written by the consolidator; `is_directive` reads only it, with no fallback to the old domain, and the
+reads of directives query `directive == true`; (2) a one-time owner-run script marks the old directives (old `domain`
+`agent_directive`, every state and version) with the flag: dry run by default, a typed confirmation to write, idempotent,
+run before the deploy and once right after; (3) no backup step precedes PR 13 (point-in-time recovery and the daily
+backups are the net); (4) in the same token upload, a plan whose date has passed and which took place becomes an event
+fact on the usual significance grounds, never dropped for being past; a past plan that did not take place or whose outcome
+is unknown keeps the history rewrite.
 
 **OD-7 Recurring occasions.** (a) Code rule: a label phrase containing `birthday` or `anniversary`, points spanning at most 31 days (day or
 month precision) projected into each year (what the prototype ran); (b) a profiler field (prompt change, re-probe). **Recommend (a).**

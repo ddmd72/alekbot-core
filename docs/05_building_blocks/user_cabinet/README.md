@@ -111,7 +111,6 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
     {
       "id": "doc_id",
       "text": "User lives in Springfield.",
-      "domain": "location",
       "primary_domain": "biography",
       "type": "fact",
       "created_at": "2026-02-17T10:32:00"
@@ -121,8 +120,8 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
 }
 ```
 `next_cursor` is `null` when there are no more pages. `primary_domain` is the profile's registry key (`null` until the
-fact is profiled); `domain` is the old consolidator value. Every fact list of the Cabinet (browse, search, all facts,
-recently closed) carries both.
+fact is profiled). Every fact list of the Cabinet (browse, search, all facts, recently closed) carries it, and so does each
+entry of the review queue.
 
 #### `GET /api/user/fact-domains`
 
@@ -232,8 +231,7 @@ All fact *creation* and *correction* goes through the ConsolidationAgent pipelin
 FactEntity
   - id: str                        ← used as pagination cursor + invalidate target
   - text: str
-  - domain: FactDomain (enum)      ← old consolidator value: the badge until the fact is profiled
-  - primary_domain: str            ← registry key: the badge
+  - primary_domain: str            ← registry key: the badge (none until the fact is profiled)
   - domain_keys: list[str]         ← registry keys: the domain filter
   - type: FactType (enum)
   - state: str                     ← "current" (read), "invalidated" (after Remove)
@@ -316,7 +314,7 @@ Each fact row has two action buttons (subtle, muted until hover):
 - Background: warm cream `#f0ece6`
 - Header: dark brown `#2c2420`
 - Cards: `#faf8f5` + warm border `#e8e2d9` + soft box-shadow
-- Domain badge: the registry label of the fact's `primary_domain` in the UI language; the old `domain` value while the fact has no profile
+- Domain badge: the registry label of the fact's `primary_domain` in the UI language; none while the fact has no profile
 
 ---
 
@@ -462,7 +460,6 @@ Create/update: naive datetime interpreted as user's local time, converted to UTC
 |------------|--------|---------|
 | `domain_facts_v2` | `account_id` ASC, `state` ASC, `created_at` DESC | Browse all facts |
 | `domain_facts_v2` | `account_id` ASC, `state` ASC, `domain_keys` CONTAINS, `created_at` DESC, `__name__` DESC | Browse with the domain filter |
-| `domain_facts_v2` | `account_id` ASC, `state` ASC, `domain` ASC, `created_at` DESC | The old domain filter (no caller; removed with the old field) |
 | `domain_facts_v2` | `account_id` ASC, `state` ASC, `vector` VECTOR 768 | Semantic search (existing) |
 
 Vector index was already present. Pagination indexes added in `config/firestore.indexes.json` (2026-02-18).
