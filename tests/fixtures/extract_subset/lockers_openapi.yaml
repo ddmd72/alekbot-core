@@ -1,0 +1,154 @@
+# Invented OpenAPI 3.0 fragment written the way an OData generator writes one (Microsoft Graph's shape: allOf chains over
+# an entity with a discriminator, OAS 3.0 nullable, x-ms-* annotations, @odata.type required everywhere, an octet-stream
+# upload), for tests/unit/scripts/test_extract_subset_odata.py. No real API.
+openapi: 3.0.4
+info:
+  title: Lockers
+  version: v1.0
+servers:
+  - url: https://api.lockers.example.com/v1.0
+paths:
+  /lockers/{locker-id}/items/{item-id}:
+    get:
+      operationId: lockers.GetItems
+      parameters:
+        - name: $select
+          in: query
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+      x-ms-docs-operation-type: operation
+    patch:
+      operationId: lockers.UpdateItems
+      requestBody:
+        description: New property values
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ex.item'
+    parameters:
+      - name: locker-id
+        in: path
+        required: true
+        schema:
+          type: string
+        x-ms-docs-key-type: locker
+      - name: item-id
+        in: path
+        required: true
+        schema:
+          type: string
+        x-ms-docs-key-type: item
+  /lockers/{locker-id}/items/{item-id}/children:
+    post:
+      operationId: lockers.items.CreateChildren
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ex.item'
+    parameters:
+      - name: locker-id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: item-id
+        in: path
+        required: true
+        schema:
+          type: string
+  /lockers/{locker-id}/items/{item-id}/content:
+    put:
+      operationId: lockers.UpdateItemsContent
+      requestBody:
+        description: New media content.
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+    parameters:
+      - name: locker-id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: item-id
+        in: path
+        required: true
+        schema:
+          type: string
+components:
+  schemas:
+    ex.entity:
+      title: entity
+      required:
+        - '@odata.type'
+      type: object
+      properties:
+        id:
+          type: string
+        '@odata.type':
+          type: string
+      discriminator:
+        propertyName: '@odata.type'
+        mapping:
+          '#ex.item': '#/components/schemas/ex.item'
+    ex.item:
+      allOf:
+        - $ref: '#/components/schemas/ex.entity'
+        - title: item
+          required:
+            - '@odata.type'
+          type: object
+          properties:
+            name:
+              type: string
+              nullable: true
+            size:
+              type: number
+              format: int64
+              nullable: true
+            shade:
+              type: string
+              enum:
+                - light
+                - dark
+              nullable: true
+            label:
+              anyOf:
+                - $ref: '#/components/schemas/ex.label'
+                - type: object
+                  nullable: true
+                  description: The label, when it has one.
+            tags:
+              type: array
+              items:
+                type: string
+                nullable: true
+            parts:
+              type: array
+              items:
+                $ref: '#/components/schemas/ex.entity'
+              x-ms-navigationProperty: true
+          x-ms-discriminator-value: '#ex.item'
+    ex.label:
+      title: label
+      required:
+        - '@odata.type'
+      type: object
+      properties:
+        text:
+          type: string
+          nullable: true
+        x-ms-note:
+          type: string
+        '@odata.type':
+          type: string
