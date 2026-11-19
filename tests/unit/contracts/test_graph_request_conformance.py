@@ -62,10 +62,17 @@ CONTRACT = REPO_ROOT / "contracts" / "providers" / "graph" / "openapi.yaml"
 GRAPH = "https://graph.microsoft.com/v1.0"
 GRAPH_HOST = "graph.microsoft.com"
 CONTENT_HOST = "example.com"   # the invented pre-authenticated download and upload URLs
-TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+TOKEN_HOST = "login.microsoftonline.com"
+TOKEN_URL = f"https://{TOKEN_HOST}/consumers/oauth2/v2.0/token"
 # hosts a shape may reach besides Graph -> why they are not checked here
 OTHER_HOSTS = {CONTENT_HOST: "the pre-authenticated download and upload URLs (NOT_COVERED)",
-               "login.microsoftonline.com": "the identity platform's token endpoint (NOT_COVERED)"}
+               TOKEN_HOST: "the identity platform's token endpoint (NOT_COVERED); the OAuth exchange only"}
+
+
+def _other_hosts(shape: shapes.Shape) -> set[str]:
+    """The hosts besides Graph this shape may reach: the token endpoint for the OAuth exchange alone (the To Do and
+    drive shapes run on an unexpired token, so a token request from one of them is a defect, not noise)."""
+    return {CONTENT_HOST, TOKEN_HOST} if shape.adapter == "oauth" else {CONTENT_HOST}
 TODO = f"{GRAPH}/me/todo/lists/{shapes.LIST_ID}"
 DRIVE = f"{GRAPH}/me/drive"
 UPLOAD_URL = f"https://{CONTENT_HOST}/upload/{shapes.FOLDER_ID}"
@@ -107,7 +114,7 @@ _PDF = _drive_item(shapes.FOLDER_ID, shapes.PDF_NAME, file={"mimeType": "applica
 _FOLDER = _drive_item(shapes.FOLDER_ID, shapes.ROOT_NAME, folder={"childCount": 0})
 
 
-def _route(fake: http_boundary_fake.HttpFake) -> None:
+def _route(fake: http_boundary_fake.HttpFake, shape: shapes.Shape) -> None:
     lists_created = {"done": False}
 
     def lists(_r: Any) -> tuple[int, Any]:
@@ -153,8 +160,9 @@ def _route(fake: http_boundary_fake.HttpFake) -> None:
     fake.route("POST", f"{root}/children", 201, _FOLDER)
     fake.route("GET", f"{root}:/{quote(shapes.FILE_NAME, safe='')}:", 200, _FILE)
     fake.route("GET", f"{root}:/{quote(shapes.SLASHED_NAME, safe='')}:", 200, _FILE)
-    fake.route("POST", TOKEN_URL, 200, {"access_token": "x", "refresh_token": "x", "expires_in": 3600,
-                                        "scope": "Files.ReadWrite.AppFolder offline_access User.Read"})
+    if shape.adapter == "oauth":   # any other shape asking for a token is left unrouted and fails
+        fake.route("POST", TOKEN_URL, 200, {"access_token": "x", "refresh_token": "x", "expires_in": 3600,
+                                            "scope": "Files.ReadWrite.AppFolder offline_access User.Read"})
     fake.route("GET", f"{GRAPH}/me", 200, {"id": "subject-1", "userPrincipalName": "owner@example.com"})
     fake.route("PUT", f"{pdf}/content", 201, _PDF)
     fake.route("POST", f"{pdf}/createUploadSession", 200, {"uploadUrl": UPLOAD_URL})
@@ -206,7 +214,7 @@ def _captured(shape_id: str) -> tuple[Sent, ...]:
     shape = next(s for s in SHAPES if s.id == shape_id)
     with pytest.MonkeyPatch.context() as mp:
         fake = _install(mp)
-        _route(fake)
+        _route(fake, shape)
         asyncio.run(_run(shape))   # an unrouted request or a refused answer raises: the call did not run to its end
     assert fake.unrouted == [], f"{shape_id}: unrouted {fake.unrouted}"
     return tuple(_sent(r) for r in fake.requests)
@@ -245,7 +253,7 @@ def test_every_graph_request_of_the_shape_conforms_to_the_contract(shape):
     for request in _graph(sent):
         _check(request)
     others = {s.host for s in sent if s.host != GRAPH_HOST}
-    assert others <= set(OTHER_HOSTS), f"{shape.id}: requests to {others}, neither Graph nor a named other host"
+    assert others <= _other_hosts(shape), f"{shape.id}: requests to {others}, neither Graph nor a host it may reach"
 
 
 @pytest.mark.parametrize("shape", SHAPES, ids=[s.id for s in SHAPES])
