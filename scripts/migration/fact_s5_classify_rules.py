@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import AbstractSet, Any, Dict, Final, List, Mapping, Optional, Sequence, Tuple
 
 from src.domain.billing import calculate_cost
-from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
+from src.domain.entities import ExpiryKind, FactEntity, FactState, FactType
 from src.domain.exceptions import FactExpiryError
 from src.domain.fact_expiry import EXPIRY_NONE, Expiry, expiry_refusal, parse_expiry, stored_expiry
 from src.domain.fact_lifecycle import (
@@ -67,7 +67,7 @@ _PROBLEM_DUPLICATE = "duplicate"
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _KIND_ORDER: Final[Tuple[str, ...]] = ("date", "horizon", "none")
 _REPORT_COLUMNS: Final[Tuple[str, ...]] = (
-    "account", "text", "domain", "type", "temporal_class", "reported", "decision", "expires_at", "due_now", "reason", "flag",
+    "account", "text", "directive", "type", "temporal_class", "reported", "decision", "expires_at", "due_now", "reason", "flag",
 )
 
 RESPONSE_SCHEMA: Dict[str, Any] = {
@@ -105,7 +105,7 @@ class ScannedFact:
     account_id: str                    # "" when the document has none
     token: str                         # str(snapshot.update_time) at the scan
     text: str
-    domain: Optional[str]
+    directive: bool
     type: Optional[str]
     tags: Tuple[str, ...]
     temporal_class: Optional[str]
@@ -118,7 +118,7 @@ class ScannedFact:
 
 
 def _lowered(value: Any) -> Optional[str]:
-    """A string `domain` or `type` lowercased before the enum parse, so a stored `AGENT_DIRECTIVE` still reads as pinned.
+    """A string `type` lowercased before the enum parse, so a stored `PRINCIPLE` still reads as pinned.
     More facts read as pinned than under the live parse, which is the safe direction (pinned means `none`)."""
     return value.lower() if isinstance(value, str) else None
 
@@ -139,7 +139,7 @@ def scanned_fact(doc_id: str, data: Mapping[str, Any], update_time: Any) -> Scan
         account_id=account if isinstance(account, str) else "",
         token=str(update_time),
         text=text if isinstance(text, str) else "",
-        domain=_lowered(data.get("domain")),
+        directive=data.get("directive") is True,
         type=_lowered(data.get("type")),
         tags=tuple(t for t in tags if isinstance(t, str)) if isinstance(tags, list) else (),
         temporal_class=temporal if isinstance(temporal, str) else None,
@@ -191,7 +191,7 @@ def _enum_or_none(enum_type: Any, value: Optional[str]) -> Any:
 
 def is_pinned(fact: ScannedFact) -> bool:
     """Directives, principles and mindset facts take `none` only (the domain's own rule, not restated here)."""
-    return expiry_pinned(_enum_or_none(FactDomain, fact.domain), _enum_or_none(FactType, fact.type), fact.tags)
+    return expiry_pinned(fact.directive, _enum_or_none(FactType, fact.type), fact.tags)
 
 
 def batches(facts: Sequence[ScannedFact], size: int = BATCH_SIZE) -> List[List[ScannedFact]]:
@@ -212,7 +212,7 @@ def fact_line(n: int, fact: ScannedFact, timezone_name: str) -> Dict[str, Any]:
     return {
         "n": n,
         "text": fact.text,
-        "domain": fact.domain,
+        "directive": fact.directive,
         "temporal_class": fact.temporal_class,
         "tags": list(fact.tags),
         "metadata": dict(fact.metadata),
@@ -620,7 +620,7 @@ def report_row(
     return {
         "account": fact.account_id[:8],
         "text": fact.text,
-        "domain": fact.domain,
+        "directive": fact.directive,
         "type": fact.type,
         "temporal_class": fact.temporal_class,
         "reported": local_day(fact.reported_date, timezone_name) if fact.reported_date is not None else "",

@@ -42,7 +42,7 @@ _LABEL_VECTOR = "label_vector"
 _ALL_VECTOR_FIELDS = (*_VECTOR_FIELDS, _LABEL_VECTOR)
 # What profile classification and the profiler read of a current fact (list_profile_states); no vectors.
 _PROFILE_STATE_FIELDS = [
-    "account_id", "created_by_user_id", "lineage_id", "owner_id", "text", "type", "metadata", "domain", "tags", "state",
+    "account_id", "created_by_user_id", "lineage_id", "owner_id", "text", "type", "metadata", "directive", "tags", "state",
     "created_at", "profile_fingerprint", "profile_derivation", "profile_failures", "profile_failed_fingerprint",
     "profile_answer", "user_identity", "primary_domain", "sensitivity", "reported_date", "profile_review_needed",
     "places_unresolved", "profile_review_items",
@@ -53,7 +53,7 @@ _PROFILE_PEOPLE_FIELDS = ["account_id", "created_by_user_id", "lineage_id", "own
 # What the fact search reads of a current fact (list_search_snapshot): search_facts' projection without `vector`, plus the
 # profile fields the search lists use.
 _SEARCH_SNAPSHOT_FIELDS = [
-    "account_id", "owner_id", "created_by_user_id", "lineage_id", "text", "type", "state", "domain", "tags",
+    "account_id", "owner_id", "created_by_user_id", "lineage_id", "text", "type", "state", "directive", "tags",
     "context_priority", "valid_from", "valid_to", "created_at", "source", "version", "visibility", "metadata",
     "temporal_class", "reported_date", "context", "expiry_kind", "ttl_days", "expires_at",
     "label_words", "time_role", "time_points", "place_keys", "people", "primary_domain", "domain_keys", "kinds",
@@ -282,7 +282,7 @@ class FirestoreFactRepository(FactRepository):
             # Legacy migration support (owner_id → account_id + created_by_user_id)
             "owner_id",
             # Optional fields used by callers
-            "state", "domain", "tags", "context_priority",
+            "state", "directive", "tags", "context_priority",
             "valid_from", "valid_to", "created_at", "last_updated",
             "source", "version", "language", "visibility",
             "reported_date", "is_current", "metadata",
@@ -307,7 +307,6 @@ class FirestoreFactRepository(FactRepository):
         owner_id: str,
         limit: int = 100,
         cursor_doc_id: Optional[str] = None,
-        domain: Optional[str] = None,
         state: str = "current",
         domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
@@ -319,13 +318,10 @@ class FirestoreFactRepository(FactRepository):
 
         Requires Firestore composite indexes:
           (account_id, state, created_at DESC)
-          (account_id, state, domain, created_at DESC)  — when the legacy domain filter is used
           (account_id, state, domain_keys CONTAINS, created_at DESC)  — when domain_key is used (the Cabinet filter)
         """
         if state not in LISTABLE_STATES:
             raise ValueError(f"get_paginated_facts reads state one of {LISTABLE_STATES}, not {state!r}")
-        if domain and domain_key:
-            raise ValueError("get_paginated_facts filters by domain or by domain_key, not both")
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", owner_id))
@@ -335,8 +331,6 @@ class FirestoreFactRepository(FactRepository):
 
         if domain_key:
             query = query.where(filter=FieldFilter("domain_keys", "array_contains", domain_key))
-        elif domain:
-            query = query.where(filter=FieldFilter("domain", "==", domain))
 
         if cursor_doc_id:
             cursor_doc = await self.facts_col.document(cursor_doc_id).get()
@@ -426,7 +420,7 @@ class FirestoreFactRepository(FactRepository):
             .where(filter=FieldFilter("state", "==", "current"))  # Only active current facts
             .select([
                 "account_id", "owner_id", "created_by_user_id", "lineage_id",
-                "text", "type", "state", "domain", "primary_domain", "tags", "context_priority",
+                "text", "type", "state", "directive", "primary_domain", "tags", "context_priority",
                 "valid_from", "valid_to", "created_at", "source", "version",
                 "visibility", "metadata", "temporal_class", "reported_date", "context",
                 "expiry_kind", "ttl_days", "expires_at",  # the stored expiry decision, shown to the consolidator
@@ -479,9 +473,9 @@ class FirestoreFactRepository(FactRepository):
     async def get_active_facts_ordered(
         self,
         account_id: str,
-        domain: Optional[str] = None,
         limit: Optional[int] = None,
         identity_only: bool = False,
+        directive_only: bool = False,
     ) -> List[FactEntity]:
         """
         Bounded, priority-ordered query for biographical cache building.
@@ -491,11 +485,11 @@ class FirestoreFactRepository(FactRepository):
 
         Requires indexes:
           (account_id, state, context_priority_rank, created_at DESC)
-          (account_id, state, domain, context_priority_rank, created_at DESC)  — with domain filter
           (account_id, state, user_identity, context_priority_rank, created_at DESC)  — identity_only
+          (account_id, state, directive, context_priority_rank, created_at DESC)  — directive_only
         """
-        if identity_only and domain:
-            raise ValueError("get_active_facts_ordered takes domain or identity_only, not both")
+        if identity_only and directive_only:
+            raise ValueError("get_active_facts_ordered takes identity_only or directive_only, not both")
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", account_id))
@@ -504,8 +498,8 @@ class FirestoreFactRepository(FactRepository):
 
         if identity_only:
             query = query.where(filter=FieldFilter("user_identity", "==", True))
-        elif domain:
-            query = query.where(filter=FieldFilter("domain", "==", domain))
+        elif directive_only:
+            query = query.where(filter=FieldFilter("directive", "==", True))
 
         query = (
             query
@@ -515,7 +509,7 @@ class FirestoreFactRepository(FactRepository):
             .select([
                 "account_id", "created_by_user_id", "lineage_id", "text", "type",
                 "owner_id",
-                "state", "domain", "tags", "context_priority",
+                "state", "directive", "tags", "context_priority",
                 "valid_from", "valid_to", "created_at", "last_updated",
                 "source", "version", "language", "visibility",
                 "reported_date", "is_current", "metadata",
@@ -529,7 +523,7 @@ class FirestoreFactRepository(FactRepository):
         docs = await query.get()
         logger.info(
             f"🗂️ [get_active_facts_ordered] {len(docs)} docs for {account_id[:8]}"
-            f"{f' domain={domain}' if domain else ''}{' identity' if identity_only else ''}"
+            f"{' identity' if identity_only else ''}{' directives' if directive_only else ''}"
         )
 
         results = []
@@ -951,7 +945,7 @@ class FirestoreFactRepository(FactRepository):
             principles = data.get("principles", [])
             directives = data.get("directives", [])
 
-            # Merge all lists (formatter separates: directives by domain, principles by tag)
+            # Merge all lists (the prompt builder separates directives by the directive flag, principles by tag)
             combined = facts + principles + directives
             
             if not combined:
@@ -1102,76 +1096,3 @@ class FirestoreFactRepository(FactRepository):
             known = oldest.get(account_id)
             oldest[account_id] = since if known is None or (since is not None and since < known) else known
         return {account_id: (count, oldest[account_id]) for account_id, count in counts.items()}
-
-    async def get_legacy_facts(
-        self,
-        account_id: str,
-        limit: int = 20
-    ) -> List[FactEntity]:
-        """
-        Retrieves legacy facts (missing domain taxonomy) for migration.
-        
-        Session: 2026-02-17 Legacy Fact Migration
-        Query: account_id = X AND domain IS NULL (filter superseded in Python)
-        Order: created_at ASC (oldest first for chronological processing)
-        
-        Note: Firestore != operator doesn't return docs where field is missing,
-        so we filter superseded facts in Python after query.
-        
-        Args:
-            account_id: Account ID to migrate
-            limit: Maximum number of facts to return (default: 20)
-            
-        Returns:
-            List of legacy facts ordered by created_at ASC
-        """
-        try:
-            # Firestore where("domain", "==", None) doesn't find docs where field is MISSING
-            # Solution: Stream all account facts and filter + sort in Python
-            # NO order_by to avoid requiring another index
-            query = self.facts_col.where(filter=FieldFilter("account_id", "==", account_id))
-            
-            results = []
-            
-            # Stream and filter in Python
-            async for doc in query.stream():
-                data = doc.to_dict()
-                
-                # Filter: domain must be missing or None
-                if "domain" in data and data["domain"] is not None:
-                    continue
-                
-                # Filter out superseded facts
-                fact_state = data.get("state", "MISSING")
-                if fact_state == "superseded":
-                    continue
-                
-                # Convert Vector back to list if needed
-                if 'vector' in data and isinstance(data['vector'], Vector):
-                    data['vector'] = list(data['vector'])
-                if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
-                    data['tags_vector'] = list(data['tags_vector'])
-                if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
-                    data['metadata_vector'] = list(data['metadata_vector'])
-                
-                # Migrate ownership fields for backward compatibility
-                data = self._migrate_ownership_fields(data)
-                results.append(FactEntity(**data))
-                
-                # Stop once we have enough facts
-                if len(results) >= limit:
-                    break
-            
-            logger.info(
-                f"📦 [get_legacy_facts] Found {len(results)} legacy facts "
-                f"for account {account_id[:8]}..."
-            )
-            
-            return results
-            
-        except Exception as e:
-            logger.error(
-                f"❌ [get_legacy_facts] Error querying legacy facts: {e}",
-                exc_info=True
-            )
-            return []

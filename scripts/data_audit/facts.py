@@ -10,8 +10,8 @@ from typing import AbstractSet, Any, Iterable, Optional
 from google.cloud.firestore_v1.vector import Vector
 from pydantic import ValidationError
 
-from src.domain.entities import FactDomain, FactEntity, FactState, FactType
-from src.domain.fact_lifecycle import _LIFECYCLE, expiry_pinned
+from src.domain.entities import FactEntity, FactState, FactType
+from src.domain.fact_lifecycle import _LIFECYCLE, expiry_pinned, is_directive
 
 VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
 # The fields whose own class already reports their error, so invalid_entity skips them.
@@ -179,22 +179,18 @@ def s2_data_present(docs: Iterable[tuple[str, dict[str, Any]]]) -> bool:
 
 
 def _pinned(doc: dict[str, Any]) -> bool:
-    """The writer's own pin rule on the stored `domain`, `type` and `tags`; an unreadable value reads as absent."""
-    try:
-        domain: Optional[FactDomain] = FactDomain(_lowered(doc.get("domain")))
-    except (ValueError, TypeError):
-        domain = None
+    """The writer's own pin rule on the stored `directive`, `type` and `tags`; an unreadable value reads as absent."""
     try:
         fact_type: Optional[FactType] = FactType(_lowered(doc.get("type")))
     except (ValueError, TypeError):
         fact_type = None
     tags = doc.get("tags")
     names = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
-    return expiry_pinned(domain, fact_type, names)  # type: ignore[arg-type]
+    return expiry_pinned(is_directive(doc), fact_type, names)  # type: ignore[arg-type]
 
 
 def _lowered(value: Any) -> Any:
-    """A stored enum value is sometimes upper case (`AGENT_DIRECTIVE`): the entity parse and the classify script lower it."""
+    """A stored enum value is sometimes upper case (`EVENT`): the entity parse and the classify script lower it."""
     return value.lower() if isinstance(value, str) else value
 
 

@@ -3,9 +3,9 @@ Read-only scan of the owner's stored texts for the drive's old intents (DRIVE_SP
 `--include-new`, for `work_with_drive_files` too (the rollback scan, §13 step 5). OWNER-run: it reads personal data
 (Firestore: custom skills and their files, unexpired skill drafts not yet saved, reminders, standing directives,
 prompt overrides; GCS: the workspace's `projects/`, `references/`, `scratch/` and `binary_files/` text files), and writes
-only under the gitignored scripts/memory/. Standing directives are read from the `agent_directive` domain and from
-`preference` (the SUBJECT x SCOPE rule demotes situational agent rules there). **Only the owner (DEV_USER_ID) is
-scanned**; another whitelisted user with custom skills, reminders or workspace files is not
+only under the gitignored scripts/memory/. Standing directives are the facts flagged `directive`; the `preference` store
+is every other current fact (a demoted situational agent rule is an ordinary fact, with no marker). **Only the owner
+(DEV_USER_ID) is scanned**; another whitelisted user with custom skills, reminders or workspace files is not
 covered. A `skill_file` hit is redrafted in chat (`draft_skill`, `$skill save`): `seed_custom_skill.py` keeps the current
 files, and `--check-rewrites` does not read them.
 
@@ -37,14 +37,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from scripts.validation.drive_intent_text_scan_logic import (
     ScanItem, backup_payload, render_report, scan, skill_markdown)
-from src.domain.entities import FactDomain
+from src.domain.fact_lifecycle import is_directive
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.workspace import workspace_kind
 
 _REPO = Path(__file__).resolve().parents[2]
 _MEMORY = _REPO / "scripts" / "memory"
 WORKSPACE_FOLDERS = ("projects/", "references/", "scratch/", "binary_files/")
-DIRECTIVE_DOMAINS = ((FactDomain.AGENT_DIRECTIVE, "directive"), (FactDomain.PREFERENCE, "preference"))
 
 
 @dataclass
@@ -92,9 +91,11 @@ async def collect(src: ScanSources, user_id: str, account_id: str, now: datetime
     else:
         skipped.append("reminder")
     if src.facts is not None:
-        for domain, store in DIRECTIVE_DOMAINS:
-            for fact in await src.facts.get_active_facts_ordered(account_id, domain=domain.value):
-                items.append(ScanItem(store, fact.id, fact.text))
+        for fact in await src.facts.get_active_facts_ordered(account_id, directive_only=True):
+            items.append(ScanItem("directive", fact.id, fact.text))
+        for fact in await src.facts.get_active_facts_ordered(account_id):
+            if not is_directive(fact):
+                items.append(ScanItem("preference", fact.id, fact.text))
     else:
         skipped += ["directive", "preference"]
     if src.workspace is not None:

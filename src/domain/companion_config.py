@@ -53,12 +53,12 @@ class CompanionConfig:
 
 def session_domain_keys(values: Iterable[str]) -> Tuple[List[str], List[str]]:
     """Registry keys for stored `session_domains` values, first seen first and without repeats, and the values that map
-    to none. A registry key maps to itself, an old `FactDomain` value to the keys that replace it (fact profile RFC
+    to none. A registry key maps to itself, an old fact-domain value to the keys that replace it (fact profile RFC
     §3.2, stored configuration); the caller logs the dropped ones."""
     keys: List[str] = []
     dropped: List[str] = []
     for value in values:
-        text = str(getattr(value, "value", value))   # an old `FactDomain` member reads as its stored value
+        text = str(value)
         mapped = config_key(text)
         if not mapped:
             dropped.append(text)

@@ -64,7 +64,7 @@ class FactWriteService(FactWritePort):
                 type=attrs.type,
                 metadata=attrs.metadata,
                 is_current=True,
-                domain=attrs.domain,
+                directive=attrs.directive,
                 temporal_class=attrs.temporal_class,
                 state=attrs.state,
                 context_priority=attrs.context_priority,

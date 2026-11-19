@@ -132,7 +132,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
                     f"   [{i+1}] fact_id={result['fact_id'][:8]}... "
                     f"similarity={sim_str} "
                     f"source={result['source']} "
-                    f"domain={result['domain']} "
+                    f"directive={result['directive']} "
                     f"content_len={len(result['content'])}"
                 )
 
@@ -155,7 +155,8 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
 
         Args:
             content: Fact text
-            metadata: Fact metadata (must include account_id, user_id, domain, etc.)
+            metadata: Fact metadata (must include account_id, user_id, temporal_class, context_priority; `directive`
+                missing reads as false)
             context: The pass this write belongs to (actor, owner's zone, span, who decides dates)
 
         Returns:
@@ -169,7 +170,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             )
 
             # Validate required fields
-            required = ["account_id", "user_id", "domain", "temporal_class", "context_priority"]
+            required = ["account_id", "user_id", "temporal_class", "context_priority"]
             missing = [f for f in required if f not in metadata]
             if missing:
                 logger.error(f"❌ [FactManagement] Missing required fields: {missing}")
@@ -241,7 +242,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             "tags": metadata.get("tags", []),
             "type": metadata.get("type", "event"),
             "metadata": metadata.get("metadata", {}),
-            "domain": metadata.get("domain"),
+            "directive": metadata.get("directive"),
             "temporal_class": metadata.get("temporal_class"),
             "state": metadata.get("state"),
             "context_priority": metadata.get("context_priority"),

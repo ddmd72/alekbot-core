@@ -12,9 +12,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, List, Sequence, Tuple
 
-from .entities import FactDomain
 from .env_switch import is_off_value
 from .fact_lifecycle_day import CounterField
 from .pass_actor import PassActor
@@ -77,7 +76,7 @@ class PassCall:
     `fingerprint` identifies the arguments (a repeated turn has the same ones); `key` is a hash of the text (create,
     merge, see `with_text`) or the fact id (update, ask); `size` the text length; `closing` an update that moves its fact
     to a closing state; `sources` the ids a create is made from or a merge joins; `words` hashes of the text's content
-    words; `domain` the new fact's domain. The text itself is never kept.
+    words; `directive` the new fact's directive decision. The text itself is never kept.
     """
 
     tool: PassTool
@@ -87,17 +86,17 @@ class PassCall:
     closing: bool = False
     sources: FrozenSet[str] = frozenset()
     words: FrozenSet[int] = frozenset()
-    domain: Optional[FactDomain] = None
+    directive: bool = False
 
     @classmethod
     def with_text(
         cls, tool: PassTool, fingerprint: str, text: str, *, sources: FrozenSet[str] = frozenset(),
-        domain: Optional[FactDomain] = None,
+        directive: bool = False,
     ) -> "PassCall":
         """A create or merge call: its key, size and words come from the new text."""
         return cls(
             tool, fingerprint, hashlib.sha256(text.encode("utf-8")).hexdigest(), len(text), False, sources,
-            _word_hashes(text), domain,
+            _word_hashes(text), directive,
         )
 
 
@@ -121,8 +120,8 @@ class PassOutcome:
 def _rewrites(refused: PassCall, later: PassCall) -> bool:
     """Whether `later` (a successful create or merge) is the rewrite a born-due refusal asks for, which has other text.
 
-    A merge is answered by a merge of the same non-empty set of facts. A create is answered by a create of the same
-    domain that holds more than half of its content words (containment, so the outcome words a rewrite adds cost
+    A merge is answered by a merge of the same non-empty set of facts. A create is answered by a create with the same
+    directive decision that holds more than half of its content words (containment, so the outcome words a rewrite adds cost
     nothing); when it was made from facts, the answer must also be made from the same set, so a sibling split part,
     which is another concept, fails the text rule. Residual, on both sides, on purpose: a near-duplicate of the same
     subject (the same kind of event with another date or place) is taken as the answer and a dropped fact goes
@@ -132,7 +131,7 @@ def _rewrites(refused: PassCall, later: PassCall) -> bool:
         return False
     if refused.tool is PassTool.MERGE:
         return later.tool is PassTool.MERGE and bool(refused.sources) and later.sources == refused.sources
-    if later.tool is not PassTool.CREATE or later.domain != refused.domain:
+    if later.tool is not PassTool.CREATE or later.directive != refused.directive:
         return False
     if refused.sources and later.sources != refused.sources:
         return False

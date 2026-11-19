@@ -147,7 +147,7 @@ async def fetch_long_facts(repository, account_id: str, min_words: int, limit: i
                 "fact_id": f.id,
                 "content": f.text,
                 "word_count": wc,
-                "domain": f.domain.value if f.domain else None,
+                "primary_domain": f.primary_domain,
                 "tags": f.tags or [],
             })
     candidates.sort(key=lambda x: x["word_count"], reverse=True)
@@ -189,7 +189,7 @@ def build_user_message(batch: List[Dict[str, Any]]) -> str:
             "fact_id": fact["fact_id"],
             "content": fact["content"],
             "word_count": fact["word_count"],
-            "domain": fact["domain"],
+            "primary_domain": fact["primary_domain"],
             "tags": fact["tags"],
         }
         lines.append(f"{i}. {json.dumps(obj, ensure_ascii=False)}")

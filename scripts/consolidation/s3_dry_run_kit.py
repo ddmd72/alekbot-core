@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, AbstractSet, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
@@ -45,7 +45,7 @@ from src.domain.email_memory_mail import MemoryMail
 from src.domain.entities import FactEntity, FactState
 from src.domain.consolidation import REVIEW_PROFILE_ID
 from src.domain.exceptions import FactResolutionError, FactWriteConflict
-from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
+from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, is_directive, require_in_place
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
 from src.domain.fact_lifecycle_run_guard import run_guard_held
 from src.domain.fact_profile import require_profile_fields
@@ -104,6 +104,11 @@ REVIEW_PROFILE_TOKEN_IDS: Tuple[str, ...] = ("CONSOLIDATION_TAXONOMY", *REVIEW_T
 _ALL_STATES: AbstractSet[FactState] = frozenset(FactState)
 _PRIORITY_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "archival": 5}
 _VECTORS = ("vector", "tags_vector", "metadata_vector")
+
+
+def _is_identity(fact: FactEntity) -> bool:
+    """The identity read's own filter (the profile says `user_identity`)."""
+    return fact.user_identity is True
 
 
 def _holds_note(joined: Any, note: str) -> bool:
@@ -368,14 +373,15 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
         self._record("save_biographical_context_cache")
 
     def _current_view(
-        self, listed: Sequence[FactEntity], account_id: str, domain: Optional[str] = None,
+        self, listed: Sequence[FactEntity], account_id: str, where: Optional[Callable[[FactEntity], bool]] = None,
         tags: Optional[Sequence[str]] = None,
     ) -> List[FactEntity]:
-        """The live list with the pass's own writes applied: closed documents leave it, new current ones join it."""
+        """The live list with the pass's own writes applied: closed documents leave it, new current ones join it. `where`
+        is the read's own filter (directives only, identity only), applied to the pass's documents."""
         def holds(doc: FactEntity) -> bool:
             return (
                 doc.account_id == account_id and doc.state is FactState.CURRENT
-                and (domain is None or (doc.domain is not None and doc.domain.value == domain))
+                and (where is None or where(doc))
                 and (not tags or bool(set(tags) & set(doc.tags)))
             )
 
@@ -394,9 +400,17 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
         return self._current_view(await self._real.get_active_facts(owner_id, tags), owner_id, tags=tags)
 
     async def get_active_facts_ordered(
-        self, account_id: str, domain: Optional[str] = None, limit: Optional[int] = None
+        self, account_id: str, limit: Optional[int] = None, identity_only: bool = False, directive_only: bool = False,
     ) -> List[FactEntity]:
-        facts = self._current_view(await self._real.get_active_facts_ordered(account_id, domain, None), account_id, domain)
+        live = await self._real.get_active_facts_ordered(
+            account_id, None, identity_only=identity_only, directive_only=directive_only
+        )
+        where: Optional[Callable[[FactEntity], bool]] = None
+        if identity_only:
+            where = _is_identity
+        elif directive_only:
+            where = is_directive
+        facts = self._current_view(live, account_id, where)
 
         def rank(fact: FactEntity) -> int:
             return _PRIORITY_RANK.get(getattr(fact.context_priority, "value", fact.context_priority), 3)
@@ -410,10 +424,10 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
         return sorted(facts, key=lambda f: len(f.text.split()), reverse=True)[:limit]
 
     async def get_paginated_facts(
-        self, owner_id: str, limit: int = 100, cursor_doc_id: Optional[str] = None, domain: Optional[str] = None,
-        state: str = "current", domain_key: Optional[str] = None,
+        self, owner_id: str, limit: int = 100, cursor_doc_id: Optional[str] = None, state: str = "current",
+        domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
-        return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, domain, state, domain_key=domain_key)
+        return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, state, domain_key=domain_key)
 
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
         """The live stale list with the pass's own writes applied: a fact the run staled joins it, one it changed shows the
@@ -475,8 +489,6 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
     async def stale_backlog(self) -> Dict[str, Tuple[int, Optional[datetime]]]:
         return await self._real.stale_backlog()
 
-    async def get_legacy_facts(self, account_id: str, limit: int = 20) -> List[FactEntity]:
-        return await self._real.get_legacy_facts(account_id, limit)
 
 
 class NoWriteIndexedEmails(IndexedEmailRepository):

@@ -4,7 +4,7 @@ kind-word table (§25.13.5). Pure constants.
 
 Closed sets: the profiler may not add values; a value outside its set becomes `other` or is dropped (§25.4.1). There
 is no query-time synonym table: the words a user may say for a label, a topic or a life area are written per file at
-index time (P8). `LIFE_DOMAINS` is its own set, not `FactDomain`.
+index time (P8). `LIFE_DOMAINS` is its own set, not a fact domain list.
 
 Public interface:
     DOC_TYPES, LIFE_DOMAINS, DATE_LABELS, ENTITY_TYPES, VALUE_LABELS      (ordered tuples, as listed in §25.2.3)

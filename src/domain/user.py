@@ -3,7 +3,6 @@ from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
-from .entities import FactDomain
 from .fact_domains import config_key, voice_open_default
 from .language import LanguageCode
 from .task_complexity import TaskComplexity
@@ -66,7 +65,7 @@ class PromptPreferences(BaseModel):
 DEFAULT_VOICE_FACT_DOMAINS = voice_open_default()
 # The default stored before the registry (owner decision 2026-10-21); a stored list equal to it
 # reads as DEFAULT_VOICE_FACT_DOMAINS (UserBotConfig.voice_domain_keys).
-LEGACY_DEFAULT_VOICE_FACT_DOMAINS = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
+LEGACY_DEFAULT_VOICE_FACT_DOMAINS = ("biographical", "preference")
 
 # Default per-agent tiers used as a fallback in get_tier_for_agent.
 # Kept outside the class so it can be referenced by both default_factory and the method
@@ -310,7 +309,7 @@ class UserBotConfig(BaseModel):
 
     # Registry keys (fact_domains.py) whose ordinary facts reach Lelik's call-start context: an
     # ALLOWLIST (decisions/lelik_warm_context.md; FACT_PROFILE_RFC §6 row 4). Everything else is
-    # still reachable through his search_memory tool. A stored old FactDomain value is mapped when
+    # still reachable through his search_memory tool. A stored old fact-domain value is mapped when
     # read (voice_domain_keys). Plain strings: a typo in a hand-edited Firestore doc must not fail
     # the whole config load — LelikPersonaService warns and ignores it. A stored doc carrying the
     # retired `voice_excluded_fact_domains` key still loads (pydantic ignores extra keys).
@@ -407,7 +406,7 @@ class UserBotConfig(BaseModel):
         """Lelik's voice list as registry keys, and the stored values that map to none (fact profile RFC §6 row 4).
 
         A stored list equal to the old default (in any order) reads as the registry default; any other value maps
-        through `config_key` (a registry key to itself, an old FactDomain value to the keys that replace it).
+        through `config_key` (a registry key to itself, an old fact-domain value to the keys that replace it).
         """
         stored = list(self.voice_fact_domains)
         if sorted(stored) == sorted(LEGACY_DEFAULT_VOICE_FACT_DOMAINS):

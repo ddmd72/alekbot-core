@@ -70,7 +70,8 @@ _A = "tests/unit/adapters/"
 KITS: Dict[str, Tuple[str, ...]] = {
     # P4 fact kits
     _STORE + "firestore_repo.FirestoreFactRepository": (
-        _A + "test_fact_repository_kit.py", _A + "test_fact_repository_versions_kit.py"),
+        _A + "test_fact_repository_kit.py", _A + "test_fact_repository_versions_kit.py",
+        _A + "test_fact_repository_directive_kit.py"),
     _STORE + "fact_management_adapter.FactManagementAdapter": (_A + "test_fact_management_kit.py",),
     # P6 access kits
     _STORE + "firestore_whitelist_repo.FirestoreWhitelistRepository": (_A + "test_whitelist_store_kit.py",),

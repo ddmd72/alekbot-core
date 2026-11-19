@@ -121,7 +121,7 @@ SPEND_LEDGER = MEMORY_DIR / "fact_s5_classify_spend.json"
 INSTRUCTION_FILE = Path(__file__).with_name("fact_s5_classify_instruction.txt")
 TAXONOMY_SNAPSHOT = PROJECT_ROOT / "prompts_snapshot" / "tokens" / "system" / "CONSOLIDATION_TAXONOMY.groovy"
 TAXONOMY_TOKEN_ID = "CONSOLIDATION_TAXONOMY"
-SCAN_FIELDS = ["account_id", "text", "domain", "type", "tags", "temporal_class", "metadata", "context",
+SCAN_FIELDS = ["account_id", "text", "directive", "type", "tags", "temporal_class", "metadata", "context",
                "reported_date", "created_at", "expiry_kind", "state"]
 REQUEST_TIMEOUT_S: Final[int] = 500
 

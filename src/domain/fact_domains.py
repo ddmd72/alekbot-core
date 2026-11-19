@@ -10,7 +10,7 @@ Domain:
 
 FactDomainEntry / FACT_DOMAINS:
     One declaration per domain, in the taxonomy's order: UI labels, the query prompt's LIFE AREAS row, the profiler's
-    SUBJECT ENUM row, the use-area and voice flags, the Cabinet order, and the old `FactDomain` values the key replaces
+    SUBJECT ENUM row, the use-area and voice flags, the Cabinet order, and the old fact-domain values the key replaces
     in stored configuration (never in facts).
 
 Functions:
@@ -69,7 +69,7 @@ class FactDomainEntry:
     use_area: bool                          # member of the USE-AREA enum
     voice_open: bool                        # in Lelik's default list
     cabinet_order: int
-    legacy_config_values: tuple[str, ...]   # old FactDomain values this key replaces in STORED CONFIGURATION only
+    legacy_config_values: tuple[str, ...]   # old fact-domain values this key replaces in STORED CONFIGURATION only
 
 
 def _labels(en: str, uk: str, fr: str, es: str) -> Mapping[str, str]:
@@ -545,7 +545,7 @@ def label(key: str, locale: str) -> Optional[str]:
 # ── Stored configuration (never facts) ───────────────────────────────────────
 
 def config_key(value: str) -> tuple[str, ...]:
-    """Registry keys for one stored configuration value: a registry key maps to itself, an old `FactDomain` value to
+    """Registry keys for one stored configuration value: a registry key maps to itself, an old fact-domain value to
     the keys that replace it, anything else to nothing (the caller logs the drop)."""
     if value in _BY_KEY:
         return (value,)

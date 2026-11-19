@@ -24,7 +24,7 @@ from scripts.consolidation.review_bench_cases import (
 from scripts.consolidation.review_kit_stand_ins import ReviewStandIns, build_review_service
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
 from src.domain.entities import FactEntity, FactState
-from src.domain.fact_lifecycle import expiry_pinned
+from src.domain.fact_lifecycle import expiry_pinned, is_directive
 from src.domain.fact_review_ask import AskRequest
 from src.domain.fact_review_frame import question_text
 from src.domain.fact_review_outcome import ReviewDecision
@@ -86,7 +86,7 @@ def pick_staged(current: Sequence[FactEntity], count: int, skip: AbstractSet[str
     soonest first; never a pinned fact (a directive, principle or mindset fact: its lifecycle is curated, not reviewed) and never a fact in `skip`."""
     eligible = [
         f for f in current
-        if f.expires_at is not None and f.id not in skip and not expiry_pinned(f.domain, f.type, f.tags)
+        if f.expires_at is not None and f.id not in skip and not expiry_pinned(is_directive(f), f.type, f.tags)
     ]
     eligible.sort(key=lambda f: (as_utc(f.expires_at), f.id))   # type: ignore[arg-type]  # filtered above
     return eligible[:max(0, count)]

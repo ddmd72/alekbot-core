@@ -7,7 +7,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from pydantic import TypeAdapter, ValidationError
 
-from .entities import ContextPriority, FactDomain, FactState, FactType, TemporalClass
+from .entities import ContextPriority, FactState, FactType, TemporalClass
 from .fact_argument_parsing import parse_enum, parse_reported_date
 from .exceptions import FactExpiryError
 from .fact_expiry import EXPIRY_IGNORED_ON_CLOSE, EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry, parse_expiry
@@ -33,7 +33,7 @@ class NewFactAttributes:
     tags: list[str]
     type: FactType
     metadata: dict[str, Any]
-    domain: Optional[FactDomain]
+    directive: bool
     temporal_class: Optional[TemporalClass]
     state: FactState
     context_priority: ContextPriority
@@ -85,7 +85,7 @@ def parse_new_fact(fact_data: Mapping[str, Any], timezone_name: Optional[str] = 
         tags=tags,
         type=_TYPE_BY_NAME.get(type_name.lower(), FactType.EVENT),
         metadata=metadata if isinstance(metadata, dict) else {},
-        domain=parse_enum(FactDomain, "domain", fact_data["domain"]) if fact_data.get("domain") else None,
+        directive=_parse_directive(fact_data.get("directive")),
         temporal_class=(
             parse_enum(TemporalClass, "temporal_class", fact_data["temporal_class"])
             if fact_data.get("temporal_class")
@@ -112,7 +112,7 @@ def new_fact_decision(attrs: NewFactAttributes, tool: str) -> Optional[Expiry]:
         return None
     return required_decision(
         attrs.expiry,
-        expiry_pinned(attrs.domain, attrs.type, attrs.tags),
+        expiry_pinned(attrs.directive, attrs.type, attrs.tags),
         lambda: FactExpiryError(
             f"{tool} needs `expiry` inside `fact_attributes`, decided from the content: use one of {EXPIRY_SHAPES}. "
             f"{NOTHING_WRITTEN}"
@@ -139,6 +139,15 @@ def parse_derived_from(raw: Any) -> Tuple[str, ...]:
     if not isinstance(items, (list, tuple)) or not all(isinstance(i, str) and i.strip() for i in items):
         raise ValueError("derived_from must be a fact id or a list of fact ids")
     return tuple(dict.fromkeys(i.strip() for i in items))
+
+
+def _parse_directive(raw: Any) -> bool:
+    """The consolidator's directive decision: missing reads as not a directive; anything but a bool is refused."""
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        raise ValueError(f"Invalid directive {raw!r}; use true or false")
+    return raw
 
 
 def _validated(name: str, adapter: TypeAdapter[Any], value: Any) -> Any:

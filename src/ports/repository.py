@@ -15,8 +15,8 @@ class FactRepository(ABC):
       `account_id`.
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
-    - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts,
-      search_facts_by_domain and get_legacy_facts read it from the stored `id` field, which every
+    - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts and
+      search_facts_by_domain read it from the stored `id` field, which every
       writer sets equal to the document id; a document written outside this port with a different or
       missing `id` reads back with that value (or a fresh uuid). resolve_current, get_lineage and
       get_latest_fact_by_lineage take it from the document id.
@@ -77,22 +77,24 @@ class FactRepository(ABC):
     async def get_active_facts_ordered(
         self,
         account_id: str,
-        domain: Optional[str] = None,
         limit: Optional[int] = None,
         identity_only: bool = False,
+        directive_only: bool = False,
     ) -> List[FactEntity]:
         """Return `state == "current"` facts of `account_id` whose context_priority is not archival.
 
         Args:
-            domain: when set, only facts of that domain (e.g. "agent_directive").
             limit: at most this many; None returns all.
             identity_only: only facts whose profile says `user_identity == true` (the baseline identity block,
-                fact profile RFC §6 row 1); a fact with no profile is absent. Exclusive with `domain` (ValueError).
+                fact profile RFC §6 row 1); a fact with no profile is absent.
+            directive_only: only facts stored with `directive == true` (the standing directives, fact profile RFC §6
+                row 15); a fact without the field is absent. `identity_only` and `directive_only` together raise
+                ValueError before any I/O.
 
         Order: context_priority critical, high, medium, low; within one priority newest first by
             created_at. The tail is the least essential (the directive cap backstop invalidates it).
         Legacy: a document without a stored priority rank is absent (observed).
-        Projection: no vectors; of the profile fields only primary_domain, sensitivity and user_identity;
+        Projection: no vectors; `directive`; of the profile fields only primary_domain, sensitivity and user_identity;
             temporal_class, context, ttl_days, expires_at, replaces_fact_id and the other profile fields
             keep the model default (observed).
         """
@@ -113,7 +115,6 @@ class FactRepository(ABC):
         owner_id: str,
         limit: int = 100,
         cursor_doc_id: Optional[str] = None,
-        domain: Optional[str] = None,
         state: str = "current",
         domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
@@ -122,11 +123,9 @@ class FactRepository(ABC):
         Args:
             limit: page size.
             cursor_doc_id: document id of the last fact of the previous page.
-            domain: when set, only facts whose old `domain` is that value (legacy; no caller since the Cabinet filters
-                by `domain_key`; removed with the old field, fact profile RFC §9 PR 13).
             state: `"current"` or `"stale"`; anything else raises ValueError before any I/O.
             domain_key: when set, only facts whose profile `domain_keys` holds that registry key (a fact not yet
-                profiled has none, so it is absent). `domain` and `domain_key` together raise ValueError before any I/O.
+                profiled has none, so it is absent).
 
         Order: newest first by created_at; pages do not overlap and together hold every matching fact.
         Returns: (facts, next_cursor); next_cursor is None exactly when no fact follows this page.
@@ -255,7 +254,7 @@ class FactRepository(ABC):
         """Return every `state == "current"` fact of account `account_id` with what profile classification and the
         profiler read (fact profile RFC §4.2): one projected scan per profile run.
 
-        Projection: id (the document id), account_id, created_by_user_id, lineage_id, text, type, metadata, domain,
+        Projection: id (the document id), account_id, created_by_user_id, lineage_id, text, type, metadata, directive,
             tags, state, created_at, and the profile fields profile_fingerprint, profile_derivation, profile_failures,
             profile_failed_fingerprint, profile_answer, user_identity, primary_domain, sensitivity, reported_date,
             profile_review_needed, and the open points of the profile: places_unresolved and profile_review_items
@@ -298,7 +297,7 @@ class FactRepository(ABC):
         """Return every `state == "current"` fact of account `account_id` with what the fact search reads (fact profile
         RFC §5.2): one projected scan per snapshot load.
 
-        Projection: id (the document id), account_id, owner_id, created_by_user_id, lineage_id, text, type, state, domain,
+        Projection: id (the document id), account_id, owner_id, created_by_user_id, lineage_id, text, type, state, directive,
             tags, context_priority, valid_from, valid_to, created_at, source, version, visibility, metadata,
             temporal_class, reported_date, context, expiry_kind, ttl_days, expires_at, and the profile fields label_words,
             time_role, time_points, place_keys, people, primary_domain, domain_keys, kinds, sensitivity. No vectors.
@@ -457,20 +456,5 @@ class FactRepository(ABC):
 
         A stale fact without `stale_since` counts but has no age; an account whose stale facts all lack it maps to
         (count, None). An account with no stale fact is absent; a document without `account_id` is skipped (logged).
-        """
-        pass
-
-    @abstractmethod
-    async def get_legacy_facts(
-        self,
-        account_id: str,
-        limit: int = 20
-    ) -> List[FactEntity]:
-        """Return up to `limit` facts of `account_id` without a domain (missing or null), not superseded.
-
-        Contract (observed; no caller in src/).
-        Order: document id order, not created_at.
-        Legacy: a document without `state` is included.
-        Errors: never raises; a failure returns [].
         """
         pass
