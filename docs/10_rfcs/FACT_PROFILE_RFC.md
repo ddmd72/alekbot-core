@@ -4,7 +4,7 @@
 flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11) and again the same day (profile questions to
 the owner: §4.7, §12 OD-12, OD-13), and a third time (search v2: a scored ranking in place of the list fusion, the
 owner's location in the query slots, one search entry point taking several phrases: §5, §9, §12 OD-14). Implementation
-in progress (§9 PR series).
+in progress (§9 PR series; PR 11, the identity block, formatter labels and voice filter, implemented).
 **Owner:** Dmytro Deleur.
 **Design inputs:** the design inputs (taxonomy, indexing rules, profiler prompt drafts, code survey, offline prototype)
 are private working documents; measured numbers quoted here are aggregates from those runs.

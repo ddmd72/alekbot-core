@@ -3,11 +3,10 @@ BiographicalFactsFormatter - Formats biographical facts for prompt injection.
 
 Part of Prompt Design System v3 (RFC).
 
-Session 2026-02-17: Domain-based formatting refactor
-- Removed hashtag noise (except [MINDSET] prefix)
-- Grouped by FactDomain enum (biographical, health, preference, etc.)
-- Dual sorting: biographical (oldest→newest), others (newest→oldest)
-- Semantic facts (Query-Specific Context) kept as separate section
+Sections follow the fact profile (FACT_PROFILE_RFC §6 row 3): one section per registry domain (`fact_domains.py`) of
+each item's `primary_domain`, headed by its English label, biography first and the rest in registry order. Biography is
+chronological (oldest first), the others newest first; the Router's prefetch (`semantic_lens`) stays a separate
+"Query-Specific Context" section.
 """
 
 from __future__ import annotations
@@ -15,43 +14,24 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List
 
+from src.domain.fact_domains import Domain, all_keys, is_known
+from src.domain.fact_domains import label as domain_label
+
+# The section of an item without a registry primary_domain: the derivation's own fallback for an unclassified subject.
+_FALLBACK_DOMAIN = Domain.LIFESTYLE
+_SEMANTIC = "semantic"
+_SECTION_LOCALE = "en"
+
 
 class BiographicalFactsFormatter:
     """Formats biographical facts into domain-grouped Markdown blocks.
 
-    Session 2026-02-17 Refactor:
-    - Groups facts by domain (biographical, health, preference, etc.)
-    - Removes hashtag noise (except [MINDSET] prefix for preference+mindset)
-    - Dual sorting: biographical ascending (chronological), others descending (recent first)
-    - Preserves semantic facts as separate "Query-Specific Context" section
-    
     Expected input: List of fact dicts with keys:
     - text (str): Fact content
-    - domain (str): FactDomain enum value (biographical, health, etc.)
-    - tags (list[str]): Tags including "mindset" for behavioral anchors
+    - primary_domain (str): registry key of the fact's profile (absent or None: the lifestyle section)
+    - tags (list[str]): "mindset" marks a behavioural anchor ([MINDSET] prefix, any domain)
     - created_at (ISO str): Timestamp for sorting
     """
-
-    # Domain labels for section headers (human-readable, LLM-friendly)
-    # Session 2026-02-17: Minimalistic - semantic key is sufficient for LLM
-    DOMAIN_LABELS = {
-        "biographical": "Biographical",
-        "possession": "Possession",
-        "health": "Health",
-        "medical_records": "Medical Records",
-        "location": "Location",
-        "work": "Work",
-        "network": "Network",
-        "preference": "Preference",
-        "agent_directive": "Agent Directive",
-        "skill": "Skill",
-        "project": "Project",
-        "finance": "Finance",
-        "education": "Education",
-        "legal": "Legal",
-        "entertainment": "Entertainment",
-        "communication": "Communication"
-    }
 
     def format(self, facts: List[Dict]) -> str:
         """Format facts into domain-grouped Markdown sections.
@@ -66,21 +46,14 @@ class BiographicalFactsFormatter:
         if not facts:
             return ""
 
-        # Group by domain (biographical, health, etc.) and separate semantic
         grouped = self._group_by_domain(facts)
-        sections = []
+        order = [Domain.BIOGRAPHY] + [key for key in all_keys() if key != Domain.BIOGRAPHY]
+        sections = [
+            self._render_section(domain_label(key, _SECTION_LOCALE) or key, grouped[key]) for key in order if key in grouped
+        ]
 
-        # Render domain sections (biographical first, then alphabetical)
-        domain_order = ["biographical"] + sorted([d for d in grouped.keys() if d not in ["biographical", "semantic"]])
-        
-        for domain in domain_order:
-            if domain in grouped:
-                label = self.DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
-                sections.append(self._render_section(label, grouped[domain], domain))
-
-        # Render semantic facts separately (Query-Specific Context)
-        if "semantic" in grouped:
-            sections.append(self._render_semantic_section(grouped["semantic"]))
+        if _SEMANTIC in grouped:
+            sections.append(self._render_semantic_section(grouped[_SEMANTIC]))
 
         return "\n\n".join(section for section in sections if section)
 
@@ -98,79 +71,56 @@ class BiographicalFactsFormatter:
         return "\n".join(f"- {d['text'].strip()}" for d in items)
 
     def _group_by_domain(self, facts: List[Dict]) -> Dict[str, List[Dict]]:
-        """Group facts by domain and sort within each domain.
-        
-        Sorting logic (Session 2026-02-17):
-        - biographical: oldest → newest (chronological order)
-        - semantic: keep as-is (no sorting, handled separately)
-        - all others: newest → oldest (recent facts first)
-        
-        Args:
-            facts: List of fact dicts
-            
+        """Group facts by registry primary_domain (none or unknown: lifestyle) and sort within each group.
+
+        Sorting: biography oldest → newest (chronological); semantic keeps insertion order; all others newest → oldest.
+
         Returns:
-            Dict mapping domain → sorted facts
+            Dict mapping registry key (or "semantic") → sorted facts
         """
-        by_domain = {}
-        
+        by_domain: Dict[str, List[Dict]] = {}
+
         for fact in facts:
             if not isinstance(fact, dict):
                 continue
-            
+
             text = (fact.get("text") or "").strip()
             if not text:
                 continue
-            
-            # Check for semantic_lens tag (Query-Specific Context)
-            tags = fact.get("tags", [])
-            if "semantic_lens" in tags:
-                domain = "semantic"
+
+            if "semantic_lens" in fact.get("tags", []):
+                domain = _SEMANTIC
             else:
-                domain = fact.get("domain", "unknown")
-            
+                domain = fact.get("primary_domain") or ""
+                if not is_known(domain):
+                    domain = _FALLBACK_DOMAIN
+
             by_domain.setdefault(domain, []).append(fact)
-        
-        # Sort within domains
+
         for domain, domain_facts in by_domain.items():
-            if domain == "biographical":
-                # Chronological: oldest → newest
+            if domain == Domain.BIOGRAPHY:
                 domain_facts.sort(key=lambda f: f.get("created_at", ""))
-            elif domain != "semantic":
-                # Recent first: newest → oldest
+            elif domain != _SEMANTIC:
                 domain_facts.sort(key=lambda f: f.get("created_at", ""), reverse=True)
-            # semantic: no sorting (keep insertion order)
-        
+
         return by_domain
 
-    def _render_section(self, label: str, facts: List[Dict], domain: str) -> str:
-        """Render a domain section with facts.
-        
-        Args:
-            label: Human-readable section label (e.g., "Biographical")
-            facts: List of facts in this domain
-            domain: Domain key (for mindset prefix logic)
-            
-        Returns:
-            Markdown formatted section
-        """
+    def _render_section(self, label: str, facts: List[Dict]) -> str:
+        """Render a domain section: its label, then one line per fact ([MINDSET] for the tag, recorded date)."""
         if not facts:
             return ""
 
         lines = [f"**{label}**"]
-        
+
         for fact in facts:
             text = (fact.get("text") or "").strip()
             if not text:
                 continue
 
-            # Session 2026-02-17: [MINDSET] prefix for preference domain + mindset tag
-            tags = fact.get("tags", [])
-            if domain == "preference" and "mindset" in tags:
+            if "mindset" in fact.get("tags", []):
                 text = f"[MINDSET] {text}"
 
-            # Add date suffix
-            created_at = fact.get("created_at")
-            date_suffix = self._format_date(created_at)
+            date_suffix = self._format_date(fact.get("created_at"))
             if date_suffix:
                 text = f"{text} ({date_suffix})"
 
