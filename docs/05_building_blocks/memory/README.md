@@ -151,7 +151,7 @@ like any other message.
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
 | `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
-| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*` (incl. `profile_review_needed`, `profile_review_items`), `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Nothing reads them yet: search moves onto them in later PRs of the RFC |
+| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*` (incl. `profile_review_needed`, `profile_review_items`), `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Readers: the fact search (§4.3–§4.5); the baseline's identity block (`user_identity`), its section labels (`primary_domain`) and Lelik's voice filter (`primary_domain`, `sensitivity`) (§4.1, §4.6) |
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
@@ -166,7 +166,7 @@ The adapter also stores `context_priority_rank` (critical 1 … archival 5) next
 
 | Axis | Values (`entities.py`) | What code does with it |
 |---|---|---|
-| `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | baseline order (biographical first), standing directives (`agent_directive`), Router domain channel, Lelik's filter |
+| `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | standing directives (`agent_directive`, kept out of the baseline fill), Router domain channel |
 | `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` (`:38-43`) | none; shown to the consolidator. Since S3 it is only a default for the expiry decision when no row of the kinds table applies (§2.7); no code reads it |
 | `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:232,286,400,471,661,899`). Only the janitor sets `stale` (§5.5); the model is refused it everywhere (§2.7). A fact whose question waits for the owner is `current` (§5.6) |
 | `context_priority` | `critical`, `high`, `medium`, `low`, `archival` (`:55-61`) | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`firestore_repo.py:479`) |
@@ -860,24 +860,28 @@ the drive agents; DeepResearch passes no account id, so it gets none either (`de
    user-level override is not applied to that rebuild. An account with no `account_defaults` resolves to the system
    limits (the fallback is `UserBotConfig()`; it used to be `SearchConfig()`, which made the resolution raise and the
    refresh silently never write).
-2. Up to 65 current, non-archival `biographical` facts, ordered by priority rank then newest first
-   (`get_active_facts_ordered`, `firestore_repo.py:452-507`).
+2. The **identity block**: up to 65 current, non-archival facts whose profile says `user_identity == true`, ordered by
+   priority rank then newest first (`get_active_facts_ordered(identity_only=True)`; index `account_id, state,
+   user_identity, context_priority_rank, created_at DESC`; `FACT_PROFILE_RFC.md` §6 row 1). A fact with no profile is
+   not in the block.
 3. If fewer than 65, fill from the 65 top facts of all domains in the same order, minus those already taken and minus
-   directives (`biographical_context_service.py:162-171`). So other domains enter only when biographical facts leave room.
+   directives (`biographical_context_service.py`). So other facts enter only when the identity block leaves room.
 4. Facts tagged `mindset` become **principles** (up to 20; extras are dropped, not moved to facts); the rest are facts
    (`biographical_context_service.py:200-206`). Principles are carved out of the 65, not added to them
    (`biographical_context_service.py:162-206`).
 5. Directives are fetched separately: up to 15 current non-archival `agent_directive` facts (`biographical_context_service.py:156-160`).
-6. Each cached item carries only id, text, domain, tags, priority, created_at (`biographical_context_service.py:190-198`).
+6. Each cached item carries only id, text, domain, `primary_domain`, `sensitivity`, tags, priority, created_at
+   (`biographical_context_service.py`); the two profile fields are None while the fact is unprofiled.
 
 **At most**, an orchestrator prompt carries 65 facts and principles (of which ≤ 20 principles) + ≤ 15 directives + the
 Router's prefetch of ≤ 30 facts minus those already in the baseline.
 
 **How it is rendered.** `PromptBuilder.build_for_agent` splits the list (`src/services/prompt_builder.py:183-202`):
 directives → `standing_directives {}` (§4.2); items tagged `semantic_lens` (the Router's prefetch) → `query_specific_context`
-after the cache boundary; the rest → `knowledge_base { biographical_context }`, grouped by domain, biographical first
-(oldest → newest), other domains alphabetically (newest → oldest), each line with its recorded date, a `preference`
-principle prefixed `[MINDSET]` (`src/services/prompt_v3/biographical_formatter.py:56-180`),
+after the cache boundary; the rest → `knowledge_base { biographical_context }`, one section per `primary_domain` headed
+by its English registry label (`src/domain/fact_domains.py`), Biography first (oldest → newest), the other domains in
+registry order (newest → oldest); an item with no `primary_domain` goes into the Lifestyle section; each line with its
+recorded date, a fact tagged `mindset` prefixed `[MINDSET]` in any section (`src/services/prompt_v3/biographical_formatter.py`),
 under the note "Dates = when recorded … conversation history takes precedence if contradictory"
 (`prompt_assembly_service.py:452-454`). Facts and directives pass the security validator as untrusted text.
 
@@ -977,8 +981,12 @@ logged. The agent has no model call of its own:
 
 ### 4.6 Lelik
 
-`LelikPersonaService.assemble` (`src/services/lelik_persona_service.py:46-64`) takes the baseline cache and keeps only
-the domains in `UserBotConfig.voice_fact_domains` (default `biographical`, `preference`); no standing directives
+`LelikPersonaService.assemble` (`src/services/lelik_persona_service.py`) takes the baseline cache and keeps only the
+facts whose `primary_domain` is in the account's voice list **and** whose `sensitivity` is `ordinary`; a fact missing
+either field never reaches the call (`FACT_PROFILE_RFC.md` §6 row 4). The list is `UserBotConfig.voice_fact_domains`, read
+through `voice_domain_keys()`: the default is the registry's `voice_open` domains (`voice_open_default()`); a stored list
+equal to the old default (`biographical`, `preference`) reads as that default, any other stored value maps through the
+registry's `config_key`, and an unknown value is dropped with a warning. No standing directives
 (`lelik_agent.py:105`). Anything else he reaches through `search_memory` (in his allowlist) or by asking Alek. A failed
 cache read raises, and the call is not opened on an empty context (`lelik_persona_service.py:46-48`).
 
