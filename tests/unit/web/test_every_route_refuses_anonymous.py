@@ -23,7 +23,9 @@ import httpx
 import pytest
 from quart import Quart
 
+from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_drive_link_store import FirestoreDriveLinkStore
+from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.slack.http_adapter import HTTPModeAdapter
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
@@ -33,10 +35,12 @@ from src.domain import sandbox_contract as sc
 from src.domain.sandbox_contract import SandboxLimits, SandboxOp
 from src.services.drive_link_service import DriveLinkService
 from src.services.file_access_token_service import FileAccessTokenService
+from src.services.geo_mark_service import GeoMarkService
 from src.services.short_link_service import ShortLinkService
 from src.web import user_cabinet_app
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
+from src.web.geo_mark_app import create_geo_mark_blueprint
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, worker_oidc_gate
 from src.web.landing_app import create_landing_blueprint
 from src.web.main_service_routes import create_main_service_blueprint
@@ -222,6 +226,17 @@ def _sandbox_unconfigured(p: Probe):
     return create_unconfigured_blueprint(), {}
 
 
+# reviewer edit, geo marks v1: the `$geo` page (GEO_MARKS_RFC §4.5), a capability URL like /d/<link_id>, so probed, not
+# PUBLIC (plan): the link store is real on the evaluating fake, everything past it a tripwire, so an unknown id is
+# refused before any geocode, post, append or enqueue.
+def _geo_mark(p: Probe):
+    service = GeoMarkService(
+        links=FirestoreEphemeralStore(p.db(), "p7_geo_mark_links"), geocoder=None, sessions=p.wire("sessions"),
+        channels=p.wire("channels"), task_queue=p.wire("task_queue"), users=p.wire("users"),
+        localization=FileLocalizationAdapter(), digest_key=b"k" * 32, base_url="https://app.example")
+    return create_geo_mark_blueprint(service), {}
+
+
 # The key is how main.py / indexer_main.py / sandbox_main.py name the factory (see the static check below).
 FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_user_cabinet_blueprint": _cabinet,
@@ -230,6 +245,7 @@ FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_file_access_blueprint": _file_access,
     "create_short_link_blueprint": _short_link,
     "create_drive_link_blueprint": _drive_link,     # reviewer edit, drive MCP slice 4
+    "create_geo_mark_blueprint": _geo_mark,
     "create_voice_control_plane_blueprint": _voice_control_plane,
     "create_voice_webhook_blueprint": _voice_webhook,
     "create_voice_web_call_blueprint": _voice_web_call,
@@ -312,6 +328,10 @@ INPUT: Dict[Tuple[str, str], dict] = {
     ("GET", "/s/<code>"): {"path": {"code": "abcdefghij"}},
     # reviewer edit, drive MCP slice 4: a well-formed id (22 URL-safe chars), so the store refuses it, not the format check
     ("GET", "/d/<link_id>"): {"path": {"link_id": "AbCdEfGhIjKlMnOpQrSt_-"}},
+    # reviewer edit, geo marks v1: a well-formed id and fix, so the link store refuses them, not the shape or body checks
+    ("GET", "/geo/<link_id>"): {"path": {"link_id": "AbCdEfGhIjKlMnOpQrSt_-"}},
+    ("POST", "/geo/<link_id>"): {"path": {"link_id": "AbCdEfGhIjKlMnOpQrSt_-"},
+                                 "json": {"latitude": 41.1, "longitude": -8.6, "accuracy": 40}},
     # A well-formed batch (Facts S4 T11b), so an anonymous one is refused by the gate, not by the body check.
     ("POST", "/api/user/facts/review-answers"): {"json": {"answers": [{"question_id": "q1", "answer": "still_true"}]}},
 }
@@ -331,6 +351,8 @@ REFUSAL: Dict[Tuple[str, str], Tuple[Callable, str]] = {
         lambda r: r.status_code == 202, "Graph requires 202 for every notification; one without the clientState is "
                                         "skipped, which the side-effect check holds"),
     ("GET", "/auth/callback"): (lambda r: r.status_code == 400, "no state cookie: the CSRF check answers 400"),
+    # reviewer edit, geo marks v1
+    ("POST", "/geo/<link_id>"): (lambda r: r.status_code == 410, "an unknown or used `$geo` link answers 410 (gone)"),
 }
 # A whole factory whose refusal is not 401/403/404/login.
 FACTORY_REFUSAL: Dict[str, Tuple[Callable, str]] = {

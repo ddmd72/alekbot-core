@@ -15,7 +15,7 @@ from src.domain.voice_turn_ownership import TurnOwnership
 from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import _ASK_NOTE, _TRANSLATE_NOTE, _WEB_PICKUP_NOTE, VoiceSessionService
+from src.services.voice_session_service import _ASK_NOTE, _TRANSLATE_NOTE, _WEB_PICKUP_NOTE, VoiceSessionService, VoiceControl
 from tests.support.control_socket_fake import FakeControlSocket
 
 TOKEN = "token-0001-invented"
@@ -108,7 +108,7 @@ class _Call:
             "control_token_sha256": control_token_digest(TOKEN)})
         self.service = VoiceSessionService(
             realtime_session_factory=lambda spec: self.provider, control_plane=self.control_plane,
-            alert_sink=_Alerts(), control_hub=self.hub, ask_clock=self.clock, ask_tick_s=0.005)
+            alert_sink=_Alerts(), control=VoiceControl(self.hub), ask_clock=self.clock, ask_tick_s=0.005)
         self.page = FakeControlSocket()
         self._tasks: List[asyncio.Task] = []
 
@@ -243,7 +243,7 @@ async def test_a_reconnecting_page_gets_the_current_state_in_welcome():
     second = FakeControlSocket()
     await call.attach(second)
     await call.end()
-    assert second.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask", "text"], "ask": "armed"}
+    assert second.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask", "geo", "text"], "ask": "armed"}
     assert call.page.frames()[-1] == {"type": "bye", "reason": "replaced"}
 
 
@@ -261,12 +261,13 @@ async def test_the_call_ending_releases_a_pressed_button_before_the_bye():
 async def test_only_the_interpreter_call_offers_ask():
     call = await _interpreter_call()
     await call.end()
-    assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask", "text"], "ask": "idle"}
+    assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask", "geo", "text"], "ask": "idle"}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("mode", "features"), [pytest.param("lelik", [], id="lelik"),
-                                               pytest.param("tutor", ["text"], id="tutor")])
+# reviewer edit, geo marks v1 (GEO_MARKS_RFC §4.7): `geo` is offered on every web call; still no `ask` here.
+@pytest.mark.parametrize(("mode", "features"), [pytest.param("lelik", ["geo"], id="lelik"),
+                                               pytest.param("tutor", ["geo", "text"], id="tutor")])
 async def test_other_modes_offer_no_ask_and_ignore_a_press(mode, features):
     call = await _Call(mode).start()
     await call.page_says({"type": "ask_arm", "seq": 1})

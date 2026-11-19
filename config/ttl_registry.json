@@ -104,6 +104,16 @@
    ]
   },
   {
+   "id": "geo_mark_links",
+   "collection": "geo_mark_links",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "one-time `$geo` location links (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps unused links",
+   "writers": [
+    "src/adapters/firestore_ephemeral_store.py"
+   ]
+  },
+  {
    "id": "event_dedup",
    "collection": "event_dedup",
    "field": "expires_at",

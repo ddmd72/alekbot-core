@@ -77,12 +77,12 @@ def test_the_command_gets_the_service_only_with_the_switch_on():
 @pytest.mark.parametrize("build", [_slack, _telegram])
 def test_both_factories_forward_the_service(build):
     sentinel = MagicMock(name="drive_note_service")
-    assert build(drive_note_service=sentinel)["drive_note_service"] is sentinel
+    assert build(drive_note_service=sentinel)["commands"].drive_notes is sentinel
 
 
 @pytest.mark.parametrize("build", [_slack, _telegram])
 def test_both_factories_default_to_none(build):
-    assert build()["drive_note_service"] is None
+    assert build()["commands"].drive_notes is None
 
 
 _GRAPH = "src/composition/application_graph.py"

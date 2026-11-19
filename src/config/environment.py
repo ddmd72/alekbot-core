@@ -510,6 +510,14 @@ class EnvironmentConfig:
         """
         return f"{self.firestore_collection_prefix}oauth_flows"
 
+    @property
+    def geo_mark_links_collection(self) -> str:
+        """
+        Pending `$geo` links under `geo_link:<keyed digest of the link id>`, single use, ten minutes (GEO_MARKS_RFC
+        §4.5; a TTL policy on `expires_at` sweeps the unused ones). Dev: development_geo_mark_links
+        """
+        return f"{self.firestore_collection_prefix}geo_mark_links"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property

@@ -21,6 +21,7 @@ from src.domain.drive_note import (
 from src.domain.messaging import MessageContext
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import UIMessage
+from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.locales import uk as uk_locale
 from src.ports.drive_index_repository import DriveIndexRepository
@@ -93,7 +94,7 @@ class Env:
         self.coordinator = MagicMock()
         self.handler = ConversationHandler(
             coordinator=self.coordinator, agent_factory=MagicMock(),
-            global_config=ConsolidationSettings(threshold=50, batch_size=30), drive_note_service=self.service)
+            global_config=ConsolidationSettings(threshold=50, batch_size=30), commands=CommandServices(drive_notes=self.service))
 
     def put(self, n, user=U, versions=2):
         binding = NoteBinding(identity=f"fake:d1:i{n}", item_id=f"i{n}", ref_tag="a1")

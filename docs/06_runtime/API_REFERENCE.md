@@ -84,6 +84,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `GET` | `/join?code=…` | cookie / redirect | Team invite deep link |
 | `GET` | `/cabinet/docs[/<path>]` | owner | The `docs/` tree, rendered |
 | `GET` | `/f/<token>`, `/f/<token>/raw` | capability token | Private file access (`src/web/file_access_app.py`) |
+| `GET`, `POST` | `/geo/<link_id>` | one-time link id (the Slack `$geo` link) | The geolocation page, and its fix route: the page posts one position, the server redeems the link, stores the geo mark and, when the owner wrote text, queues a `geo_mark_turn` task (`src/web/geo_mark_app.py`, `GEO_MARKS_RFC` §4.5) |
 | `GET` | `/s/<code>` | none | Short link to a `/f/<token>` URL |
 
 ## Voice

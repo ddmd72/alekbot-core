@@ -57,6 +57,7 @@ GET /d/<link_id>
 GET /f/<token>
 GET /f/<token>/raw
 GET /favicon.ico
+GET /geo/<link_id>
 GET /health
 GET /health
 GET /join
@@ -89,6 +90,7 @@ POST /api/voice/web-call/<call_id>/renegotiate
 POST /auth/link-oauth
 POST /auth/logout
 POST /auth/refresh
+POST /geo/<link_id>
 POST /mcp/consent
 POST /slack/events
 POST /slack/interactivity

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="__LANG__">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="robots" content="noindex" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Location</title>
+  <style>
+    :root { --bg: #f6f7f9; --card: #ffffff; --text: #1c1f24; --muted: #5f6672; --accent: #2b6cb0; --ok: #2f855a; --err: #c53030; --line: #e2e5ea; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #14161a; --card: #1f2227; --text: #eceef2; --muted: #9aa1ad; --accent: #63a4e8; --ok: #5fc08a; --err: #f08080; --line: #2f333a; }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+      font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    main { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .card { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 28px 22px; text-align: center; }
+    .icon { font-size: 40px; line-height: 1; height: 44px; margin-bottom: 14px; }
+    .spinner { width: 34px; height: 34px; margin: 5px auto; border: 4px solid var(--line); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #message { margin: 0 0 8px; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+    #detail { margin: 0 0 4px; color: var(--muted); font-size: 15px; overflow-wrap: anywhere; }
+    .ok #icon { color: var(--ok); }
+    .err #icon { color: var(--err); }
+    button { margin-top: 18px; min-height: 44px; padding: 0 26px; border: 0; border-radius: 10px; background: var(--accent);
+      color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.55; cursor: default; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card" id="card">
+      <div class="icon" id="icon" aria-hidden="true"><div class="spinner"></div></div>
+      <p id="message" role="status" aria-live="polite"></p>
+      <p id="detail"></p>
+      <button type="button" id="retry" hidden></button>
+    </div>
+  </main>
+  <script type="application/json" id="strings">__STRINGS__</script>
+  <script>
+(function () {
+  var S = JSON.parse(document.getElementById("strings").textContent);
+  var card = document.getElementById("card");
+  var icon = document.getElementById("icon");
+  var message = document.getElementById("message");
+  var detail = document.getElementById("detail");
+  var retry = document.getElementById("retry");
+  var busy = false;
+
+  function show(kind, glyph, text, more, canRetry) {
+    card.className = "card " + kind;
+    icon.textContent = glyph;
+    message.textContent = text;
+    detail.textContent = more || "";
+    retry.hidden = !canRetry;
+    retry.disabled = busy;
+  }
+
+  function fill(template, values) {
+    return template.replace(/\{(\w+)\}/g, function (m, key) { return key in values ? values[key] : m; });
+  }
+
+  function locating() {
+    busy = true;
+    card.className = "card";
+    icon.innerHTML = '<div class="spinner"></div>';
+    message.textContent = S.geo_page_locating;
+    detail.textContent = "";
+    retry.hidden = true;
+  }
+
+  function failed(code) {
+    busy = false;
+    if (code === 1) {
+      show("err", "!", S.geo_page_denied, S.geo_page_denied_howto, true);
+    } else {
+      show("err", "!", S.geo_page_unavailable, "", true);
+    }
+  }
+
+  function send(position) {
+    var body = JSON.stringify({
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      accuracy: position.coords.accuracy
+    });
+    fetch(location.pathname, { method: "POST", headers: { "Content-Type": "application/json" }, body: body,
+            referrerPolicy: "same-origin" })
+      .then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (data) {
+          return { status: response.status, data: data };
+        });
+      })
+      .then(function (result) {
+        busy = false;
+        if (result.status === 200) {
+          var accuracy = String(Math.round(result.data.accuracy_m || 0));
+          var line = result.data.address
+            ? fill(S.geo_page_saved, { address: result.data.address, accuracy: accuracy })
+            : fill(S.geo_page_saved_no_address, { accuracy: accuracy });
+          var more = "";
+          if (result.data.status === "turn_queued") { more = S.geo_page_question_sent; }
+          if (result.data.status === "question_not_sent") { more = S.geo_page_question_not_sent; }
+          show("ok", "✓", line, more, false);
+        } else if (result.status === 404 || result.status === 410) {
+          show("err", "!", S.geo_page_gone, "", false);
+        } else if (result.status === 400 || result.status === 413 || result.status === 415) {
+          show("err", "!", S.geo_page_unavailable, "", true);
+        } else {
+          show("err", "!", S.geo_page_not_saved, "", false);
+        }
+      })
+      .catch(function () {
+        busy = false;
+        show("err", "!", S.geo_page_unavailable, "", true);
+      });
+  }
+
+  function locate() {
+    if (busy) { return; }
+    locating();
+    if (!navigator.geolocation) { failed(2); return; }
+    navigator.geolocation.getCurrentPosition(send, function (error) { failed(error && error.code); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  }
+
+  retry.textContent = S.geo_page_retry;
+  retry.addEventListener("click", locate);
+  locate();
+})();
+  </script>
+</body>
+</html>

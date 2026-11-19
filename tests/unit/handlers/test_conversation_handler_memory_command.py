@@ -15,6 +15,7 @@ from src.domain.memory_fact import (
 from src.domain.messaging import MessageContext
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import UIMessage
+from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.locales import uk as uk_locale
 
@@ -46,7 +47,7 @@ def _handler(memory_fact_service=None):
     handler = ConversationHandler(
         coordinator=MagicMock(), agent_factory=MagicMock(),
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
-        memory_fact_service=memory_fact_service,
+        commands=CommandServices(memory_facts=memory_fact_service),
     )
     return handler
 
