@@ -1121,7 +1121,7 @@ command of the recordings, before any recording. Test-only (plus the extractor's
   replayed as `raw_content` conforms to the request contract; unknown and wrong-typed fields fail at the top level and at depth;
   every kept field, variant and gap is exercised. The grounded loop's pause_turn continuation (the request side's `NOT_REACHABLE`
   `container`) now runs offline over a scripted stream.
-- **P17-D1 (open, strict xfail):** the Anthropic SDK's stream accumulator sets `caller: null` on every tool_use / server_tool_use
+- **P17-D1 (resolved 2026-11-19 as an ALLOWED gap, see "Built (P17 recordings replay)"):** the Anthropic SDK's stream accumulator sets `caller: null` on every tool_use / server_tool_use
   block whose start event has no `caller`, and a replay (raw_content, the pause_turn continuation) sends it; the request contract has
   no null there. The recordings `replay_thinking_and_tool_use` and `grounding_dynamic_container` settle whether the API accepts it
   (accepted: an ALLOWED gap; refused: an adapter fix).
@@ -1137,7 +1137,7 @@ command of the recordings, before any recording. Test-only (plus the extractor's
 
 **Built (P17 recordings replay, 2026-11-19).** The 16 recorded exchanges (`tests/fixtures/providers/<provider>/`, written on the
 owner's machine by `make contract-record`) are read by tests, discovered from the folder (`tests/unit/contracts/recorded_exchanges.py`),
-so a new recording is covered without a test edit. Test-only.
+so a new recording is covered without a test edit. Tests, plus the extractor's table and two `Allowed` kinds.
 - **Format and contracts** (`test_recorded_exchanges.py`): every `_meta` names provider, operation, scenario (one of the recorder's
   `SCENARIOS`), source `recorded`, date, outcome and its `make contract-record PROVIDER=<p> ONLY=<scenario>` command; every scenario
   of the recorder (minus `UNREACHABLE`) has a recording; every recorded request passes `assert_request`, every recorded response
@@ -1153,20 +1153,31 @@ so a new recording is covered without a test edit. Test-only.
 - **`NOT_REACHABLE` `container` stays:** the dynamic search recording (`grounding_dynamic_container`, Sonnet 5.5) ended with
   `stop_reason` `end_turn` (the provider did not pause), so no continuation carried `container`. A test fails when a recording
   reaches a listed entry.
-- **P17-D1 evidence** (the strict xfail stays, a reviewer decides): in `replay_server_tool_blocks` the `server_tool_use` block's
-  start event carries no `caller`, the SDK assembles `caller: null`, and the second request sends `"caller": null`; the API answered
-  200. The `web_search_tool_result` block (received with `caller: {type: direct}`) and, in `replay_thinking_and_tool_use`, the
-  `tool_use` block (received with `caller: {type: direct}`) are sent back as received, also answered 200. The request contract
-  fails only that null (`test_a_null_caller_is_the_only_violation_of_a_recorded_request_p17_d1`).
-- **P17-D2 and P17-D3 (open, strict xfails):** every recorded response breaks its response contract by fields the provider sends
-  and the source lacks. Anthropic (D2): `message.diagnostics` and `message.usage.speed` of `message_start`, and `abort_reason` in a
-  code-execution result. OpenAI (D3): the top-level `billing`, `frequency_penalty`, `presence_penalty` and `store`. A pin fails any
-  other violation, so a new gap does not hide behind the xfails. Fix: response `Allowed` entries (or the source's next version),
-  decided by a reviewer.
-- **Still open for P17:** P17-D1, P17-D2, P17-D3, the other providers (Slack, Twilio, Telegram, Cloudflare SFU, Google OAuth, and
-  Microsoft's identity platform: the token POST of `src/adapters/microsoft/graph_auth.py` and the token endpoint of
-  `microsoft_oauth_provider.py`, both on `login.microsoftonline.com`; that file's Graph `GET /me` is in the Graph slice), WebSocket
-  event schemas, and the low-coverage adapters listed in the table.
+- **P17-D1 resolved: an ALLOWED gap.** In `replay_server_tool_blocks` the `server_tool_use` block's start event carries no
+  `caller`, the SDK assembles `caller: null`, the second request sends `"caller": null`, and the API answered 200. The request
+  contract now allows null on `messages[].content[].caller` of a `server_tool_use` block only (`Allowed(null=True,
+  variant="server_tool_use")`, reason naming the recording, 2026-11-19). The other replayed callers were received as
+  `{type: direct}` and sent back as received (the `web_search_tool_result` there, the `tool_use` of
+  `replay_thinking_and_tool_use`), also answered 200; no recording shows a null on those blocks, so they get no gap.
+- **Contract gaps closed from the recordings.** Every recorded response carried fields the pinned source lacks (checked: the
+  OpenAI spec's `Response` at the pinned commit; the installed SDK's `Message`, `Usage` and `CodeExecutionResultBlock`), so
+  each is a response `Allowed` field with the schema the recording shows, its reason naming the recording (2026-11-19).
+  Anthropic stream: `message.diagnostics` (null) and `message.usage.speed` (string) of `message_start`, and `abort_reason`
+  (null) on the `code_execution_result` inside a `content_block` only. OpenAI: the top-level `billing` (`{payer: string}`),
+  `frequency_penalty`, `presence_penalty` (numbers) and `store` (boolean). The stale-entry refusal applies: once the source
+  has a field, the run refuses until the entry is removed.
+- **Extractor additions.** `Allowed(null=True)`: the JSON value null at a path (`const: null` beside the source schema;
+  stale once the source accepts null). `Allowed.variant`: a null, value or new-field gap applies only where the nearest typed
+  object (the object at the path for a field, the object holding the node for a value) has that `type`, since a path reaches
+  every kept variant of a union; a narrowed entry never applied fails the run.
+- **Left for a reviewer** (the strict xfails and meta-tests written before the gaps, unchanged): the recorded-exchange xfails
+  now pass, and the "every ALLOWED gap is exercised" meta-tests of the request shapes and the response samples do not see the
+  new gaps. The response-conformance samples still replay a `tool_use` and server-tool result blocks with `caller: null`, which
+  no recording shows and which stays outside the contract.
+- **Still open for P17:** the reviewer's decisions above, the other providers (Slack, Twilio, Telegram, Cloudflare SFU, Google
+  OAuth, and Microsoft's identity platform: the token POST of `src/adapters/microsoft/graph_auth.py` and the token endpoint of
+  `microsoft_oauth_provider.py`, both on `login.microsoftonline.com`; that file's Graph `GET /me` is in the Graph slice),
+  WebSocket event schemas, and the low-coverage adapters listed in the table.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years

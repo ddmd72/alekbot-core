@@ -15,7 +15,8 @@ What a subset holds, per operation in `PROVIDERS`:
 - `Operation.open` paths as free-form objects: they carry our own JSON Schemas (tool parameters, output formats);
 - `Operation.allowed`: what our adapter sends although the source lacks it (or marks it deprecated), each injected with
   `x-alek-extension: <reason> (<date>)`. The run refuses to write when the source now has an allowed item: the entry is
-  stale and must be removed.
+  stale and must be removed. A gap can be the value null (`Allowed.null`) and can be kept to one block type
+  (`Allowed.variant`) when the evidence shows no more.
 - `Operation.raw_body`: a request body that is not JSON (an upload's bytes) is kept with its media type and not validated.
 - `Provider.aliases`: the subset's `x-alek-aliases`, the path rewrites `tests/contracts/openapi_contract.py` applies before
   the lookup (Microsoft Graph's `/me/drive/...` and colon addressing name operations the spec writes only as
@@ -65,10 +66,13 @@ MAX_BYTES = 100_000
 # ------------------------------------------------------------------------------------------------------- the table
 @dataclass(frozen=True)
 class Allowed:
-    """Something our adapter sends that the source lacks or marks deprecated. Exactly one of three kinds:
-    `value` (an enum literal, or the `type` of a union variant, at `path`), `field` + `schema` (a field the object at
-    `path` lacks; at path "query": a query parameter the operation lacks), `field` alone (a field of the object at
-    `path` the source marks deprecated, which we keep sending)."""
+    """Something our adapter sends that the source lacks or marks deprecated. Exactly one of four kinds:
+    `value` (an enum literal, or the `type` of a union variant, at `path`), `null` (the JSON value null at `path`),
+    `field` + `schema` (a field the object at `path` lacks; at path "query": a query parameter the operation lacks),
+    `field` alone (a field of the object at `path` the source marks deprecated, which we keep sending). `variant`
+    narrows a `value`, `null` or `field` + `schema` gap to the nodes whose nearest typed object (the object at `path`
+    itself for a field, the object holding the node for a value) has that `type`: a path is transparent to unions, so
+    without it every variant reaching the path gets the gap."""
 
     path: str                                  # body path ("" = the body), "header:<name>" or "query"
     reason: str                                # the fact: what we send, where, why the source lacks it
@@ -76,6 +80,8 @@ class Allowed:
     value: str | None = None
     field: str | None = None
     schema: Mapping[str, Any] | None = None
+    null: bool = False
+    variant: str | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +154,7 @@ class Provider:
 
 _OPENAI_ADAPTER = "src/adapters/openai_adapter.py"
 _CLAUDE_ADAPTER = "src/adapters/claude_adapter.py"
+_RECORDINGS = "tests/fixtures/providers"
 # The content blocks a Claude response carries that the adapter reads or passes back: text (with citations), tool_use,
 # thinking and redacted_thinking (replayed in raw_content), and the server tools' blocks of the grounding path (web
 # search and fetch, and the code execution the dynamic search tools bring). Not kept: tool search, container upload.
@@ -221,6 +228,17 @@ PROVIDERS: dict[str, Provider] = {
                     "output[]": ("message", "function_call", "reasoning", "web_search_call"),
                     "output[].content[]": ("output_text", "reasoning_text"),
                 },
+                allowed=tuple(Allowed(
+                    path="", field=name, schema=schema, date="2026-11-19",
+                    reason=f"every recorded response carries {name} ({_RECORDINGS}/openai/*.json); the spec's "
+                           f"Response lacks it; not read by the adapter",
+                ) for name, schema in (
+                    ("billing", {"type": "object", "properties": {"payer": {"type": "string"}},
+                                 "required": ["payer"], "additionalProperties": False}),
+                    ("frequency_penalty", {"type": "number"}),
+                    ("presence_penalty", {"type": "number"}),
+                    ("store", {"type": "boolean"}),
+                )),
             ),),
         ),),
     ),
@@ -263,6 +281,13 @@ PROVIDERS: dict[str, Provider] = {
                            f"dynamic search ({_CLAUDE_ADAPTER} generate_content beta_headers), absent from the SDK's "
                            f"AnthropicBetaParam literals",
                 ),
+                Allowed(
+                    path="messages[].content[].caller", null=True, variant="server_tool_use", date="2026-11-19",
+                    reason=f"P17-D1: a server_tool_use block replayed as raw_content carries caller: null (the SDK's "
+                           f"stream accumulator sets it when the block's start event has none); the API answered 200 "
+                           f"to it ({_RECORDINGS}/anthropic/replay_server_tool_blocks.json, second request); the "
+                           f"SDK's ServerToolUseBlockParam has no null caller",
+                ),
             ),
             responses=(
                 Response(
@@ -290,12 +315,32 @@ PROVIDERS: dict[str, Provider] = {
                         "message.content[]": _CLAUDE_BLOCKS,
                         "content_block": _CLAUDE_BLOCKS,
                     },
-                    allowed=(Allowed(
-                        path="", value="ping", date="2026-11-19",
-                        reason="Anthropic's streaming documentation: a stream may carry any number of ping events "
-                               "(data {\"type\": \"ping\"}); the SDK passes on only the event names it knows "
-                               "(anthropic/_streaming.py Stream.__stream__) and drops ping, so its event types lack it",
-                    ),),
+                    allowed=(
+                        Allowed(
+                            path="", value="ping", date="2026-11-19",
+                            reason="Anthropic's streaming documentation: a stream may carry any number of ping events "
+                                   "(data {\"type\": \"ping\"}); the SDK passes on only the event names it knows "
+                                   "(anthropic/_streaming.py Stream.__stream__) and drops ping, so its event types "
+                                   "lack it",
+                        ),
+                        Allowed(
+                            path="message", field="diagnostics", schema={"type": "null"}, date="2026-11-19",
+                            reason=f"message_start's message carries diagnostics (null) in every recorded stream "
+                                   f"({_RECORDINGS}/anthropic/*.json); the SDK's Message lacks it",
+                        ),
+                        Allowed(
+                            path="message.usage", field="speed", schema={"type": "string"}, date="2026-11-19",
+                            reason=f"message_start's usage carries speed (a string, \"standard\") in every recorded "
+                                   f"stream ({_RECORDINGS}/anthropic/*.json); the SDK's Usage lacks it",
+                        ),
+                        Allowed(
+                            path="content_block.content", field="abort_reason", schema={"type": "null"},
+                            variant="code_execution_result", date="2026-11-19",
+                            reason=f"a code_execution_tool_result block's code_execution_result carries abort_reason "
+                                   f"(null) ({_RECORDINGS}/anthropic/grounding_dynamic_container.json); the SDK's "
+                                   f"CodeExecutionResultBlock lacks it",
+                        ),
+                    ),
                 ),
             ),
         ),),
@@ -503,6 +548,8 @@ class _Builder:
         self._allowed = {a.path: [] for a in op.allowed}
         for a in op.allowed:
             self._allowed[a.path].append(a)
+        self._typed: list[set[str]] = []        # the `type` values of the typed objects being built, innermost last
+        self._narrowed: set[int] = set()         # the variant-narrowed ALLOWED entries applied somewhere
 
     # -- source navigation
     def resolve(self, node: Any) -> Any:
@@ -590,6 +637,9 @@ class _Builder:
             absent = sorted(set(wanted_variants) - self._found.get(path, set()))
             if absent:
                 raise ValueError(f"variants absent at {path or '<body>'}: {absent}")
+        unapplied = [a.path for a in self.op.allowed if a.variant is not None and id(a) not in self._narrowed]
+        if unapplied:
+            raise ValueError(f"ALLOWED narrowed to a variant never applied (typo, or the source moved it): {unapplied}")
         if self.response:
             absent_fields = sorted(set(self.op.fields) - self._root_fields)
             if absent_fields:
@@ -604,6 +654,8 @@ class _Builder:
                 if path[len("header:"):] not in getattr(self.op, "headers", {}):
                     raise ValueError(f"allowed header {path!r} is not a declared header")
                 continue
+            if any(a.null for a in self._allowed.get(path, [])) and path in self.op.variants:
+                raise ValueError(f"ALLOWED null at the union {path!r}: name a path below it")
             head = path.split(".")[0].split("[")[0]
             if path and head not in self.op.fields:
                 raise ValueError(f"path {path!r} is under no listed field")
@@ -672,7 +724,14 @@ class _Builder:
             if key in _DROPPED:
                 continue
             if key == "properties":
-                out[key] = self._properties(value, path)
+                tags = self.type_values(node)
+                if tags:
+                    self._typed.append(tags)
+                try:
+                    out[key] = self._properties(value, path)
+                finally:
+                    if tags:
+                        self._typed.pop()
             elif key in ("anyOf", "oneOf"):
                 out["anyOf"] = [self.build(m, path, whole=False) for m in value]
             elif key in _SCHEMA_LISTS:
@@ -723,7 +782,7 @@ class _Builder:
             self._root_fields.update(n for n in names if n in self.op.fields)
             out = {name: self.build(props[name], name) if name in self.op.fields else {UNREAD: _UNREAD_NOTE}
                    for name in names}
-            for a in self._allowed.get("", []):
+            for a in self._applicable(""):
                 if a.field is None:
                     continue
                 if a.field in props:
@@ -737,7 +796,7 @@ class _Builder:
                 raise ValueError(f"listed fields absent from the source: {absent}")
             names = [n for n in names if n in self.op.fields]
         out = {name: self.build(props[name], _join(path, name)) for name in names}
-        for a in self._allowed.get(path, []):
+        for a in self._applicable(path):
             if a.field is None:
                 continue
             if a.schema is not None:
@@ -756,6 +815,18 @@ class _Builder:
                 built["x-alek-extension"] = _note(a)
         return dict(sorted(out.items()))
 
+    def _applicable(self, path: str) -> list[Allowed]:
+        """The ALLOWED entries at `path` that apply to the node being built: a `variant` one only inside (or on) the
+        typed object of that type; each such application is noted for `body`'s never-applied check."""
+        out = []
+        for a in self._allowed.get(path, []):
+            if a.variant is not None:
+                if not self._typed or a.variant not in self._typed[-1]:
+                    continue
+                self._narrowed.add(id(a))
+            out.append(a)
+        return out
+
     def _check_root_required(self, out: dict) -> None:
         dropped = [r for r in out.get("required") or [] if r not in self.op.fields]
         if dropped:
@@ -763,14 +834,16 @@ class _Builder:
 
     def _inject_values(self, built: Any, path: str) -> Any:
         """A scalar ALLOWED value: the node at `path` becomes anyOf [node, const]. A variant value is `_variants`'."""
-        extras = [a for a in self._allowed.get(path, []) if a.value is not None and path not in self.op.variants]
+        extras = [a for a in self._applicable(path) if (a.value is not None or a.null) and path not in self.op.variants]
         for a in extras:
             schema = {**built, "components": {"schemas": self.components}} if isinstance(built, dict) else built
-            if jsonschema.Draft202012Validator(schema).is_valid(a.value):
-                raise ValueError(f"stale ALLOWED at {path}: the source now accepts {a.value!r}; remove the entry")
+            if jsonschema.Draft202012Validator(schema).is_valid(None if a.null else a.value):
+                raise ValueError(f"stale ALLOWED at {path}: the source now accepts "
+                                 f"{'null' if a.null else repr(a.value)}; remove the entry")
         if not extras:
             return built
-        return {"anyOf": [built, *({"const": a.value, "x-alek-extension": _note(a)} for a in extras)]}
+        return {"anyOf": [built, *({"const": None if a.null else a.value, "x-alek-extension": _note(a)}
+                                   for a in extras)]}
 
 
 def _note(a: Allowed) -> str:
@@ -785,8 +858,10 @@ def _check_allowed_kinds(op: Operation) -> None:
     for a in [*op.allowed, *(a for r in op.responses for a in r.allowed)]:
         if not a.reason.strip() or not a.date:
             raise ValueError(f"ALLOWED at {a.path!r} without a reason or a date")
-        if (a.value is None) == (a.field is None):
-            raise ValueError(f"ALLOWED at {a.path!r}: exactly one of value / field")
+        if (a.value is not None) + (a.field is not None) + a.null != 1:
+            raise ValueError(f"ALLOWED at {a.path!r}: exactly one of value / field / null")
+        if a.variant is not None and a.field is not None and a.schema is None:
+            raise ValueError(f"ALLOWED at {a.path!r}: a variant narrows a value, null or new field only")
         if a.path.startswith("header:") and a.value is None:
             raise ValueError(f"ALLOWED at {a.path!r}: a header allows values only")
         if a.path == "query" and (a.field is None or a.schema is None):
