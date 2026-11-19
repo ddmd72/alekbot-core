@@ -10,7 +10,7 @@ Paths: a request's path is the decoded URL path the client sent (`yarl.URL.path`
 or fragment. When the contract's server has a base path (`/v1`), the path must start with it and it is stripped; a path
 without it is accepted only for a server with an empty base path. The operation is found by its literal path, else by a
 templated one matched segment by segment (`/messages/{id}`; a literal match wins); the matched segments are the path
-parameters. `contract_form=True` names an operation by its own `paths` key instead (a test of the contract itself).
+parameters.
 
 Query: the caller always says what was sent (`{}` for nothing). Values arrive as strings and are read per the
 parameter's schema (integer and number in their canonical ASCII form, boolean; an array is a repeated parameter, or one
@@ -47,20 +47,18 @@ def assert_request(
     body: Any,
     *,
     query: Mapping[str, Sequence[str]],
-    contract_form: bool = False,
     contracts_dir: Path = CONTRACTS_DIR,
 ) -> None:
     """Fail (AssertionError, every violation on its own line) unless the request conforms to the provider's contract.
 
-    `path` is the decoded URL path the client sent, the server's base path included (see the module docstring), or with
-    `contract_form` the operation's own `paths` key. Only the headers the operation declares are checked: the SDK adds
+    `path` is the decoded URL path the client sent, the server's base path included (see the module docstring). Only the headers the operation declares are checked: the SDK adds
     its own (auth, user agent, retries). `query` maps each query parameter sent to its values in order, as strings;
     `{}` when none was sent. `body` is None for a request without one. `contracts_dir` is for the tests of this module
     and of the extractor."""
     if query is None:
         raise TypeError("query: pass {} when the request carries no query")
     contract = contracts_dir / provider / "openapi.yaml"
-    template, path_params = _match(contract, method.lower(), _plain_path(path), contract_form)
+    template, path_params = _match(contract, method.lower(), _plain_path(path))
     op = _operation(contract, method.lower(), template)
     problems = sorted(set(op.problems(headers, body, dict(path_params), query)))
     if problems:
@@ -70,7 +68,7 @@ def assert_request(
 def operation_path(provider: str, method: str, path: str, *, contracts_dir: Path = CONTRACTS_DIR) -> str:
     """The contract path (`paths` key) a request's method and decoded URL path resolve to; AssertionError when none
     does."""
-    return _match(contracts_dir / provider / "openapi.yaml", method.lower(), _plain_path(path), False)[0]
+    return _match(contracts_dir / provider / "openapi.yaml", method.lower(), _plain_path(path))[0]
 
 
 def _plain_path(path: str) -> str:
@@ -96,15 +94,11 @@ def _document(contract: Path) -> dict:
 
 
 @functools.lru_cache(maxsize=None)
-def _match(contract: Path, method: str, path: str, contract_form: bool) -> tuple[str, tuple[tuple[str, str], ...]]:
+def _match(contract: Path, method: str, path: str) -> tuple[str, tuple[tuple[str, str], ...]]:
     """The `paths` key the request resolves to and its path parameters. A literal path wins; otherwise the templated
     path with the most literal segments (a tie between two templates is ambiguous and fails)."""
     doc = _document(contract)
     paths = doc.get("paths") or {}
-    if contract_form:
-        if method not in (paths.get(path) or {}):
-            raise AssertionError(f"{method.upper()} {path} is not in {contract} (operations: {sorted(paths)})")
-        return path, ()
     bases = _base_paths(doc) or [""]
     candidates = [path[len(base):] if base else path for base in bases if not base or path.startswith(base + "/")]
     for candidate in candidates:

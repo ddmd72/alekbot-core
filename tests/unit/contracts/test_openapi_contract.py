@@ -253,16 +253,6 @@ def test_a_server_without_a_base_path_takes_the_path_as_sent(tmp_path):
         oc.assert_request("tmp", "GET", "/v1/parcels", {}, None, query={}, contracts_dir=root)
 
 
-def test_the_contract_form_names_an_operation_by_its_paths_key_only_when_asked():
-    oc.assert_request("parcels", "GET", "/parcels/tracked", {}, None, query={}, contract_form=True,
-                      contracts_dir=FIXTURES)
-    with pytest.raises(AssertionError, match="is not in"):
-        oc.assert_request("parcels", "GET", "/parcels/tracked", {}, None, query={}, contracts_dir=FIXTURES)
-    with pytest.raises(AssertionError, match="is not in"):
-        oc.assert_request("parcels", "GET", "/v1/parcels/tracked", {}, None, query={}, contract_form=True,
-                          contracts_dir=FIXTURES)
-
-
 @pytest.mark.parametrize("value", ["٥", "５", "+5", "05", " 5"])
 def test_an_integer_value_must_be_canonical_ascii_digits(value):
     with pytest.raises(AssertionError, match=r"query limit: wrong type \(expected integer\)"):

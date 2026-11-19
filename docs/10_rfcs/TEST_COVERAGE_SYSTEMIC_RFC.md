@@ -1047,7 +1047,7 @@ header list, the full fetch, the parts listing, an attachment by its handle and 
 - **Core additions.** The extractor keeps every path parameter of an operation and the query parameters named in `Operation.query` (a name the source lacks
   fails); an operation without `fields` has no request body; a discovery integer format becomes its range (`minimum`/`maximum`). `assert_request(..., *, query)`
   takes the decoded URL path alone (a `?` or `#` in it is refused) and the query the request carried (required: `{}` for none). A server base path (`/v1`) is
-  required and stripped; the path is taken as sent only for a server without one (`contract_form=True` names an operation by its `paths` key instead). A templated
+  required and stripped; the path is taken as sent only for a server without one. A templated
   contract path matches segment by segment when no literal path matches (a literal wins; the template with more literal segments wins, a tie fails); the path
   parameters are validated. Query values are read per schema (integer and number in canonical ASCII form, boolean; an array is a repeated parameter, or one comma
   list under `explode: false`): an unknown name fails, a required one must be there, and a parameter marked `deprecated` fails unless the contract allows it.
