@@ -164,37 +164,37 @@ class TestGroupByDomain:
 class TestRenderSection:
 
     def test_empty_facts_returns_empty_string(self, fmt):
-        assert fmt._render_section("Biographical", [], "biographical") == ""
+        assert fmt._render_section("Biographical", []) == ""
 
     def test_mindset_prefix_for_preference_domain_with_mindset_tag(self, fmt):
         facts = [_fact("Be curious", domain="preference", tags=["mindset"])]
-        result = fmt._render_section("Preference", facts, "preference")
+        result = fmt._render_section("Preference", facts)
         assert "[MINDSET] Be curious" in result
 
     def test_no_mindset_prefix_without_mindset_tag(self, fmt):
         facts = [_fact("Likes coffee", domain="preference", tags=[])]
-        result = fmt._render_section("Preference", facts, "preference")
+        result = fmt._render_section("Preference", facts)
         assert "[MINDSET]" not in result
         assert "Likes coffee" in result
 
     def test_no_mindset_prefix_for_non_preference_domain(self, fmt):
         facts = [_fact("Runs daily", domain="health", tags=["mindset"])]
-        result = fmt._render_section("Health", facts, "health")
+        result = fmt._render_section("Health", facts)
         assert "[MINDSET]" not in result
 
     def test_date_suffix_appended(self, fmt):
         facts = [_fact("Born in Portugal", created_at="2026-01-15T00:00:00Z")]
-        result = fmt._render_section("Biographical", facts, "biographical")
+        result = fmt._render_section("Biographical", facts)
         assert "Jan 15, 2026" in result
 
     def test_no_date_suffix_when_created_at_missing(self, fmt):
         facts = [{"text": "Old fact", "domain": "biographical", "tags": []}]
-        result = fmt._render_section("Biographical", facts, "biographical")
+        result = fmt._render_section("Biographical", facts)
         assert "(" not in result
 
     def test_header_and_bullet_format(self, fmt):
         facts = [_fact("A fact", created_at=None)]
-        result = fmt._render_section("Biographical", facts, "biographical")
+        result = fmt._render_section("Biographical", facts)
         assert result.startswith("**Biographical**")
         assert "- A fact" in result
 
