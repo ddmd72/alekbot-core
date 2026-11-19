@@ -99,7 +99,7 @@ def test_the_subset_is_flattened_pruned_and_closed_after_the_transforms():
     assert sorted(item["properties"]) == sorted(PATCH.fields) and item["additionalProperties"] is False
     assert "required" not in item
     label = schemas["ex.label"]
-    assert label["additionalProperties"] is False and sorted(label["properties"]) == ["@odata.type", "text", "x-ms-note"]
+    assert label["additionalProperties"] is False and sorted(label["properties"]) == ["text", "x-ms-note"]
 
 
 def test_the_odata_transforms_are_named_and_the_source_is_pinned():
