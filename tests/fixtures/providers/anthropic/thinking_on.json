@@ -1,0 +1,204 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "thinking_on",
+    "purpose": "a reasoning / thinking block before the answer",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:23Z",
+    "model": "claude-haiku-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 3.2e-05,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=thinking_on"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 2048,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Alex Doe's 2015 Skoda Fabia had its oil changed at 10,000 km and was serviced at 90,000 km. How many km lie between the two? Think it through, then answer with the number only."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "output_config": {
+            "effort": "medium"
+          },
+          "system": [],
+          "tools": [],
+          "thinking": {
+            "type": "adaptive"
+          },
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgA8JvzkUYedoJ4RgDQ",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 75,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 2,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQSvQUKEAgUGAI4AUIIdGhpbmtpbmcSDB/y7wh2ni+bSBqvLBoM06ec7JSrxe4y5pReIjCXiFck5CzOtyW1+QTZyh5wt+YvpAWw4clyZGpfmd0poo2dI0xvil/2Gd69oKf1w8gq2gTxC2D8t2ziOtdxZo6S6nz0TpJNxfFA90JuK17czlQ1ANOKd/gdmm2u7Efeiui8+FGOks2Lfk/4gLByaAk3pqCKMNTRHIC9n4+fVtC+m86fhF+Dbj/kWn5KuxgEWp1TcqK6Lx4ONLPZwQslnsHyfUjEctHSnqOwEfzcG8ioQxYJSjnG5Rjdo2cfXGigb3bcc7/ljYH1+7vFUv4PS8CMRge+2oah5l7U3/rLknhwGiTJrenBnqbO10LbuYxvmoKqtXhmI4QL7UpMN348gvE7EtHjfti2abWU5rFI5EGcLk+ZksuH2mRjSeLJyuHzuQaEMXZx8PtB3XL625Ic+kqUIVDZPuA8zZxRT8FhHjgbp5r+B9Z9nQXtPXoBQY7j8/xtFdB9fBPWTcBsmReBZioAGgERx4Gjk8VrqRDy90UqCGkmdr7331W9CLPFfIcxHKwZ6eGLYkkMzDHu+5LoEFHUl6uFEdYVAZ1le59LGH5ul3WfNeR0IC9Fttr9FSe1u27YnIMzglSRN4yIujERVVUkcJGpPehFXU9HAElJ5JOu0UvN1R0p3gWtmTwSMzLJAlazt4pDz98f+XL/DSoU+73dIfvSmcNpGuasVJlskQfsBKqlXrq0NuUqTE9fKRa3RKD+AypYJrcUJowpn3RCx6HnlHRagQnnzCCaykfZgYTcPv3xhG03Qx8g7a/lE7CMHUCXi5wie+jlVnuE2+sQKScbu/HQNGmxGixbgu3NGQ96BFXadeItK5/ewb/lVQUbLQfnwghdqE8BitVkPkLymEZGSo7Z05XEcH+Ubhx4wRgB"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "80000"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 75,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 49,
+                "output_tokens_details": {
+                  "thinking_tokens": 45
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.001076,
+      "cost": {
+        "input": 75,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 49,
+        "searches": 0,
+        "usd": 3.2e-05
+      }
+    }
+  ]
+}

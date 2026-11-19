@@ -1,0 +1,252 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "structured_output",
+    "purpose": "a JSON answer to a response schema",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:31Z",
+    "model": "claude-haiku-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 9.2e-05,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=structured_output"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 200,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Where and in which month is the Sao Joao festival held? From what you know."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "output_config": {
+            "format": {
+              "type": "json_schema",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "month": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city",
+                  "month"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "system": [],
+          "tools": [],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgAeUtxBxBx8CFVDX8T",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 237,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 9,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQSmQcKEAgUGAI4AUIIdGhpbmtpbmcSDCRXw/fpiZ4eBZkwIxoMR9jPd//JaB3TQthCIjCXEhUfK+FwJwClumdxTswe8dnXTR5qZw5Wvfb5Q9xf218Xmb+a0E7NFJyCo+HaECkqtgabYTBpkvmpQonWjxe6BAkF0fc/uZdH08kJN/JaNanzP03xBiD9enqdr22h5AUdNDoy5+1S3cSDsX9Fr5pW+sA8/eUcXCggUoOCMlwExe4ZbY51z7UwRXs+4EZMJyzx3Cn0ChBlx1PeP7D2/vjS4Y77d69tBTtXa2KW/xew9qmiBeG2nVbp1zyTRbn0/MlKw9zM24MlJTyXZG1Ci/cHLK5LtuuolPYTgUuc7a4SRcwy/JopCZ5w0nyLFFBAL9iNgz4EpfZ0CTHc9VNR6s2xZ5FCAW39Q9ajH6OKjQFVH5cYSy6ZD5CBeJSy0yVcNi7uIjHnUDjXPefXczLkrs8fcTwmwqCJB8j4HtgVOyNw6vOpv0ecPpQ372MfESsYN/JDX5/jnhRBTvLT0q4IAHELI/NTtWWukHFV1dy1ha+QJZ2EpWJON+CB6aISjQ0j/R2dhclJML1zwNrokAl8uQXIVsMfhzZZYdA4hXIzYz3d5PsR3Gn9RX6E1fEjjYPApwgqysRkbTKXoj8Zg9mPx1Hiq9NNC64Ka6W/fxe+w1m2HjDXoPWz/JNKvyRU5eCWAr9hS1PvEpSU5umdq/sJwcfaiBkSTgdtYgluNOxmc0OKq9XNS/hDzq50E+w9r7y/tgYdS3qXawhgMzL5H+jhs5sTdUsJqbs+h/uUIquQXuvZkSpg5TTzLQXLz9VaYS8VQiZ7vKPVvbudH5D9HTn3JeV4b4U8i14eXmbAQA8wqR6mODH3aP5AH7xa5xVxjDw2YQZHUIO9G+NiaGFvVlE6M9ELSQjWaHrk6j93L3o6A4raw9FEWGb6Ri7ujXiykMhGSopJIabSLwGG/bLKk/T25/Ygv477mempG3aZBO/KreHgA+4a/nXkb+ujlesT6s3IpGZqyOEaMGm+ue9882EYLkynD/cC87e5R7qgiN+5B5+s/TTy/HX79roo8tZl4eMUQSDDEPN/VfR3jVmXeeJ8lCcI1VUnPWmzBWNOQhSvgqDJKtNKT3X5Z3QDA+yWKuyfXgBhrIwUHfu5Dc9ExvgbrXgkPbnXY6acwdp5k7U2KoFllORNJFEhGAs1fvOu0nlq7BPpbgBdmbD16uIYAQ=="
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "{\""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "city\":"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": " \"Porto\","
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": " \"month\": \"June\"}"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 237,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 137,
+                "output_tokens_details": {
+                  "thinking_tokens": 119
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.000158,
+      "cost": {
+        "input": 237,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 137,
+        "searches": 0,
+        "usd": 9.2e-05
+      }
+    }
+  ]
+}

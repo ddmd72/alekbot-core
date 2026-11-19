@@ -1,0 +1,953 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "replay_server_tool_blocks",
+    "purpose": "NOT_REACHABLE: server-tool blocks of a grounded answer replayed in the next turn",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:37Z",
+    "model": "claude-haiku-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 0.012929,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=replay_server_tool_blocks"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31,web-search-2025-03-05",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 1024,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "When is the Sao Joao festival celebrated in Porto? Answer in one sentence and cite your source."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "system": [],
+          "tools": [
+            {
+              "type": "web_search_20250305",
+              "name": "web_search"
+            },
+            {
+              "type": "web_fetch_20250910",
+              "name": "web_fetch"
+            }
+          ],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgAwJvnijuLzr6AEqX4",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 3618,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 6,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQS7gUKEAgUGAI4AUIIdGhpbmtpbmcSDBaWWczfgmDKgqShCxoM0fH6DyZLrkuS5VRAIjC9wwHYt2U7Q+mBWoU8YVH6dqNhQsSsnPiUVowy23EFUeuFDyfM3X2cTagts0GCftgqiwV6bcKKB3FRVp1C2wQGl46CAcjZl411tFtfLxPAt4pY7trrFlDods1n6Oqwig+GGPBi5hILLxbn6r7hi1M5lP4c6HxBSBPoIpDwPITVp9s85T/qqlNIVmUUXujdxxAPP5/zxZUAgeG21+8i0lx4X24nmyYOHdrCGacljhUU82U6/hiENUosF1N0vnKfz1xCvBaqHuhTaQGy3vEvcsd/OHhX8gGp15IJZJt5L7OhC/Mz277ocuK92qdx/imiTsDujrT1bClVU0yUY4sjWf7IiYUGVwtr0iL0cWsrySiZXrEpschvMCD7a1alP95UD7GnC6vxz/eHaZxfHDr41+0tz40oukujYcUDRClEasnQisShBmnOjLUe3VjsLsctaEE2BeEbHakVB0XMeRk4MgbKmwOYcZ04Jyxd+VJgq8G9QNoosC0Ib4pOspWHnOEVORUuOpQPF/1iboZYGkYzkXPMeHFAlHVZXmQ2+2hFXENpzbr4Km65qjL95616YbidLe+0lgNbVxk05nBvnZkZLbZo7tjw2dZwcViKiytt1dy3a2D4j/OUMkqe6RR/i5CNXeqki4H3Hx3ZhUkkG2iphzvnXGBgj6fiXDiJQGZxDdxZcxr7XArGDntiq7t+UNXUJ36IHH9xAxfpHLWyYdusBfY5cfAruKVGVeElnWlzFJCbO3UuAtKO9JxFZr028JMB0hNjZ23J3g/Z2npsl+dEogY/koWBvAZh8TWV6mOs0qiP/lw8OylkXU9M1ilkJybNV0e7loqmRDycFmnIVfWoIunhBzofKF6omfwcpiSyvPBBDzvx+uLiTuqh2e6BBYmqE8baxsS2MZIO8MUeHaWXGUji7HEi6s1cSCfDbcV2BPEYAQ=="
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "server_tool_use",
+                "id": "srvtoolu_01216AcVR2gj49APRrxhb4sm",
+                "name": "web_search",
+                "input": {}
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "{\"query"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\": \"Sao"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " Joao f"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "estival"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " Porto "
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "June da"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "tes\"}"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 2,
+              "content_block": {
+                "type": "web_search_tool_result",
+                "tool_use_id": "srvtoolu_01216AcVR2gj49APRrxhb4sm",
+                "content": [
+                  {
+                    "type": "web_search_result",
+                    "title": "Festa de S%C3%A3o Jo%C3%A3o do Porto",
+                    "url": "https://en.wikipedia.org/wiki/Festa_de_S%C3%A3o_Jo%C3%A3o_do_Porto",
+                    "encrypted_content": "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",
+                    "page_age": null
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "Festas de São João in Porto: Traditions & Fireworks",
+                    "url": "https://cooltouroporto.com/blog/porto-sao-joao-festival",
+                    "encrypted_content": "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",
+                    "page_age": "177 days ago"
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "Porto São João Festival Guide: Everything You Need to Know",
+                    "url": "https://cantocooking.com/porto-sao-joao-festival-guide-everything-you-need-to-know/",
+                    "encrypted_content": "ErUNCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDKeQABxNP23T1JhOcRoMZg9FyxwRXyU6gygSIjAntg0zMxhUs5IpRJb8qijNiaG1zqIFAute3yBa5J4BQ+7UNom8IaowQdXHfqybWmIquAy8/ABZ2KdW2BWNWGYRr/4hwfnkJs+doHbsQD+gCNyiISrgwPWmPwf68idPm8YeOdObMCYw2xXqdaT+ub4MFUzQZC5vD2bRM4/2sNKQYg//lGSRj1wdwIQ0xcRdUNDTlcpbOIPuLXhMkzPtojpA1Ocwz/hzAnWEbcdVwS7JUUQQGy8RmGWmLtL1KRphuxbwfNhhfduMUK4krNXW8GyVXFhQhl5a7m8fvwJUSpncNZzkJpBUz2FYr9HUztZ1KguNEk3QutSCr4qo0uZxbrLye6mO73GZkC/F06UJcnRD8g/yNA4MoV4/rmA6vjDWWEzdOh2X2uX6l9n/K/cz/9itZkcQQ0lQKJIpJOwwrm0lo4rOaIjpRl8jSPI6Qx5I66piJmY06tmdaWaDRI0QaLVSMvR3k6765zKJpTLndMPpbGA2RKQBTeg0gfgpPb3+jaQiO1GY0kEHvJOR3ozJTf+rm/Kakw43HDlCu118FJm5LXhY0T5SS5fxV/RocZKfTlwnHKy7bK79FZCP9g9zDX4MKZASq/Te/LbYmHkFeqYHpFO9G0brKVgIcMUxzk8hbA/cESHj3qup9jZXPKSeZs8jiJbgkTe1M9A1/f6pYCZINiJY+rCUaDkyHanbT7M69FGsfnUDpPLGtCgnid5PwdVbMU4KRHhpAoNvDJHB2B7HICxZU+XwUUsdg+Ajm04bJnMnXOGB5cMECg/o2erySSn772zw2uBKqJk7BWElpIkOt72nnmHCdjYcJMp3FZLG9aZHCQxO4zB9t1TRwte9DH4fjQScOgfH34eKZH4tXiFMyvuyUejMMnVtdqDblrNVTf34qDVlmbqSg9zAY192qCf2qavdnZZy1UTs4m493qBepzBCfiqAaaqHA0s2AsksmIhI1gp6ww7TkaVRkzeQ67V6wJs9jbewZrakFODVbvJtlJ5fwtQGHlbo+wbGmhwfQPmqbFeLqRVKQo5z30IfdEmwuTqv5IgsXNey7Gav55KGfFVOQLb+BF/6cXZ+lTA5ZrbH8ieuyo3wu7/DqN5NCP1RRS2QLan1Ht9sFQrCASLw9MeCMZT4eaZlfs/5GoD4KhrMjcJcgbS8RTMp04j/EsTPNGF5t0cpLtAnfLMdYxe5aT6d7EzgNzxxBsG65IxmoIKO2suIqmkjURyAZwnO4EVoySSm5IHq4GbKLsQseHgk5dfEL4wdb4xOtzO/Mw3p+ewIFPvaimVfVOzR+I28TOInL0MUzVq7gCLM41PPoJ3L3YmYwKmGcK3kUcCkQEhQlRdVB+IvotozSRaA3NMjGAp+uRdRgs+SJazbkZ/Wl85D74pUFhOd4z3P2LC4shRPAXxCHc4XxJeoNnVc/+KvN10a8YgF+JoqlYIaQ3yjVrOhaSoAtxAnjagOVNth/odyd8wqkkqqiYOlt9YLZg5M6vNBkhNmXeM+XGtVHfj/Bgn4RNQFBs2+nf5xw+9b3j61Sf4ebWhcRj/TH5bPVW08toD3gh77yE/r2QV3aJzvsbfrcEhNldNDhYhpxkpP9c2xifBEip/nw33nNvo42re09ziHyLM8uGt6VW7swzCgPOEIsqveI0Lm2Z8h4ZSzE43RDvvep62oZ3LPUDnCwjMmsKk7fIDdsm8OimeE0iIQKGMZQL1HRV0dgWNRg49luK3YyO2GF20fM09RPxNC+0FtE1pZCSfg9OMuAsq2IUuOLc9GbUjN/w3NepUHrBhuDUwdjuWcTiZg6r/wVm/bx8XGsFbcjtfMpngsoM/I3w2Hw0YT3O4wiw2cN0HDe0elG5mMgzdYhD3hdiljOnjCHUjD2UbESuqgsB7hglIzCRzmaoTHm5H6lUTlhlCeV1q1BsUal3lNu771ZVjYjIJDtdd31ppBX6teLUw6HPyzEicKZWnWTCPcj93JKxwmzDL1iCUGn4yA0T6pIqVU9+MljiLsf7/KEuCghYRCSNKIcjDmXOoH2YhvaIBi+CYrhOcBUO3ZFd6J4GY/G11523CVIBHrC6Kc8/pf63N07xYkB232oKZJKsA1NomS3ks9bn2uwfRJBqENgf68Kx+RKWGaG/CAdeSaKAvUEs+0qb41Y6YxElCqoSRoeIgf7i9BLQ7nhiktNS+rQCUVc9IOL05Q8xgD",
+                    "page_age": "57 days ago"
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "São João Festival Porto 2026",
+                    "url": "https://portopoolvilla.com/sao-joao-festival-porto-2026/",
+                    "encrypted_content": "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",
+                    "page_age": "209 days ago"
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "São João Festival Porto 2026 2026 - Portugal",
+                    "url": "https://www.theportugalguides.com/events/sao-joao-porto-2026/",
+                    "encrypted_content": "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",
+                    "page_age": null
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "Festa de são joão, Porto, Portugal - Dotonmap",
+                    "url": "https://dotonmap.com/portugal/porto/festa-de-sao-joao-porto-portugal/",
+                    "encrypted_content": "EpMLCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDIpSMlk3hAKa0Alo/xoM3TSGhIuGEM9r4AJaIjB3EtLSqENR6syJEaBHeImjyJaiDP89b1lZV8trKUtEBjkuVtOrB9O/7TmL3v7uNvMqlgqQ51h6mqYFxAqaTeskhGGm95Tkx4zcMuSew5oXQaLNuaoTWXzMWqheXRz38VJtQsYw6JF2WbHaork0qgnB+K8jVNhkXLl3yPpdf47H2aME/mu+2szvENUPBo6K8ehDFKOfhamplSqRyYUHs7v5X2RrTueZKaVt1BskA5zjnBIapCkwidLmG9cLgu5X8t9W+D2sRcqL+CnW+eAixwoS/LzqySanrAtdpcPR5OKAtCBDUWqPcuDHm4Q+lcR43jr+sh0v7MH0Qgjdt63uu2SnBaYjBaomT2yhyjZ3IW+noFxC6IDG+n8zSbtwP6qq1rQJmoyH4BewYxTdhtWFAQplBtnWZsCgOVfQDBAgANum/Ht/dcIkbZyPtKzLiX6GyJJ9pC6n2O0FjnWfANBz5gcSInfxXTPNh11ObRxScJYN3rdoaugSXu3a+PYb/W8uJeok4CXeNc3VA39CT3VK1LFZkjyOEqDII9L5GQy0qCYW//fXx5Qoiae7jcOx6K6c3ok0kqYxQSJFp3FsoEW5hKcbfRekohxrx7FpYcNCe+hG03iD1AfIwh/XiYFrcV+sZO6Ze6ChMdXL52clbGWBOw0+lAjZGUBikDRjRtvguY3krcN4XsGWbMREOwL+3bIv/HOmFKZREj+AUMfAotl7RVEp2OSI8eWpdYCou8jNbHEZ2vi9dV1t2f6/zkS0ZSjW2dLpAOJeAoscKrFHu2gtYdAjEh6J9K+5eDrWu74uHVRBmC2HIkzfnezkDqBfJgWdegucoNPxNL4tVVK7iNmeRI01cewOCVClODcaWcdZc5ZnpgBGgOrZ9saFt1ESvpSK/Vz/XuSloC0TAQgcRkybDYwcDPtyo2r49wLEojhXPSx/90HypGpJH/QeRBOJoi/YEHdRB84mGexa6FDeRBWbKLUlQ3ah2Wu6eWZXSh3SVV1DLbKE2+PE9lCJv7jDUFACr57MUryw/r5Y9plJznER8yOBlNW7GjBqx8bZCntp5JY/E22Ksn2Hc9AKxFpsbAQoHh1hFqgRw8p63/hv40/ulco6s/q0PrYtgzPfujzG8rUMM47Ur2s4Lp5BO8aerpiRJxlgKIG0T/6XBe0LhgU5RUqmpfr1WieV3noOnxoWQ4nZJcGrpt5VDvU4r8IJ9WlviJ+RQ7+uAUoaEALmZMzu7Qe7tS5bBydUy7Xa3yDHYw7tsEdJvHEkKd0pWth+U5UbEmGbypo0zxpKDq5FVo5nfhHyUCboxNejHeDig2ZlykYrb8exZLGVOQgrrysG9IF3eDCNz24pk0neQQg5d14zcVKj65mHZuEJ/K0amTyJ3/mEMWQf0AunvvByehSe1Tl2BtPuSZiEm91GBwcllUnMYIumtqYfFjhRxBvYZD4dlWI70KRRqu4SPkpM+n9/VlW2mXKfaCvNBz8dgBMii6tFrz+WM1aQbdMTWSRTm92mkYnp1IG8RymXOL03t6I3CAXxpEY6yTo5QIOviug6sFKBBHAOzjAVx9FsOioFk5pcAJ8d+l2PTlJX3lOxpnOkX5E4w6kZX2pADjaRI5Nx0LV4d0AEbTctCi5JPF9/ogVBa9SasD9EbdgPYk6wu9szay0sZJC7pkDk3KB+fyfr4Ongrf4sTXJyzr2waJlN4dFnux78GgeZj/RddIpr17+b2oFOX+ppT/Zq+g5h6ooWW4zlL8Gp1KZludb91SW3wCr2nJjof5z5fQrXBfB3kX0zsLlezWOba7GxDDBVaRsYAw==",
+                    "page_age": "215 days ago"
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "São João Festival Porto: Complete Guide",
+                    "url": "https://www.nomadotravel.app/en/guides/sao-joao-festival-porto",
+                    "encrypted_content": "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",
+                    "page_age": "149 days ago"
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "Festa de São João 2027: Dates, Tickets & Backpacking Guide",
+                    "url": "https://www.takeyourbackpack.com/backpacking-in-portugal/visit-festa-de-sao-joao/",
+                    "encrypted_content": "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",
+                    "page_age": "13 days ago"
+                  },
+                  {
+                    "type": "web_search_result",
+                    "title": "São João Festival Porto 2026",
+                    "url": "https://dourovinhateiro.com/en/event/festas-sao-joao-porto-2026",
+                    "encrypted_content": "EpMLCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDDi8I9Y5kiUcW/1VgxoMaV5cYlOhwzFPMCcXIjCxq3VxLjNfdPhGh6QQmh0fH7blxd2ogXEdqR/zBOyvi2OJUVZXieL6hYDVwYHh1DcqlgpjFnvzBwa2RGXj4Ew+JWKUwCSj8eKWiTEReJ+bhJUMYeZNr7nCrhbhiG7sx+2OyadgnoahPWA8vZhX/LWBtnxo+A23KayiTxLoSAuWGYmdQSEuPavgcFU5OVsyOBn8S00kGRROTYxFSB6ik+M4vzCbt/61KWpvzfnjLOQDpph33V3RrqQPr6uvQ8CNL/6s2L5dZQF0Sg9oM/+7EicEU3V1cxy3fOHTyYF+WAl/G8QDv6fCZSaSrpZSiagGYxYKPf/ibWueyTeX8COkaNfgcCSk7x8lYj6PIqVC2Qb0dpaYJ6xV90INPSCStOOLkUpNsn8JSvYmZ5IFDBB/BlSwdkLtqydMErBjMo+aM/er4ojP/bka/WwXQ0Hrco3xhQDJRGTMEEs9t3XbAH/ANEQYtiJWpvZ5xhxA8PQSzTlSFR4TYngBcAo20jTtLRVqi4k5fzfilqRjfXKmmit7cndFX2DZDvrsVbrIDV1mf3AjF08fBrzxPBNxkjtE9YZIRIGcY/UyTvp39DZOFuEZpawVQEDrTALn0vv6OjLZQ+uR8n7WRcTqbm4FS3VnzyBYgjA2V8JuDr2XTf0z0t5xNZ3iGRN1NbnSP+hGu5TTnRr6KM1s7SS0f7K7VuoWEX+AFWYN+ogeqrH+VTLZe3JERZ7d+/yP4kBgnOTS4rVvW4DUf74PUPQRfQrqc6H08gl31G3p1Y7G90b5doN34RkefrIHQIEmT03sV7Wy3McIZMqGQYE/2qOmHmw9MRTF00xyodsbNbZq4dW/fQxfF6p/PV0S/LDcDXxvIW58Cwy64iTde1kxHmkWdFQALhGh4h9xF5CLLs6jwH8oQBpF75cRslKa+bpa8nXhIcC0HMvHzeTiC61Up7TDYzdpakVsgOd9xBtOpUzdCQ0FBzHrruSDGPf62Z8qF0P2R6XNvYpAF2yKc9ryQyRR9O/WFM36xEO8UqbVGJbA1sIc6idUDJpXkoF14xXz17OheJy6roKMrjo2tdNma+bj9yJ3+cl30Rk5XHmWTdsGxOu73gq8901L3mJtPnrszGS8KShNmCBr9cSZQz6NI6X5GY09HGaOC1zMVzce+9AeXDateWBzZe1RLEsqh+kpOd4raIV0/WjBHB89N/GkDwufkaDZXF/kOdGSYY8Z9jHnXCkrG9I/YabvVIiNJ7Uyf/iPTgYbbBwhAuUiYMF1/Myi5XUCP+Ed9IkkoBT1mPay2X8QiT6vj05V+oxAH6wHyIXRulo9c+j7EMauGujQsdB9OswQM3AJUzi8aoDiH0JuuGGAhlKfYqKCJ2GKxhLQ92sw3D6zAl8c2XuH8T0hBGn2uDk5jd9aH8mJfnwCPYNTq0iSaddDZlLgF52+fYZj6ZPSrVYEB7tHbSoUI53WaKsIXd+9STV3wljuy4Pue5CJwh5jDcgDxLQBUN4+SkqVLZT0GE+AZY9Xb89yuPSlHtpQ7uhNCRxNviU8P7xhoB11BVWPPZ77hQJVGvKIc3cY8IBZbobdE+DoxHsXy3xClZK3CUzOX7I2VcaO/sdeHzKpH+KW8Bp+SymApEeQr4pFifCMpV71H0Co9JZkRyzVKkQ6J4JiBzSGx5+P0/PZfFPbUriw/n/bhktWfiTp5gck8tYQylHq6h3pJ1PRYXT8FAAa+gfv/WSS6NvQysi2m4rr6B829NKUEUz0F8vEWRU6iK7dvcTKxCnikL87+fRt7I0QsEL8SH1/8CGiUZL1NfLFYSk0A0EYAw==",
+                    "page_age": null
+                  }
+                ],
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 2
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 3,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 3,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 3,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQS5woKEAgUGAI4AUIIdGhpbmtpbmcSDFlkwKv71lcHZokqgRoMRbNkKVcAkplZ1/JyIjB1HGMo8sjXtmi47oaSxyEZouQxfhuuxQG0LnkiX7r+9gPR90dXH1PrV0T/M/7HwHEqhApRLY9FvlK1Aiuf8UK4EuiXL+bsZOIvlnvbWXngAcg7I5KUTOl+oGt8DdeyZiS8K6VMB47s6pqpbz/xrelzFtWAlyGg3jXW17+mAgt/fdoNxl8G29SHfrFPXKaGVTsmpmHN7ARPQSyTrHGSPkurakhtdWFs9AEZWLoJ+s5MV7PylSSCc81Z95tAYNw6CdLLU/vS9AeNKwG8Xh+jVLEHQTjaSxwWiMmEp/y4z6w0bHy98yr5YD6OP2sYgnU8hOl9KNFTU6kZ4MAVe/9hKZtJZVzooqGiaCqldLWL6QWY4v54NZy96oz2x0WrkS/s3JMpbwtW9cMVy3EnbNk7H3ft3LyYImtbSeW0jY7mnR3DWcSdPwYll7odRjjvwZUKH2CXw8Kwv7wWmpZQ3aNkgt3bN5ICiyrvKbiOlfwPKulxrr6HCFziTpuqH7Q6sq7O4EXusaJDQKEA5Vl1U7AxegPEBkey5KrbO2zFP8LsosWqyTsaFL7MILZvixy3rD6Wr1goMdeNollusU8BCWcN3gQGXW1k8HJaU7mAwCb/0C2Fj6O+gMpbhJFp4JYyq+giKWevDcBRI0nCaa9ONAwAvCkeqWPhKojId992pVQY9wgD4aJn2TKmf2YFThDrG4JAdYIkh15PH4wR1mZvV0FdE+brMG4KFlxP35C0XtMEphohfh/JEtPnZRZ9HD5RSVknChBBMptB4YBOwpP6FIijzrdhxzFhgP8HcMmDCin/bTHdN0nwYejNR5d4yEczMn5V+Wu1TXYhootjyY8ZxYVHWkxCv7IHQ/Du0of8IiDEXr8zXvc7HyDqFseOQdBw8TDLuo8XpZwnxEwHclKq/PYSmvWkMFbgkwh6yItmbNkq//r9n3YCnD08bAvJLS+p6QY2nG59V3Xt9MxIsa5EGRPWpwhvH1zWGMSPfeVXOKqVBMSwLf/641fmrZmdm1DuxzHoekt3aRvQ3avIicsrTsqHH1hAwRowvTONJQ46fjs50U4PPtt1VGBgpkUA5QpWAkBJ2MCpCPbyia29pLRi+mw/hH5J8jMDfe7tGFOXCzCa/9fsDq6Zpbk3vmOGCxSyjq/ta5UvZXiF+2uspYXyd/kpjRrow/RjIpKaKIFyAwsoBWac4iLIqpER2sQufIW9pSqHju3ZLKtO4T+1RTY5kY9tz8ZtcsWiqjidpyq4PjImnQvUAedeYHhPdV03Sfb7+m3gGSjTpVKOcxP2V8om+7rMoa3XcbwgWpaeSeAo29vhetupkDsOIqOhg9Qw/jqEk38NmwMhNgcvo8EQCF3FqRumch51RD4v5dD9F6Kye4gD7PF6jxmB1hyiqDDi8gLt7NYmTpKZMF9yhvsOnP8veXwL8dawjc9W8eQWpNky1rJzBRxSsMqxvmmO2GNs+PzONbqQdFiaFS/yUXTa64m+MHp+z5SsqUtnsxs6n7q41AKvuWi9h7nSn3f3vH5CrJ/qepklzSpcOuqDahiTRCUdrP4Irb9oc/zNcI2YPozD2saPzL4sY49cob6Tm9v7PHobY4FqillPdjHBqImWxAvueAdgNb5pD0usCMGhUHFuUwb0XSDR3k/pRt1cxq8dLfoh0pxJAEarYfb8HcQwaNNNWCw4Y2sDsuw5alK5AT/RMRaMXLqUI8G9I+UTH36zSDLfdfGwHMENUsotbmpgzPn4vm20PQu5IgOe2Cg49Edx7BHCLfqPi8VmQ4v+BdsYAQ=="
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 3
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 4,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 4,
+              "delta": {
+                "type": "text_delta",
+                "text": "Porto's São João festiv"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 4,
+              "delta": {
+                "type": "text_delta",
+                "text": "ities fall each"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 4,
+              "delta": {
+                "type": "text_delta",
+                "text": " year across"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 4,
+              "delta": {
+                "type": "text_delta",
+                "text": " the overnight stretch from"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 4,
+              "delta": {
+                "type": "text_delta",
+                "text": " June 23 into the early h"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 4,
+              "delta": {
+                "type": "text_delta",
+                "text": "ours of June 24, with "
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 4
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 5,
+              "content_block": {
+                "citations": [],
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "citations_delta",
+                "citation": {
+                  "type": "web_search_result_location",
+                  "cited_text": "- The Praça da Ribeira, in Porto, during São João\n- Observed by: Porto\n- Type: ethnographic; midsummer;\n\n- Date: 23 June\n- Next time: 23 June 2027\n- F...",
+                  "url": "https://en.wikipedia.org/wiki/Festa_de_S%C3%A3o_Jo%C3%A3o_do_Porto",
+                  "title": "Festa de S%C3%A3o Jo%C3%A3o do Porto",
+                  "encrypted_index": "Eo8BCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDKs1Vlfr1VrxDRLUwhoMi/W6iPOx6dETk9s3IjDv9XXjBoTm7S8d4hX72X91/+FPxVCIoJXA55wjSVy0liceJXKyhfG3RWOGIHzEpGYqE0Oga+diqJZIFcmQ65vLxCG9WNwYBA=="
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": "the"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": " fest"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": "ival ta"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": "king place on the night of 23"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": " June ("
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": "Saint John's Eve"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": ")"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 5
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 6,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "text_delta",
+                "text": "."
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 6
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 15053,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 473,
+                "output_tokens_details": {
+                  "thinking_tokens": 329
+                },
+                "server_tool_use": {
+                  "web_search_requests": 1,
+                  "web_fetch_requests": 0
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.058058,
+      "cost": {
+        "input": 15053,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 473,
+        "searches": 1,
+        "usd": 0.011742
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31,web-search-2025-03-05",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 1024,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "When is the Sao Joao festival celebrated in Porto? Answer in one sentence and cite your source."
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "signature": "CAQS7gUKEAgUGAI4AUIIdGhpbmtpbmcSDBaWWczfgmDKgqShCxoM0fH6DyZLrkuS5VRAIjC9wwHYt2U7Q+mBWoU8YVH6dqNhQsSsnPiUVowy23EFUeuFDyfM3X2cTagts0GCftgqiwV6bcKKB3FRVp1C2wQGl46CAcjZl411tFtfLxPAt4pY7trrFlDods1n6Oqwig+GGPBi5hILLxbn6r7hi1M5lP4c6HxBSBPoIpDwPITVp9s85T/qqlNIVmUUXujdxxAPP5/zxZUAgeG21+8i0lx4X24nmyYOHdrCGacljhUU82U6/hiENUosF1N0vnKfz1xCvBaqHuhTaQGy3vEvcsd/OHhX8gGp15IJZJt5L7OhC/Mz277ocuK92qdx/imiTsDujrT1bClVU0yUY4sjWf7IiYUGVwtr0iL0cWsrySiZXrEpschvMCD7a1alP95UD7GnC6vxz/eHaZxfHDr41+0tz40oukujYcUDRClEasnQisShBmnOjLUe3VjsLsctaEE2BeEbHakVB0XMeRk4MgbKmwOYcZ04Jyxd+VJgq8G9QNoosC0Ib4pOspWHnOEVORUuOpQPF/1iboZYGkYzkXPMeHFAlHVZXmQ2+2hFXENpzbr4Km65qjL95616YbidLe+0lgNbVxk05nBvnZkZLbZo7tjw2dZwcViKiytt1dy3a2D4j/OUMkqe6RR/i5CNXeqki4H3Hx3ZhUkkG2iphzvnXGBgj6fiXDiJQGZxDdxZcxr7XArGDntiq7t+UNXUJ36IHH9xAxfpHLWyYdusBfY5cfAruKVGVeElnWlzFJCbO3UuAtKO9JxFZr028JMB0hNjZ23J3g/Z2npsl+dEogY/koWBvAZh8TWV6mOs0qiP/lw8OylkXU9M1ilkJybNV0e7loqmRDycFmnIVfWoIunhBzofKF6omfwcpiSyvPBBDzvx+uLiTuqh2e6BBYmqE8baxsS2MZIO8MUeHaWXGUji7HEi6s1cSCfDbcV2BPEYAQ==",
+                  "thinking": "",
+                  "type": "thinking"
+                },
+                {
+                  "id": "srvtoolu_01216AcVR2gj49APRrxhb4sm",
+                  "caller": null,
+                  "input": {
+                    "query": "Sao Joao festival Porto June dates"
+                  },
+                  "name": "web_search",
+                  "type": "server_tool_use"
+                },
+                {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "content": [
+                    {
+                      "encrypted_content": "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",
+                      "page_age": null,
+                      "title": "Festa de S%C3%A3o Jo%C3%A3o do Porto",
+                      "type": "web_search_result",
+                      "url": "https://en.wikipedia.org/wiki/Festa_de_S%C3%A3o_Jo%C3%A3o_do_Porto"
+                    },
+                    {
+                      "encrypted_content": "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",
+                      "page_age": "177 days ago",
+                      "title": "Festas de São João in Porto: Traditions & Fireworks",
+                      "type": "web_search_result",
+                      "url": "https://cooltouroporto.com/blog/porto-sao-joao-festival"
+                    },
+                    {
+                      "encrypted_content": "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",
+                      "page_age": "57 days ago",
+                      "title": "Porto São João Festival Guide: Everything You Need to Know",
+                      "type": "web_search_result",
+                      "url": "https://cantocooking.com/porto-sao-joao-festival-guide-everything-you-need-to-know/"
+                    },
+                    {
+                      "encrypted_content": "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",
+                      "page_age": "209 days ago",
+                      "title": "São João Festival Porto 2026",
+                      "type": "web_search_result",
+                      "url": "https://portopoolvilla.com/sao-joao-festival-porto-2026/"
+                    },
+                    {
+                      "encrypted_content": "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",
+                      "page_age": null,
+                      "title": "São João Festival Porto 2026 2026 - Portugal",
+                      "type": "web_search_result",
+                      "url": "https://www.theportugalguides.com/events/sao-joao-porto-2026/"
+                    },
+                    {
+                      "encrypted_content": "EpMLCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDIpSMlk3hAKa0Alo/xoM3TSGhIuGEM9r4AJaIjB3EtLSqENR6syJEaBHeImjyJaiDP89b1lZV8trKUtEBjkuVtOrB9O/7TmL3v7uNvMqlgqQ51h6mqYFxAqaTeskhGGm95Tkx4zcMuSew5oXQaLNuaoTWXzMWqheXRz38VJtQsYw6JF2WbHaork0qgnB+K8jVNhkXLl3yPpdf47H2aME/mu+2szvENUPBo6K8ehDFKOfhamplSqRyYUHs7v5X2RrTueZKaVt1BskA5zjnBIapCkwidLmG9cLgu5X8t9W+D2sRcqL+CnW+eAixwoS/LzqySanrAtdpcPR5OKAtCBDUWqPcuDHm4Q+lcR43jr+sh0v7MH0Qgjdt63uu2SnBaYjBaomT2yhyjZ3IW+noFxC6IDG+n8zSbtwP6qq1rQJmoyH4BewYxTdhtWFAQplBtnWZsCgOVfQDBAgANum/Ht/dcIkbZyPtKzLiX6GyJJ9pC6n2O0FjnWfANBz5gcSInfxXTPNh11ObRxScJYN3rdoaugSXu3a+PYb/W8uJeok4CXeNc3VA39CT3VK1LFZkjyOEqDII9L5GQy0qCYW//fXx5Qoiae7jcOx6K6c3ok0kqYxQSJFp3FsoEW5hKcbfRekohxrx7FpYcNCe+hG03iD1AfIwh/XiYFrcV+sZO6Ze6ChMdXL52clbGWBOw0+lAjZGUBikDRjRtvguY3krcN4XsGWbMREOwL+3bIv/HOmFKZREj+AUMfAotl7RVEp2OSI8eWpdYCou8jNbHEZ2vi9dV1t2f6/zkS0ZSjW2dLpAOJeAoscKrFHu2gtYdAjEh6J9K+5eDrWu74uHVRBmC2HIkzfnezkDqBfJgWdegucoNPxNL4tVVK7iNmeRI01cewOCVClODcaWcdZc5ZnpgBGgOrZ9saFt1ESvpSK/Vz/XuSloC0TAQgcRkybDYwcDPtyo2r49wLEojhXPSx/90HypGpJH/QeRBOJoi/YEHdRB84mGexa6FDeRBWbKLUlQ3ah2Wu6eWZXSh3SVV1DLbKE2+PE9lCJv7jDUFACr57MUryw/r5Y9plJznER8yOBlNW7GjBqx8bZCntp5JY/E22Ksn2Hc9AKxFpsbAQoHh1hFqgRw8p63/hv40/ulco6s/q0PrYtgzPfujzG8rUMM47Ur2s4Lp5BO8aerpiRJxlgKIG0T/6XBe0LhgU5RUqmpfr1WieV3noOnxoWQ4nZJcGrpt5VDvU4r8IJ9WlviJ+RQ7+uAUoaEALmZMzu7Qe7tS5bBydUy7Xa3yDHYw7tsEdJvHEkKd0pWth+U5UbEmGbypo0zxpKDq5FVo5nfhHyUCboxNejHeDig2ZlykYrb8exZLGVOQgrrysG9IF3eDCNz24pk0neQQg5d14zcVKj65mHZuEJ/K0amTyJ3/mEMWQf0AunvvByehSe1Tl2BtPuSZiEm91GBwcllUnMYIumtqYfFjhRxBvYZD4dlWI70KRRqu4SPkpM+n9/VlW2mXKfaCvNBz8dgBMii6tFrz+WM1aQbdMTWSRTm92mkYnp1IG8RymXOL03t6I3CAXxpEY6yTo5QIOviug6sFKBBHAOzjAVx9FsOioFk5pcAJ8d+l2PTlJX3lOxpnOkX5E4w6kZX2pADjaRI5Nx0LV4d0AEbTctCi5JPF9/ogVBa9SasD9EbdgPYk6wu9szay0sZJC7pkDk3KB+fyfr4Ongrf4sTXJyzr2waJlN4dFnux78GgeZj/RddIpr17+b2oFOX+ppT/Zq+g5h6ooWW4zlL8Gp1KZludb91SW3wCr2nJjof5z5fQrXBfB3kX0zsLlezWOba7GxDDBVaRsYAw==",
+                      "page_age": "215 days ago",
+                      "title": "Festa de são joão, Porto, Portugal - Dotonmap",
+                      "type": "web_search_result",
+                      "url": "https://dotonmap.com/portugal/porto/festa-de-sao-joao-porto-portugal/"
+                    },
+                    {
+                      "encrypted_content": "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",
+                      "page_age": "149 days ago",
+                      "title": "São João Festival Porto: Complete Guide",
+                      "type": "web_search_result",
+                      "url": "https://www.nomadotravel.app/en/guides/sao-joao-festival-porto"
+                    },
+                    {
+                      "encrypted_content": "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",
+                      "page_age": "13 days ago",
+                      "title": "Festa de São João 2027: Dates, Tickets & Backpacking Guide",
+                      "type": "web_search_result",
+                      "url": "https://www.takeyourbackpack.com/backpacking-in-portugal/visit-festa-de-sao-joao/"
+                    },
+                    {
+                      "encrypted_content": "EpMLCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDDi8I9Y5kiUcW/1VgxoMaV5cYlOhwzFPMCcXIjCxq3VxLjNfdPhGh6QQmh0fH7blxd2ogXEdqR/zBOyvi2OJUVZXieL6hYDVwYHh1DcqlgpjFnvzBwa2RGXj4Ew+JWKUwCSj8eKWiTEReJ+bhJUMYeZNr7nCrhbhiG7sx+2OyadgnoahPWA8vZhX/LWBtnxo+A23KayiTxLoSAuWGYmdQSEuPavgcFU5OVsyOBn8S00kGRROTYxFSB6ik+M4vzCbt/61KWpvzfnjLOQDpph33V3RrqQPr6uvQ8CNL/6s2L5dZQF0Sg9oM/+7EicEU3V1cxy3fOHTyYF+WAl/G8QDv6fCZSaSrpZSiagGYxYKPf/ibWueyTeX8COkaNfgcCSk7x8lYj6PIqVC2Qb0dpaYJ6xV90INPSCStOOLkUpNsn8JSvYmZ5IFDBB/BlSwdkLtqydMErBjMo+aM/er4ojP/bka/WwXQ0Hrco3xhQDJRGTMEEs9t3XbAH/ANEQYtiJWpvZ5xhxA8PQSzTlSFR4TYngBcAo20jTtLRVqi4k5fzfilqRjfXKmmit7cndFX2DZDvrsVbrIDV1mf3AjF08fBrzxPBNxkjtE9YZIRIGcY/UyTvp39DZOFuEZpawVQEDrTALn0vv6OjLZQ+uR8n7WRcTqbm4FS3VnzyBYgjA2V8JuDr2XTf0z0t5xNZ3iGRN1NbnSP+hGu5TTnRr6KM1s7SS0f7K7VuoWEX+AFWYN+ogeqrH+VTLZe3JERZ7d+/yP4kBgnOTS4rVvW4DUf74PUPQRfQrqc6H08gl31G3p1Y7G90b5doN34RkefrIHQIEmT03sV7Wy3McIZMqGQYE/2qOmHmw9MRTF00xyodsbNbZq4dW/fQxfF6p/PV0S/LDcDXxvIW58Cwy64iTde1kxHmkWdFQALhGh4h9xF5CLLs6jwH8oQBpF75cRslKa+bpa8nXhIcC0HMvHzeTiC61Up7TDYzdpakVsgOd9xBtOpUzdCQ0FBzHrruSDGPf62Z8qF0P2R6XNvYpAF2yKc9ryQyRR9O/WFM36xEO8UqbVGJbA1sIc6idUDJpXkoF14xXz17OheJy6roKMrjo2tdNma+bj9yJ3+cl30Rk5XHmWTdsGxOu73gq8901L3mJtPnrszGS8KShNmCBr9cSZQz6NI6X5GY09HGaOC1zMVzce+9AeXDateWBzZe1RLEsqh+kpOd4raIV0/WjBHB89N/GkDwufkaDZXF/kOdGSYY8Z9jHnXCkrG9I/YabvVIiNJ7Uyf/iPTgYbbBwhAuUiYMF1/Myi5XUCP+Ed9IkkoBT1mPay2X8QiT6vj05V+oxAH6wHyIXRulo9c+j7EMauGujQsdB9OswQM3AJUzi8aoDiH0JuuGGAhlKfYqKCJ2GKxhLQ92sw3D6zAl8c2XuH8T0hBGn2uDk5jd9aH8mJfnwCPYNTq0iSaddDZlLgF52+fYZj6ZPSrVYEB7tHbSoUI53WaKsIXd+9STV3wljuy4Pue5CJwh5jDcgDxLQBUN4+SkqVLZT0GE+AZY9Xb89yuPSlHtpQ7uhNCRxNviU8P7xhoB11BVWPPZ77hQJVGvKIc3cY8IBZbobdE+DoxHsXy3xClZK3CUzOX7I2VcaO/sdeHzKpH+KW8Bp+SymApEeQr4pFifCMpV71H0Co9JZkRyzVKkQ6J4JiBzSGx5+P0/PZfFPbUriw/n/bhktWfiTp5gck8tYQylHq6h3pJ1PRYXT8FAAa+gfv/WSS6NvQysi2m4rr6B829NKUEUz0F8vEWRU6iK7dvcTKxCnikL87+fRt7I0QsEL8SH1/8CGiUZL1NfLFYSk0A0EYAw==",
+                      "page_age": null,
+                      "title": "São João Festival Porto 2026",
+                      "type": "web_search_result",
+                      "url": "https://dourovinhateiro.com/en/event/festas-sao-joao-porto-2026"
+                    }
+                  ],
+                  "tool_use_id": "srvtoolu_01216AcVR2gj49APRrxhb4sm",
+                  "type": "web_search_tool_result"
+                },
+                {
+                  "signature": "CAQS5woKEAgUGAI4AUIIdGhpbmtpbmcSDFlkwKv71lcHZokqgRoMRbNkKVcAkplZ1/JyIjB1HGMo8sjXtmi47oaSxyEZouQxfhuuxQG0LnkiX7r+9gPR90dXH1PrV0T/M/7HwHEqhApRLY9FvlK1Aiuf8UK4EuiXL+bsZOIvlnvbWXngAcg7I5KUTOl+oGt8DdeyZiS8K6VMB47s6pqpbz/xrelzFtWAlyGg3jXW17+mAgt/fdoNxl8G29SHfrFPXKaGVTsmpmHN7ARPQSyTrHGSPkurakhtdWFs9AEZWLoJ+s5MV7PylSSCc81Z95tAYNw6CdLLU/vS9AeNKwG8Xh+jVLEHQTjaSxwWiMmEp/y4z6w0bHy98yr5YD6OP2sYgnU8hOl9KNFTU6kZ4MAVe/9hKZtJZVzooqGiaCqldLWL6QWY4v54NZy96oz2x0WrkS/s3JMpbwtW9cMVy3EnbNk7H3ft3LyYImtbSeW0jY7mnR3DWcSdPwYll7odRjjvwZUKH2CXw8Kwv7wWmpZQ3aNkgt3bN5ICiyrvKbiOlfwPKulxrr6HCFziTpuqH7Q6sq7O4EXusaJDQKEA5Vl1U7AxegPEBkey5KrbO2zFP8LsosWqyTsaFL7MILZvixy3rD6Wr1goMdeNollusU8BCWcN3gQGXW1k8HJaU7mAwCb/0C2Fj6O+gMpbhJFp4JYyq+giKWevDcBRI0nCaa9ONAwAvCkeqWPhKojId992pVQY9wgD4aJn2TKmf2YFThDrG4JAdYIkh15PH4wR1mZvV0FdE+brMG4KFlxP35C0XtMEphohfh/JEtPnZRZ9HD5RSVknChBBMptB4YBOwpP6FIijzrdhxzFhgP8HcMmDCin/bTHdN0nwYejNR5d4yEczMn5V+Wu1TXYhootjyY8ZxYVHWkxCv7IHQ/Du0of8IiDEXr8zXvc7HyDqFseOQdBw8TDLuo8XpZwnxEwHclKq/PYSmvWkMFbgkwh6yItmbNkq//r9n3YCnD08bAvJLS+p6QY2nG59V3Xt9MxIsa5EGRPWpwhvH1zWGMSPfeVXOKqVBMSwLf/641fmrZmdm1DuxzHoekt3aRvQ3avIicsrTsqHH1hAwRowvTONJQ46fjs50U4PPtt1VGBgpkUA5QpWAkBJ2MCpCPbyia29pLRi+mw/hH5J8jMDfe7tGFOXCzCa/9fsDq6Zpbk3vmOGCxSyjq/ta5UvZXiF+2uspYXyd/kpjRrow/RjIpKaKIFyAwsoBWac4iLIqpER2sQufIW9pSqHju3ZLKtO4T+1RTY5kY9tz8ZtcsWiqjidpyq4PjImnQvUAedeYHhPdV03Sfb7+m3gGSjTpVKOcxP2V8om+7rMoa3XcbwgWpaeSeAo29vhetupkDsOIqOhg9Qw/jqEk38NmwMhNgcvo8EQCF3FqRumch51RD4v5dD9F6Kye4gD7PF6jxmB1hyiqDDi8gLt7NYmTpKZMF9yhvsOnP8veXwL8dawjc9W8eQWpNky1rJzBRxSsMqxvmmO2GNs+PzONbqQdFiaFS/yUXTa64m+MHp+z5SsqUtnsxs6n7q41AKvuWi9h7nSn3f3vH5CrJ/qepklzSpcOuqDahiTRCUdrP4Irb9oc/zNcI2YPozD2saPzL4sY49cob6Tm9v7PHobY4FqillPdjHBqImWxAvueAdgNb5pD0usCMGhUHFuUwb0XSDR3k/pRt1cxq8dLfoh0pxJAEarYfb8HcQwaNNNWCw4Y2sDsuw5alK5AT/RMRaMXLqUI8G9I+UTH36zSDLfdfGwHMENUsotbmpgzPn4vm20PQu5IgOe2Cg49Edx7BHCLfqPi8VmQ4v+BdsYAQ==",
+                  "thinking": "",
+                  "type": "thinking"
+                },
+                {
+                  "citations": null,
+                  "text": "Porto's São João festivities fall each year across the overnight stretch from June 23 into the early hours of June 24, with ",
+                  "type": "text"
+                },
+                {
+                  "citations": [
+                    {
+                      "cited_text": "- The Praça da Ribeira, in Porto, during São João\n- Observed by: Porto\n- Type: ethnographic; midsummer;\n\n- Date: 23 June\n- Next time: 23 June 2027\n- F...",
+                      "encrypted_index": "Eo8BCioIFhgCIiRlYzEzNmJmNC1iZTk0LTQ4OTQtODJiNi0yMzQ1OWY3YzQ4ZTcSDKs1Vlfr1VrxDRLUwhoMi/W6iPOx6dETk9s3IjDv9XXjBoTm7S8d4hX72X91/+FPxVCIoJXA55wjSVy0liceJXKyhfG3RWOGIHzEpGYqE0Oga+diqJZIFcmQ65vLxCG9WNwYBA==",
+                      "title": "Festa de S%C3%A3o Jo%C3%A3o do Porto",
+                      "type": "web_search_result_location",
+                      "url": "https://en.wikipedia.org/wiki/Festa_de_S%C3%A3o_Jo%C3%A3o_do_Porto"
+                    }
+                  ],
+                  "text": "the festival taking place on the night of 23 June (Saint John's Eve)",
+                  "type": "text"
+                },
+                {
+                  "citations": null,
+                  "text": ".",
+                  "type": "text"
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Thanks. Now say it in five words."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "system": [],
+          "tools": [
+            {
+              "type": "web_search_20250305",
+              "name": "web_search"
+            },
+            {
+              "type": "web_fetch_20250910",
+              "name": "web_fetch"
+            }
+          ],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgBCSWrvPRTL9wd3kV6",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 11811,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 1,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "June"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": " 23–"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "24 each"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": " year."
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 11811,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 11,
+                "output_tokens_details": {
+                  "thinking_tokens": 0
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.06135,
+      "cost": {
+        "input": 11811,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 11,
+        "searches": 0,
+        "usd": 0.001187
+      }
+    }
+  ]
+}

@@ -1,0 +1,395 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "prompt_cache_write_then_read",
+    "purpose": "a cache write, then a cache read of the same prefix",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:24Z",
+    "model": "claude-haiku-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 0.001998,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=prompt_cache_write_then_read"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 50,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Which city is the weekend trip in? One word."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "system": [
+            {
+              "type": "text",
+              "text": "Household notes of Alex Doe, 12 Oak Street, Springfield.\nNote 1: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 2: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 3: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 4: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 5: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 6: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 7: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 8: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 9: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 10: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 11: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 12: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 13: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 14: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 15: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 16: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 17: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 18: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 19: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 20: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 21: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 22: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 23: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 24: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 25: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 26: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 27: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 28: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 29: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 30: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 31: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 32: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 33: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 34: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 35: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 36: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 37: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 38: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 39: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 40: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 41: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 42: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 43: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 44: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 45: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 46: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 47: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 48: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 49: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 50: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 51: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 52: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 53: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 54: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 55: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 56: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 57: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 58: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 59: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 60: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 61: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 62: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 63: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 64: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 65: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 66: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 67: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 68: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 69: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 70: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 71: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 72: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 73: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 74: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 75: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 76: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 77: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 78: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 79: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 80: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 81: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 82: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 83: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 84: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 85: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 86: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 87: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 88: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 89: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 90: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 91: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 92: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 93: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 94: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 95: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 96: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 97: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 98: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 99: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 100: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 101: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 102: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 103: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 104: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 105: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 106: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 107: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 108: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 109: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 110: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 111: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 112: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 113: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 114: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 115: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 116: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 117: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 118: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 119: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 120: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 121: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 122: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 123: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 124: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 125: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 126: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 127: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 128: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 129: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 130: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 131: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 132: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 133: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 134: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 135: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 136: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 137: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 138: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 139: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 140: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 141: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 142: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 143: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 144: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 145: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 146: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 147: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 148: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 149: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 150: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 151: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 152: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 153: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 154: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 155: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 156: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 157: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 158: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 159: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 160: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            }
+          ],
+          "tools": [],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgACDLjw3SdomUUt3mx",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 21,
+                  "cache_creation_input_tokens": 14589,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 14589,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 6,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQS+wQKEAgUGAI4AUIIdGhpbmtpbmcSDPefZjbtxfbpSLxedhoMqDo2oD1SE9QJb+fnIjC/rtSKqZjGij2gi46sEUBcELAxsY4vXHlbzWT+9y5xsxyNpoVojg4rdV3hiKz/XNsqmAQtm6O5g/oiLsgVDfbF04JzZU9WkeqRQ+6aOS5wFVkdTxVyM3euxlVmadClavXFyJ72tuzWPLVlA/qiF3iwgy/rNitigBwdaXgU46VU3I+aILAcFjOHRkps7ki6/42/Uf9lyFsCFBeIgqxPs3/Jy17fjdC2/MzO3zb3d0nR2wKQkWjphIAeEDgsuc0aW06k3OZEAsx53iTfuG2no5pweHn30qOxa+VWc2pHaJOFrzIPxFR7IZczBKXfqk4xy9nWnUQ8RQnZcl/RUlfJuVrOr7fKAoPzuJwJUKgFp5Hg0D264etx8GRmLd7Ww9QIbGC1+7KGkn7zDUsgTkj9EfFdh7KEzd4IdNRAna976EjGBzEhL2+gxbQyI5r1Y7R3s4A15+Tcc9UL+Mc9JSzDKbpwywguB1edHkFMq2YBiodhdOT4wSVFMOcH29RKCuEtJRPABFWcHuZAySxeOdYBas/9ZD38SMdU0g3lL8GVzznKdWsDs15RZz96OLp19KWDhI3lbQc9MSuY+9TuzvhhIamZX5qezBazjOMw/b3lopatlp8CDdrVlonDkSOAhqyWjeOU72IrydJKw9VVV/YTbjAwpvtgzHKcAwmgXtGaaCjgxIgl2dZ0pc5FfToSBepeNjNlRMBTGKbejvE3WiqJ2jFrHS5GWo/DZD2GXP00Oj3PXEka/x/ntgVN53d2QhaW0VRKZ64/FR1BPm9ULBgB"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "Coimbra"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 21,
+                "cache_creation_input_tokens": 14589,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 24,
+                "output_tokens_details": {
+                  "thinking_tokens": 17
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.003853,
+      "cost": {
+        "input": 21,
+        "cache_read": 0,
+        "cache_write": 14589,
+        "output": 24,
+        "searches": 0,
+        "usd": 0.001838
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 50,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Which city is the weekend trip in? One word."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "system": [
+            {
+              "type": "text",
+              "text": "Household notes of Alex Doe, 12 Oak Street, Springfield.\nNote 1: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 2: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 3: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 4: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 5: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 6: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 7: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 8: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 9: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 10: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 11: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 12: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 13: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 14: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 15: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 16: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 17: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 18: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 19: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 20: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 21: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 22: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 23: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 24: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 25: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 26: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 27: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 28: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 29: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 30: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 31: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 32: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 33: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 34: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 35: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 36: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 37: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 38: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 39: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 40: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 41: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 42: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 43: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 44: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 45: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 46: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 47: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 48: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 49: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 50: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 51: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 52: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 53: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 54: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 55: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 56: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 57: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 58: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 59: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 60: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 61: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 62: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 63: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 64: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 65: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 66: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 67: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 68: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 69: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 70: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 71: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 72: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 73: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 74: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 75: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 76: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 77: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 78: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 79: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 80: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 81: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 82: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 83: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 84: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 85: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 86: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 87: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 88: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 89: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 90: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 91: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 92: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 93: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 94: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 95: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 96: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 97: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 98: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 99: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 100: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 101: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 102: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 103: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 104: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 105: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 106: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 107: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 108: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 109: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 110: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 111: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 112: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 113: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 114: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 115: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 116: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 117: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 118: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 119: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 120: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 121: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 122: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 123: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 124: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 125: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 126: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 127: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 128: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 129: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 130: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 131: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 132: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 133: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 134: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 135: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 136: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 137: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 138: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 139: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 140: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 141: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 142: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 143: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 144: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 145: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 146: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 147: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 148: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 149: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 150: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 151: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 152: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 153: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 154: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 155: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 156: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 157: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 158: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 159: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.\nNote 160: the 2015 Skoda Fabia was serviced at 90,000 km; the weekend in Coimbra with Clara Moreira is Mar 6-8; Jamie and Ana Doe go to Example School; Robin trains at the Iron Temple gym.",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            }
+          ],
+          "tools": [],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgAF9hC3BQXookBApov",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 21,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 14589,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 6,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQS+wQKEAgUGAI4AUIIdGhpbmtpbmcSDIO6QB4xwHMykAj10xoMJI0i8AgUDEjQ+JeRIjA2Oe8LHnoe6M0BfQkKc0VNSR3njEGWZodbzHWS03FyF8L/cjEwLbcJiCych8yM2CEqmAQNBXGrVynlF+9lUoOrRr0nvsDArFHOQVkoqCFTZuKppt697LRziXn23AD+6zGcjJUXYJZh9Fmc+7KUyTfw9NPimg4KFe6mgdViRg3VNkalt9nQjHsGKvFWogRiGxYzH5JP9ex7nYy85/WVqOC7NZIWDqQLzlREwd00X/n2c27rvduttD/Cg+DTckEgdKcGbj+gY7tnfR0ajM9r6V/6ghJU1LaveHwy4lMq1/iLuwXSIhxbezbqiF8F7GuzGTcbslbdt7vEpfgoYMRLKeVYO+uyFu2lhmegzWezkgg+xCkjtv4Af5EM/DWA26fPh6g8RiEZs3x0E72iQ4Mjkxc1pHPLD2qx28zskgcx01zt/mxiTlIaz/uRz257hRaxLBDDOdPgtNXqFEgDBV4VgA8yXTVRgHdfKxtQ+L4Hg8m1l8Ip0iaj6Ce7ga/U2O7KHkLb86J03sfK+GDp+SPCq3C3U6j+Drq+uBao5Nf4sEyzhofHKaJ6+T17zbfEvwmyN4hOST0sv+r4sf0oclRoSTV1UocUZwB1b8sOz0q8eC7EHpgGZb9FEQKIsSHqj15icqeXaWHz1OBYCJWt/bi2RuMHDb0tUgKD+7ZnoUpdRleo+ykXkf5RVG0gQk/2N/Nwt8Cq+TJ5zsVeYI1ZAc+lwNaFe1AcR3ESJRLV83nkh3vRcp3aHD1/yaEd063LoocwPCwrF8uzRBwReteEVxgB"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "Coimbra"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 21,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 14589,
+                "output_tokens": 24,
+                "output_tokens_details": {
+                  "thinking_tokens": 17
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.003853,
+      "cost": {
+        "input": 21,
+        "cache_read": 14589,
+        "cache_write": 0,
+        "output": 24,
+        "searches": 0,
+        "usd": 0.00016
+      }
+    }
+  ]
+}
