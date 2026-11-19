@@ -95,10 +95,13 @@ def test_every_scenario_model_is_priced_in_billing(provider):
 
 @pytest.mark.parametrize("provider, scenario", [(p, s.name) for p in sorted(rec.SCENARIOS) for s in rec.plan(p)])
 def test_every_first_request_conforms_to_the_request_contract_before_any_money_is_spent(provider, scenario):
-    body = asyncio.run(rec.first_request_body(provider, next(s for s in rec.plan(provider) if s.name == scenario)))
-    method, _ = rec.OPERATIONS[provider]
-    url_path = {"openai": "/v1/responses", "anthropic": "/v1/messages"}[provider]   # as sent: the base path included
-    assert_request(provider, method, url_path, {}, body, query={})
+    sent = asyncio.run(rec.first_request(provider, next(s for s in rec.plan(provider) if s.name == scenario)))
+    body = json.loads(sent.content)
+    query: dict[str, list[str]] = {}
+    for name, value in sent.url.params.multi_items():
+        query.setdefault(name, []).append(value)
+    # Method, path, query and headers as the SDK sent them, so a moved endpoint or an added query parameter fails here.
+    assert_request(provider, sent.method, sent.url.path, dict(sent.headers), body, query=query)
     assert body.get("max_output_tokens" if provider == "openai" else "max_tokens") <= 2048   # small output caps
 
 

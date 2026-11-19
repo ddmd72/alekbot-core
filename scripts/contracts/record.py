@@ -481,7 +481,12 @@ async def record(provider: str, scenarios: list[Scenario], key: str, meter: Mete
 
 
 async def first_request_body(provider: str, scenario: Scenario) -> dict[str, Any]:
-    """The body the scenario's first call would send, built by the real adapter and SDK on an in-process transport
+    """The body the scenario's first call would send (see `first_request`)."""
+    return json.loads((await first_request(provider, scenario)).content)
+
+
+async def first_request(provider: str, scenario: Scenario) -> httpx.Request:
+    """The request the scenario's first call would send, built by the real adapter and SDK on an in-process transport
     that answers 400 (no network, no key)."""
     seen: list[httpx.Request] = []
 
@@ -497,7 +502,7 @@ async def first_request_body(provider: str, scenario: Scenario) -> dict[str, Any
         pass
     if not seen:
         raise RuntimeError(f"{scenario.name}: the adapter sent nothing")
-    return json.loads(seen[0].content)
+    return seen[0]
 
 
 async def dry_run(provider: str, scenarios: list[Scenario], max_usd: float) -> int:
