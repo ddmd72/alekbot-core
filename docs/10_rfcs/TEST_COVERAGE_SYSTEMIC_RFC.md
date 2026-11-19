@@ -1037,7 +1037,7 @@ Deviations and results:
   field, union variant and `Allowed` gap is sent by a shape (a dead keep-list entry fails); every `self.client.<a>.<b>(` call site of the adapter file maps to an operation.
 - **Claude gaps the SDK types lack, allowed with a reason and a date:** `thinking.type = between_tools` (Sonnet 5.5's no-thinking floor) and the beta header
   `web-search-2025-03-05` (the legacy search tool). No shape failed on the first run, so no adapter change was needed.
-- **Still open for P17:** the other providers (Graph, Slack, Twilio, Telegram, Cloudflare SFU, Google OAuth), the recordings, WebSocket event schemas, and
+- **Still open for P17:** the other providers (Graph, Slack, Twilio, Telegram, Cloudflare SFU, Google OAuth), WebSocket event schemas, and
   the low-coverage adapters listed in the table.
 
 **Built (P17 Gmail request side, 2026-11-19).** Gmail joins the slice, and the core gains what every later provider needs. Files:
@@ -1088,8 +1088,10 @@ command of the recordings, before any recording. Test-only (plus the extractor's
   script: a pessimistic estimate before each call against the cap, the `billing.py` cost after it, a stop on a call with tokens and
   a $0 cost; `DRY_RUN=1` builds the first requests in process (no network, no key). Web search is priced by the script ($0.01 per
   search, both providers): `billing.py` has no per-search leg.
-- **Still open for P17:** the recordings themselves (a measured cost probe first), a test that replays every committed recording
-  through its contract and the real SDK, P17-D1, and the providers, event schemas and adapters listed in the request-slice note.
+- **Recordings (2026-11-19):** 16 scenarios (7 OpenAI, 9 Claude) recorded on the owner's machine after a one-call cost probe;
+  the replayed tool-use block with `caller: null` was accepted by the API.
+- **Still open for P17:** a test that replays every committed recording through its contract and the real SDK, P17-D1 (an
+  ALLOWED gap, per the recording above), and the providers, event schemas and adapters listed in the request-slice note.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
