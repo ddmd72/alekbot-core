@@ -152,7 +152,8 @@ def test_the_grounded_loop_continues_a_paused_turn_in_its_container():
     assert "container" not in first and second["container"] == cs.CONTAINER["id"]
     replayed = [b["type"] for b in second["messages"][-1]["content"]]
     assert replayed == [b["type"] for b in SAMPLES["grounded_server_tools_paused"]["content"]]
-    assert_request("anthropic", sent[0].method, sent[0].url.path, dict(sent[0].headers), first)
+    assert_request("anthropic", sent[0].method, sent[0].url.path, dict(sent[0].headers), first,
+                   query={k: sent[0].url.params.get_list(k) for k in sent[0].url.params.keys()})
 
 
 # P17-D1: the SDK's stream accumulator builds every block of content_block_start with `model_dump()` (not
@@ -170,7 +171,8 @@ def test_the_continuation_of_a_paused_turn_conforms_to_the_request_contract():
     _, (_, second), sent = _grounded_run()
     require("container" in second and len(second["messages"][-1]["content"]) == len(
         SAMPLES["grounded_server_tools_paused"]["content"]), "the continuation replays the paused turn")
-    assert_request("anthropic", sent[1].method, sent[1].url.path, dict(sent[1].headers), second)
+    assert_request("anthropic", sent[1].method, sent[1].url.path, dict(sent[1].headers), second,
+                   query={k: sent[1].url.params.get_list(k) for k in sent[1].url.params.keys()})
 
 
 def _has_tool_block(sample_id: str) -> bool:
@@ -205,7 +207,8 @@ def test_the_message_replayed_as_raw_content_conforms_to_the_request_contract(sa
     body = json.loads(sent[0].content)
     require([b["type"] for b in body["messages"][1]["content"]] == [b["type"] for b in SAMPLES[sample_id]["content"]],
             "the assistant turn is replayed block for block")
-    assert_request("anthropic", sent[0].method, sent[0].url.path, dict(sent[0].headers), body)
+    assert_request("anthropic", sent[0].method, sent[0].url.path, dict(sent[0].headers), body,
+                   query={k: sent[0].url.params.get_list(k) for k in sent[0].url.params.keys()})
 
 
 def test_the_replayed_tool_block_carries_caller_null_p17_d1():

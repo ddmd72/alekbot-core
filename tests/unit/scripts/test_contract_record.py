@@ -96,8 +96,9 @@ def test_every_scenario_model_is_priced_in_billing(provider):
 @pytest.mark.parametrize("provider, scenario", [(p, s.name) for p in sorted(rec.SCENARIOS) for s in rec.plan(p)])
 def test_every_first_request_conforms_to_the_request_contract_before_any_money_is_spent(provider, scenario):
     body = asyncio.run(rec.first_request_body(provider, next(s for s in rec.plan(provider) if s.name == scenario)))
-    method, path = rec.OPERATIONS[provider]
-    assert_request(provider, method, path, {}, body)
+    method, _ = rec.OPERATIONS[provider]
+    url_path = {"openai": "/v1/responses", "anthropic": "/v1/messages"}[provider]   # as sent: the base path included
+    assert_request(provider, method, url_path, {}, body, query={})
     assert body.get("max_output_tokens" if provider == "openai" else "max_tokens") <= 2048   # small output caps
 
 

@@ -160,11 +160,12 @@ class BiographicalContextService(BiographicalCacheRefresher):
         )
         
         # ========================================================================
-        # STEP 2: Fetch facts — BIOGRAPHICAL domain first, fill from others if needed.
+        # STEP 2: Fetch facts — the identity block first (profile `user_identity == true`,
+        # FACT_PROFILE_RFC §6 row 1), fill from all non-directive facts if needed.
         # Uses context_priority_rank for efficient ORDER BY in Firestore (no Python sort).
         # ========================================================================
-        biog_facts = await self._repo.get_active_facts_ordered(
-            account_id, domain=FactDomain.BIOGRAPHICAL.value, limit=facts_limit
+        identity_facts = await self._repo.get_active_facts_ordered(
+            account_id, identity_only=True, limit=facts_limit
         )
 
         # Standing directives: fetched separately, NEVER subject to facts_limit eviction —
@@ -176,22 +177,22 @@ class BiographicalContextService(BiographicalCacheRefresher):
             limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
         )
 
-        current_facts = list(biog_facts)
+        current_facts = list(identity_facts)
         if len(current_facts) < facts_limit:
             remaining = facts_limit - len(current_facts)
-            biog_ids = {f.id for f in current_facts}
+            identity_ids = {f.id for f in current_facts}
             all_ordered = await self._repo.get_active_facts_ordered(account_id, limit=facts_limit)
             fill = [
                 f for f in all_ordered
-                if f.id not in biog_ids and f.domain != FactDomain.AGENT_DIRECTIVE
+                if f.id not in identity_ids and f.domain != FactDomain.AGENT_DIRECTIVE
             ][:remaining]
             current_facts.extend(fill)
             logger.debug(
-                f"📊 [BiographicalContext] Loaded {len(biog_facts)} biographical + {len(fill)} fill facts"
+                f"📊 [BiographicalContext] Loaded {len(identity_facts)} identity + {len(fill)} fill facts"
             )
         else:
             logger.debug(
-                f"📊 [BiographicalContext] Loaded {len(biog_facts)} biographical facts (limit reached)"
+                f"📊 [BiographicalContext] Loaded {len(identity_facts)} identity facts (limit reached)"
             )
 
         selected_facts = current_facts
@@ -209,6 +210,9 @@ class BiographicalContextService(BiographicalCacheRefresher):
                 "id": fact.id,
                 "text": fact.text,
                 "domain": fact.domain.value if fact.domain else "unknown",
+                # Profile fields the formatter sections and Lelik's voice filter read (None while unprofiled).
+                "primary_domain": fact.primary_domain,
+                "sensitivity": fact.sensitivity,
                 "tags": fact.tags,
                 "context_priority": fact.context_priority.value if fact.context_priority else "medium",
                 "created_at": fact.created_at.isoformat() if fact.created_at else None,

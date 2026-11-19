@@ -15,8 +15,9 @@ class BiographicalCacheRefresher(ABC):
     ) -> None:
         """Rebuild the cached biographical context of account `owner_id` from its current facts.
 
-        Content: up to facts_limit facts in get_active_facts_ordered order, biographical domain
-            first, then other non-directive domains; of these, facts tagged "mindset" become
+        Content: up to facts_limit facts in get_active_facts_ordered order, the identity block
+            (profile user_identity == true) first, then the other non-directive facts; each item
+            carries the fact's primary_domain and sensitivity; of these, facts tagged "mindset" become
             principles (they count toward facts_limit; those beyond principles_limit are dropped);
             agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
         Limit: facts_limit and principles_limit are what the cache holds; an explicit value wins over the

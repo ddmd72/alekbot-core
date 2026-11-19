@@ -1,6 +1,7 @@
 """Lelik's xAI prompt profile, assembled from the real Firestore upload files: the voice character
 is user-overridable per category, and safety and call manners are not (VOICE_MULTI_PROVIDER_RFC §4.5)."""
 import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -73,14 +74,31 @@ async def _assemble(user_overrides=None) -> str:
     return await _service(user_overrides or {}).assemble(agent_type=_PROFILE, user_id="u1", account_id=None)
 
 
+_BLOCK_LINE = re.compile(r"^\s*(\w+\s*\{|\})\s*$")
+
+
 def _content(name: str) -> str:
-    """A distinctive snippet of the token's text: headings are shared by alternatives, so skip them."""
-    body = [line for line in _load(name)["content"].splitlines() if not line.startswith("##")]
+    """A distinctive snippet of the token's text: headings and block wrappers (`identity {`, `}`) are shared by
+    alternatives, so skip them."""
+    body = [line for line in _load(name)["content"].splitlines()
+            if not line.startswith("##") and not _BLOCK_LINE.match(line)]
     return " ".join(" ".join(body).split()[:10])
 
 
 def _flat(prompt: str) -> str:
     return " ".join(prompt.split())
+
+
+_VOICE_SECTIONS = ["identity {", "## Voice & Communication Style", "spoken_delivery {"]
+
+
+def _assert_each_section_once_in_order(prompt: str) -> None:
+    """The voice character opens each of its sections exactly once (an alternative replaces, never duplicates),
+    in profile order: the persona's `identity` block, the humour heading, the call manners' `spoken_delivery`."""
+    for marker in _VOICE_SECTIONS:
+        assert prompt.count(marker) == 1, marker
+    positions = [prompt.index(marker) for marker in _VOICE_SECTIONS]
+    assert positions == sorted(positions)
 
 
 class TestLelikXaiVoiceCharacter:
@@ -90,14 +108,23 @@ class TestLelikXaiVoiceCharacter:
     def test_the_split_tokens_reproduce_the_uat_portrait(self):
         """The split reproduces the call-4 portrait verbatim, except for the brevity cues the owner
         removed from the live tokens on 2026-10-21 (Lelik sounded terse). Each removal is stated here
-        and must match exactly once, so any other drift from the portrait still fails."""
+        and must match exactly once, so any other drift from the portrait still fails. Likewise the
+        owner's 2026-11-19 wrapping for the persona anchor: the persona's first two paragraphs become
+        the `identity` block (replacing the `## Role & Persona` heading) and the call manners become
+        the `spoken_delivery` block, the prose inside unchanged."""
         owner_removals_2026_10_21 = [
             ("Your humour is dry, dark and paradoxical", "Your humour is dark and paradoxical"),
             ("Zhvanetsky: a short line that turns", "Zhvanetsky: a line that turns"),
             ("curious, bored by small talk, animated", "curious, animated"),
         ]
+        owner_anchor_blocks_2026_11_19 = [
+            ("## Role & Persona You are Lelik,", "identity { You are Lelik,"),
+            ("what is genuinely good. When the caller", "what is genuinely good. } When the caller"),
+            ("in your words. A familiar, friendly", "in your words. spoken_delivery { A familiar, friendly"),
+            ("opener twice in a call.", "opener twice in a call. }"),
+        ]
         portrait = " ".join(_load("PERSONA_LELIK_YOU")["content"].split())
-        for before, after in owner_removals_2026_10_21:
+        for before, after in owner_removals_2026_10_21 + owner_anchor_blocks_2026_11_19:
             assert portrait.count(before) == 1
             portrait = portrait.replace(before, after)
 
@@ -110,8 +137,7 @@ class TestLelikXaiVoiceCharacter:
 
         positions = [prompt.index(_content(n)) for n in _SYSTEM_VOICE]
         assert positions == sorted(positions)
-        assert prompt.count("## Role & Persona") == 1
-        assert prompt.count("## Voice & Communication Style") == 1
+        _assert_each_section_once_in_order(prompt)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("alternative,order", sorted(_CATALOG.items()))
@@ -125,8 +151,7 @@ class TestLelikXaiVoiceCharacter:
         assert _content(replaced) not in prompt
         for kept in (n for n in _SYSTEM_VOICE if n != replaced):
             assert _content(kept) in prompt
-        assert prompt.count("## Role & Persona") == 1
-        assert prompt.count("## Voice & Communication Style") == 1
+        _assert_each_section_once_in_order(prompt)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("locked", ["VOICE_CARE_LELIK", "VOICE_CALL_MANNERS"])

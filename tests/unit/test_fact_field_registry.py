@@ -7,8 +7,8 @@ field list cross-check.
 
 What counts as a reader, in a module that handles facts: it imports `FactEntity`, `StoredFact` or the fact repository
 (`FactRepository`, `FirestoreFactRepository`: they hand out the dict form), or it is one of `FACT_MODULE_STEMS`, the
-services named in a planned reader (the baseline `biographical_context_service`, which will read `user_identity` in
-PR 11 of FACT_PROFILE_RFC and imports none of those types, so the P20-D2 pin flips when its reader lands):
+services named in a planned reader (the baseline `biographical_context_service`, named for `user_identity`; PR 11 of
+FACT_PROFILE_RFC put that read in the repository's identity query, which closed P20-D2):
 - `<x>.field` in load context;
 - `<x>["field"]` in load context, and `.get("field")` / `.pop("field")`;
 - `FieldFilter("field", ...)`, `.where("field", ...)`, `.order_by("field")` (a query reads the stored value);
@@ -53,9 +53,7 @@ WRITE_ONLY_BY_DESIGN: dict[str, str] = {
 
 # Fields written, meant to be read, read by no code yet. Each has its own strict xfail below, `P20-D<n>: `field` ...`;
 # the one that gets a reader flips its test to XPASS (strict), which forces the pin and this entry out.
-PINNED_DEFECTS: dict[str, str] = {
-    "user_identity": "P20-D2",
-}
+PINNED_DEFECTS: dict[str, str] = {}
 
 
 def _dotted_tail(node: ast.AST) -> str:
@@ -180,11 +178,9 @@ def test_allow_list_has_no_stale_entry():
     assert all(len(reason.split()) >= 4 for reason in WRITE_ONLY_BY_DESIGN.values()), "an entry needs a reason"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P20-D2: `user_identity` pending FACT_PROFILE PR 11 (reader not built yet; RFC line 112)",
-)
 def test_p20_d2_user_identity_is_read():
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): the pinned defect is fixed (the identity block's query filters on
+    # the field), so the strict xfail and its PINNED_DEFECTS entry go; the test stays as the guard that it is read.
     assert _registry()[1]["user_identity"]
 
 

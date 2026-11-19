@@ -9,16 +9,28 @@ response it is accepted. `assert_response` checks one body (one event's data for
 server-sent-event stream.
 JSON Schema `format` keywords (date-time, uri, ...) are not enforced: no FormatChecker is passed.
 
-A failure lists every violation, one per line: `<where>: unknown field | wrong type | missing required | value not
-allowed | deprecated`. `<where>` is a JSON path into the body (`$.input[1].content[0].type`) or `header <name>`. Where
-a union's variants carry a `type` const, the message comes from the variant the request's `type` names, not from the
-whole union.
+Paths: a request's path is the decoded URL path the client sent (`yarl.URL.path`, `httpx.URL.path`), never with a query
+or fragment. When the contract's server has a base path (`/v1`), the path must start with it and it is stripped; a path
+without it is accepted only for a server with an empty base path. The operation is found by its literal path, else by a
+templated one matched segment by segment (`/messages/{id}`; a literal match wins); the matched segments are the path
+parameters.
+
+Query: the caller always says what was sent (`{}` for nothing). Values arrive as strings and are read per the
+parameter's schema (integer and number in their canonical ASCII form, boolean; an array is a repeated parameter, or one
+comma-separated value when the parameter says `explode: false`) before validation. A path or query parameter the
+contract marks `deprecated` fails when sent, unless it carries the extension.
+
+A failure lists every violation, one per line: `<where>: unknown field | unknown query parameter | wrong type | missing
+required | value not allowed | deprecated`. `<where>` is a JSON path into the body (`$.input[1].content[0].type`),
+`header <name>`, `path <name>` or `query <name>`. Where a union's variants carry a `type` const, the message comes from
+the variant the request's `type` names, not from the whole union.
 """
 from __future__ import annotations
 
 import functools
+import re
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 from urllib.parse import urlparse
 
 import jsonschema
@@ -37,15 +49,21 @@ def assert_request(
     headers: Mapping[str, str],
     body: Any,
     *,
+    query: Mapping[str, Sequence[str]],
     contracts_dir: Path = CONTRACTS_DIR,
 ) -> None:
     """Fail (AssertionError, every violation on its own line) unless the request conforms to the provider's contract.
 
-    `path` is the operation's path as the contract writes it, or the URL path the client sent (the base path of the
-    contract's server, e.g. `/v1`, is stripped). Only the headers the operation declares are checked: the SDK adds
-    its own (auth, user agent, retries). `contracts_dir` is for the extractor's own tests."""
-    op = _operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
-    problems = sorted(set(op.problems(headers, body)))
+    `path` is the decoded URL path the client sent, the server's base path included (see the module docstring). Only the headers the operation declares are checked: the SDK adds
+    its own (auth, user agent, retries). `query` maps each query parameter sent to its values in order, as strings;
+    `{}` when none was sent. `body` is None for a request without one. `contracts_dir` is for the tests of this module
+    and of the extractor."""
+    if query is None:
+        raise TypeError("query: pass {} when the request carries no query")
+    contract = contracts_dir / provider / "openapi.yaml"
+    template, path_params = _match(contract, method.lower(), _plain_path(path))
+    op = _operation(contract, method.lower(), template)
+    problems = sorted(set(op.problems(headers, body, dict(path_params), query)))
     if problems:
         raise AssertionError(f"{provider} {method.upper()} {path} breaks the contract:\n" + "\n".join(problems))
 
@@ -65,8 +83,9 @@ def assert_response(
 
     For `text/event-stream` the body is ONE event's data JSON (see `assert_stream` for a whole stream). A field the
     source marks deprecated is accepted in a response (the provider may still send it); a top-level field the contract
-    keeps as `x-alek-unread` accepts any value."""
-    op = _operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
+    keeps as `x-alek-unread` accepts any value. `path` names the operation: its `paths` key, or the URL path of the
+    request it answers (the server's base path included)."""
+    op = _response_operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
     problems = sorted(set(op.response_problems(str(status), media, body, "$")))
     if problems:
         raise AssertionError(
@@ -85,7 +104,7 @@ def assert_stream(
     """Fail unless every event of a server-sent-event stream conforms: `events` is `[{"event": <name>, "data":
     <JSON>}]` in wire order. Each violation is prefixed `event[i]`; an event whose name differs from its data's
     `type` is a violation too (the SDK dispatches on the name)."""
-    op = _operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
+    op = _response_operation(contracts_dir / provider / "openapi.yaml", method.lower(), path)
     problems: list[str] = []
     for i, event in enumerate(events):
         data = event.get("data")
@@ -96,6 +115,26 @@ def assert_stream(
     if problems:
         raise AssertionError(
             f"{provider} {method.upper()} {path} {status} text/event-stream breaks the contract:\n" + "\n".join(problems))
+
+
+def operation_path(provider: str, method: str, path: str, *, contracts_dir: Path = CONTRACTS_DIR) -> str:
+    """The contract path (`paths` key) a request's method and decoded URL path resolve to; AssertionError when none
+    does."""
+    return _match(contracts_dir / provider / "openapi.yaml", method.lower(), _plain_path(path))[0]
+
+
+def _plain_path(path: str) -> str:
+    if "?" in path or "#" in path:
+        raise ValueError(f"{path!r}: pass the URL path alone; the query goes in `query`")
+    return path
+
+
+def _response_operation(contract: Path, method: str, path: str) -> "_Operation":
+    """The operation a response answers: `path` is the contract's `paths` key itself, else the request's URL path
+    resolved as `assert_request` resolves it."""
+    if method in ((_document(contract).get("paths") or {}).get(path) or {}):
+        return _operation(contract, method, path)
+    return _operation(contract, method, _match(contract, method, _plain_path(path))[0])
 
 
 # ------------------------------------------------------------------------------------------------------- loading
@@ -115,15 +154,58 @@ def _document(contract: Path) -> dict:
 
 
 @functools.lru_cache(maxsize=None)
-def _operation(contract: Path, method: str, path: str) -> "_Operation":
+def _match(contract: Path, method: str, path: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """The `paths` key the request resolves to and its path parameters. A literal path wins; otherwise the templated
+    path with the most literal segments (a tie between two templates is ambiguous and fails)."""
     doc = _document(contract)
     paths = doc.get("paths") or {}
-    candidates = [path] + [path[len(base):] for base in _base_paths(doc) if base and path.startswith(base)]
+    bases = _base_paths(doc) or [""]
+    candidates = [path[len(base):] if base else path for base in bases if not base or path.startswith(base + "/")]
     for candidate in candidates:
-        op = (paths.get(candidate) or {}).get(method)
-        if op is not None:
-            return _Operation(doc, op)
-    raise AssertionError(f"{method.upper()} {path} is not in {contract} (operations: {sorted(paths)})")
+        if method in (paths.get(candidate) or {}):
+            return candidate, ()
+    found: dict[str, tuple[int, tuple[tuple[str, str], ...]]] = {}
+    for candidate in candidates:
+        for template, item in paths.items():
+            if "{" in template and method in (item or {}) and template not in found:
+                params = _template_params(template, candidate)
+                if params is not None:
+                    found[template] = (sum("{" not in seg for seg in template.split("/")), params)
+    if not found:
+        raise AssertionError(f"{method.upper()} {path} is not in {contract} (operations: {sorted(paths)})")
+    best = max(literal for literal, _ in found.values())
+    winners = sorted(t for t, (literal, _) in found.items() if literal == best)
+    if len(winners) > 1:
+        raise AssertionError(f"{method.upper()} {path} matches several operations of {contract}: {winners}")
+    return winners[0], found[winners[0]][1]
+
+
+def _template_params(template: str, path: str) -> tuple[tuple[str, str], ...] | None:
+    """The `{name}` values of `path` (already decoded) under `template`, segment by segment (a value never spans a
+    `/`); None: no match."""
+    want, got = template.split("/"), path.split("/")
+    if len(want) != len(got):
+        return None
+    params: list[tuple[str, str]] = []
+    for pattern, segment in zip(want, got):
+        parts = re.split(r"\{([^}]+)\}", pattern)   # "a{x}b" -> ["a", "x", "b"]: names at the odd indexes
+        if len(parts) == 1:
+            if pattern != segment:
+                return None
+            continue
+        hit = re.fullmatch("".join("(.+?)" if i % 2 else re.escape(p) for i, p in enumerate(parts)), segment)
+        if hit is None or not all(hit.groups()):
+            return None
+        params += list(zip(parts[1::2], hit.groups()))
+    return tuple(params)
+
+
+@functools.lru_cache(maxsize=None)
+def _operation(contract: Path, method: str, template: str) -> "_Operation":
+    op = ((_document(contract).get("paths") or {}).get(template) or {}).get(method)
+    if op is None:
+        raise AssertionError(f"{method.upper()} {template} is not in {contract}")
+    return _Operation(_document(contract), op)
 
 
 def _base_paths(doc: dict) -> list[str]:
@@ -131,16 +213,18 @@ def _base_paths(doc: dict) -> list[str]:
 
 
 class _Operation:
-    """One operation's compiled validators: the body and each declared header; each response (status, media type)
-    compiled on first use."""
+    """One operation's compiled validators: the body (None: the operation takes none) and each declared parameter;
+    each response (status, media type) compiled on first use."""
 
     def __init__(self, doc: dict, op: dict):
         self.schemas = (doc.get("components") or {}).get("schemas") or {}
         self.op = op
-        body = op["requestBody"]["content"]["application/json"]["schema"]
-        self.body = self._compile(body)
-        self.headers = [(p["name"], bool(p.get("required")), p["schema"], self._compile(p["schema"]))
-                        for p in op.get("parameters") or [] if p.get("in") == "header"]
+        body = op.get("requestBody")
+        self.body = self._compile(body["content"]["application/json"]["schema"]) if body else None
+        self.params: dict[str, list[tuple[dict, Any]]] = {"header": [], "path": [], "query": []}
+        for p in op.get("parameters") or []:
+            if p.get("in") in self.params:
+                self.params[p["in"]].append((p, self._compile(p["schema"])))
         self._responses: dict[tuple[str, str], Any] = {}
 
     def _compile(self, schema: dict, validator: Any = _Validator) -> Any:
@@ -161,20 +245,59 @@ class _Operation:
         for error in self._responses[key].iter_errors(body):
             yield from self._explain(error, root)
 
-    def problems(self, headers: Mapping[str, str], body: Any) -> Iterator[str]:
-        for error in self.body.iter_errors(body):
-            yield from self._explain(error, "$")
+    def problems(self, headers: Mapping[str, str], body: Any, path_params: Mapping[str, str],
+                 query: Mapping[str, Sequence[str]]) -> Iterator[str]:
+        if self.body is not None:
+            for error in self.body.iter_errors(body):
+                yield from self._explain(error, "$")
+        elif body is not None:
+            yield "$: unknown field (the operation takes no request body)"
         sent = {k.lower(): v for k, v in headers.items()}
-        for name, required, schema, validator in self.headers:
+        for param, validator in self.params["header"]:
+            name, schema = param["name"], param["schema"]
             value = sent.get(name.lower())
             if value is None:
-                if required:
+                if param.get("required"):
                     yield f"header {name}: missing required"
                 continue
             instance: Any = [v.strip() for v in value.split(",") if v.strip()] if schema.get("type") == "array" \
                 else value
             for error in validator.iter_errors(instance):
                 yield from self._explain(error, f"header {name}")
+        for param, validator in self.params["path"]:
+            name = param["name"]
+            if name not in path_params:
+                yield f"path {name}: missing required"
+                continue
+            yield from _deprecated_parameter(param, f"path {name}")
+            yield from self._explain_all(validator, _scalar(path_params[name], param["schema"]), f"path {name}")
+        known = {param["name"] for param, _ in self.params["query"]}
+        for name in sorted(set(query) - known):
+            yield f"query {name}: unknown query parameter"
+        for param, validator in self.params["query"]:
+            name, schema = param["name"], param["schema"]
+            values = query.get(name)
+            if isinstance(values, (str, bytes)):
+                raise TypeError(f"query {name}: pass the values as a list of strings, not one string")
+            if not values:
+                if param.get("required"):
+                    yield f"query {name}: missing required"
+                continue
+            if schema.get("type") == "array":
+                if param.get("explode") is False:
+                    values = [part for value in values for part in value.split(",")]
+                instance = [_scalar(v, schema.get("items") or {}) for v in values]
+            elif len(values) > 1:
+                yield f"query {name}: wrong type (expected one value, got {len(values)})"
+                continue
+            else:
+                instance = _scalar(values[0], schema)
+            yield from _deprecated_parameter(param, f"query {name}")
+            yield from self._explain_all(validator, instance, f"query {name}")
+
+    def _explain_all(self, validator: Any, instance: Any, root: str) -> Iterator[str]:
+        for error in validator.iter_errors(instance):
+            yield from self._explain(error, root)
 
     # -- messages
     def _explain(self, error: ValidationError, root: str) -> Iterator[str]:
@@ -220,6 +343,29 @@ class _Operation:
         while isinstance(schema, dict) and "$ref" in schema:
             schema = self.schemas[schema["$ref"].rsplit("/", 1)[-1]]
         return schema
+
+
+def _deprecated_parameter(param: Mapping[str, Any], where: str) -> Iterator[str]:
+    """A sent parameter the contract marks deprecated (OpenAPI puts the mark on the Parameter Object), unless allowed."""
+    if param.get("deprecated") is True and EXTENSION not in param:
+        yield f"{where}: deprecated"
+
+
+_INTEGER = re.compile(r"-?(0|[1-9][0-9]*)")                       # as a client writes an int: no sign, no zero padding
+_NUMBER = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?")
+
+
+def _scalar(text: str, schema: Mapping[str, Any]) -> Any:
+    """A path or query value (a string on the wire) as the schema's type, when it reads as one in canonical ASCII
+    form; else the string, which then fails as a wrong type."""
+    kind = schema.get("type")
+    if kind == "integer" and _INTEGER.fullmatch(text):
+        return int(text)
+    if kind == "number" and _NUMBER.fullmatch(text):
+        return float(text)
+    if kind == "boolean" and text in ("true", "false"):
+        return text == "true"
+    return text
 
 
 # -------------------------------------------------------------------------------------------- union discrimination

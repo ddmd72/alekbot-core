@@ -125,7 +125,8 @@ def test_the_output_items_passed_back_conform_to_the_request_contract(sample_id)
     with pytest.raises(LLMClientError):
         asyncio.run(_run(sink, _request(follow_up)))
     (request,) = seen
-    assert_request("openai", request.method, request.url.path, dict(request.headers), json.loads(request.content))
+    assert_request("openai", request.method, request.url.path, dict(request.headers), json.loads(request.content),
+                   query={k: request.url.params.get_list(k) for k in request.url.params.keys()})
 
 
 # ----------------------------------------------------------------------------------------- unknown and wrong fields

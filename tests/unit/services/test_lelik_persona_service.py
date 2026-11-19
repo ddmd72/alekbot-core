@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.entities import FactDomain
+from src.domain.fact_domains import Domain, all_keys
 from src.domain.llm import Message, MessagePart, ToolCall
 from src.domain.notification import NotificationChannel
 from src.domain.session import SessionState
@@ -17,7 +17,12 @@ from src.services.lelik_persona_service import (
     LelikPersonaService,
 )
 
-ALL_DOMAIN_FACTS = [{"domain": d.value, "text": f"fact: {d.value}"} for d in FactDomain]
+# Reviewer edit (FACT_PROFILE_RFC §6 row 4, PR 11): Lelik's filter reads the profile, so the cache carries one ordinary
+# fact per registry key (primary_domain) instead of one per old FactDomain value.
+ALL_DOMAIN_FACTS = [{"primary_domain": key, "sensitivity": "ordinary", "text": f"fact: {key}"} for key in all_keys()]
+# The RFC's voice_open default (§6 row 4), written out so the test does not read it from the registry it checks.
+VOICE_OPEN = {"biography", "food", "lifestyle", "abilities", "beliefs", "media", "hobbies", "sport", "going_out",
+              "memories", "appearance", "belongings"}
 
 
 def _channel(channel_id="C123"):
@@ -47,28 +52,29 @@ async def test_only_the_default_voice_domains_reach_the_prompt_by_default():
     service, fact_repo, *_ = _service()
     ctx = await service.assemble(user_id="u1", account_id="a1")
     fact_repo.get_biographical_context_cached.assert_awaited_once_with("a1")
-    assert {f["domain"] for f in ctx.biographical_facts} == {
-        FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value,
-    }
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 4, PR 11): the default is the registry's voice_open set.
+    assert {f["primary_domain"] for f in ctx.biographical_facts} == VOICE_OPEN
 
 
 @pytest.mark.asyncio
 async def test_domains_outside_the_allowlist_are_withheld():
-    config = UserBotConfig(voice_fact_domains=[FactDomain.WORK.value, FactDomain.PREFERENCE.value])
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 4, PR 11): the allowlist names registry keys, matched on primary_domain.
+    config = UserBotConfig(voice_fact_domains=[Domain.WORK, Domain.FOOD])
     service, *_ = _service(config=config)
     ctx = await service.assemble(user_id="u1", account_id="a1")
-    domains = {f["domain"] for f in ctx.biographical_facts}
-    assert "medical_records" not in domains and "finance" not in domains
-    assert FactDomain.BIOGRAPHICAL.value not in domains
-    assert domains == {FactDomain.WORK.value, FactDomain.PREFERENCE.value}
+    domains = {f["primary_domain"] for f in ctx.biographical_facts}
+    assert Domain.HEALTH not in domains and Domain.MONEY not in domains
+    assert Domain.BIOGRAPHY not in domains
+    assert domains == {Domain.WORK, Domain.FOOD}
 
 
 @pytest.mark.asyncio
 async def test_unknown_allowed_domain_is_ignored_not_fatal():
-    config = UserBotConfig(voice_fact_domains=[FactDomain.WORK.value, "medcal_records"])
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 4, PR 11): matched on primary_domain.
+    config = UserBotConfig(voice_fact_domains=[Domain.WORK, "medcal_records"])
     service, *_ = _service(config=config)
     ctx = await service.assemble(user_id="u1", account_id="a1")
-    assert ctx.biographical_facts == [f for f in ALL_DOMAIN_FACTS if f["domain"] == FactDomain.WORK.value]
+    assert ctx.biographical_facts == [f for f in ALL_DOMAIN_FACTS if f["primary_domain"] == Domain.WORK]
 
 
 @pytest.mark.asyncio
@@ -156,5 +162,7 @@ async def test_primary_channel_is_the_notification_chain():
     notifications.resolve_channel.assert_awaited_once_with("u1")
 
 
-def test_user_bot_config_allows_biographical_and_preference_by_default():
-    assert UserBotConfig().voice_fact_domains == [FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value]
+def test_user_bot_config_allows_the_voice_open_domains_by_default():
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 4, PR 11): the stored default is the registry's voice_open keys.
+    default = UserBotConfig().voice_fact_domains
+    assert set(default) == VOICE_OPEN and len(default) == len(VOICE_OPEN)

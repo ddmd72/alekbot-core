@@ -1,0 +1,126 @@
+# Invented mini contract for tests/unit/contracts/test_openapi_contract.py: path and query parameters, templated paths and
+# operations without a body (shaped like an extracted subset; no real API).
+openapi: 3.1.0
+info:
+  title: parcels request subset
+  version: 1.0.0
+x-source: https://example.com/parcels@abc
+x-retrieved: '2026-11-19'
+x-transforms: []
+servers:
+  - url: https://api.parcels.example.com/v1
+paths:
+  /parcels:
+    get:
+      parameters:
+        - name: limit
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, shipped]
+        - name: tag
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: fields
+          in: query
+          required: false
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [id, weight]
+        - name: express
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: ratio
+          in: query
+          required: false
+          schema:
+            type: number
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                weight:
+                  type: integer
+              additionalProperties: false
+  /parcels/tracked:
+    get: {}
+  /parcels/{parcelId}:
+    get:
+      parameters:
+        - name: parcelId
+          in: path
+          required: true
+          schema:
+            type: integer
+  /parcels/{parcelId}/labels/{labelId}.pdf:
+    get:
+      parameters:
+        - name: parcelId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: labelId
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [front, back]
+  /depots/{depotId}/parcels:
+    get:
+      parameters:
+        - name: depotId
+          in: path
+          required: true
+          schema:
+            type: string
+  /{area}/{depotId}/parcels:
+    get:
+      parameters:
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: depotId
+          in: path
+          required: true
+          schema:
+            type: string
+  /routes/{a}:
+    get:
+      parameters:
+        - name: a
+          in: path
+          required: true
+          schema:
+            type: string
+  /{b}/east:
+    get:
+      parameters:
+        - name: b
+          in: path
+          required: true
+          schema:
+            type: string
