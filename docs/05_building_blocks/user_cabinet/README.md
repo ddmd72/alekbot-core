@@ -185,7 +185,6 @@ Directly marks a fact as `state = "invalidated"` in Firestore. Immediate effect 
 |--------|--------|
 | Browse (`GET /browse`) | Fact disappears immediately (filtered by `state == "current"`) |
 | Memory search (`search_facts`) | Fact excluded immediately |
-| Enrichment service (`search_facts_by_domain`) | Fact excluded immediately |
 | Biographical context **cache** | ⚠️ Cache stale until next consolidation refreshes it |
 
 The biographical cache risk is limited in practice: the cache contains only CRITICAL/HIGH priority biographical facts. Most user-invalidated facts are health metrics, location, possession — not cached.

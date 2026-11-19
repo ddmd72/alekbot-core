@@ -144,10 +144,10 @@ like any other message.
 | `tags` | keywords; `mindset` makes the fact a principle (§4.1); `consolidated` is added to every fact, `anchor` to principles (`fact_write_service.py:53-56`); an update keeps both (§2.4) |
 | `type` | `state`, `event`, `principle`, `system`, `alert` (`entities.py:7-12`); the consolidator does not set it, so it defaults to `event` (`fact_management_adapter.py:207`) |
 | `metadata` | structured values (numbers, dates) |
-| `directive`, `temporal_class`, `state`, `context_priority` | the consolidator's directive decision and three axes (§2.2); a document written before `FACT_PROFILE_RFC.md` PR 13 also carries the old 16-value `domain`, read only by the `domain_direct` channel no caller uses (§4.3) |
+| `directive`, `temporal_class`, `state`, `context_priority` | the consolidator's directive decision and three axes (§2.2); a document written before `FACT_PROFILE_RFC.md` PR 13 also carries the old 16-value `domain`, which no code reads |
 | `context` | a short label for why it was recorded; shown by `search_memory` |
 | `reported_date` | when the owner last stated the fact; code owns it per pass (§2.7); shown by `search_memory` as `reported: YYYY-MM-DD`, and to the consolidator as an ISO time with the owner's offset |
-| `created_at` | ordering of the baseline and the domain channel; a version copies it from the document it replaces, so it is the fact's first mention |
+| `created_at` | ordering of the baseline and the Cabinet lists; a version copies it from the document it replaces, so it is the fact's first mention |
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
 | `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
@@ -941,11 +941,10 @@ of this section describes `enrich_context`, the older multi-vector engine, which
 `SearchEnrichmentService.enrich_context` (`search_enrichment_service.py:42-249`):
 
 1. Embeds the non-empty inputs in one batch with `RETRIEVAL_QUERY` (`:113-129`).
-2. Runs up to 7 queries in parallel (`:131-179`), each restricted to `account_id` and `state == "current"`:
+2. Runs up to 6 vector queries in parallel, each restricted to `account_id` and `state == "current"`:
 
 | Channel | Input | Field | Limit (defaults) |
 |---|---|---|---|
-| `domain_direct` | `relevant_domains` (1–3) | Firestore `IN` on the old `domain` (no longer written since PR 13; no caller passes `relevant_domains`), newest first | keyword limit (10) |
 | `keyword_tags` | keywords joined | `tags_vector` | 10 |
 | `keyword_metadata` | keywords joined | `metadata_vector` | 7 |
 | `phrase1_text` | phrase 1 | `vector` | 10 |
@@ -963,8 +962,7 @@ of this section describes `enrich_context`, the older multi-vector engine, which
    numbers are never duplicates; a clearly longer, more detailed text is kept.
 5. Cut to the total limit; drop facts whose id is in the `biographical_facts` passed in (`search_enrichment_service.py:214-236`).
 
-Scores: Firestore returns no distance in this projection, so `relevance_score` is `None` for every vector hit (only
-the domain channel sets 1.0, `search_enrichment_service.py:397,452`). Ranking uses ranks, not scores. A process-wide semaphore caps parallel
+Scores: Firestore returns no distance in this projection, so `relevance_score` is `None` for every hit. Ranking uses ranks, not scores. A process-wide semaphore caps parallel
 `find_nearest` calls at 30 (`firestore_repo.py:50`). Since S3 the result (`EnrichedFact`) also carries `expiry_kind`,
 `ttl_days` and `expires_at` (the last as an ISO string, so the Router's context stays JSON-serialisable for Cloud Task
 payloads); only the consolidator's search dict renders them (§2.7), and Smart, `search_memory`, Lelik, the connector and the

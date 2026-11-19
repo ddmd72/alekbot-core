@@ -119,9 +119,8 @@ version keeps text and metadata, so its profile stays fresh (code survey surpris
 | `account_id` ASC, `state` ASC, `directive` ASC, `context_priority_rank` ASC, `created_at` DESC | every read of the standing directives (the baseline's rulebook, Stage 2b, the cap, the companion slice) | PR 13 |
 
 The profile scan and the search snapshot (§5.2) read `account_id == X AND state == current` with a projection; the
-existing `(account_id, state, __name__)` index serves them. PR 13 removes five of the six old `domain` indexes; the one
-that serves `search_facts_by_domain` (`account_id`, `state`, `domain`, `created_at` DESC, `__name__` DESC) stays while that
-method has a caller in `src/` (the `relevant_domains` channel of `enrich_context`, which no caller passes).
+existing `(account_id, state, __name__)` index serves them. PR 13 removes the six old `domain` indexes, together with the
+old domain channel (`search_facts_by_domain` and the `relevant_domains` path of `enrich_context`, which no caller used).
 
 ## 3. Domain registry
 
@@ -559,7 +558,7 @@ Every reader of today's `FactDomain` (code survey + taxonomy), its new rule and 
 | 8 | `firestore_channel_binding_adapter.py:72` | `FactDomain(d)` — raises on an unknown value | registry `config_key(d)`: legacy mapping, unknown dropped with a warning, never raises | 12 |
 | 9 | `user_cabinet_app.py:842-1010`, `cabinet.html` | badge `f.domain`; `?domain=` filter (`firestore_repo.py:312`) | badge = registry label of `primary_domain` (old `domain` while absent); filter on `domain_keys`; labels from `/api/user/fact-domains` | 12 |
 | 10 | `mcp_setup.py:175-182`, `:361-370` | groups by `f.domain`; calls `enrich_context` itself | the memory search agent with `queries`; registry label of `primary_domain`; gate applied by the engine | 10 |
-| 11 | `search_enrichment_service.py:135,363`, `firestore_repo.py:909-953` | domain channel `domain IN`, newest first | domain list of §5.3; old method kept for `enrich_context` users | 8–10 |
+| 11 | `search_enrichment_service.py:135,363`, `firestore_repo.py:909-953` | domain channel `domain IN`, newest first | domain list of §5.3; the old domain channel of `enrich_context` and `search_facts_by_domain` removed in PR 13 | 8–10, 13 |
 | 12 | `router_agent.py:310-338` | prefetch from triage `semantic_lens`/`search_phrase`/`relevant_domains` | P1 slots + `FactSearchService`; the triage search fields are removed in the same PR (OD-14) | 9 |
 | 13 | `memory_search_agent.py:108-153, 241-247, 295-352` | `MEMORYSEARCH_*` decomposer, old domains, fallback vector search | `queries` (1–4 phrases); P1 slots per phrase; one multi-phrase search; a failed slots call = one semantic list for that phrase; no legacy payload | 8 |
 | 14 | `consolidation_agent.py:105-116` (+ tokens) | model supplies one of 16 domains | the directive decision only: a required boolean `directive` on `create_fact` and `merge_facts`, the tokens teach that one decision (OD-6) | 13 |
@@ -634,7 +633,7 @@ Each PR is small, deploys on its own and changes no behaviour a later PR needs u
 | 10 | Connector `get_user_context(queries)` through the memory search agent (claude.ai and the voice token) | owner reconnects claude.ai (the schema changes) | `tests/unit/composition/test_mcp_get_user_context_v2.py` |
 | 11 | Baseline identity block, formatter labels, Lelik filter | identity index READY; scan shows 0 unprofiled | `tests/unit/services/test_biographical_identity_block.py`, `tests/unit/services/test_lelik_voice_filter.py`, `tests/unit/services/prompt_v3/test_biographical_formatter_labels.py` |
 | 12 | `is_directive` predicate, Cabinet filter + domains API, companion slice, channel-binding load | Cabinet index READY | `tests/unit/domain/test_is_directive.py`, `tests/unit/web/test_cabinet_fact_domains.py`, `tests/unit/services/test_companion_slice_v2.py`, `tests/unit/adapters/test_channel_binding_legacy_domains.py` |
-| 13 | Consolidator writes the directive decision only (a boolean `directive` field); `FactDomain`, the old `domain` field and its indexes removed except the one `search_facts_by_domain` still needs (OD-6); the token `date_rules` keep a past plan that happened as an event; the owner-run mark script; the Router triage part moved to PR 9 | consolidation bench dry run clean; directive index READY; the mark script run before the deploy and once right after | consolidation vocabulary tests updated by a reviewer; `tests/unit/agents/test_consolidation_directive_flag.py`, `tests/unit/scripts/test_fact_directive_flag_mark.py` |
+| 13 | Consolidator writes the directive decision only (a boolean `directive` field); `FactDomain`, the old `domain` field, its indexes and the old domain channel (`search_facts_by_domain`, `relevant_domains`) removed (OD-6); the token `date_rules` keep a past plan that happened as an event; the owner-run mark script; the Router triage part moved to PR 9 | consolidation bench dry run clean; directive index READY; the mark script run before the deploy and once right after | consolidation vocabulary tests updated by a reviewer; `tests/unit/agents/test_consolidation_directive_flag.py`, `tests/unit/scripts/test_fact_directive_flag_mark.py` |
 
 An existing test that fails under any PR goes to a reviewer (REVIEWER RULE); tests of deleted code are deleted in that PR
 and listed in its body.
