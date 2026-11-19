@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from google.api_core.exceptions import InvalidArgument
 from google.cloud.firestore_v1.vector import Vector
 from pydantic import ValidationError
 
@@ -67,20 +66,16 @@ async def _paginated(s):
     return (await s.repo.get_paginated_facts(ACC, limit=50))[0]
 
 
-async def _by_domain(s):
-    return await s.repo.search_facts_by_domain(["health"], limit=50, account_id=ACC)
-
-
 async def _search(s):
     return await s.repo.search_facts(embed("query"), "vector", limit=50, user_id=USER, account_id=ACC)
 
 
 ACCOUNT_READERS = pytest.mark.parametrize(
-    "reader", [_active, _ordered, _longest, _paginated, _by_domain, _search],
-    ids=["active", "ordered", "longest", "paginated", "by_domain", "search"],
+    "reader", [_active, _ordered, _longest, _paginated, _search],
+    ids=["active", "ordered", "longest", "paginated", "search"],
 )
 ORDERED_BY_CREATED_AT = pytest.mark.parametrize(
-    "reader", [_ordered, _paginated, _by_domain], ids=["ordered", "paginated", "by_domain"])
+    "reader", [_ordered, _paginated], ids=["ordered", "paginated"])
 PROJECTION_READERS = pytest.mark.parametrize(
     "reader", [_active, _ordered, _longest], ids=["active", "ordered", "longest"])
 
@@ -448,40 +443,6 @@ async def test_search_returns_vectors_as_lists_of_floats(store):
     put_raw(store, "own", "own")
     (got,) = await store.repo.search_facts(embed("own"), "vector", user_id=USER, account_id=ACC)
     assert type(got.vector) is list and all(type(x) is float for x in got.vector)
-
-
-# ------------------------------------------------------------------------------------ search_facts_by_domain
-
-async def test_by_domain_returns_newest_first_within_limit_for_the_domains_only(store):
-    for text, domain, age in (("h0", "health", 0), ("h1", "health", 1), ("w2", "work", 2), ("p3", "possession", 3),
-                              ("h4", "health", 4)):
-        await store.repo.add_fact(make_fact(text, domain=domain, age_days=age))
-    await store.repo.add_fact(make_fact("foreign", account=OTHER, age_days=9))
-    await store.repo.add_fact(make_fact("archived", state=FactState.ARCHIVED, age_days=8))
-    got = await store.repo.search_facts_by_domain(["health", "work"], limit=3, account_id=ACC)
-    assert [f.text for f in got] == ["h4", "w2", "h1"]
-    assert len(await store.repo.search_facts_by_domain(["health"], account_id=ACC)) == 3
-
-
-async def test_by_domain_account_is_the_argument_else_the_context_account_and_user_id_is_unused(store):
-    put_raw(store, "own", "own")
-    put_raw(store, "foreign", "foreign", account_id=OTHER)
-    assert ids(await store.repo.search_facts_by_domain(["health"], account_id=OTHER)) == ["foreign"]
-    with RequestContext(user_id=OTHER, account_id=ACC):
-        assert ids(await store.repo.search_facts_by_domain(["health"])) == ["own"]
-        assert ids(await store.repo.search_facts_by_domain(["health"], user_id=OTHER)) == ["own"]
-    with pytest.raises(ValueError):
-        await store.repo.search_facts_by_domain(["health"], user_id=ACC)
-
-
-async def test_by_domain_errors_and_empty_domains(store):
-    put_raw(store, "own", "own")
-    with pytest.raises(ValueError):
-        await store.repo.search_facts_by_domain(["health"])
-    assert await store.repo.search_facts_by_domain([], account_id=ACC) == []
-    with pytest.raises(InvalidArgument):
-        await store.repo.search_facts_by_domain([f"d{i}" for i in range(31)], account_id=ACC)
-    assert ids(await store.repo.search_facts_by_domain([f"d{i}" for i in range(29)] + ["health"], account_id=ACC)) == ["own"]
 
 
 # ------------------------------------------------------------------------------------------ add_fact_if_unique

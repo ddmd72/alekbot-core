@@ -3,7 +3,6 @@ from datetime import timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from google.cloud import firestore
 
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.config.environment import EnvironmentConfig
@@ -29,24 +28,6 @@ def repo(col):
 def _filters(mock_where):
     return [(c.kwargs["filter"].field_path, c.kwargs["filter"].op_string, c.kwargs["filter"].value)
             for c in mock_where.call_args_list]
-
-
-@pytest.mark.asyncio
-async def test_domain_search_newest_first_with_filters(repo, col):
-    # where() chain returns the same mock so every call is recorded on col.where
-    chain = col.where.return_value
-    chain.where.return_value = chain
-    ordered = chain.order_by.return_value
-    ordered.limit.return_value.get = AsyncMock(return_value=[])
-
-    assert await repo.search_facts_by_domain(["health"], limit=7, account_id="acc") == []
-
-    seen = _filters(col.where) + _filters(chain.where)
-    assert ("account_id", "==", "acc") in seen
-    assert ("domain", "in", ["health"]) in seen
-    assert ("state", "==", "current") in seen
-    chain.order_by.assert_called_once_with("created_at", direction=firestore.Query.DESCENDING)
-    ordered.limit.assert_called_once_with(7)
 
 
 @pytest.mark.asyncio

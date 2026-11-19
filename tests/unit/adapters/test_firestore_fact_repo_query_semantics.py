@@ -26,16 +26,6 @@ def store():
     return FactStore()
 
 
-async def test_search_by_domain_returns_newest_current_facts_first_within_limit(store):
-    for i in range(5):
-        await store.repo.add_fact(_fact(f"health {i}", age_days=i))
-    await store.repo.add_fact(_fact("work 9", domain="work", age_days=9))
-    await store.repo.add_fact(_fact("poss 10", domain="possession", age_days=10))
-    await store.repo.add_fact(_fact("archived health", state=FactState.ARCHIVED, age_days=20))
-    await store.repo.add_fact(_fact("foreign health", account="acc-2", age_days=30))
-    got = await store.repo.search_facts_by_domain(["health", "work"], limit=3, account_id=ACC)
-    assert [f.text for f in got] == ["work 9", "health 4", "health 3"]
-
 
 async def test_add_if_unique_adds_text_equal_to_an_archived_or_invalidated_fact(store):
     await store.repo.add_fact(_fact("old claim", state=FactState.ARCHIVED))

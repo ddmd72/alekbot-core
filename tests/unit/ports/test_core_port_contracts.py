@@ -573,9 +573,6 @@ class TestFactRepositoryContract:
         assert getattr(FactRepository.get_legacy_facts, "__isabstractmethod__", False)
         assert getattr(FactRepository.get_longest_facts, "__isabstractmethod__", False)
 
-    def test_has_search_facts_by_domain(self):
-        assert getattr(FactRepository.search_facts_by_domain, "__isabstractmethod__", False)
-
     def test_all_abstract_methods_count(self):
         """Port should have exactly 30 abstract methods.
 

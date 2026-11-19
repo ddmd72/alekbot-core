@@ -40,20 +40,8 @@ async def vector_search(world):
     return {f.text for f in await world.repo.search_facts(embed(GONE), account_id=ACC, user_id=USER)}
 
 
-async def domain_search(world):
-    return {f.text for f in await world.repo.search_facts_by_domain(["health", "agent_directive"], account_id=ACC)}
-
-
 def enrichment(world):
     return SearchEnrichmentService(world.repo, world.store.embedder, 7, 10, 10, 20)
-
-
-async def router_enrichment(world):
-    with RequestContext(user_id=USER, account_id=ACC):
-        result = await enrichment(world).enrich_context(
-            keywords=[], search_phrase_1=GONE, search_phrase_2=KEPT, relevant_domains=["health"]
-        )
-    return {f.content for f in result.facts}
 
 
 async def consolidator_search(world):
@@ -66,8 +54,6 @@ async def consolidator_search(world):
 READ_PATHS = [
     pytest.param(cache, "health", id="biographical-cache-document"),
     pytest.param(vector_search, "health", id="search_facts-smart-router-search_memory-mcp"),
-    pytest.param(domain_search, "health", id="search_facts_by_domain-router"),
-    pytest.param(router_enrichment, "health", id="enrichment-with-domains"),
     pytest.param(active_ordered, "health", id="get_active_facts_ordered-lelik-voice-domains"),
     pytest.param(active_ordered_directives, "agent_directive", id="get_active_facts_ordered-stage-2b-directives"),
     pytest.param(active, "health", id="get_active_facts-cabinet-and-cache-build"),
