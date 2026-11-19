@@ -323,7 +323,7 @@ class TestRedeemWithText:
 
         [(_, body)] = w.tasks.worker_tasks()
         assert "2026-11-18 19:40 (UTC+01:00)" in body["mark_text"]
-        assert w.geocoder.asked == [(41.1, -8.6, "uk")]
+        assert w.geocoder.asked == [(41.1, -8.6)]      # names come in English (§4.3); the line is in uk
         assert w.posted() == [uk.UI_STRINGS[UIMessage.GEO_SAVED.value].format(
             address=ADDRESS, accuracy="±5 m", time="19:40")]
 

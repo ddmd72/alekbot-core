@@ -1141,15 +1141,14 @@ class TestReverseGeocodingPortContract:
         with pytest.raises(TypeError):
             ReverseGeocodingPort()
 
-    def test_nearest_address_is_its_one_abstract_async_method(self):
+    def test_look_up_is_its_one_abstract_async_method(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(ReverseGeocodingPort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert abstract_methods == {"nearest_address"}
-        assert inspect.iscoroutinefunction(ReverseGeocodingPort.nearest_address)
+        assert abstract_methods == {"look_up"}
+        assert inspect.iscoroutinefunction(ReverseGeocodingPort.look_up)
 
-    def test_nearest_address_signature(self):
-        sig = inspect.signature(ReverseGeocodingPort.nearest_address)
-        assert list(sig.parameters) == ["self", "latitude", "longitude", "language"]
-        assert sig.parameters["language"].kind is inspect.Parameter.KEYWORD_ONLY
+    def test_look_up_signature_takes_the_position_only(self):
+        sig = inspect.signature(ReverseGeocodingPort.look_up)
+        assert list(sig.parameters) == ["self", "latitude", "longitude"]

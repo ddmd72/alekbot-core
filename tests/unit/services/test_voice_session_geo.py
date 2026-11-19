@@ -174,7 +174,7 @@ async def test_a_geo_frame_inserts_one_note_with_the_rendered_mark_and_answers_g
     await call.page_says(_geo())
     assert call.geo_notes() == [_expected_note(ADDRESS)] and ADDRESS in call.geo_notes()[0]
     assert call.geo_states() == [{"type": "geo_state", "ok": True, "seq": 1, "address": ADDRESS, "accuracy": 40.0}]
-    assert geocoder.asked == [(41.1, -8.6, "en")]
+    assert geocoder.asked == [(41.1, -8.6)]
     await call.end()
 
 
