@@ -15,21 +15,27 @@ BODY = {"id": "sp-1", "teeth": 12, "finish": None, "items": [{"type": "cog", "si
         "usage": {"input_tokens": 5, "details": {"cached_tokens": 0}}}
 
 
-def _problems(body=None, status=200, media="application/json", path="/sprockets") -> list[str]:
+def _violations(check, *args, **kwargs) -> list[str]:
+    """The violations `check` (`assert_response` or `assert_stream`) lists ([] when it passes). Any other failure (an
+    operation not found, no contract, no response for the status or media type) propagates: read as [], it would make
+    a test asserting [] pass vacuously."""
     try:
-        oc.assert_response("sprockets", "POST", path, status, BODY if body is None else body, media=media,
-                           contracts_dir=FIXTURES)
+        check(*args, contracts_dir=FIXTURES, **kwargs)
     except AssertionError as failure:
-        return str(failure).splitlines()[1:]
+        head, *violations = str(failure).splitlines()
+        if not head.endswith(" breaks the contract:") or not violations:
+            raise
+        return violations
     return []
+
+
+def _problems(body=None, status=200, media="application/json", path="/v1/sprockets") -> list[str]:
+    return _violations(oc.assert_response, "sprockets", "POST", path, status, BODY if body is None else body,
+                       media=media)
 
 
 def _stream_problems(events) -> list[str]:
-    try:
-        oc.assert_stream("sprockets", "POST", "/v1/sprockets", 200, events, contracts_dir=FIXTURES)
-    except AssertionError as failure:
-        return str(failure).splitlines()[1:]
-    return []
+    return _violations(oc.assert_stream, "sprockets", "POST", "/v1/sprockets", 200, events)
 
 
 def test_a_conforming_response_passes():
