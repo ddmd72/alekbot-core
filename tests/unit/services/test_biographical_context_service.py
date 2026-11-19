@@ -50,14 +50,18 @@ class TestBiographicalContextService:
     # ========================================================================
 
     async def test_biographical_domain_fetched_first(self, service, mock_repo):
-        """Service calls get_active_facts_ordered with domain=biographical first."""
+        """Service calls get_active_facts_ordered for the identity block first.
+
+        Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): the first query is the identity block (profile
+        user_identity == true), no longer domain=biographical; the limit is unchanged.
+        """
         biog_facts = [make_fact("biog fact")]
         mock_repo.get_active_facts_ordered.return_value = biog_facts
 
         await service.refresh_context("acc-123")
 
         first_call = mock_repo.get_active_facts_ordered.call_args_list[0]
-        assert first_call == call("acc-123", domain="biographical", limit=65)
+        assert first_call == call("acc-123", identity_only=True, limit=65)
 
     async def test_no_fill_when_biographical_reaches_limit(self, service, mock_repo):
         """No all-domain fill query when biographical facts fill the limit.

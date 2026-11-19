@@ -671,12 +671,18 @@ def _cache_refresher(store):
 
 
 async def _seed_account_for_cache(store, account=ACC):
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): the identity block is chosen by the profile's user_identity, not
+    # by the old domain: "bio critical" is the one identity fact, "health high" carries a non-identity profile, and
+    # "bio low" and "be calm" (old domain biographical) carry none, so they are fill like any other fact.
+    profiles = {"bio critical": dict(user_identity=True, primary_domain=Domain.BIOGRAPHY, sensitivity="ordinary"),
+                "health high": dict(user_identity=False, primary_domain=Domain.HEALTH, sensitivity="discreet")}
     for text, domain, priority, tags, age in (
             ("bio low", "biographical", "low", [], 3), ("bio critical", "biographical", "critical", [], 1),
             ("health high", "health", "high", [], 9), ("be calm", "biographical", "high", ["mindset"], 2),
             ("never apologise", "agent_directive", "critical", [], 4)):
+        profile = profiles.get(text, {})
         await store.repo.add_fact(make_fact(f"{account} {text}", account=account, domain=FactDomain(domain), tags=tags,
-                                            context_priority=ContextPriority(priority), age_days=age))
+                                            context_priority=ContextPriority(priority), age_days=age, **profile))
     await store.repo.add_fact(make_fact(f"{account} archived", account=account, state=FactState.ARCHIVED))
     await store.repo.add_fact(make_fact(f"{account} archival", account=account, context_priority=ContextPriority.ARCHIVAL))
 
@@ -688,13 +694,19 @@ async def test_refresh_rebuilds_the_cache_from_the_current_facts(store):
     started = datetime.now(timezone.utc)
     await refresher.refresh_cache(ACC)
     cache = _cache(store)
-    assert [f["text"] for f in cache["biographical_facts"]] == [f"{ACC} bio critical", f"{ACC} bio low",
-                                                                f"{ACC} health high"]
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): the identity fact first, then the fill by priority rank, so the
+    # low-priority biographical-domain fact without a profile now comes after the high-priority health fact.
+    assert [f["text"] for f in cache["biographical_facts"]] == [f"{ACC} bio critical", f"{ACC} health high",
+                                                                f"{ACC} bio low"]
     assert [f["text"] for f in cache["principles"]] == [f"{ACC} be calm"]
     assert [f["text"] for f in cache["directives"]] == [f"{ACC} never apologise"]
     assert (cache["facts_count"], cache["principles_count"], cache["version"]) == (3, 1, "v3_hexagonal_di")
     assert started <= cache["refreshed_at"] <= datetime.now(timezone.utc)
-    assert set(cache["biographical_facts"][0]) == {"id", "text", "domain", "tags", "context_priority", "created_at"}
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): cached items gain primary_domain and sensitivity.
+    assert set(cache["biographical_facts"][0]) == {"id", "text", "domain", "primary_domain", "sensitivity", "tags",
+                                                   "context_priority", "created_at"}
+    assert [(f["primary_domain"], f["sensitivity"]) for f in cache["biographical_facts"]] == [
+        (Domain.BIOGRAPHY, "ordinary"), (Domain.HEALTH, "discreet"), (None, None)]
     assert _cache(store, OTHER) is None
 
 

@@ -2,23 +2,23 @@
 Unit tests for BiographicalFactsFormatter.
 
 Coverage:
-  format()
+  format()  (sections by the profile's primary_domain, FACT_PROFILE_RFC §6 row 3)
     - empty list → empty string
-    - biographical facts → grouped under "Biographical" header
-    - multiple domains → biographical first, others alphabetical
+    - biography facts → grouped under the registry label "Biography"
+    - multiple domains → biography first, others in registry order
     - semantic facts → separate "Query-Specific Context" section
-    - unknown domain → title-cased fallback label
+    - unknown primary_domain → the Lifestyle section
 
   _group_by_domain()
-    - biographical sorted oldest→newest
+    - biography sorted oldest→newest
     - others sorted newest→oldest
     - semantic (semantic_lens tag) kept in insertion order
     - non-dict facts skipped
     - facts with empty text skipped
 
   _render_section()
-    - preference + mindset tag → [MINDSET] prefix
-    - preference without mindset tag → no prefix
+    - mindset tag → [MINDSET] prefix, in any domain
+    - no mindset tag → no prefix
     - date suffix appended when created_at present
     - empty facts list → empty string
 
@@ -45,8 +45,11 @@ def fmt():
     return BiographicalFactsFormatter()
 
 
-def _fact(text, domain="biographical", tags=None, created_at="2026-01-01T00:00:00Z"):
-    return {"text": text, "domain": domain, "tags": tags or [], "created_at": created_at}
+def _fact(text, domain="biographical", tags=None, created_at="2026-01-01T00:00:00Z", primary=None):
+    fact = {"text": text, "domain": domain, "tags": tags or [], "created_at": created_at}
+    if primary is not None:
+        fact["primary_domain"] = primary
+    return fact
 
 
 # ---------------------------------------------------------------------------
@@ -59,30 +62,34 @@ class TestFormat:
         assert fmt.format([]) == ""
 
     def test_biographical_facts_grouped_under_biographical_header(self, fmt):
-        facts = [_fact("Born in Portugal", domain="biographical")]
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): the section is the registry label of primary_domain.
+        facts = [_fact("Born in Portugal", primary="biography")]
         result = fmt.format(facts)
-        assert "**Biographical**" in result
+        assert "**Biography**" in result
         assert "Born in Portugal" in result
 
     def test_biographical_section_comes_first(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): sections keyed on primary_domain, biography first.
         facts = [
-            _fact("Work fact", domain="work"),
-            _fact("Bio fact", domain="biographical"),
+            _fact("Work fact", primary="work"),
+            _fact("Bio fact", primary="biography"),
         ]
         result = fmt.format(facts)
-        bio_idx = result.index("**Biographical**")
+        bio_idx = result.index("**Biography**")
         work_idx = result.index("**Work**")
         assert bio_idx < work_idx
 
-    def test_non_biographical_domains_sorted_alphabetically(self, fmt):
+    def test_non_biographical_domains_follow_the_registry_order(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): alphabetical order is replaced by registry order; sport
+        # precedes food in the registry and follows it alphabetically, so the pair tells the two orders apart.
         facts = [
-            _fact("Work fact", domain="work"),
-            _fact("Health fact", domain="health"),
+            _fact("Food fact", primary="food"),
+            _fact("Sport fact", primary="sport"),
         ]
         result = fmt.format(facts)
-        health_idx = result.index("**Health**")
-        work_idx = result.index("**Work**")
-        assert health_idx < work_idx
+        sport_idx = result.index("**Sport**")
+        food_idx = result.index("**Food & drinks**")
+        assert sport_idx < food_idx
 
     def test_semantic_facts_in_separate_section(self, fmt):
         facts = [
@@ -93,20 +100,27 @@ class TestFormat:
         assert "**Query-Specific Context:**" in result
         assert "Context hint" in result
 
-    def test_unknown_domain_gets_titlecased_label(self, fmt):
-        facts = [_fact("Custom fact", domain="custom_domain")]
+    def test_unknown_domain_lands_in_the_lifestyle_section(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): an unknown primary_domain gets no title-cased section of
+        # its own; it lands in the Lifestyle section.
+        facts = [_fact("Custom fact", primary="custom_domain")]
         result = fmt.format(facts)
-        assert "**Custom Domain**" in result
+        assert result.startswith("**Lifestyle**\n- Custom fact")
+        assert "**Custom Domain**" not in result and "custom_domain" not in result
 
     def test_known_domain_uses_predefined_label(self, fmt):
-        facts = [_fact("Fact", domain="medical_records")]
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): the label is the registry's English label of primary_domain;
+        # the old domain value names no section.
+        facts = [_fact("Fact", domain="medical_records", primary="health")]
         result = fmt.format(facts)
-        assert "**Medical Records**" in result
+        assert "**Health & wellbeing**" in result
+        assert "**Medical Records**" not in result
 
     def test_sections_separated_by_double_newline(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): two sections come from two primary domains.
         facts = [
-            _fact("Bio fact", domain="biographical"),
-            _fact("Work fact", domain="work"),
+            _fact("Bio fact", primary="biography"),
+            _fact("Work fact", primary="work"),
         ]
         result = fmt.format(facts)
         assert "\n\n" in result
@@ -119,18 +133,20 @@ class TestFormat:
 class TestGroupByDomain:
 
     def test_biographical_sorted_oldest_to_newest(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): grouped by the registry key of primary_domain.
         facts = [
-            _fact("Newer", domain="biographical", created_at="2026-03-01T00:00:00Z"),
-            _fact("Older", domain="biographical", created_at="2025-01-01T00:00:00Z"),
+            _fact("Newer", primary="biography", created_at="2026-03-01T00:00:00Z"),
+            _fact("Older", primary="biography", created_at="2025-01-01T00:00:00Z"),
         ]
         grouped = fmt._group_by_domain(facts)
-        assert grouped["biographical"][0]["text"] == "Older"
-        assert grouped["biographical"][1]["text"] == "Newer"
+        assert grouped["biography"][0]["text"] == "Older"
+        assert grouped["biography"][1]["text"] == "Newer"
 
     def test_non_biographical_sorted_newest_to_oldest(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): grouped by the registry key of primary_domain.
         facts = [
-            _fact("Older", domain="work", created_at="2025-01-01T00:00:00Z"),
-            _fact("Newer", domain="work", created_at="2026-03-01T00:00:00Z"),
+            _fact("Older", primary="work", created_at="2025-01-01T00:00:00Z"),
+            _fact("Newer", primary="work", created_at="2026-03-01T00:00:00Z"),
         ]
         grouped = fmt._group_by_domain(facts)
         assert grouped["work"][0]["text"] == "Newer"
@@ -177,10 +193,11 @@ class TestRenderSection:
         assert "[MINDSET]" not in result
         assert "Likes coffee" in result
 
-    def test_no_mindset_prefix_for_non_preference_domain(self, fmt):
-        facts = [_fact("Runs daily", domain="health", tags=["mindset"])]
-        result = fmt._render_section("Health", facts)
-        assert "[MINDSET]" not in result
+    def test_mindset_prefix_for_non_preference_domain(self, fmt):
+        # Reviewer edit (FACT_PROFILE_RFC §6 row 3, PR 11): [MINDSET] keys on the tag alone, in any domain.
+        facts = [_fact("Runs daily", domain="health", tags=["mindset"], primary="health")]
+        result = fmt._render_section("Health & wellbeing", facts)
+        assert "- [MINDSET] Runs daily" in result
 
     def test_date_suffix_appended(self, fmt):
         facts = [_fact("Born in Portugal", created_at="2026-01-15T00:00:00Z")]
