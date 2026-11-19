@@ -116,8 +116,11 @@ records the request, and checks it against the provider's request contract
   `invalid_request_error`, so the adapter raises its client error and the call ends: the capture is a short-circuit,
   nothing is asserted about a response. A Claude shape that exercises the same-provider model fallback is answered 529
   first; both requests are checked.
-- **Check.** `tests/contracts/openapi_contract.py::assert_request(provider, method, path, headers, body)`: closed
-  subset, every violation on its own line.
+- **Capture, aiohttp adapters** (Gmail): `tests/support/http_boundary_fake.install(monkeypatch)` replaces the session; each URL is
+  routed with the smallest invented answer that lets the method run to its end, and every recorded request is checked, its URL
+  rebuilt as aiohttp builds it (`URL.extend_query(params)`) and split into path and `query`.
+- **Check.** `tests/contracts/openapi_contract.py::assert_request(provider, method, path, headers, body, *, query=None)`:
+  closed subset, every violation on its own line; a templated contract path (`/messages/{id}`) matches the URL path.
 - **Shapes.** `tests/unit/contracts/<provider>_request_shapes.py` is a table `id -> LLMRequest` (+ model); the shape is an
   input only, the contract says what it must produce. The conformance test also fails when a kept field or union variant of
   the provider's operation is reached by no shape (a dead keep-list entry), when an adapter file has an SDK call site
