@@ -1,6 +1,7 @@
 # RFC: Geo marks — the owner shares where he is, on purpose
 
-**Status:** Implemented v1 (2026-11-19). Product decisions are the owner's (2026-11-18) and final; this RFC turns them into a
+**Status:** Implemented v1 (2026-11-19); landmarks around the position added the same day (§2, §4.1–§4.4, §4.7).
+Product decisions are the owner's (2026-11-18) and final; this RFC turns them into a
 design. Open: §8 and the Telegram picked-point probe (§9). Slices, file anchors and tests: the private delivery plan.
 
 ## 1. Problem
@@ -25,8 +26,14 @@ Sending must be easy and work the same from a phone and from a laptop.
 - **Follow-up without a new mark:** the bot may use the earlier mark, stating its age; beyond that it judges itself.
 - **The bot never asks for a mark.** No recent mark → it works from home as today.
 - **A mark carries:** coordinates, the nearest street address (reverse geocoding, never an LLM guess), the accuracy of
-  the fix in metres, the time it was shared. Coordinates reach the model: the owner shares them on purpose. A venue
-  name is not added; the bot queries Maps itself when it needs one.
+  the fix in metres, the time it was shared. Coordinates reach the model: the owner shares them on purpose.
+- **Landmarks around the position (owner, 2026-11-19; replaces "a venue name is not added").** At a large
+  place (a park, a stadium) the nearest address names a small place at its edge or a building across the road, the
+  large place itself is absent, and the model cannot tell which place the owner means; a name in the owner's UI
+  language can also come back transliterated past recognition. A mark now also carries the landmarks and areas
+  Google's reverse geocoding returns for the position (§4.3), each with its relation and distance, worded as reference
+  points, never as "the user is at X". Names come in English (`language=en`): a local name stays readable and is never
+  transliterated.
 - **No movement journal.** Marks live in the session history of their channel (the sliding window); losing old marks
   is expected. Memory may extract patterns from them. Each channel has its own session: a Slack mark is not visible
   to Lelik and the reverse.
@@ -92,8 +99,12 @@ Sending must be easy and work the same from a phone and from a laptop.
 - `GeoFix` (frozen dataclass): `latitude`, `longitude`, `accuracy_m: Optional[float]`, `shared_at` (aware UTC),
   `source`. `GeoFix.parse(...)` refuses a non-finite value, latitude outside ±90, longitude outside ±180, a negative
   accuracy; that is the only validation the entry points need.
-- `GeoMark` (frozen dataclass): a `GeoFix` plus `address: Optional[str]` (the reverse-geocoded nearest address) and
-  `note: Optional[str]` (the owner's text). `to_wire()` / `from_wire()` for the Cloud Task payload.
+- `GeoMark` (frozen dataclass): a `GeoFix` plus the lookup's result: `address: Optional[str]` (the reverse-geocoded
+  nearest address), `landmarks: tuple[GeoLandmark, ...]` and `areas: tuple[GeoArea, ...]` (§4.3; empty when the
+  lookup returned none). `GeoLandmark` (frozen): `name`, `kinds` (Google place types, minus the generic
+  `establishment` / `point_of_interest`, underscores as spaces), `relation: Optional[str]` (Google's
+  `spatial_relationship`), `distance_m: int` (straight line, rounded). `GeoArea` (frozen): `name`, `containment`
+  (`WITHIN` / `OUTSKIRTS` / `NEAR`). `to_wire()` / `from_wire()` carry all of them.
 - Pure renderers (§4.2) and the link id pattern (§4.5).
 
 No Firestore record of marks: a mark exists only as history text (owner: no journal). No schema change, no index.
@@ -125,6 +136,8 @@ reference), all as statements.
 Shared at: {local time, YYYY-MM-DD HH:MM} ({UTC offset})
 Position: {lat:.5f}, {lon:.5f}{accuracy_clause}
 Nearest street address: {address_clause}
+{landmarks_block}
+{areas_line}
 This records the position the user shared at that moment, for what they ask with it or soon after it. It is not
 evidence of where they are at any later time; later, it shows only where they were at its 'Shared at' time. The user
 shares a position only when they choose to; with no recent mark in the conversation, the home location stays the
@@ -137,11 +150,19 @@ reference.
 | | Telegram pin without `horizontal_accuracy` | "a point" (the source phrase names Telegram; `accuracy_clause` explains) |
 | `source_phrase` | `slack_geo` / `telegram_pin` / `lelik_button` | "from the location link in Slack" / "as a Telegram location" / "from the voice call page" |
 | `accuracy_clause` | ≤ 100 m | ", accurate to about {n} m" |
-| | > 100 m | ", approximate: within about {n} m (or {x.x} km), so the address names the area, not the exact spot" |
+| | > 100 m, no landmarks and no areas | ", approximate: within about {n} m (or {x.x} km), so the address names the area, not the exact spot" |
+| | > 100 m, landmarks or areas present | ", approximate: within about {n} m (or {x.x} km), so the address and the places around it name the area, not the exact spot" |
 | | absent, Telegram | " — no accuracy came with it, so this may be a point picked on the map rather than where the user was" |
 | | absent, Slack or Lelik | " — no accuracy came with it, so how close it is to the spot is unknown" |
 | `address_clause` | present | "{address} (looked up from the position, not stated by the user)" |
 | | absent (no geocoder, lookup failed, no result) | "not available (the lookup returned no address)" |
+| `landmarks_block` | landmarks present | a header line "Landmarks around the position (from Google Maps, nearest first, each with its distance from the position; reference points for where the position is, not stated by the user):", then one line per landmark in the lookup's order: "- {name} ({kinds}), {n} m away: the position is {relation_phrase}" |
+| | a landmark without kinds / without a known relation | the "({kinds})" / ": the position is …" part is left out |
+| | no landmarks | no line at all (the feature is Experimental outside India; its absence says nothing) |
+| `relation_phrase` | `NEAR` / `WITHIN` / `BESIDE` / `BEHIND` | "near it" / "within it" / "beside it" / "behind it" |
+| | `ACROSS_THE_ROAD` / `DOWN_THE_ROAD` / `AROUND_THE_CORNER` | "across the road from it" / "down the road from it" / "around the corner from it" |
+| `areas_line` | areas present | "Areas (from Google Maps): the position is {containment} {name}; {containment} {name}" — `WITHIN` "within", `OUTSKIRTS` "on the outskirts of", `NEAR` "near"; an area with another containment is left out |
+| | no areas | no line at all |
 | local time | `UserBotConfig.timezone`, UTC when unset or unreadable | the owner's clock, with its offset, so the age can be computed against the prompt's current time |
 
 The owner's text is never rendered into the mark: it is its own part, verbatim.
@@ -149,7 +170,8 @@ The owner's text is never rendered into the mark: it is its own part, verbatim.
 **Example (invented):** Alex Doe sends `$geo is the gym still open?` near the Iron Temple gym. History holds a user
 message with two parts: the mark ("…shared their position at that moment, on purpose, from the location link in Slack /
 Shared at: 2026-11-18 18:40 (UTC+00:00) / Position: 41.10000, -8.60000, accurate to about 5 m / Nearest street address:
-Main Street, Springfield (looked up …) / …") and "is the gym still open?". Two days later Alex asks from Shelbyville,
+Main Street, Springfield (looked up …) / Landmarks around the position (…): / - Iron Temple gym (gym), 20 m away: the
+position is beside it / …") and "is the gym still open?". Two days later Alex asks from Shelbyville,
 without a mark, where to eat: the mark is two days old, and home (12 Oak Street, Springfield) is the reference.
 
 **Consolidation.** The consolidator may extract "visited Main Street, Springfield on 2026-11-18" or, over several marks,
@@ -160,18 +182,29 @@ If live consolidations show state facts ("Alex is at Main Street"), the fix is i
 
 ### 4.3 Reverse geocoding
 
-- **Port** `src/ports/reverse_geocoding_port.py`: `ReverseGeocodingPort.nearest_address(latitude, longitude, *,
-  language) -> Optional[str]`. A system boundary with a test double; justified by the port rule.
+- **Port** `src/ports/reverse_geocoding_port.py`: `ReverseGeocodingPort.look_up(latitude, longitude) -> GeoPlace`
+  (`GeoPlace`: `address`, `landmarks`, `areas`, the §4.1 types; `GeoPlace.EMPTY` when nothing came back). A system
+  boundary with a test double; justified by the port rule.
 - **Adapter** `src/adapters/google_geocoding_adapter.py`: `GET https://maps.googleapis.com/maps/api/geocode/json` with
-  `latlng`, `language` (the owner's UI language) and `key`, aiohttp, a 3 s total timeout. The first result's
-  `formatted_address`; `ZERO_RESULTS`, any other status, an HTTP error or the timeout → `None`, logged with the status
-  only. It never raises to the caller.
+  `latlng`, `language=en`, `extra_computations=ADDRESS_DESCRIPTORS` and `key`, aiohttp, a 3 s total timeout.
+  - `address`: the first result's `formatted_address`.
+  - `landmarks` / `areas`: the response-level `address_descriptor` (up to 5 landmarks, 3 areas). A landmark's name is
+    `display_name.text`, its distance `straight_line_distance_meters`; an area's `containment`. An entry without a
+    name or a distance is skipped; an unknown relation becomes `None`.
+  - Address descriptors are GA in India and Experimental everywhere else (Google, read 2026-11-19); they bill on the
+    same Geocoding SKU. A missing or malformed `address_descriptor` gives no landmarks and never fails the address.
+  - `ZERO_RESULTS`, any other status, an HTTP error or the timeout → `GeoPlace.EMPTY`, logged with the status only.
+    It never raises to the caller.
+- **Why `en`, not the owner's UI language:** Google translates names into the requested language when it has a
+  translation and transliterates them otherwise, and a transliterated local name no longer says what the place is.
+  English keeps a local Latin-script name as it is, and the place type stands next to
+  it. A local-language name would need a second request after the country is known.
 - **Key:** `GOOGLE_SEARCH_API_KEY`, already in `load_settings()` and already sent to `mapstools.googleapis.com`. No new
   secret; the Geocoding API must be enabled on the project and allowed by the key's API restrictions (§9). With the
   key absent the adapter is not built and every mark has no address.
 - **Failure never fails the mark.** No address is a valid mark (§4.2 table).
-- **Logging:** never coordinates, never the address. A line carries the source, the accuracy band
-  (`precise`/`approx`/`none`), `address=yes|no` and the user id prefix.
+- **Logging:** never coordinates, never the address or a landmark name. A line carries the source, the accuracy band
+  (`precise`/`approx`/`none`), `address=yes|no`, the landmark and area counts and the user id prefix.
 
 ### 4.4 `GeoMarkService` (`src/services/geo_mark_service.py`)
 
@@ -187,8 +220,10 @@ confirmation line); plus `digest_key` and `base_url`.
   §4.5.
 
 The confirmation line (a `UIMessage`, four locales) is what the bot posts and what the model message of the pair
-holds: "📍 Location saved: {address} (±{n} m, {HH:MM})", or the no-address variant. It is code text in a model message,
-and it is true: the bot did post it.
+holds: "📍 Location saved: {address} (±{n} m, {HH:MM})", or the no-address variant. With an address and landmarks it
+is "📍 Location saved: {address}; nearby: {names} (±{n} m, {HH:MM})": the two nearest landmark names that the address
+does not already contain; none left → the plain line. It is code text in a model message, and it is true: the bot
+did post it.
 
 ### 4.5 Slack: `$geo [text]`, the link and the page
 
@@ -295,8 +330,12 @@ The page gets a position and sends it over the control channel; Lelik receives i
   `geo_state`.
 - **The note** (system role, in the provider conversation, never persisted by us, so a plain rule is fine there):
   "[The caller has just shared {position_phrase}, on purpose, {source_phrase}: {lat}, {lon}{accuracy_clause};
-  nearest street address: {address_clause}. They shared it for what they ask with it. Do not read the coordinates
-  aloud.]" (the §4.2 phrases, with "the caller" for "the user" in the no-accuracy and address clauses).
+  nearest street address: {address_clause}{landmarks_clause}{areas_clause}. They shared it for what they ask with it.
+  Do not read the coordinates aloud.]" (the §4.2 phrases, with "the caller" for "the user" in the no-accuracy and
+  address clauses). `landmarks_clause`: "; landmarks around the position (from Google Maps, nearest first): {item};
+  {item}", each item "{name} ({kinds}), {n} m away, the position is {relation_phrase}" with the §4.2 omissions;
+  `areas_clause`: "; areas: the position is {containment} {name}, {containment} {name}". Each is empty when there are
+  none.
 - **History:** in-call only. It is not added to the call transcript buffer, the post-call chat note or companion
   memory: each channel keeps its own marks (owner), and the call is Lelik's session. A resumed xAI call keeps it (the
   provider conversation holds it).
