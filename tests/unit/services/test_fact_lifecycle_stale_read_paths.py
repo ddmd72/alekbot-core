@@ -24,7 +24,7 @@ async def active_ordered(world):
 
 
 async def active_ordered_directives(world):
-    return {f.text for f in await world.repo.get_active_facts_ordered(ACC, domain="agent_directive")}
+    return {f.text for f in await world.repo.get_active_facts_ordered(ACC, directive_only=True)}
 
 
 async def active(world):
@@ -51,22 +51,24 @@ async def consolidator_search(world):
     return {item["content"] for item in found}
 
 
+# Reviewer edit (fact profile PR 13): the old domain is gone; the second value is the `directive` flag the facts are
+# seeded with (the stage-2b directive read selects by it with `directive_only`, was the agent_directive domain).
 READ_PATHS = [
-    pytest.param(cache, "health", id="biographical-cache-document"),
-    pytest.param(vector_search, "health", id="search_facts-smart-router-search_memory-mcp"),
-    pytest.param(active_ordered, "health", id="get_active_facts_ordered-lelik-voice-domains"),
-    pytest.param(active_ordered_directives, "agent_directive", id="get_active_facts_ordered-stage-2b-directives"),
-    pytest.param(active, "health", id="get_active_facts-cabinet-and-cache-build"),
-    pytest.param(paginated, "health", id="get_paginated_facts-cabinet-list"),
-    pytest.param(consolidator_search, "health", id="search_existing_facts-stage-1-and-2a"),
+    pytest.param(cache, False, id="biographical-cache-document"),
+    pytest.param(vector_search, False, id="search_facts-smart-router-search_memory-mcp"),
+    pytest.param(active_ordered, False, id="get_active_facts_ordered-lelik-voice-domains"),
+    pytest.param(active_ordered_directives, True, id="get_active_facts_ordered-stage-2b-directives"),
+    pytest.param(active, False, id="get_active_facts-cabinet-and-cache-build"),
+    pytest.param(paginated, False, id="get_paginated_facts-cabinet-list"),
+    pytest.param(consolidator_search, False, id="search_existing_facts-stage-1-and-2a"),
 ]
 
 
-@pytest.mark.parametrize("reader,domain", READ_PATHS)
-async def test_a_staled_fact_is_absent_from_the_reader_after_the_sweep(reader, domain):
+@pytest.mark.parametrize("reader,directive", READ_PATHS)
+async def test_a_staled_fact_is_absent_from_the_reader_after_the_sweep(reader, directive):
     world = JanitorWorld()
-    gone = await world.seed_due(GONE, domain=domain)
-    await world.seed(KEPT, domain=domain)
+    gone = await world.seed_due(GONE, directive=directive)
+    await world.seed(KEPT, directive=directive)
     await world.bio.refresh_cache(ACC)
     assert await reader(world) >= {GONE, KEPT}                    # the reader does see the due fact until it is staled
 

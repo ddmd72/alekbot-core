@@ -164,14 +164,19 @@ class TestBiographicalContextService:
 
         assert "id" in fact
         assert "text" in fact
-        assert "domain" in fact
+        # Reviewer edit (fact profile PR 13): the cached item carries the `directive` flag in place of the old domain.
+        assert "directive" in fact
         assert "tags" in fact
         assert "context_priority" in fact
         assert "created_at" in fact
         assert "_priority_obj" not in fact  # temp field must not leak
 
-    async def test_domain_none_serialized_as_unknown(self, service, mock_repo):
-        """Facts with domain=None serialize domain as 'unknown'."""
+    async def test_a_fact_without_the_directive_flag_serializes_it_false(self, service, mock_repo):
+        """A fact built without `directive` serializes it as False (the value `is_directive` reads from the cache).
+
+        Reviewer edit (fact profile PR 13): was test_domain_none_serialized_as_unknown; the old domain and its "unknown"
+        placeholder are gone, and the cached item carries the directive flag instead.
+        """
         fact = FactEntity(
             account_id="account-1",
             created_by_user_id="user-1",
@@ -184,7 +189,7 @@ class TestBiographicalContextService:
         mock_repo.get_active_facts_ordered.return_value = [fact]
 
         result = await service.refresh_context("acc-123")
-        assert result["facts"][0]["domain"] == "unknown"
+        assert result["facts"][0]["directive"] is False
 
     # ========================================================================
     # EMPTY CASES
@@ -229,10 +234,11 @@ class TestDirectivesChannel:
 
         result = await service.refresh_context("acc-123")
 
-        # a dedicated directive query with the agent_directive domain was issued
+        # a dedicated directive query was issued (reviewer edit, fact profile PR 13: by the `directive_only` flag read,
+        # was the agent_directive domain)
         dir_calls = [
             c for c in mock_repo.get_active_facts_ordered.call_args_list
-            if c.kwargs.get("domain") == "agent_directive"
+            if c.kwargs.get("directive_only") is True
         ]
         assert len(dir_calls) == 1
         assert [d["text"] for d in result["directives"]] == ["Never give partial answers."]

@@ -113,10 +113,12 @@ async def test_list_profile_states_returns_the_current_facts_of_the_account_only
 
 
 async def test_list_profile_states_projects_what_classification_reads_and_no_vector(store, repo):
-    await profiled(store, "car", metadata={"policy": "MP-2026-118204"}, tags=["insurance"])
+    # Reviewer edit (fact profile PR 13): the projection carries `directive` in place of the old domain; the fact is a
+    # directive so the read shows the stored value, not the model default.
+    await profiled(store, "car", metadata={"policy": "MP-2026-118204"}, tags=["insurance"], directive=True)
     (got,) = await repo.list_profile_states(ACC)
     assert (got.id, got.text, got.metadata, got.tags) == ("f-car", "car", {"policy": "MP-2026-118204"}, ["insurance"])
-    assert got.domain is not None and got.created_at is not None
+    assert got.directive is True and got.created_at is not None
     assert {name: getattr(got, name) for name in STATE_FIELDS} == {name: PROFILE[name] for name in STATE_FIELDS}
     if isinstance(repo, NoWriteFactRepository):
         return      # the live list as the store returns it: checked on the store itself

@@ -569,12 +569,15 @@ class TestFactRepositoryContract:
         # resolve_current + update_fact_fields; the port no longer carries it.
         assert not hasattr(FactRepository, "invalidate_fact")
 
-    def test_has_get_legacy_facts(self):
-        assert getattr(FactRepository.get_legacy_facts, "__isabstractmethod__", False)
+    def test_has_get_longest_facts_and_no_old_domain_reads(self):
+        # Reviewer edit (fact profile PR 13): was test_has_get_legacy_facts; get_legacy_facts and search_facts_by_domain
+        # are deleted with the old domain (no caller left), get_longest_facts is kept.
         assert getattr(FactRepository.get_longest_facts, "__isabstractmethod__", False)
+        assert not hasattr(FactRepository, "get_legacy_facts")
+        assert not hasattr(FactRepository, "search_facts_by_domain")
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 30 abstract methods.
+        """Port should have exactly 28 abstract methods.
 
         F7.2 (2026-05-18): added search_facts_by_domain to close the
         port/adapter contract gap — search_facts_by_domain was called via
@@ -593,18 +596,21 @@ class TestFactRepositoryContract:
         2026-11-09 (FACT_PROFILE_RFC §5.2, §9 PR 6): the fact search's list_search_snapshot, get_baseline_refreshed_at,
         nearest_fact_ids and get_fact_vectors added (29; reviewer edit).
         2026-11-09 (FACT_PROFILE_RFC §7, §9 PR 5): the people cards' list_profile_people added (30; reviewer edit).
+        2026-11-19 (FACT_PROFILE_RFC §9 PR 13): search_facts_by_domain and get_legacy_facts deleted with the old domain
+        (28; reviewer edit).
         """
         abstract_methods = {
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 30, f"Expected 30 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 28, f"Expected 28 abstract methods, got {abstract_methods}"
         assert {"find_due_facts", "stale_due_fact", "stale_backlog"} <= abstract_methods
         assert {"list_profile_states", "write_fact_profile", "list_profile_people"} <= abstract_methods
         assert {
             "list_search_snapshot", "get_baseline_refreshed_at", "nearest_fact_ids", "get_fact_vectors",
         } <= abstract_methods
         assert "invalidate_fact" not in abstract_methods
+        assert not {"search_facts_by_domain", "get_legacy_facts"} & abstract_methods
 
     def test_add_fact_signature(self):
         sig = inspect.signature(FactRepository.add_fact)

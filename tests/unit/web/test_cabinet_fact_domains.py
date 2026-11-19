@@ -1,7 +1,7 @@
 """The Cabinet on the fact profile (RFC §6 row 9, §3.2): `GET /api/user/fact-domains` (every registry key once, in
 Cabinet order, labelled in the page language, behind the same session gate as the other Cabinet routes), the facts
-list filtered by profile `domain_keys`, and the fields the badge reads (`primary_domain`; the old `domain` while a fact
-has none). Real routes and repository on the evaluating Firestore fake (index refusal on); the page itself is read as
+list filtered by profile `domain_keys`, and the field the badge reads (`primary_domain`; none while a fact has none —
+reviewer edit, fact profile PR 13: the old `domain` fallback is gone). Real routes and repository on the evaluating Firestore fake (index refusal on); the page itself is read as
 text for the parts only it holds."""
 import copy
 from pathlib import Path
@@ -169,16 +169,18 @@ async def test_the_dry_run_kit_forwards_the_domain_key_to_the_live_store(world):
 
 # ------------------------------------------------------------------------------------------- the badge fields
 
-async def test_browse_carries_the_profile_domain_and_the_old_domain_while_it_is_absent(world):
+async def test_browse_carries_the_profile_domain_and_none_while_it_is_absent(world):
+    # Reviewer edit (fact profile PR 13): was ..._and_the_old_domain_while_it_is_absent; the old `domain` key left the
+    # row (the badge has no fallback), so an unprofiled fact carries primary_domain None and nothing else.
     _, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", age_days=2, **YOGA))
     await repo.add_fact(make_fact("plays tennis on Sundays", age_days=1))
 
     _, body = await _get("/api/user/facts/browse", repo)
 
-    rows = {f["text"]: (f["primary_domain"], f["domain"]) for f in body["facts"]}
-    assert rows == {"morning yoga 30 min": (Domain.SPORT, "preference"),
-                    "plays tennis on Sundays": (None, "preference")}
+    rows = {f["text"]: f["primary_domain"] for f in body["facts"]}
+    assert rows == {"morning yoga 30 min": Domain.SPORT, "plays tennis on Sundays": None}
+    assert all("domain" not in f for f in body["facts"])
 
 
 async def test_the_recently_closed_list_carries_the_profile_domain(world):
@@ -193,7 +195,8 @@ async def test_the_recently_closed_list_carries_the_profile_domain(world):
     _, body = await _get("/api/user/facts/recently-closed", repo)
 
     [row] = body["facts"]
-    assert (row["primary_domain"], row["domain"]) == (Domain.TRANSPORT, "finance")
+    # Reviewer edit (fact profile PR 13): the old `domain` key left the row.
+    assert row["primary_domain"] == Domain.TRANSPORT and "domain" not in row
 
 
 async def test_the_search_list_carries_the_profile_domain(world):
@@ -213,9 +216,11 @@ async def test_the_search_list_carries_the_profile_domain(world):
         body = await resp.get_json()
 
     assert resp.status_code == 200
-    rows = {f["text"]: (f["primary_domain"], f["domain"]) for f in body["facts"]}
-    assert rows["morning yoga 30 min"] == (Domain.SPORT, "preference")
-    assert rows["plays tennis on Sundays"] == (None, "preference")
+    # Reviewer edit (fact profile PR 13): the old `domain` key left the row.
+    rows = {f["text"]: f["primary_domain"] for f in body["facts"]}
+    assert rows["morning yoga 30 min"] == Domain.SPORT
+    assert rows["plays tennis on Sundays"] is None
+    assert all("domain" not in f for f in body["facts"])
 
 
 # ------------------------------------------------------------------------------------------------------- the page
@@ -237,7 +242,9 @@ def test_the_page_loads_labels_and_filter_options_from_the_route_in_its_language
     assert "...factDomains.map((d) => ({ label: d.label, value: d.key }))" in page
 
 
-def test_the_badge_reads_the_profile_domain_then_the_old_domain(page):
-    assert "if (f.primary_domain) return domainLabel(f.primary_domain);" in page
-    assert 'return f.domain ? f.domain.replace(/_/g, " ") : "";' in page
+def test_the_badge_reads_the_profile_domain_only(page):
+    # Reviewer edit (fact profile PR 13): was test_the_badge_reads_the_profile_domain_then_the_old_domain; the fallback
+    # to the old domain is gone, so a fact without a profile domain shows no badge.
+    assert 'return f.primary_domain ? domainLabel(f.primary_domain) : "";' in page
+    assert "f.domain" not in page
     assert '<span class="fact-domain-badge">${escapeHtml(badge)}</span>' in page

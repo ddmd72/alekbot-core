@@ -113,6 +113,8 @@ class TestCachedItems:
         await _put(store, BORN, priority="high", identity=True, primary=Domain.BIOGRAPHY, sensitivity="ordinary")
         await BiographicalContextService(store.repo).refresh_cache(ACC)
         (item,) = await store.repo.get_biographical_context_cached(ACC)
-        assert set(item) == {"id", "text", "domain", "primary_domain", "sensitivity", "tags", "context_priority",
+        # Reviewer edit (fact profile PR 13): the old domain left the item; the `directive` flag took its place (the
+        # value `is_directive` reads from the cache).
+        assert set(item) == {"id", "text", "directive", "primary_domain", "sensitivity", "tags", "context_priority",
                              "created_at"}
-        assert (item["id"], item["domain"], item["context_priority"]) == (f"f-{BORN}", "health", "high")
+        assert (item["id"], item["directive"], item["context_priority"]) == (f"f-{BORN}", False, "high")

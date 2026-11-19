@@ -124,7 +124,9 @@ async def test_a_rewrite_of_a_stale_fact_is_a_current_version_and_supersedes_the
 
 @pytest.mark.parametrize("actor", ACTORS)
 async def test_an_archive_with_history_writes_both_documents(store, actor):
-    seed(store, "old", "works at Acme")
+    # Reviewer edit (fact profile PR 13): the history fact copies `old`'s `directive` flag in place of the old domain;
+    # `old` carries the non-default value so the copy is seen.
+    seed(store, "old", "works at Acme", directive=True)
     said = datetime.now(UTC) - timedelta(hours=2)
     before = set(store.docs)
 
@@ -145,7 +147,7 @@ async def test_an_archive_with_history_writes_both_documents(store, actor):
     new = store.docs[history_id]
     assert new["text"] == HISTORY and new["state"] == "current" and new["is_current"] is True
     assert (new["expiry_kind"], new["ttl_days"], new["expires_at"]) == ("none", None, None)
-    assert (new["domain"], new["type"], new["tags"]) == (old["domain"], old["type"], old["tags"])
+    assert (new["directive"], new["type"], new["tags"]) == (True, old["type"], old["tags"]) and old["directive"] is True
     assert new["reported_date"] == said
     assert new["account_id"] == ACC and new["created_by_user_id"] == USER
     assert new["lineage_id"] not in (old["lineage_id"], None) and new["version"] == 1
