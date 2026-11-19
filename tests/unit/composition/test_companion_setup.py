@@ -12,7 +12,7 @@ from tests.support.firestore_eval import EvalDb
 
 CONTAINER = SimpleNamespace(repository=object(), embedding_service=object(), context_builder=object(),
                             assembly_service=object(), prompt_content_store=object(), user_drive_service=object())
-USERS, QUOTA, QUEUE, NOTIFY = object(), object(), object(), object()
+USERS, QUOTA, QUEUE, NOTIFY, SEARCH = object(), object(), object(), object(), object()
 LANGUAGES = SimpleNamespace(resolver=object(), localization_port=object())
 
 
@@ -21,7 +21,7 @@ def companions(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     return build_companions(EvalDb(), EnvironmentConfig(), container=CONTAINER, user_repo=USERS,  # type: ignore[arg-type]
                             quota_service=QUOTA, extraction_queue=QUEUE, notification_service=NOTIFY,
-                            languages=LANGUAGES)
+                            languages=LANGUAGES, fact_search=SEARCH)
 
 
 def test_the_assembler_and_the_extraction_share_one_store_and_cache(companions):

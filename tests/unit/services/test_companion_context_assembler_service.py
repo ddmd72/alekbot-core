@@ -9,6 +9,7 @@ from src.domain.settings import SearchConfig
 from src.ports.companion_cache_repository import CompanionCacheRepository
 from src.ports.companion_memory_repository import CompanionMemoryRepository
 from src.ports.embedding_service import EmbeddingService
+from src.ports.fact_search_port import FactSearchPort
 from src.ports.repository import FactRepository
 from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.services.companion_context_assembler_service import (
@@ -39,8 +40,8 @@ def embedding_service():
 
 
 @pytest.fixture
-def enrichment_port():
-    return AsyncMock(spec=SearchEnrichmentPort)
+def fact_search():
+    return AsyncMock(spec=FactSearchPort)
 
 
 @pytest.fixture
@@ -49,12 +50,12 @@ def fact_repo():
 
 
 @pytest.fixture
-def service(companion_repo, cache_repo, embedding_service, enrichment_port, fact_repo):
+def service(companion_repo, cache_repo, embedding_service, fact_search, fact_repo):
     return CompanionContextAssemblerService(
         companion_repo=companion_repo,
         cache_repo=cache_repo,
         embedding_service=embedding_service,
-        enrichment_port=enrichment_port,
+        fact_search=fact_search,
         fact_repo=fact_repo,
     )
 
@@ -145,7 +146,7 @@ class TestOwnRecords:
 
 
 class TestBiographical:
-    async def test_disabled_by_default(self, service, cache_repo, enrichment_port):
+    async def test_disabled_by_default(self, service, cache_repo, fact_search):
         cache_repo.get_summary = AsyncMock(return_value=None)
 
         ctx = await service.assemble_context(
@@ -153,7 +154,7 @@ class TestBiographical:
             include_own_records=False, include_biographical=False,
         )
 
-        enrichment_port.enrich_context.assert_not_called()
+        fact_search.search.assert_not_called()
         assert ctx.biographical_facts == []
 
     async def test_calls_enrich_context_with_session_domains(
@@ -263,7 +264,7 @@ class TestRequestContextWiring:
         assert captured["account_id"] == "acc1"
 
     async def test_biographical_fetch_fails_closed_when_user_id_omitted(
-        self, service, cache_repo, enrichment_port
+        self, service, cache_repo, fact_search
     ):
         """Permission-boundary default (RFC §5: 'default is no'): without a user_id to scope
         the fetch, the biographical slice is skipped entirely rather than falling back to
@@ -276,7 +277,7 @@ class TestRequestContextWiring:
             include_own_records=False, include_biographical=True,
         )
 
-        enrichment_port.enrich_context.assert_not_called()
+        fact_search.search.assert_not_called()
         assert ctx.biographical_facts == []
 
 
@@ -320,10 +321,10 @@ class TestPerFetchFailureIsolation:
         assert [r.id for r in ctx.own_records] == ["a"]
 
     async def test_biographical_fetch_failure_returns_empty_list(
-        self, service, cache_repo, enrichment_port
+        self, service, cache_repo, fact_search
     ):
         cache_repo.get_summary = AsyncMock(return_value="cached summary")
-        enrichment_port.enrich_context = AsyncMock(side_effect=RuntimeError("enrichment down"))
+        fact_search.search = AsyncMock(side_effect=RuntimeError("enrichment down"))
 
         ctx = await service.assemble_context(
             session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
