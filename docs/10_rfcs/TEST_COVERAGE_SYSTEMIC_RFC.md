@@ -1046,9 +1046,12 @@ Deviations and results:
 `test_gmail_request_conformance.py` (10 shapes: the list with a query and date bounds, exact instants, the next page, no filter, the key search and the window-only
 header list, the full fetch, the parts listing, an attachment by its handle and an inline part re-read through `_gmail_json`).
 - **Core additions.** The extractor keeps every path parameter of an operation and the query parameters named in `Operation.query` (a name the source lacks
-  fails); an operation without `fields` has no request body. `assert_request(..., query=None)` matches a templated contract path segment by segment when no literal
-  path matches (a literal wins; the template with more literal segments wins, a tie fails), validates the path parameters, and reads query values per schema
-  (integer, number, boolean; an array is a repeated parameter, or one comma list under `explode: false`): an unknown name fails, a required one must be there.
+  fails); an operation without `fields` has no request body; a discovery integer format becomes its range (`minimum`/`maximum`). `assert_request(..., *, query)`
+  takes the decoded URL path alone (a `?` or `#` in it is refused) and the query the request carried (required: `{}` for none). A server base path (`/v1`) is
+  required and stripped; the path is taken as sent only for a server without one. A templated
+  contract path matches segment by segment when no literal path matches (a literal wins; the template with more literal segments wins, a tie fails); the path
+  parameters are validated. Query values are read per schema (integer and number in canonical ASCII form, boolean; an array is a repeated parameter, or one comma
+  list under `explode: false`): an unknown name fails, a required one must be there, and a parameter marked `deprecated` fails unless the contract allows it.
   `operation_path(provider, method, path)` names the operation a request resolves to.
 - **Discovery source.** `Provider(discovery=True)` reads a Google discovery document from `googleapis/discovery-artifact-manager`, pinned by commit like the OpenAI
   spec, and converts only the kept methods to OpenAPI (`discovery_document`): the server is `rootUrl` + `servicePath`, `repeated` becomes an array, the API-wide

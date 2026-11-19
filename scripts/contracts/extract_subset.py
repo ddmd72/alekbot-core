@@ -319,7 +319,9 @@ _DISCOVERY_TRANSFORMS = (
     "discovery-to-openapi: each kept method is an operation at /<path> (operationId = the method id) under the server "
     "rootUrl + servicePath; the API-wide parameters apply to every method",
     "discovery-parameters: location path|query becomes in path|query (a path parameter is required); repeated becomes "
-    "an array of the type; string-typed default, minimum and maximum take the parameter's type",
+    "an array of the type; string-typed default, minimum and maximum take the parameter's type; an integer format "
+    "(int32, uint32, int64, uint64) becomes its range as minimum and maximum unless the method states them; "
+    "deprecated is kept",
 )
 _PARAMETER_TRANSFORM = (
     "prune-parameters: every path parameter, only the listed query parameters and headers; $refs inlined, "
@@ -1038,19 +1040,30 @@ def _typed(value: Any, kind: str | None, where: str) -> Any:
     raise ValueError(f"{where}: {value!r} is not a {kind}")
 
 
+# An integer format's range: JSON Schema does not enforce `format`, so the range becomes minimum/maximum.
+_INTEGER_RANGES = {
+    "int32": (-2**31, 2**31 - 1), "uint32": (0, 2**32 - 1), "int64": (-2**63, 2**63 - 1), "uint64": (0, 2**64 - 1),
+}
+
+
 def _discovery_parameter(name: str, param: dict) -> dict:
     location = param.get("location")
     if location not in ("path", "query"):
         raise ValueError(f"parameter {name}: location {location!r} is not converted")
     kind = param.get("type")
     schema: dict[str, Any] = {k: param[k] for k in ("type", "format", "enum", "pattern") if k in param}
+    if kind == "integer" and param.get("format") in _INTEGER_RANGES:
+        schema["minimum"], schema["maximum"] = _INTEGER_RANGES[param["format"]]
     for key in ("default", "minimum", "maximum"):
         if key in param:
             schema[key] = _typed(param[key], kind, f"parameter {name}.{key}")
     if param.get("repeated"):
         schema = {"type": "array", "items": schema}
-    return {"name": name, "in": location, "required": location == "path" or bool(param.get("required")),
-            "schema": schema}
+    out = {"name": name, "in": location, "required": location == "path" or bool(param.get("required")),
+           "schema": schema}
+    if param.get("deprecated"):
+        out["deprecated"] = True
+    return out
 
 
 def discovery_document(discovery: dict, operations: tuple[Operation, ...]) -> dict:

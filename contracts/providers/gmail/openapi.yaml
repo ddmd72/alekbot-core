@@ -21,6 +21,8 @@ paths:
         schema:
           default: 100
           format: uint32
+          maximum: 4294967295
+          minimum: 0
           type: integer
       - in: query
         name: pageToken
@@ -101,6 +103,7 @@ x-transforms:
 - 'discovery-to-openapi: each kept method is an operation at /<path> (operationId = the method id) under the server rootUrl
   + servicePath; the API-wide parameters apply to every method'
 - 'discovery-parameters: location path|query becomes in path|query (a path parameter is required); repeated becomes an array
-  of the type; string-typed default, minimum and maximum take the parameter''s type'
+  of the type; string-typed default, minimum and maximum take the parameter''s type; an integer format (int32, uint32, int64,
+  uint64) becomes its range as minimum and maximum unless the method states them; deprecated is kept'
 - 'prune-parameters: every path parameter, only the listed query parameters and headers; $refs inlined, documentation keys
   dropped'

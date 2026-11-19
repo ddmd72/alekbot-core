@@ -14,13 +14,22 @@ HEADERS = {"X-Widget-Tenant": "t-1"}
 BODY = {"name": "w", "count": 2, "color": "red", "parts": [{"type": "bolt", "length": 1.5}, {"text": "n"}]}
 
 
-def _problems(body=None, headers=None, path="/widgets") -> list[str]:
+def _violations(*args, **kwargs) -> list[str]:
+    """The violations `assert_request` lists ([] when it passes). Any other failure (an operation not found, no
+    contract) propagates: read as [], it would make the test asserting [] pass vacuously."""
     try:
-        oc.assert_request("widgets", "POST", path, HEADERS if headers is None else headers,
-                          BODY if body is None else body, contracts_dir=FIXTURES)
+        oc.assert_request(*args, contracts_dir=FIXTURES, **kwargs)
     except AssertionError as failure:
-        return str(failure).splitlines()[1:]
+        head, *violations = str(failure).splitlines()
+        if not head.endswith(" breaks the contract:") or not violations:
+            raise
+        return violations
     return []
+
+
+def _problems(body=None, headers=None, path="/v2/widgets") -> list[str]:
+    return _violations("widgets", "POST", path, HEADERS if headers is None else headers,
+                       BODY if body is None else body, query={})
 
 
 def test_a_conforming_request_passes():
@@ -29,16 +38,18 @@ def test_a_conforming_request_passes():
 
 def test_the_url_path_with_the_server_base_path_is_the_operation():
     assert _problems(path="/v2/widgets") == []
+    with pytest.raises(AssertionError, match="POST /widgets is not in"):
+        _problems(path="/widgets")
 
 
 def test_an_operation_absent_from_the_contract_fails():
-    with pytest.raises(AssertionError, match="GET /widgets is not in"):
-        oc.assert_request("widgets", "get", "/widgets", HEADERS, BODY, contracts_dir=FIXTURES)
+    with pytest.raises(AssertionError, match="GET /v2/widgets is not in"):
+        oc.assert_request("widgets", "get", "/v2/widgets", HEADERS, BODY, query={}, contracts_dir=FIXTURES)
 
 
 def test_a_provider_without_a_contract_fails():
     with pytest.raises(AssertionError, match="no contract at"):
-        oc.assert_request("gadgets", "post", "/widgets", HEADERS, BODY, contracts_dir=FIXTURES)
+        oc.assert_request("gadgets", "post", "/v2/widgets", HEADERS, BODY, query={}, contracts_dir=FIXTURES)
 
 
 def test_unknown_field():
@@ -111,11 +122,7 @@ def test_the_validator_is_compiled_once_per_operation():
 
 # ------------------------------------------------------------------------------- path and query parameters (parcels)
 def _query_problems(query, path="/v1/parcels", method="GET", body=None) -> list[str]:
-    try:
-        oc.assert_request("parcels", method, path, {}, body, query=query, contracts_dir=FIXTURES)
-    except AssertionError as failure:
-        return str(failure).splitlines()[1:]
-    return []
+    return _violations("parcels", method, path, {}, body, query=query)
 
 
 def test_a_conforming_query_passes_with_its_values_read_as_their_types():
@@ -130,7 +137,7 @@ def test_an_unknown_query_parameter_is_named():
 
 def test_a_required_query_parameter_is_missing():
     assert _query_problems({"status": ["open"]}) == ["query limit: missing required"]
-    assert _query_problems(None) == ["query limit: missing required"]
+    assert _query_problems({}) == ["query limit: missing required"]
 
 
 def test_query_values_that_do_not_read_as_the_type_are_wrong_types():
@@ -160,13 +167,13 @@ def test_a_query_value_passed_as_one_string_is_a_caller_error():
 
 
 def test_a_templated_path_is_matched_and_its_parameters_validated():
-    assert _query_problems(None, path="/v1/parcels/7") == []
-    assert _query_problems(None, path="/v1/parcels/seven") == ["path parcelId: wrong type (expected integer)"]
+    assert _query_problems({}, path="/v1/parcels/7") == []
+    assert _query_problems({}, path="/v1/parcels/seven") == ["path parcelId: wrong type (expected integer)"]
 
 
 def test_a_template_inside_a_segment_is_matched():
-    assert _query_problems(None, path="/v1/parcels/7/labels/front.pdf") == []
-    assert _query_problems(None, path="/v1/parcels/7/labels/side.pdf") == ["path labelId: value not allowed ('side')"]
+    assert _query_problems({}, path="/v1/parcels/7/labels/front.pdf") == []
+    assert _query_problems({}, path="/v1/parcels/7/labels/side.pdf") == ["path labelId: value not allowed ('side')"]
     with pytest.raises(AssertionError, match="is not in"):
         oc.operation_path("parcels", "get", "/v1/parcels/7/labels/front.png", contracts_dir=FIXTURES)
 
@@ -189,22 +196,95 @@ def test_a_path_with_an_extra_or_empty_segment_matches_no_template():
             oc.operation_path("parcels", "get", path, contracts_dir=FIXTURES)
 
 
-def test_a_percent_encoded_path_segment_is_decoded_before_validation():
-    assert _query_problems(None, path="/v1/parcels/7/labels/fr%6Fnt.pdf") == []
-
-
 def test_a_body_sent_to_an_operation_without_one_fails():
-    assert _query_problems(None, path="/v1/parcels/tracked", body={"weight": 1}) == [
+    assert _query_problems({}, path="/v1/parcels/tracked", body={"weight": 1}) == [
         "$: unknown field (the operation takes no request body)"]
 
 
 def test_a_body_operation_still_validates_its_body():
-    assert _query_problems(None, method="POST", body={"weight": "x"}) == ["$.weight: wrong type (expected integer)"]
+    assert _query_problems({}, method="POST", body={"weight": "x"}) == ["$.weight: wrong type (expected integer)"]
 
 
 def test_one_validator_serves_every_concrete_path_of_a_template():
-    _query_problems(None, path="/v1/parcels/1")
+    _query_problems({}, path="/v1/parcels/1")
     before = oc._operation.cache_info()
-    _query_problems(None, path="/v1/parcels/2")
+    _query_problems({}, path="/v1/parcels/2")
     after = oc._operation.cache_info()
     assert after.misses == before.misses and after.hits == before.hits + 1
+
+
+# --------------------------------------------------------------------------- no vacuous pass (reviewer probes p1-p3)
+def _contract_at(tmp_path: Path, server: str, paths: dict) -> Path:
+    """A one-off invented contract `tmp/<provider "tmp">/openapi.yaml`; returns the contracts directory."""
+    import yaml
+
+    (tmp_path / "tmp").mkdir()
+    doc = {"openapi": "3.1.0", "info": {"title": "tmp", "version": "1"}, "servers": [{"url": server}],
+           "components": {"schemas": {}}, "paths": paths}
+    (tmp_path / "tmp" / "openapi.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    return tmp_path
+
+
+def test_the_query_keyword_is_required_and_none_is_refused():
+    with pytest.raises(TypeError, match="query"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/7", {}, None, contracts_dir=FIXTURES)
+    with pytest.raises(TypeError, match=r"pass \{\} when the request carries no query"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/7", {}, None, query=None, contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("path", ["/v1/parcels/7?zz_unknown=1", "/v1/parcels/7#top", "/v1/parcels?limit=5"])
+def test_a_query_or_fragment_left_in_the_path_is_refused(path):
+    with pytest.raises(ValueError, match="pass the URL path alone"):
+        oc.assert_request("parcels", "GET", path, {}, None, query={"limit": ["5"]}, contracts_dir=FIXTURES)
+    with pytest.raises(ValueError, match="pass the URL path alone"):
+        oc.operation_path("parcels", "GET", path, contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("path", ["/parcels/7", "/parcels/tracked", "/v10/parcels/7", "/v1parcels/7"])
+def test_the_server_base_path_is_required_when_the_server_has_one(path):
+    with pytest.raises(AssertionError, match="is not in"):
+        oc.operation_path("parcels", "GET", path, contracts_dir=FIXTURES)
+
+
+def test_a_server_without_a_base_path_takes_the_path_as_sent(tmp_path):
+    root = _contract_at(tmp_path, "https://api.example.com", {"/parcels": {"get": {}}})
+    oc.assert_request("tmp", "GET", "/parcels", {}, None, query={}, contracts_dir=root)
+    with pytest.raises(AssertionError, match="is not in"):
+        oc.assert_request("tmp", "GET", "/v1/parcels", {}, None, query={}, contracts_dir=root)
+
+
+@pytest.mark.parametrize("value", ["٥", "５", "+5", "05", " 5"])
+def test_an_integer_value_must_be_canonical_ascii_digits(value):
+    with pytest.raises(AssertionError, match=r"query limit: wrong type \(expected integer\)"):
+        oc.assert_request("parcels", "GET", "/v1/parcels", {}, None, query={"limit": [value]}, contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("value", ["٠.5", "+0.5", "00.5", ".5"])
+def test_a_number_value_must_be_canonical_ascii_digits(value):
+    with pytest.raises(AssertionError, match=r"query ratio: wrong type \(expected number\)"):
+        oc.assert_request("parcels", "GET", "/v1/parcels", {}, None, query={"limit": ["5"], "ratio": [value]},
+                          contracts_dir=FIXTURES)
+
+
+def _deprecated_paths() -> dict:
+    return {"/items/{kind}": {"get": {"parameters": [
+        {"in": "path", "name": "kind", "required": True, "deprecated": True, "schema": {"type": "string"}},
+        {"in": "query", "name": "$top", "required": False, "deprecated": True, "schema": {"type": "integer"}},
+        {"in": "query", "name": "$skip", "required": False, "deprecated": True, "x-alek-extension": "still sent (2026-11-19)",
+         "schema": {"type": "integer"}},
+    ]}}}
+
+
+def test_a_deprecated_parameter_fails_when_sent_unless_the_contract_allows_it(tmp_path):
+    root = _contract_at(tmp_path, "https://api.example.com/v1.0", _deprecated_paths())
+    with pytest.raises(AssertionError) as failure:
+        oc.assert_request("tmp", "GET", "/v1.0/items/full", {}, None, query={"$top": ["5"], "$skip": ["5"]},
+                          contracts_dir=root)
+    assert str(failure.value).splitlines()[1:] == ["path kind: deprecated", "query $top: deprecated"]
+
+
+def test_a_path_segment_is_not_decoded_a_second_time():
+    """`path` is already the decoded URL path: `%6F` in it is the three characters, not an `o`."""
+    with pytest.raises(AssertionError, match=r"path labelId: value not allowed \('fr%6Fnt'\)"):
+        oc.assert_request("parcels", "GET", "/v1/parcels/7/labels/fr%6Fnt.pdf", {}, None, query={},
+                          contracts_dir=FIXTURES)

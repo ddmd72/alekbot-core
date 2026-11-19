@@ -119,8 +119,9 @@ records the request, and checks it against the provider's request contract
 - **Capture, aiohttp adapters** (Gmail): `tests/support/http_boundary_fake.install(monkeypatch)` replaces the session; each URL is
   routed with the smallest invented answer that lets the method run to its end, and every recorded request is checked, its URL
   rebuilt as aiohttp builds it (`URL.extend_query(params)`) and split into path and `query`.
-- **Check.** `tests/contracts/openapi_contract.py::assert_request(provider, method, path, headers, body, *, query=None)`:
-  closed subset, every violation on its own line; a templated contract path (`/messages/{id}`) matches the URL path.
+- **Check.** `tests/contracts/openapi_contract.py::assert_request(provider, method, path, headers, body, *, query)`:
+  closed subset, every violation on its own line. `path` is the decoded URL path as sent (the server's base path included,
+  no query); `query` is what the request carried (`{}` for none); a templated contract path (`/messages/{id}`) matches it.
 - **Aliases** (Microsoft Graph): when the spec writes an operation under another path than the adapter sends (`/me/drive/...` and
   colon addressing `items/{id}:/{name}:` exist only as `/drives/{drive-id}/items/...`), the provider's `PROVIDERS` entry lists
   `Alias(pattern, target, reason)` rules, written into the subset as `x-alek-aliases` and applied by `assert_request` before the
