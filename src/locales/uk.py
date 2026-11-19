@@ -266,6 +266,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_LINK_LINE.value: "📍 Відкрий посилання нижче на пристрої, який зараз з тобою, щоб поділитися, де ти. Воно спрацює один раз, протягом {minutes} хвилин.",
     UIMessage.GEO_LINK_LABEL.value: "Поділитися місцезнаходженням",
     UIMessage.GEO_SAVED.value: "📍 Місцезнаходження збережено: {address} ({accuracy}, {time})",
+    UIMessage.GEO_SAVED_WITH_LANDMARKS.value: "📍 Місцезнаходження збережено: {address}; поруч: {landmarks} ({accuracy}, {time})",
     UIMessage.GEO_SAVED_NO_ADDRESS.value: "📍 Місцезнаходження збережено, адресу не знайдено ({accuracy}, {time})",
     UIMessage.GEO_NOT_SAVED.value: "⚠️ Місцезнаходження не збережено. Поділися ним ще раз.",
     UIMessage.GEO_UNAVAILABLE.value: "Поділитися місцезнаходженням зараз неможливо.",
