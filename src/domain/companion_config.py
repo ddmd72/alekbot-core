@@ -9,9 +9,9 @@ that governs what a companion session may see of the user's personal store.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
+from typing import Iterable, List, Tuple
 
-from .entities import FactDomain
+from .fact_domains import config_key
 
 
 class CompanionTextMode(str, Enum):
@@ -35,7 +35,7 @@ class CompanionConfig:
 
     # Read side — permission boundary, default is no (RFC §5).
     include_biographical: bool = False
-    session_domains: List[FactDomain] = field(default_factory=list)
+    session_domains: List[str] = field(default_factory=list)   # registry keys (`fact_domains.Domain`)
     include_standing_directives: bool = False
     include_own_records: bool = True
 
@@ -49,3 +49,20 @@ class CompanionConfig:
     # default is safe here — still fully overridable per companion type
     # (AgentDescriptor.companion_default_config) and per channel binding.
     history_recent_full_turns: int = 5
+
+
+def session_domain_keys(values: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """Registry keys for stored `session_domains` values, first seen first and without repeats, and the values that map
+    to none. A registry key maps to itself, an old `FactDomain` value to the keys that replace it (fact profile RFC
+    §3.2, stored configuration); the caller logs the dropped ones."""
+    keys: List[str] = []
+    dropped: List[str] = []
+    for value in values:
+        text = str(getattr(value, "value", value))   # an old `FactDomain` member reads as its stored value
+        mapped = config_key(text)
+        if not mapped:
+            dropped.append(text)
+        for key in mapped:
+            if key not in keys:
+                keys.append(key)
+    return keys, dropped

@@ -10,12 +10,11 @@ from typing import List, Optional
 
 from .companion import CompanionRecord
 from .entities import FactEntity
-from .search import EnrichedFact
 
 
 @dataclass
 class CompanionContext:
     session_summary: Optional[str] = None
     own_records: List[CompanionRecord] = field(default_factory=list)
-    biographical_facts: List[EnrichedFact] = field(default_factory=list)
+    biographical_facts: List[FactEntity] = field(default_factory=list)
     standing_directives: List[FactEntity] = field(default_factory=list)

@@ -327,9 +327,25 @@ def _min_horizon_days(reported_date: datetime, now: datetime) -> int:
     return max(1, (now + 2 * _DAY - local_moment(reported_date, "UTC")) // _DAY + 1)
 
 
+# The stored marker of a standing directive (FACT_PROFILE_RFC §6 row 15): the consolidator's old `domain` value. A
+# repository read that selects directives filters on it; `is_directive` reads it from a fact. PR 13 moves both to the
+# consolidator's directive flag together.
+DIRECTIVE_DOMAIN: Final[str] = FactDomain.AGENT_DIRECTIVE.value
+
+
+def _directive_marker(domain: Any) -> bool:
+    return bool(domain == DIRECTIVE_DOMAIN)
+
+
+def is_directive(fact: FactEntity | Mapping[str, Any]) -> bool:
+    """A standing directive (the owner's order to the assistant). The one place that decides it; reads a fact or the
+    dict a fact is cached as (the biographical cache)."""
+    return _directive_marker(fact.get("domain") if isinstance(fact, Mapping) else fact.domain)
+
+
 def expiry_pinned(domain: Optional[FactDomain], type: FactType, tags: Sequence[str]) -> bool:
     """Directives, principles and mindset facts take `none` only: their lifecycle stays with Stage 2b."""
-    return domain == FactDomain.AGENT_DIRECTIVE or type == FactType.PRINCIPLE or "mindset" in {t.lower() for t in tags}
+    return _directive_marker(domain) or type == FactType.PRINCIPLE or "mindset" in {t.lower() for t in tags}
 
 
 def check_pin(expiry: Optional[Expiry], pinned: bool) -> Expiry:

@@ -12,6 +12,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.channel_binding import ChannelBinding
 from src.domain.companion_config import CompanionConfig, CompanionTextMode
 from src.domain.entities import FactDomain
+from src.domain.fact_domains import Domain
 
 
 @pytest.fixture
@@ -92,12 +93,13 @@ class TestGet:
         col_mock.document.return_value = doc_ref
 
         result = await adapter.get("C123")
+        # Stored old values read as the registry keys that replace them (fact profile RFC §6 row 8).
         assert result.companion_config == CompanionConfig(
             window_threshold=100,
             batch_size=50,
             text_mode=CompanionTextMode.FULL,
             include_biographical=True,
-            session_domains=[FactDomain.EDUCATION, FactDomain.SKILL],
+            session_domains=[Domain.LEARNING, Domain.ABILITIES],
             include_standing_directives=True,
             include_own_records=False,
         )

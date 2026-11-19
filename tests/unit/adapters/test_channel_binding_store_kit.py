@@ -12,7 +12,7 @@ import pytest
 from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.domain.channel_binding import ChannelBinding
 from src.domain.companion_config import CompanionConfig, CompanionTextMode
-from src.domain.entities import FactDomain
+from src.domain.fact_domains import Domain, config_key
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_channel_bindings"
@@ -38,7 +38,7 @@ def store(kit_db):
 
 
 FULL = CompanionConfig(window_threshold=30, batch_size=20, text_mode=CompanionTextMode.FULL, include_biographical=True,
-                       session_domains=[FactDomain.BIOGRAPHICAL, FactDomain.PREFERENCE],
+                       session_domains=[Domain.BIOGRAPHY, Domain.SPORT],
                        include_standing_directives=True, include_own_records=False, history_recent_full_turns=3)
 
 
@@ -58,8 +58,16 @@ async def test_save_then_get_round_trips_every_field_and_stores_enums_as_values(
     assert store.docs["C1"] == {
         "channel_id": "C1", "agent_type": "tutor", "intent": "tutor_chat", "created_by": "u1",
         "companion_config": {"window_threshold": 30, "batch_size": 20, "text_mode": "full", "include_biographical": True,
-                             "session_domains": ["biographical", "preference"], "include_standing_directives": True,
+                             "session_domains": ["biography", "sport"], "include_standing_directives": True,
                              "include_own_records": False, "history_recent_full_turns": 3}}
+
+
+async def test_old_domain_values_stored_before_the_registry_read_as_the_keys_that_replace_them(store):
+    # fact profile RFC §6 row 8: the values the round trip above stored before the registry still load, mapped
+    raw_binding(store, {"window_threshold": 30, "batch_size": 20, "session_domains": ["biographical", "preference"]})
+    got = (await store.adapter.get("C1")).companion_config.session_domains
+    assert got == [Domain.BIOGRAPHY, *config_key("preference")]
+    assert Domain.SPORT in got and "preference" not in got
 
 
 async def test_a_binding_without_a_companion_config_stores_null_and_reads_none(store):

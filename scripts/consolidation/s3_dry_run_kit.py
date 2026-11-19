@@ -411,9 +411,9 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
 
     async def get_paginated_facts(
         self, owner_id: str, limit: int = 100, cursor_doc_id: Optional[str] = None, domain: Optional[str] = None,
-        state: str = "current",
+        state: str = "current", domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
-        return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, domain, state)
+        return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, domain, state, domain_key=domain_key)
 
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
         """The live stale list with the pass's own writes applied: a fact the run staled joins it, one it changed shows the

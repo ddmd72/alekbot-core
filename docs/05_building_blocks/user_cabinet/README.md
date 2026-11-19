@@ -15,7 +15,7 @@ User Cabinet is a single-page application served at `/cabinet`. It authenticates
 ### Key Features
 
 - ✅ **Platform Linking** — Link/unlink Slack and Telegram identities; shows current linked state
-- ✅ **Facts Browser** — Cursor-based paginated view of personal facts (100/page, domain filter)
+- ✅ **Facts Browser** — Cursor-based paginated view of personal facts (100/page, filter by profile domain, labels from `GET /api/user/fact-domains`)
 - ✅ **Semantic Search** — Vector-based search over personal facts via `POST /api/user/facts/search`
 - ✅ **Fact Removal** — Direct invalidation via `POST /api/user/facts/{id}/invalidate`; immediate effect, no LLM required
 - ✅ **Fact Correction** — UI generates a pre-formatted message for the user to paste into chat; ConsolidationAgent handles the update
@@ -102,7 +102,7 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
 |-------|---------|-------------|
 | `limit` | 100 | Page size (max 500) |
 | `cursor` | — | Doc ID of last item from previous page |
-| `domain` | — | Filter: `health`, `location`, `biographical`, etc. |
+| `domain` | — | One registry key (`src/domain/fact_domains.py`, as listed by `GET /api/user/fact-domains`): only facts whose profile `domain_keys` hold it; a fact not yet profiled is in no domain. Any other value → `400` |
 
 **Response:**
 ```json
@@ -112,6 +112,7 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
       "id": "doc_id",
       "text": "User lives in Springfield.",
       "domain": "location",
+      "primary_domain": "biography",
       "type": "fact",
       "created_at": "2026-02-17T10:32:00"
     }
@@ -119,7 +120,21 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
   "next_cursor": "abc123def"
 }
 ```
-`next_cursor` is `null` when there are no more pages.
+`next_cursor` is `null` when there are no more pages. `primary_domain` is the profile's registry key (`null` until the
+fact is profiled); `domain` is the old consolidator value. Every fact list of the Cabinet (browse, search, all facts,
+recently closed) carries both.
+
+#### `GET /api/user/fact-domains`
+
+The life areas of the fact registry for the page's filter chips and badges. Behind the same session gate as the other
+Cabinet routes (`401` without one).
+
+**Query params:** `lang` — the page's UI language (`en`, `uk`, `fr`, `es`); English when absent or without labels.
+
+**Response:** every registry key once, in Cabinet order:
+```json
+{ "domains": [ { "key": "biography", "label": "Biography", "order": 1 }, ... ] }
+```
 
 **Pagination pattern (client):**
 ```js
@@ -217,7 +232,9 @@ All fact *creation* and *correction* goes through the ConsolidationAgent pipelin
 FactEntity
   - id: str                        ← used as pagination cursor + invalidate target
   - text: str
-  - domain: FactDomain (enum)      ← health | location | biographical | ...
+  - domain: FactDomain (enum)      ← old consolidator value: the badge until the fact is profiled
+  - primary_domain: str            ← registry key: the badge
+  - domain_keys: list[str]         ← registry keys: the domain filter
   - type: FactType (enum)
   - state: str                     ← "current" (read), "invalidated" (after Remove)
   - created_at: datetime
@@ -263,7 +280,7 @@ await cabinet_facts.invalidate(
 ```
 Browse mode (default):
   → GET /api/user/facts/browse
-  → Domain chips filter server-side (new request per chip)
+  → Domain chips: every registry domain from GET /api/user/fact-domains?lang=<UI language>; filter server-side on domain_keys (new request per chip)
   → "Load more" button loads next cursor page
   → max-height: 520px, overflow-y: auto
 
@@ -299,7 +316,7 @@ Each fact row has two action buttons (subtle, muted until hover):
 - Background: warm cream `#f0ece6`
 - Header: dark brown `#2c2420`
 - Cards: `#faf8f5` + warm border `#e8e2d9` + soft box-shadow
-- Domain badges: color-coded per domain (red=health, green=location, blue=biographical, etc.)
+- Domain badge: the registry label of the fact's `primary_domain` in the UI language; the old `domain` value while the fact has no profile
 
 ---
 
@@ -444,7 +461,8 @@ Create/update: naive datetime interpreted as user's local time, converted to UTC
 | Collection | Fields | Purpose |
 |------------|--------|---------|
 | `domain_facts_v2` | `account_id` ASC, `state` ASC, `created_at` DESC | Browse all facts |
-| `domain_facts_v2` | `account_id` ASC, `state` ASC, `domain` ASC, `created_at` DESC | Browse with domain filter |
+| `domain_facts_v2` | `account_id` ASC, `state` ASC, `domain_keys` CONTAINS, `created_at` DESC, `__name__` DESC | Browse with the domain filter |
+| `domain_facts_v2` | `account_id` ASC, `state` ASC, `domain` ASC, `created_at` DESC | The old domain filter (no caller; removed with the old field) |
 | `domain_facts_v2` | `account_id` ASC, `state` ASC, `vector` VECTOR 768 | Semantic search (existing) |
 
 Vector index was already present. Pagination indexes added in `config/firestore.indexes.json` (2026-02-18).

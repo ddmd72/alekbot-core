@@ -18,7 +18,7 @@ from typing import List, Dict, Optional, Any
 
 from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.repository import FactRepository
-from ..domain.entities import FactDomain
+from ..domain.fact_lifecycle import DIRECTIVE_DOMAIN, is_directive
 from ..domain.settings import SearchConfig
 from ..domain.user import UserBotConfig
 from ..utils.logger import logger
@@ -170,10 +170,11 @@ class BiographicalContextService(BiographicalCacheRefresher):
 
         # Standing directives: fetched separately, NEVER subject to facts_limit eviction —
         # they render as the binding standing_directives block (STANDING_DIRECTIVES_RFC).
-        # The consolidator caps the rulebook itself (soft cap ~12).
+        # The consolidator caps the rulebook itself (soft cap ~12). The read's condition is the marker
+        # `is_directive` reads (both move together, FACT_PROFILE_RFC §6 row 15).
         directive_facts = await self._repo.get_active_facts_ordered(
             account_id,
-            domain=FactDomain.AGENT_DIRECTIVE.value,
+            domain=DIRECTIVE_DOMAIN,
             limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
         )
 
@@ -184,7 +185,7 @@ class BiographicalContextService(BiographicalCacheRefresher):
             all_ordered = await self._repo.get_active_facts_ordered(account_id, limit=facts_limit)
             fill = [
                 f for f in all_ordered
-                if f.id not in identity_ids and f.domain != FactDomain.AGENT_DIRECTIVE
+                if f.id not in identity_ids and not is_directive(f)
             ][:remaining]
             current_facts.extend(fill)
             logger.debug(

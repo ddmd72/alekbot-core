@@ -8,8 +8,7 @@ from typing import Optional
 
 from ..config.environment import EnvironmentConfig
 from ..domain.channel_binding import ChannelBinding
-from ..domain.companion_config import CompanionConfig, CompanionTextMode
-from ..domain.entities import FactDomain
+from ..domain.companion_config import CompanionConfig, CompanionTextMode, session_domain_keys
 from ..ports.channel_binding_port import ChannelBindingPort
 from ..utils.logger import logger
 
@@ -19,7 +18,9 @@ class FirestoreChannelBindingAdapter(ChannelBindingPort):
 
     Collection `{firestore_collection_prefix}channel_bindings` (no `EnvironmentConfig` property), document id
     `channel_id`, every `save` writes the whole document (all fields, `companion_config` as a dict of plain values or
-    null; `session_domains` as enum values). No query is issued, so no index is needed.
+    null; `session_domains` as registry keys). No query is issued, so no index is needed. A stored `session_domains` value
+    from before the registry is read through it (fact profile RFC §6 row 8): an old value becomes the keys that replace
+    it, one that maps to nothing is dropped with a warning; loading never raises on a domain value.
     """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
@@ -64,12 +65,15 @@ class FirestoreChannelBindingAdapter(ChannelBindingPort):
         # stay strict. Every other field has a CompanionConfig default, so a partial/
         # hand-written Firestore doc falls back instead of raising KeyError outside
         # handle_message's try/except (Important #2, final whole-branch review 2026-08-31).
+        session_domains, dropped = session_domain_keys(data.get("session_domains", []))
+        if dropped:
+            logger.warning("⚠️ [ChannelBinding] unknown session_domains dropped: %s", sorted(dropped))
         return CompanionConfig(
             window_threshold=data["window_threshold"],
             batch_size=data["batch_size"],
             text_mode=CompanionTextMode(data.get("text_mode", CompanionTextMode.SUMMARY.value)),
             include_biographical=data.get("include_biographical", False),
-            session_domains=[FactDomain(d) for d in data.get("session_domains", [])],
+            session_domains=session_domains,
             include_standing_directives=data.get("include_standing_directives", False),
             include_own_records=data.get("include_own_records", True),
             history_recent_full_turns=data.get("history_recent_full_turns", 5),
@@ -84,7 +88,7 @@ class FirestoreChannelBindingAdapter(ChannelBindingPort):
             "batch_size": config.batch_size,
             "text_mode": config.text_mode.value,
             "include_biographical": config.include_biographical,
-            "session_domains": [d.value for d in config.session_domains],
+            "session_domains": list(config.session_domains),
             "include_standing_directives": config.include_standing_directives,
             "include_own_records": config.include_own_records,
             "history_recent_full_turns": config.history_recent_full_turns,

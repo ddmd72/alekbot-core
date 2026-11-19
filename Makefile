@@ -206,7 +206,7 @@ help: ## Show this help message
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
 	@echo "  make check-pricing   Fetch live model prices and audit billing.py"
-	@echo "  make contract-extract PROVIDER=openai|anthropic|gmail [REF=<sha>]  Regenerate contracts/providers/<p>/openapi.yaml"
+	@echo "  make contract-extract PROVIDER=openai|anthropic|gmail|graph [REF=<sha>]  Regenerate contracts/providers/<p>/openapi.yaml"
 	@echo "  make contract-record PROVIDER=openai|anthropic [ONLY=<scenario>] [MAX_USD=1.0] [DRY_RUN=1] [ENV_FILE=<path>]"
 	@echo "                       Record real provider exchanges to tests/fixtures/providers/<p>/ (PAID calls; DRY_RUN=1 first)"
 	@echo ""
@@ -638,7 +638,7 @@ check-pricing: ## Fetch live model prices (OpenRouter) and audit billing.py → 
 	@echo "📄 Open: scripts/memory/pricing_report.md"
 
 contract-extract: ## Regenerate a provider's request contract subset (contracts/providers/<p>/openapi.yaml); never hand-edit it
-	@test -n "$(PROVIDER)" || (echo "usage: make contract-extract PROVIDER=openai|anthropic|gmail [REF=<sha>]" && exit 2)
+	@test -n "$(PROVIDER)" || (echo "usage: make contract-extract PROVIDER=openai|anthropic|gmail|graph [REF=<sha>]" && exit 2)
 	@$(PYTHON) -m scripts.contracts.extract_subset --provider $(PROVIDER) $(if $(REF),--ref $(REF))
 
 contract-record: ## Record real provider exchanges for the contract tests (PAID calls, capped by MAX_USD; DRY_RUN=1 prints the plan); never hand-edit a recording

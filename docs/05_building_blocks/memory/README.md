@@ -116,7 +116,7 @@ reply, a Cabinet click) are applied by code, not by a model (§5.6).
 | `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document (its write, `save_biographical_context_cache`, and its read) | `src/adapters/firestore_repo.py` |
 | `BiographicalContextService` | chooses the baseline and rebuilds its cache (`refresh_cache`, port `BiographicalCacheRefresher`) | `src/services/biographical_context_service.py`, `src/ports/biographical_cache_port.py` |
 | `FactSearchService` | the scored fact search: candidate lists, the pure scorer, phrase fusion (`FACT_PROFILE_RFC` §5.3) | `src/services/fact_search_service.py` |
-| `SearchEnrichmentService` | the older multi-vector search + RRF, kept for the callers that still use `enrich_context` (the companion context, the fact-management adapter); no longer used by the Router, `search_memory` or the connector | `src/services/search_enrichment_service.py` |
+| `SearchEnrichmentService` | the older multi-vector search + RRF, kept for the callers that still use `enrich_context` (the fact-management adapter); no longer used by the Router, `search_memory`, the connector or the companion context | `src/services/search_enrichment_service.py` |
 | Router, Smart, `FactsMemoryAgent`, Lelik, MCP | readers (§4) | §11 |
 
 ### 1.4 What is not this memory
@@ -151,7 +151,7 @@ like any other message.
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
 | `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
-| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*` (incl. `profile_review_needed`, `profile_review_items`), `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Readers: the fact search (§4.3–§4.5); the baseline's identity block (`user_identity`), its section labels (`primary_domain`) and Lelik's voice filter (`primary_domain`, `sensitivity`) (§4.1, §4.6) |
+| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*` (incl. `profile_review_needed`, `profile_review_items`), `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Readers: the fact search (§4.3–§4.5); the baseline's identity block (`user_identity`), its section labels (`primary_domain`) and Lelik's voice filter (`primary_domain`, `sensitivity`) (§4.1, §4.6); the Cabinet's domain filter (`domain_keys`) and badge (`primary_domain`) (§4.8) |
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
@@ -166,7 +166,7 @@ The adapter also stores `context_priority_rank` (critical 1 … archival 5) next
 
 | Axis | Values (`entities.py`) | What code does with it |
 |---|---|---|
-| `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | standing directives (`agent_directive`, kept out of the baseline fill), Router domain channel |
+| `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | standing directives (`agent_directive`, kept out of the baseline fill), Router domain channel. As the directive marker it is read in one place: `is_directive(fact)` and `DIRECTIVE_DOMAIN`, the condition of every read that selects directives, in `fact_lifecycle.py` (§4.2) |
 | `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` (`:38-43`) | none; shown to the consolidator. Since S3 it is only a default for the expiry decision when no row of the kinds table applies (§2.7); no code reads it |
 | `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:232,286,400,471,661,899`). Only the janitor sets `stale` (§5.5); the model is refused it everywhere (§2.7). A fact whose question waits for the owner is `current` (§5.6) |
 | `context_priority` | `critical`, `high`, `medium`, `low`, `archival` (`:55-61`) | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`firestore_repo.py:479`) |
@@ -709,8 +709,8 @@ left, or an error), and `FactReviewService._daily` after the review for every st
 deadline. A step that raises is logged (`[FactProfile] step failed`) and changes nothing of the run's result.
 
 - **Order:** one projected scan (`list_profile_states`) of the current facts, classified by `classify_profile`; free work
-  first (a `stale_derivation` profile with a stored answer is re-derived without a call; a standing directive,
-  `domain == agent_directive`, gets its fixed profile without a call; `abandoned` facts are skipped); then model calls for
+  first (a `stale_derivation` profile with a stored answer is re-derived without a call; a standing directive
+  (`is_directive`, §4.2) gets its fixed profile without a call; `abandoned` facts are skipped); then model calls for
   `missing`, `stale_input` and a former directive, newest `created_at` first, at most `FACT_PROFILER_MAX_PER_RUN`, four at a
   time, each started only while the lease leaves twice the profiler's call timeout; one embedding batch of the joined label words;
   then one compare-and-set write per fact, stopping when the lease has no time left. `SYSTEM` facts are out.
@@ -914,12 +914,22 @@ checklist (§9.4).
 A directive invalidated in the Cabinet leaves `standing_directives` from the next message: the invalidate rebuilds the
 cache at once (§5.2).
 
+**What makes a fact a directive** is decided in one place, `is_directive(fact)` (`src/domain/fact_lifecycle.py`; a fact
+or its cached dict): today the old `domain == agent_directive` marker, later the consolidator's directive flag
+(`FACT_PROFILE_RFC.md` §6 row 15, PR 13). The prompt builder's split, the baseline fill, the profile step and the
+companion call it; the reads that select directives (the baseline's directive list, Stage 2b and its backstop, the
+companion) filter on `DIRECTIVE_DOMAIN`, defined next to it, so both change together. The expiry pin (`expiry_pinned`,
+§2.7) is wider: a directive, a principle or a `mindset` fact; principles and mindset facts are pinned but are not
+directives.
+
 ### 4.3 The search engines
 
 Readers use the scored fact search (`FactSearchService.search_phrases`, `FACT_PROFILE_RFC` §5.3): per-phrase candidate
 lists, a linear score, fusion over up to four phrases, a cut to 30. The Router, `search_memory`, Lelik and the connector all
-reach it (§4.4, §4.5, §4.7). The rest of this section describes `enrich_context`, the older multi-vector engine, which the
-companion context assembler and the fact-management adapter still call.
+reach it (§4.4, §4.5, §4.7), and so does the companion's biographical slice: `FactSearchPort.search` with the first phrase
+as subject and message and the channel's `session_domains` (registry keys; an old stored value is mapped through the
+registry, an unknown one dropped with a warning) as `domains`, cut to 10 (`companion_context_assembler_service.py`). The rest
+of this section describes `enrich_context`, the older multi-vector engine, which the fact-management adapter still calls.
 
 #### `enrich_context`
 
@@ -1000,7 +1010,11 @@ groups facts by domain, one line each, with a `when:` line where a record has on
 
 Read routes (`src/web/user_cabinet_app.py`): all current facts; a paginated browser, newest first, optional
 domain filter and a state filter, `current` (the default) or `stale`; a single-vector search over `vector` (50 results).
-They show text, domain, type and created date. Since S4 the page has three views and a question list (§5.6):
+They show text, domain, type and created date. **Domains come from the profile** (`FACT_PROFILE_RFC.md` §6 row 9): the
+filter is one registry key and lists the facts whose `domain_keys` hold it (a fact not yet profiled is in no domain;
+any other value is a 400); each fact's badge is the registry label of its `primary_domain`, the old `domain` value while
+it has none. The page takes the chips and labels from `GET /api/user/fact-domains?lang=<page language>`: every registry
+key in Cabinet order with its label in that language (English when it has none); it holds no domain list of its own. Since S4 the page has three views and a question list (§5.6):
 - **Current** (the browser as before).
 - **Waiting for review**: the stale facts (`state=stale`), each with its `stale_since`, read-only.
 - **Set aside lately**: `GET /api/user/facts/recently-closed`, everything archived or invalidated in the last 30 days (not
@@ -1995,7 +2009,7 @@ successor while the live consolidation prompts still tell the model to retire a 
 | File | Role |
 |---|---|
 | `src/domain/entities.py` | `FactEntity` (with `superseded_by`, `expiry_kind`, `stale_since`, `lifecycle_events`), the four enums and `ExpiryKind`, `normalize_fact_taxonomy` (`historical` → `archival`), `FACT_SYSTEM_TAGS` |
-| `src/domain/fact_lifecycle.py` | state → `is_current` / `valid_to`; forward resolution (`forward_step`), the accepted end states per caller, `IN_PLACE_FIELDS`, `closure_fields`; `compute_expiry`, `born_due`, `expiry_pinned` / `check_pin`, `lifecycle_event` / `with_event` |
+| `src/domain/fact_lifecycle.py` | state → `is_current` / `valid_to`; forward resolution (`forward_step`), the accepted end states per caller, `IN_PLACE_FIELDS`, `closure_fields`; `compute_expiry`, `born_due`, `expiry_pinned` / `check_pin`, `lifecycle_event` / `with_event`; `is_directive` and `DIRECTIVE_DOMAIN`, the one directive rule (§4.2) |
 | `src/domain/fact_update.py`, `src/domain/fact_update_plan.py` | `update_fact` arguments parsed and validated; the plan: version document or in-place fields |
 | `src/domain/fact_expiry.py` | the `expiry` argument: `Expiry`, `parse_expiry`, `expiry_view` (the stored decision as the model sends it), the refusal texts |
 | `src/domain/fact_write_context.py` | `FactWriteContext` (actor, owner's zone, span, who decides dates), `as_utc`, the `reported_date` rules per write |
@@ -2053,7 +2067,7 @@ successor while the live consolidation prompts still tell the model to retire a 
 | `src/composition/mcp_setup.py` | `get_user_context` |
 | `src/infrastructure/memory_fact_tools.py`, `src/services/memory_fact_service.py`, `src/adapters/firestore_memory_fact_draft_repository.py` | `$memory save` |
 | `src/handlers/conversation_handler.py` | `$consolidate` (and its outcome wording), `$memory save`, memory preview delivery, the reply to a memory-review question taken at intake |
-| `src/web/user_cabinet_app.py`, `src/web/static/cabinet.html` | Cabinet fact routes (invalidate follows the id forward, answers 409, rebuilds the baseline; the stale filter; recently closed; the question list and the bulk answers) |
+| `src/web/user_cabinet_app.py`, `src/web/static/cabinet.html` | Cabinet fact routes (invalidate follows the id forward, answers 409, rebuilds the baseline; the stale filter; the profile-domain filter and `fact-domains` labels; recently closed; the question list and the bulk answers) |
 | `prompts_snapshot/{profiles/consolidation.yaml,blueprints/consolidation_agent_v1.yaml,tokens/system/CONSOLIDATION_*.groovy}` | the consolidation prompt (mirror) |
 | `prompts_snapshot/{profiles/consolidation_review.yaml,blueprints/consolidation_review_v1.yaml,tokens/system/CONSOLIDATION_LIFECYCLE.groovy,tokens/system/PROTOCOL_MEMORY_REVIEW_MARKERS.groovy}` | the review pass's prompt and Smart's memory-review protocol (mirror) |
 | `scripts/consolidation/`, `scripts/data_audit/` | benches (with the S3 kit `s3_dry_run_kit.py`, `s3_bench_support.py`, and the review benches and their stand-ins `test_review_dryrun.py`, `test_review_answers_dryrun.py`, `review_bench_*.py`, `review_kit_*.py`); the audit with the version-chain classes (§9.6) |

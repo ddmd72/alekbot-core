@@ -3117,20 +3117,49 @@
           loadTasksStatus();
           loadDriveStatus();
         }
+        if (active && active.id === "section-memory" && factDomainsLang !== _currentLang) {
+          loadFactDomains().then(() => {
+            if (factsMode === "browse" && factsState !== "closed") renderDomainChips();
+            if (factsMode !== "idle" && factsState !== "closed") renderFacts(allFacts, true, true);
+          });
+        }
       }
 
-      const DOMAIN_LABELS = {
-        health: "Health",
-        biographical: "Biographical",
-        possession: "Possession",
-        location: "Location",
-        relationship: "Relationship",
-        financial: "Financial",
-        professional: "Professional",
-      };
+      /* ── Fact domains: keys, labels and order come from the server's registry ── */
+      let factDomains = [],
+        factDomainLabels = {},
+        factDomainsLang = null;
+
+      async function loadFactDomains() {
+        const lang = _currentLang;
+        if (factDomainsLang === lang) return;
+        try {
+          const res = await fetch(
+            `${API}/api/user/fact-domains?lang=${encodeURIComponent(lang)}`,
+            { credentials: "include" },
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          factDomains = (data.domains || [])
+            .slice()
+            .sort((a, b) => a.order - b.order);
+          factDomainLabels = Object.fromEntries(
+            factDomains.map((d) => [d.key, d.label]),
+          );
+          factDomainsLang = lang;
+        } catch {
+          // labels stay as they were; the badges fall back to the stored value
+        }
+      }
 
       function domainLabel(d) {
-        return d ? DOMAIN_LABELS[d] || d.replace(/_/g, " ") : "Uncategorized";
+        return d ? factDomainLabels[d] || d.replace(/_/g, " ") : "Uncategorized";
+      }
+
+      // The badge of a fact: its profile domain's label; the old domain value while the fact has no profile yet.
+      function factBadge(f) {
+        if (f.primary_domain) return domainLabel(f.primary_domain);
+        return f.domain ? f.domain.replace(/_/g, " ") : "";
       }
 
       /* ── UI Helpers & Observers ──────────────────────── */
@@ -3557,8 +3586,7 @@
       let factsMode = "idle",
         factsState = "current",
         browseCursor = null,
-        browseDomain = "all",
-        browseKnownDomains = [];
+        browseDomain = "all";
 
       // Store the skeleton template so we don't lose it when overwriting container
       let _memorySkeletonHtml = "";
@@ -3572,10 +3600,10 @@
           _memorySkeletonHtml;
         browseCursor = null;
         browseDomain = "all";
-        browseKnownDomains = [];
         factsMode = "browse";
         renderStateChips();
         loadReviewQuestions();
+        await loadFactDomains();
         if (factsState === "closed") await closedLoad();
         else await browseLoad(true);
       }
@@ -4001,13 +4029,9 @@
           else allFacts = allFacts.concat(newFacts);
 
           browseCursor = data.next_cursor || null;
-          newFacts.forEach((f) => {
-            if (f.domain && !browseKnownDomains.includes(f.domain))
-              browseKnownDomains.push(f.domain);
-          });
 
           renderFacts(newFacts, isFirst, keepList);
-          renderDomainChips(browseKnownDomains.sort());
+          renderDomainChips();
         } catch (e) {
           showToast("Error loading facts: " + e.message, "error");
         }
@@ -4095,8 +4119,9 @@
                   year: "numeric",
                 })
               : "";
-            const domain = f.domain
-              ? `<span class="fact-domain-badge">${domainLabel(f.domain)}</span>`
+            const badge = factBadge(f);
+            const domain = badge
+              ? `<span class="fact-domain-badge">${escapeHtml(badge)}</span>`
               : "";
             const factIndex = allFacts.findIndex((fact) => fact.id === f.id);
 
@@ -4129,10 +4154,10 @@
           : "";
       }
 
-      function renderDomainChips(domains) {
+      function renderDomainChips() {
         const chips = [
           { label: "All", value: "all" },
-          ...domains.map((d) => ({ label: domainLabel(d), value: d })),
+          ...factDomains.map((d) => ({ label: d.label, value: d.key })),
         ];
         document.getElementById("domain-chips").innerHTML = chips
           .map(
