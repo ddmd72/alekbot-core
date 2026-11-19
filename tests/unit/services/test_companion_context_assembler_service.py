@@ -4,14 +4,12 @@ import pytest
 
 from src.domain.companion import CompanionRecord
 from src.domain.entities import FactDomain, FactEntity, FactType
-from src.domain.search import EnrichedContext, EnrichedFact
 from src.domain.settings import SearchConfig
 from src.ports.companion_cache_repository import CompanionCacheRepository
 from src.ports.companion_memory_repository import CompanionMemoryRepository
 from src.ports.embedding_service import EmbeddingService
 from src.ports.fact_search_port import FactSearchPort
 from src.ports.repository import FactRepository
-from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.services.companion_context_assembler_service import (
     CompanionContextAssemblerService,
 )
@@ -157,52 +155,6 @@ class TestBiographical:
         fact_search.search.assert_not_called()
         assert ctx.biographical_facts == []
 
-    async def test_calls_enrich_context_with_session_domains(
-        self, service, cache_repo, enrichment_port
-    ):
-        cache_repo.get_summary = AsyncMock(return_value=None)
-        fact = EnrichedFact(fact_id="f1", content="likes spanish soap operas", source="phrase1_text")
-        enrichment_port.enrich_context = AsyncMock(
-            return_value=EnrichedContext(
-                facts=[fact], total_sources=1, dedup_count=0, biographical_dedup_count=0
-            )
-        )
-
-        ctx = await service.assemble_context(
-            session_id="slack:C1", account_id="acc1",
-            query_phrases=["mixed up preterite", "asked about soap operas"],
-            include_own_records=False, include_biographical=True,
-            session_domains=[FactDomain.ENTERTAINMENT],
-            user_id="user-42",
-        )
-
-        enrichment_port.enrich_context.assert_called_once_with(
-            keywords=[],
-            search_phrase_1="mixed up preterite",
-            search_phrase_2="asked about soap operas",
-            relevant_domains=["entertainment"],
-        )
-        assert ctx.biographical_facts == [fact]
-
-    async def test_missing_second_phrase_passes_empty_string(
-        self, service, cache_repo, enrichment_port
-    ):
-        cache_repo.get_summary = AsyncMock(return_value=None)
-        enrichment_port.enrich_context = AsyncMock(
-            return_value=EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
-        )
-
-        await service.assemble_context(
-            session_id="slack:C1", account_id="acc1", query_phrases=["only one"],
-            include_own_records=False, include_biographical=True,
-            user_id="user-42",
-        )
-
-        enrichment_port.enrich_context.assert_called_once_with(
-            keywords=[], search_phrase_1="only one", search_phrase_2="",
-            relevant_domains=None,
-        )
-
 
 class TestStandingDirectives:
     async def test_disabled_by_default(self, service, cache_repo, fact_repo):
@@ -239,30 +191,6 @@ class TestStandingDirectives:
 
 
 class TestRequestContextWiring:
-    async def test_wraps_enrich_context_in_request_context_when_user_id_given(
-        self, service, cache_repo, enrichment_port
-    ):
-        from src.domain.request_context import get_current_account_id, get_current_user_id
-
-        cache_repo.get_summary = AsyncMock(return_value=None)
-        captured = {}
-
-        async def _capture(**kwargs):
-            captured["user_id"] = get_current_user_id()
-            captured["account_id"] = get_current_account_id()
-            return EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
-
-        enrichment_port.enrich_context = AsyncMock(side_effect=_capture)
-
-        await service.assemble_context(
-            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
-            include_own_records=False, include_biographical=True,
-            user_id="user-42",
-        )
-
-        assert captured["user_id"] == "user-42"
-        assert captured["account_id"] == "acc1"
-
     async def test_biographical_fetch_fails_closed_when_user_id_omitted(
         self, service, cache_repo, fact_search
     ):

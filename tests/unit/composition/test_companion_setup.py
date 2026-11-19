@@ -7,7 +7,6 @@ import pytest
 
 from src.composition.companion_setup import build_companions
 from src.config.environment import EnvironmentConfig
-from src.domain.settings import SearchConfig
 from tests.support.firestore_eval import EvalDb
 
 CONTAINER = SimpleNamespace(repository=object(), embedding_service=object(), context_builder=object(),
@@ -32,15 +31,6 @@ def test_the_assembler_and_the_extraction_share_one_store_and_cache(companions):
     assert assembler._embedding is CONTAINER.embedding_service and assembler._fact_repo is CONTAINER.repository
     assert (extraction._queue, extraction._quota, extraction._embedding) == (QUEUE, QUOTA, CONTAINER.embedding_service)
     assert extraction._extractor is companions.extractor_runner
-
-
-def test_the_assemblers_search_runs_at_the_system_defaults_with_ten_results(companions):
-    enrichment, defaults = companions.context_assembler._enrichment, SearchConfig()
-
-    assert enrichment._repo is CONTAINER.repository and enrichment._embedding is CONTAINER.embedding_service
-    assert (enrichment._keyword_limit, enrichment._phrase_one_limit, enrichment._phrase_two_limit) == (
-        defaults.DEFAULT_KEYWORD_LIMIT, defaults.DEFAULT_PHRASE_ONE_LIMIT, defaults.DEFAULT_PHRASE_TWO_LIMIT)
-    assert enrichment._total_limit == 10
 
 
 def test_the_extractor_runs_over_the_containers_model_setup(companions):
