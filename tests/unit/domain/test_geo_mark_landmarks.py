@@ -135,7 +135,7 @@ def test_wire_round_trip_carries_landmarks_and_areas():
 
 def test_an_old_payload_without_the_keys_still_reads():
     wire = _mark().to_wire()
-    del wire["landmarks"], wire["areas"]
+    assert "landmarks" not in wire and "areas" not in wire
     mark = GeoMark.from_wire(wire)
     assert mark.landmarks == () and mark.areas == ()
 
