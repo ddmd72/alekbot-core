@@ -155,6 +155,9 @@ wire (`text/event-stream`, one schema per event's data; the adapter always strea
   and `Allowed` gap of the responses is in a sample. A sample is a test input, not a recording.
 - **Open defects** are strict xfails with their id (`P17-D1`: a replayed Claude tool block carries `caller: null`, which the
   request contract lacks; a recording settles whether the API accepts it).
+- **Recordings replayed** (`test_recorded_exchanges.py`, `test_recorded_exchanges_replay.py`): every committed recording (below) is
+  checked against both contracts and its scenario re-run through the real adapter and SDK, answered from the recording; the adapter
+  must send the recorded requests and read what the derivation from the recording says, else the scenario is re-recorded.
 
 **Recordings** (`make contract-record PROVIDER=openai|anthropic [ONLY=<scenario>] [MAX_USD=1.0] [DRY_RUN=1] [ENV_FILE=<path>]`,
 `scripts/contracts/record.py`). The regeneration command of every recorded fixture; a recording is never edited by hand.
