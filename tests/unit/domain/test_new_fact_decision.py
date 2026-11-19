@@ -33,7 +33,7 @@ def test_a_fact_born_closed_carries_no_decision():
 
 def test_a_pinned_fact_without_expiry_gets_none():
     assert new_fact_decision(attrs(type="principle"), "create_fact") == NONE_DECISION
-    assert new_fact_decision(attrs(domain="agent_directive"), "merge_facts") == NONE_DECISION
+    assert new_fact_decision(attrs(directive=True), "merge_facts") == NONE_DECISION   # reviewer edit (PR 13): the flag
     assert new_fact_decision(attrs(tags=["Mindset"]), "create_fact") == NONE_DECISION
 
 

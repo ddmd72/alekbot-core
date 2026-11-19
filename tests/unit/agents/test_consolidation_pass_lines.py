@@ -24,7 +24,6 @@ from src.domain.consolidation_pass_stats import (
     ConsolidationPassStats,
     PassTool,
 )
-from src.domain.entities import FactDomain
 from src.domain.pass_actor import PassActor
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.llm_port import LLMResponse, ToolCall
@@ -36,11 +35,11 @@ USER = "abcdef1234567890-tail"
 SEARCH = ("search_existing_facts", {"keywords": ["a"], "primary_query": "a"})
 LISBON = ("create_fact", {
     "content": "User flies to Lisbon on 2026-10-10",
-    "fact_attributes": {"domain": "location", "expiry": {"kind": "date", "date": "2026-10-10"}},
+    "fact_attributes": {"directive": False, "expiry": {"kind": "date", "date": "2026-10-10"}},
 })
-WALKS = ("create_fact", {"content": "User walks daily", "fact_attributes": {"domain": "preference"}})
+WALKS = ("create_fact", {"content": "User walks daily", "fact_attributes": {"directive": False}})
 UPDATE = ("update_fact", {"fact_id": "1234567890abcdef", "updates": {"content": "hidden"}})
-MERGE = ("merge_facts", {"fact_ids": ["a", "b"], "merged_content": "Merged text here", "fact_attributes": {"domain": "work"}})
+MERGE = ("merge_facts", {"fact_ids": ["a", "b"], "merged_content": "Merged text here", "fact_attributes": {"directive": False}})
 COUNT = ("count_words", {"text": "x"})
 
 
@@ -139,22 +138,26 @@ def test_the_sequence_of_a_turn_without_calls_is_a_dash():
 # --- the typed call -------------------------------------------------------------------------------------------------
 
 
-def test_a_create_is_keyed_by_its_text_with_its_parsed_domain_and_sources():
+# Reviewer edit (fact profile PR 13, RFC §6 row 16): the typed call carries the parsed directive decision in place of
+# the old domain.
+def test_a_create_is_keyed_by_its_text_with_its_parsed_directive_and_sources():
     call = _call("create_fact", {
-        "content": "User flew to Lisbon", "fact_attributes": {"domain": " Location ", "derived_from": [" f1", "f1", "f2 "]},
+        "content": "User flew to Lisbon", "fact_attributes": {"directive": True, "derived_from": [" f1", "f1", "f2 "]},
     })
-    other = _call("create_fact", {"content": "User flew to Lisbon", "fact_attributes": {"domain": "work"}})
+    other = _call("create_fact", {"content": "User flew to Lisbon", "fact_attributes": {"directive": False}})
     assert call.tool is PassTool.CREATE and call.size == len("User flew to Lisbon")
     assert call.key == other.key and call.key != "User flew to Lisbon"
-    assert call.domain is FactDomain.LOCATION and other.domain is FactDomain.WORK
+    assert call.directive is True and other.directive is False
     assert call.sources == frozenset({"f1", "f2"})
     assert call.words == other.words and call.words
 
 
+# Reviewer edit (fact profile PR 13): the refused value is a non-bool `directive` (a truthy one, so a kept value would
+# show), as the old domain is no longer read.
 def test_a_create_the_parser_refuses_keeps_its_text_key_and_nothing_else():
-    call = _call("create_fact", {"content": "User walks", "fact_attributes": {"domain": "no-such", "derived_from": 5}})
+    call = _call("create_fact", {"content": "User walks", "fact_attributes": {"directive": "yes", "derived_from": 5}})
     assert call.key == _call("create_fact", {"content": "User walks"}).key
-    assert call.domain is None and call.sources == frozenset()
+    assert call.directive is False and call.sources == frozenset()
 
 
 def test_a_merge_joins_its_fact_ids_as_the_parser_reads_them():
@@ -218,14 +221,14 @@ _REPORT = LLMResponse(text=json.dumps({"operations": []}), tool_calls=[])
 def _split(derived):
     return ("create_fact", {
         "content": "User plans a trip to Lisbon on 2026-10-10",
-        "fact_attributes": {"domain": "location", "derived_from": derived},
+        "fact_attributes": {"directive": False, "derived_from": derived},
     })
 
 
 def _rewrite(derived):
     return ("create_fact", {
         "content": "User took a trip to Lisbon on 2026-10-10",
-        "fact_attributes": {"domain": "location", "derived_from": derived},
+        "fact_attributes": {"directive": False, "derived_from": derived},
     })
 
 

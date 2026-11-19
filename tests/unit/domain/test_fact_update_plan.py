@@ -138,10 +138,13 @@ def test_the_version_entity_follows_the_design():
     assert version.reported_date == old.reported_date == CREATED
 
 
+# Reviewer edit (fact profile PR 13): the old `domain` is gone; the classification copied is the `directive` flag, set on
+# the old document so a copy that drops it shows.
 def test_the_version_copies_the_identity_and_classification_of_the_old_document():
-    old = current_fact()
+    old = current_fact(directive=True)
     version = plan({"content": "mother is Mariia"}, old).version_fact
-    for field in ("created_at", "lineage_id", "account_id", "created_by_user_id", "domain", "context_priority", "type",
+    assert old.directive is True
+    for field in ("created_at", "lineage_id", "account_id", "created_by_user_id", "directive", "context_priority", "type",
                   "context", "visibility", "ttl_days", "expires_at", "temporal_class"):
         assert getattr(version, field) == getattr(old, field), field
 

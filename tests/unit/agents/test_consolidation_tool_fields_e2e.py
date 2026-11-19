@@ -50,12 +50,15 @@ SEEDED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 HORIZON_DAYS = (datetime.now(timezone.utc) - SPAN_END).days + 60
 
 # ------------------------------------------------------------------------------------------- the scripted calls
+# Reviewer edit (fact profile PR 13, task item 3): `directive` (boolean) replaced the old `domain` in `fact_attributes`.
+# A directive is pinned to expiry `none`, so `true` is sent only by the calls born closed (CREATE_ARCHIVED, MERGE_CLOSED),
+# whose expiry is not decided; each tool's tests store both values.
 
 PASSPORT = "User's passport expires on 2031-03-04."
 CREATE_CURRENT: Dict[str, Any] = {
     "content": PASSPORT,
     "fact_attributes": {
-        "domain": "legal", "temporal_class": "stable", "state": "current", "context_priority": "high",
+        "directive": False, "temporal_class": "stable", "state": "current", "context_priority": "high",
         "tags": ["passport", "documents"], "metadata": {"document": "passport", "expires": "2031-03-04"},
         "context": "travel documents", "reported_date": INSIDE.isoformat(),
         "expiry": {"kind": "date", "date": "2031-03-04"},
@@ -65,7 +68,7 @@ FITLIFE_OLD = "User trained at the FitLife gym on Main Street."
 CREATE_ARCHIVED: Dict[str, Any] = {
     "content": FITLIFE_OLD,
     "fact_attributes": {
-        "domain": "health", "temporal_class": "dynamic", "state": "archived", "context_priority": "low",
+        "directive": True, "temporal_class": "dynamic", "state": "archived", "context_priority": "low",
         "tags": ["gym"], "expiry": {"kind": "horizon", "days": HORIZON_DAYS},
         "derived_from": ["seed-fitlife"],
     },
@@ -87,7 +90,7 @@ MERGE_DATE: Dict[str, Any] = {
     "fact_ids": ["seed-passport-a", "seed-passport-b"],
     "merged_content": MERGED_PASSPORT,
     "fact_attributes": {
-        "domain": "legal", "temporal_class": "stable", "state": "current", "context_priority": "low",
+        "directive": False, "temporal_class": "stable", "state": "current", "context_priority": "low",
         "tags": ["passport"], "metadata": {"document": "passport"}, "context": "travel documents",
         "reported_date": INSIDE.isoformat(), "expiry": {"kind": "date", "date": "2031-03-04"},
     },
@@ -97,7 +100,7 @@ MERGE_HORIZON: Dict[str, Any] = {
     "fact_ids": ["seed-gym-a", "seed-gym-b"],
     "merged_content": MERGED_GYM,
     "fact_attributes": {
-        "domain": "health", "temporal_class": "dynamic", "context_priority": "medium", "tags": ["gym"],
+        "directive": False, "temporal_class": "dynamic", "context_priority": "medium", "tags": ["gym"],
         "expiry": {"kind": "horizon", "days": HORIZON_DAYS},
     },
 }
@@ -106,7 +109,7 @@ MERGE_CLOSED: Dict[str, Any] = {
     "fact_ids": ["seed-fitlife-a", "seed-fitlife-b"],
     "merged_content": MERGED_FITLIFE,
     "fact_attributes": {
-        "domain": "health", "temporal_class": "dynamic", "state": "archived", "context_priority": "low",
+        "directive": True, "temporal_class": "dynamic", "state": "archived", "context_priority": "low",
         "tags": ["gym"], "expiry": {"kind": "none"},
     },
 }
@@ -190,8 +193,8 @@ async def test_create_fact_writes_every_attribute(store):
 
     assert response.status == AgentStatus.SUCCESS, response.error
     current, archived = by_text(store, PASSPORT), by_text(store, FITLIFE_OLD)
-    assert (current["domain"], current["temporal_class"], current["state"], current["context_priority"]) == (
-        "legal", "stable", "current", "high")
+    assert (current["directive"], current["temporal_class"], current["state"], current["context_priority"]) == (
+        False, "stable", "current", "high")
     assert current["tags"] == ["passport", "documents", "consolidated"]
     assert current["metadata"] == {"document": "passport", "expires": "2031-03-04"}
     assert current["context"] == "travel documents"
@@ -199,8 +202,8 @@ async def test_create_fact_writes_every_attribute(store):
     assert current["expiry_kind"] == "date"
     assert as_utc(current["expires_at"]) == datetime(2031, 3, 4, 23, tzinfo=timezone.utc)  # end of the day, Berlin
 
-    assert (archived["domain"], archived["temporal_class"], archived["state"], archived["context_priority"]) == (
-        "health", "dynamic", "archived", "low")
+    assert (archived["directive"], archived["temporal_class"], archived["state"], archived["context_priority"]) == (
+        True, "dynamic", "archived", "low")
     assert archived["tags"] == ["gym", "consolidated"]
     assert archived.get("expires_at") is None and archived.get("expiry_kind") is None
     first, second = results(script.llm, "create_fact")
@@ -260,16 +263,16 @@ async def test_merge_facts_writes_every_attribute(store):
 
     assert response.status == AgentStatus.SUCCESS, response.error
     passport, gym = by_text(store, MERGED_PASSPORT), by_text(store, MERGED_GYM)
-    assert (passport["domain"], passport["temporal_class"], passport["state"], passport["context_priority"]) == (
-        "legal", "stable", "current", "low")
+    assert (passport["directive"], passport["temporal_class"], passport["state"], passport["context_priority"]) == (
+        False, "stable", "current", "low")
     assert passport["tags"] == ["passport", "consolidated"]
     assert passport["metadata"] == {"document": "passport"}
     assert passport["context"] == "travel documents"
     assert as_utc(passport["reported_date"]) == INSIDE
     assert passport["expiry_kind"] == "date"
     assert as_utc(passport["expires_at"]) == datetime(2031, 3, 4, 23, tzinfo=timezone.utc)
-    assert (gym["domain"], gym["temporal_class"], gym["context_priority"], gym["expiry_kind"]) == (
-        "health", "dynamic", "medium", "horizon")
+    assert (gym["directive"], gym["temporal_class"], gym["context_priority"], gym["expiry_kind"]) == (
+        False, "dynamic", "medium", "horizon")
     assert as_utc(gym["expires_at"]) == SPAN_END + timedelta(days=HORIZON_DAYS)
     passport_id = next(k for k, d in store.docs.items() if d["text"] == MERGED_PASSPORT)
     gym_id = next(k for k, d in store.docs.items() if d["text"] == MERGED_GYM)
@@ -279,7 +282,8 @@ async def test_merge_facts_writes_every_attribute(store):
 
 
 async def test_merge_facts_into_a_closed_fact(store):
-    """`fact_attributes.state` of a merge is stored: the merged fact is written archived, and both sources point to it."""
+    """`fact_attributes.state` and `fact_attributes.directive` of a merge are stored: the merged fact is written archived
+    and marked a directive, and both sources point to it."""
     seed(store, "seed-fitlife-a", "User trains at the FitLife gym.")
     seed(store, "seed-fitlife-b", "User's gym is FitLife on Main Street.")
     script = Pass(tools(("merge_facts", MERGE_CLOSED)))
@@ -289,6 +293,7 @@ async def test_merge_facts_into_a_closed_fact(store):
     assert response.status == AgentStatus.SUCCESS, response.error
     merged_id = next(k for k, d in store.docs.items() if d["text"] == MERGED_FITLIFE)
     assert store.docs[merged_id]["state"] == "archived"
+    assert store.docs[merged_id]["directive"] is True   # reviewer edit (PR 13): the merge's directive flag is stored
     assert [store.docs[s]["superseded_by"] for s in ("seed-fitlife-a", "seed-fitlife-b")] == [merged_id] * 2
     script_spent(script.llm)
 
@@ -314,7 +319,9 @@ async def test_an_update_of_only_unknown_keys_is_not_reported_as_updated(store):
     `context`) without a word, so the model is told `updated` for a call that changed nothing it asked for.
     Fix: `parse_fact_update` adds a note naming the keys it ignored; parser notes already reach `note` through
     `finish_fact_update` (src/domain/fact_update_lifecycle.py) and `with_notes` (src/domain/fact_tool_result.py)."""
-    seed(store, "seed-job", "User works at Acme.")
+    # Reviewer edit (fact profile PR 13): the old `domain` is no longer a fact field; the seed is a stored document that
+    # still carries the key (as the live ones do), so the unchanged-domain precondition still reads a value.
+    put_raw(store, "seed-job", "User works at Acme.", entity={"reported_date": SEEDED_AT}, domain="work")
     script = Pass(tools(("update_fact", UPDATE_UNKNOWN)))
 
     await run(store, script)

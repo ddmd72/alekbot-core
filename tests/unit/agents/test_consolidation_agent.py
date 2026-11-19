@@ -1161,8 +1161,9 @@ class TestReviewDirectives:
         ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert ops == [{"action": "MERGE"}]
-        # fetched by directive domain
-        assert repo.get_active_facts_ordered.call_args.kwargs["domain"] == "agent_directive"
+        # fetched by the directive flag (reviewer edit, fact profile PR 13: `directive_only` replaced the domain filter)
+        assert repo.get_active_facts_ordered.call_args.kwargs["directive_only"] is True
+        assert "domain" not in repo.get_active_facts_ordered.call_args.kwargs
         # both directives + cap rule present in the review message
         msg = agent._run_consolidation_loop.call_args.kwargs["user_message_text"]
         assert "Never give partial answers." in msg

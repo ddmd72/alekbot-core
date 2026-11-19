@@ -76,9 +76,11 @@ async def seed(db, docs):
 
 
 def standard_docs():
+    # Reviewer edit (fact profile PR 13): a stored directive carries `directive: true` (the owner-run mark script sets it
+    # on the old directives); the old domain is no longer read, so every directive below is stored with the flag.
     return [
         raw("f-car", CAR), raw("f-conf", CONF), raw("f-pipe", PIPE), raw("f-guitar", GUITAR), raw("f-trial", TRIAL, reported_date=TRIAL_REPORTED),
-        raw("f-maria", MARIA), raw("f-rule", RULE, domain="AGENT_DIRECTIVE"),
+        raw("f-maria", MARIA), raw("f-rule", RULE, directive=True),
         raw("f-system", SYSTEM_TEXT, account="SYSTEM"), raw("f-decided", DECIDED_TEXT, expiry_kind="none"),
         raw("f-orphan", ORPHAN_TEXT, account=ORPHAN_ACC), raw("f-noacc", "no account text", account=""),
     ]
@@ -270,7 +272,7 @@ async def test_unsure_on_a_horizon_type_fact_is_flagged_and_none(tmp_path):
 
 async def test_an_iso_string_reported_date_cannot_carry_a_horizon_and_a_directive_is_never_sent(tmp_path):
     db = EvalDb()
-    await seed(db, [raw("f-str", PIPE, reported_date="2026-10-01T09:30:00Z"), raw("f-dir", RULE, domain="AGENT_DIRECTIVE")])
+    await seed(db, [raw("f-str", PIPE, reported_date="2026-10-01T09:30:00Z"), raw("f-dir", RULE, directive=True)])
     requests = []
     result, _ = await run(db, scripted(ANSWERS, requests), tmp_path)
     entry = by_fact(plan_of(tmp_path))
@@ -287,7 +289,7 @@ async def test_closed_facts_are_selected_only_with_the_flag_and_only_when_listed
         raw("f-sup", GUITAR, state="superseded", is_current=False), raw("f-stale", TRIAL, state="stale"),
         raw("f-cur", MARIA), raw("f-unlisted", CONF, state="archived", is_current=False),
         raw("f-arch-decided", "decided closed text", state="archived", expiry_kind="none"),
-        raw("f-arch-rule", RULE, state="archived", domain="AGENT_DIRECTIVE"),
+        raw("f-arch-rule", RULE, state="archived", directive=True),
         raw("f-arch-sys", SYSTEM_TEXT, state="archived", account="SYSTEM"),
     ])
     listed = {"f-arch", "f-inv", "f-sup", "f-stale", "f-cur", "f-arch-decided", "f-arch-rule", "f-arch-sys"}
@@ -334,7 +336,7 @@ def six_answers():
 async def test_a_call_that_fails_twice_stops_the_run_and_lists_the_undecided(tmp_path, monkeypatch):
     monkeypatch.setattr(s5, "BATCH_SIZE", 2)
     db = EvalDb()
-    await seed(db, six_facts() + [raw("g-rule", RULE, domain="AGENT_DIRECTIVE")])
+    await seed(db, six_facts() + [raw("g-rule", RULE, directive=True)])
     result, _ = await run(db, scripted(six_answers(), raise_on={"fact number 3"}), tmp_path)
     assert result["stopped"] == "call failed twice: RuntimeError"
     plan = plan_of(tmp_path)

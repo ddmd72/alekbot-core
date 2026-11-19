@@ -62,13 +62,25 @@ def test_a_dropped_part_next_to_an_unrelated_create_is_still_abandoned(label):
     assert s.abandoned == 1
 
 
+# Reviewer edit (fact profile PR 13, RFC §6 row 16): the stats compare the directive decision, not the old domain; the
+# helper maps the old directive domain to `directive=True` and every other value to `False`.
 @pytest.mark.parametrize("label", CLEANUP)
-def test_an_overlapping_create_of_another_domain_does_not_answer(label):
+def test_an_overlapping_create_of_another_directive_decision_does_not_answer(label):
+    s = stats(label)
+    turn(s, create("Plans a trip to Lisbon on 2026-10-10"), OUTCOME_BORN_DUE)
+    turn(s, create("Took a trip to Lisbon on 2026-10-10", domain="agent_directive"), OUTCOME_OK)
+
+    assert s.abandoned == 1
+
+
+@pytest.mark.parametrize("label", CLEANUP)
+def test_an_overlapping_create_of_another_old_domain_answers_when_neither_is_a_directive(label):
+    """RFC §6 row 16: with the domain gone, two non-directives differ by nothing the stats compare."""
     s = stats(label)
     turn(s, create("Plans a trip to Lisbon on 2026-10-10"), OUTCOME_BORN_DUE)
     turn(s, create("Took a trip to Lisbon on 2026-10-10", domain="health"), OUTCOME_OK)
 
-    assert s.abandoned == 1
+    assert (s.born_due, s.abandoned) == (1, 0)
 
 
 @pytest.mark.parametrize("label", CLEANUP)

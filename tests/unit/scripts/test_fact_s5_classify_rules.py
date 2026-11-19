@@ -177,10 +177,13 @@ def test_select_in_filtered_mode():
     assert select(facts, set()) == ([], [])
 
 
+# Reviewer edit (fact profile PR 13): the scan reads the stored `directive` flag (only a stored true counts) in place of
+# the old domain, which it no longer reads.
 def test_scanned_fact_normalises_what_the_collection_holds():
-    fact = scanned(tags=["a", 3, None, "b"], domain="AGENT_DIRECTIVE", type="PRINCIPLE")
+    fact = scanned(tags=["a", 3, None, "b"], directive=True, type="PRINCIPLE")
     assert fact.tags == ("a", "b")
-    assert fact.domain == "agent_directive" and fact.type == "principle"
+    assert fact.directive is True and fact.type == "principle"
+    assert scanned(directive="true").directive is False and scanned(domain="agent_directive").directive is False
     assert fact.token == "2026-10-01T09:30:00Z" and fact.fact_id == "f1"
     assert is_pinned(fact)
     assert scanned(tags="car").tags == ()
@@ -189,7 +192,7 @@ def test_scanned_fact_normalises_what_the_collection_holds():
     assert naive.reported_date == REPORTED and naive.reported_date.tzinfo is not None
     assert naive.created_at == datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
     bare = scanned_fact("g", {}, "t")
-    assert (bare.account_id, bare.text, bare.domain, bare.type, bare.tags, bare.metadata) == ("", "", None, None, (), {})
+    assert (bare.account_id, bare.text, bare.directive, bare.type, bare.tags, bare.metadata) == ("", "", False, None, (), {})
     assert (bare.context, bare.temporal_class, bare.reported_date, bare.expiry_kind) == (None, None, None, None)
 
 
@@ -203,12 +206,14 @@ def test_a_reported_date_that_is_a_string_reads_as_none_and_a_horizon_then_falls
 
 
 def test_is_pinned():
-    assert is_pinned(scanned(domain="agent_directive"))
+    # Reviewer edit (fact profile PR 13): the directive leg is the stored flag; an old directive domain alone no longer pins.
+    assert is_pinned(scanned(directive=True))
     assert is_pinned(scanned(type="principle"))
     assert is_pinned(scanned(tags=["Mindset"]))
     assert not is_pinned(scanned())
-    assert not is_pinned(scanned(domain="not-a-domain", type="not-a-type"))
-    assert not is_pinned(scanned(domain=None, type=None))
+    assert not is_pinned(scanned(directive="yes", type="not-a-type"))
+    assert not is_pinned(scanned(directive=None, type=None))
+    assert not is_pinned(scanned(domain="agent_directive"))
 
 
 def test_batches():
@@ -223,10 +228,11 @@ def test_batches():
 def test_fact_line_has_exactly_the_listed_keys_and_local_days():
     fact = scanned(reported_date=UTC_MIDNIGHT.utc, created_at=None, account_id="acc-secret")
     line = fact_line(3, fact, HELSINKI)
-    assert list(line) == [
-        "n", "text", "domain", "temporal_class", "tags", "metadata", "context", "reported_date", "created_at",
+    assert list(line) == [   # reviewer edit (PR 13): the model sees the directive flag in place of the old domain
+        "n", "text", "directive", "temporal_class", "tags", "metadata", "context", "reported_date", "created_at",
     ]
     assert line["n"] == 3 and line["tags"] == ["car"] and line["metadata"] == {"k": "v"}
+    assert line["directive"] is False and fact_line(3, scanned(directive=True), HELSINKI)["directive"] is True
     assert line["reported_date"] == "2026-10-27 Tue"  # Helsinki is two hours into the day at UTC midnight
     assert fact_line(3, fact, "America/New_York")["reported_date"] == "2026-10-26 Mon"
     assert line["created_at"] is None
@@ -557,8 +563,8 @@ def test_report_row_columns():
     _, _, rows = decided_rows()
     quiet, soon, due = rows
     assert list(due) == [
-        "account", "text", "domain", "type", "temporal_class", "reported", "decision", "expires_at", "due_now", "reason", "flag",
-    ]
+        "account", "text", "directive", "type", "temporal_class", "reported", "decision", "expires_at", "due_now", "reason", "flag",
+    ]   # reviewer edit (PR 13): the directive flag in place of the old domain
     assert due["account"] == "acc-1234" and due["decision"] == "date 2025-01-01" and due["due_now"] is True
     assert due["expires_at"] == "2025-01-02 Thu 00:00 CET" and due["reported"] == "2024-12-01 Sun"
     assert due["flag"] == "" and due["reason"] == "old plan"
@@ -591,7 +597,7 @@ def test_render_report_orders_due_rows_first_and_escapes_cells():
 
 
 def test_render_report_sorts_by_kind_then_text_inside_the_not_due_group():
-    base = {c: "" for c in ("account", "domain", "type", "temporal_class", "reported", "expires_at", "reason", "flag")}
+    base = {c: "" for c in ("account", "directive", "type", "temporal_class", "reported", "expires_at", "reason", "flag")}
     rows = [
         {**base, "text": "z", "decision": "none", "due_now": False},
         {**base, "text": "y", "decision": "horizon 3 d", "due_now": False},

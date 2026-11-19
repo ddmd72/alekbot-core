@@ -63,8 +63,9 @@ def test_only_a_current_account_fact_needs_an_expiry_kind(over):
     assert check_expiry("f1", stored(**NO_EXPIRY, **over)) == []
 
 
+# Reviewer edit (fact profile PR 13): a directive is pinned by its stored `directive` flag, not the old domain.
 @pytest.mark.parametrize("pin", [
-    {"domain": "agent_directive"}, {"type": "principle"}, {"tags": ["Mindset"]},
+    {"directive": True}, {"type": "principle"}, {"tags": ["Mindset"]},
 ])
 def test_pinned_fact_with_an_expiry(pin):
     assert check_expiry("f1", stored(**pin)) == ["pinned_expiry_not_none"]
@@ -130,7 +131,7 @@ def test_a_naive_run_time_reads_as_utc():
 
 
 def test_classes_come_in_the_documented_order():
-    doc = stored(domain="agent_directive", stale_since=REPORTED, ttl_days=0)
+    doc = stored(directive=True, stale_since=REPORTED, ttl_days=0)   # reviewer edit (PR 13): the flag pins
     assert check_expiry("f1", doc, due_as_of=RAN_AT) == [
         "pinned_expiry_not_none", "current_with_stale_since", HORIZON_CLASS, PAST]
     assert check_expiry("f1", stored(**NO_EXPIRY, stale_since=REPORTED)) == [
@@ -305,10 +306,19 @@ def test_the_modules_call_no_write_method():
 
 # ------------------------------------------------------------------------------ pins stored in upper case
 
-@pytest.mark.parametrize("pin", [{"domain": "AGENT_DIRECTIVE"}, {"type": "PRINCIPLE"}])
+# Reviewer edit (fact profile PR 13): the upper-case `domain` case left with the old domain (the flag is a bool and has no
+# case); a stored old directive domain, in either case, no longer pins (`test_a_stored_old_directive_domain_no_longer_pins`).
+@pytest.mark.parametrize("pin", [{"type": "PRINCIPLE"}])
 def test_an_upper_case_stored_pin_still_counts_as_pinned(pin):
     assert check_expiry("f1", stored(**pin)) == ["pinned_expiry_not_none"]
     assert check_expiry("f1", stored(**NONE_KIND, **pin)) == []
+
+
+@pytest.mark.parametrize("domain", ["agent_directive", "AGENT_DIRECTIVE"])
+def test_a_stored_old_directive_domain_no_longer_pins(domain):
+    """Owner decision 1 (PR 13): only the flag decides; the mark script sets it on the old directives before the deploy."""
+    assert check_expiry("f1", stored(domain=domain)) == []
+    assert check_expiry("f1", stored(domain=domain, directive=True)) == ["pinned_expiry_not_none"]
 
 
 # ------------------------------------------------------------------------------ documents the lifecycle writers leave

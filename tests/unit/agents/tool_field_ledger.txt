@@ -6,7 +6,7 @@ consolidation:create_fact.content  # stored tests/unit/agents/test_consolidation
 consolidation:create_fact.fact_attributes.context  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:create_fact.fact_attributes.context_priority  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:create_fact.fact_attributes.derived_from  # noted tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
-consolidation:create_fact.fact_attributes.domain  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.directive  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:create_fact.fact_attributes.expiry.date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:create_fact.fact_attributes.expiry.days  # noted tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:create_fact.fact_attributes.expiry.kind  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
@@ -17,7 +17,7 @@ consolidation:create_fact.fact_attributes.tags  # stored tests/unit/agents/test_
 consolidation:create_fact.fact_attributes.temporal_class  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:merge_facts.fact_attributes.context  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_attributes.context_priority  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
-consolidation:merge_facts.fact_attributes.domain  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.directive  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_into_a_closed_fact
 consolidation:merge_facts.fact_attributes.expiry.date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_attributes.expiry.days  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_attributes.expiry.kind  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute

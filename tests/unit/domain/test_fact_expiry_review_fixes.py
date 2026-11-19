@@ -71,10 +71,12 @@ def test_a_none_kind_is_never_due():
     assert born_due(fields, NOW, NOW, LISBON, CONVERSATION) == (fields, None)
 
 
-def test_pinning_reads_domain_and_type_given_as_strings():
-    assert expiry_pinned("agent_directive", FactType.EVENT, []) is True
-    assert expiry_pinned(None, "principle", []) is True
-    assert expiry_pinned("work", "event", []) is False
+# Reviewer edit (fact profile PR 13): the directive leg is the `directive` flag (a stored old domain string is no
+# longer read); the type is still read when given as a string.
+def test_pinning_reads_the_flag_and_a_type_given_as_a_string():
+    assert expiry_pinned(True, "event", []) is True
+    assert expiry_pinned(False, "principle", []) is True
+    assert expiry_pinned(False, "event", []) is False
     assert expiry_pinned(True, FactType.EVENT, []) is True
 
 
