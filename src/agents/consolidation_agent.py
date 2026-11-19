@@ -26,8 +26,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..domain.entities import FactDomain, FactEntity, FactState, normalize_fact_taxonomy
-from ..domain.fact_lifecycle import CLOSING_STATES
+from ..domain.entities import FactEntity, FactState, normalize_fact_taxonomy
+from ..domain.fact_lifecycle import CLOSING_STATES, DIRECTIVE_DOMAIN
 from ..domain.fact_lifecycle_day import counter_day
 from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
@@ -1618,7 +1618,7 @@ class ConsolidationAgent(BaseAgent):
         """
         directives = await self._repo.get_active_facts_ordered(
             account_id,
-            domain=FactDomain.AGENT_DIRECTIVE.value,
+            domain=DIRECTIVE_DOMAIN,
             limit=self.DIRECTIVE_REVIEW_FETCH_LIMIT,
         )
         if not directives:
@@ -1660,7 +1660,7 @@ class ConsolidationAgent(BaseAgent):
         merge (the LLM's job) preserves content; this only guarantees the ceiling."""
         port = fact_management if fact_management is not None else self._fact_management
         directives = await self._repo.get_active_facts_ordered(
-            account_id, domain=FactDomain.AGENT_DIRECTIVE.value, limit=None
+            account_id, domain=DIRECTIVE_DOMAIN, limit=None
         )
         if len(directives) <= self.DIRECTIVE_HARD_CAP:
             return []

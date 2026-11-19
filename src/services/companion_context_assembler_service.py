@@ -9,20 +9,25 @@ boundary, not a preference... default is no") and §6 (shared infrastructure,
 "structurally parallel to SearchEnrichmentService").
 """
 import asyncio
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import List, Optional, Sequence
 
 from ..domain.companion import CompanionRecord
+from ..domain.companion_config import session_domain_keys
 from ..domain.companion_context import CompanionContext
-from ..domain.entities import FactDomain
-from ..domain.request_context import RequestContext
+from ..domain.entities import FactEntity
+from ..domain.fact_lifecycle import DIRECTIVE_DOMAIN
+from ..domain.fact_query import FactQuery
 from ..domain.rrf import apply_rrf_ranking
 from ..domain.settings import SearchConfig
 from ..ports.companion_cache_repository import CompanionCacheRepository
 from ..ports.companion_memory_repository import CompanionMemoryRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.fact_search_port import FactSearchPort
 from ..ports.repository import FactRepository
-from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
+
+PATH = "companion"
 
 
 class CompanionContextAssemblerService:
@@ -32,16 +37,18 @@ class CompanionContextAssemblerService:
         companion_repo: CompanionMemoryRepository,
         cache_repo: CompanionCacheRepository,
         embedding_service: EmbeddingService,
-        enrichment_port: SearchEnrichmentPort,
+        fact_search: FactSearchPort,
         fact_repo: FactRepository,
         rrf_k: int = 60,
+        biographical_limit: int = 10,
     ) -> None:
         self._companion_repo = companion_repo
         self._cache_repo = cache_repo
         self._embedding = embedding_service
-        self._enrichment = enrichment_port
+        self._fact_search = fact_search
         self._fact_repo = fact_repo
         self._rrf_k = rrf_k
+        self._biographical_limit = biographical_limit
 
     async def assemble_context(
         self,
@@ -51,7 +58,7 @@ class CompanionContextAssemblerService:
         include_own_records: bool = True,
         own_records_limit: int = 10,
         include_biographical: bool = False,
-        session_domains: Optional[List[FactDomain]] = None,
+        session_domains: Optional[Sequence[str]] = None,
         include_standing_directives: bool = False,
         user_id: Optional[str] = None,
     ) -> CompanionContext:
@@ -88,9 +95,10 @@ class CompanionContextAssemblerService:
             if not include_standing_directives:
                 return []
             try:
+                # One read whose condition is the directive marker `is_directive` reads (both move together, RFC §6).
                 return await self._fact_repo.get_active_facts_ordered(
                     account_id,
-                    domain=FactDomain.AGENT_DIRECTIVE.value,
+                    domain=DIRECTIVE_DOMAIN,
                     limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
                 )
             except Exception as exc:
@@ -137,39 +145,30 @@ class CompanionContextAssemblerService:
     async def _fetch_biographical(
         self,
         query_phrases: List[str],
-        session_domains: Optional[List[FactDomain]],
+        session_domains: Optional[Sequence[str]],
         account_id: str,
         user_id: Optional[str],
-    ) -> List:
-        """Reuses SearchEnrichmentPort.enrich_context unchanged (RFC §6: 'reused unchanged;
-        already a generic text -> vector port with zero entity coupling' — same reasoning
-        applied here to the enrichment port itself). Maps this service's variable-length
-        query_phrases onto enrich_context's fixed phrase_1/phrase_2 slots; extra phrases
-        beyond 2 are not used for this slice (existing enrich_context contract, not a gap
-        introduced here).
+    ) -> List[FactEntity]:
+        """The biographical slice through the fact search (fact profile RFC §5.4): `subject` and `message` from the
+        first phrase, `domains` from the session's domains, the first `biographical_limit` facts.
 
-        enrich_context resolves account_id implicitly from RequestContext (a contextvar),
-        not from an explicit parameter — so this wraps the call in RequestContext(user_id,
-        account_id) to scope it to the account this turn actually belongs to. RFC §5 frames
-        this read path as a permission boundary ('default is no'): without a user_id there
-        is no way to scope the call correctly, so this fails CLOSED rather than falling back
-        to whatever RequestContext happens to be ambient — a fallback would risk reading a
-        different account's facts if some unrelated ambient context were live."""
+        `session_domains` are registry keys; an old stored value is mapped through the registry and one that maps to
+        nothing is dropped with a warning (a channel saved before the registry may still hold one).
+
+        RFC §5 frames this read path as a permission boundary ('default is no'): without the owner's user_id the slice
+        is skipped (fails CLOSED) rather than read on the turn's behalf."""
         if not user_id:
             logger.warning(
                 "⚠️ [CompanionAssembler] biographical slice skipped: no user_id to scope the fetch"
             )
             return []
 
-        phrase_1 = query_phrases[0] if len(query_phrases) >= 1 else ""
-        phrase_2 = query_phrases[1] if len(query_phrases) >= 2 else ""
-        domains = [d.value for d in session_domains] if session_domains else None
-
-        async with RequestContext(user_id=user_id, account_id=account_id):
-            enriched = await self._enrichment.enrich_context(
-                keywords=[],
-                search_phrase_1=phrase_1,
-                search_phrase_2=phrase_2,
-                relevant_domains=domains,
-            )
-        return enriched.facts
+        domains, dropped = session_domain_keys(session_domains or ())
+        if dropped:
+            logger.warning(f"⚠️ [CompanionAssembler] unknown session domains dropped: {sorted(dropped)}")
+        phrase = query_phrases[0] if query_phrases else ""
+        query = FactQuery(
+            today=datetime.now(timezone.utc).date(), subject=phrase, message=phrase, domains=tuple(domains), path=PATH,
+        )
+        facts = await self._fact_search.search(account_id, query)
+        return facts[:self._biographical_limit]

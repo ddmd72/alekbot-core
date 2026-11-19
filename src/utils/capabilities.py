@@ -265,8 +265,8 @@ Google Tasks:
 2. Disconnect when needed from the same section
 
 *Memory tab*
-- Browse all facts I know about you — displayed as cards with domain labels (Email, Chat, Profile, etc.)
-- Filter by domain: click a domain chip to show only facts from that category
+- Browse all facts I know about you — displayed as cards, each labelled with its life area (Sport, Travel, Money, etc.) in your interface language
+- Filter by life area: click a chip to show only the facts filed under that area (a fact I have not sorted yet shows its old category and appears under no chip)
 - Search: type in the search bar and press Enter — semantic search across your entire knowledge base
 - Switch the list between current facts, facts waiting for review, and facts set aside in the last 30 days (read-only)
 - Answer my memory questions: each fact I am unsure about is shown in full with buttons (yes / no longer / never); mark several at once with the checkboxes

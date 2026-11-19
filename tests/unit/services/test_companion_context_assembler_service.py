@@ -4,13 +4,12 @@ import pytest
 
 from src.domain.companion import CompanionRecord
 from src.domain.entities import FactDomain, FactEntity, FactType
-from src.domain.search import EnrichedContext, EnrichedFact
 from src.domain.settings import SearchConfig
 from src.ports.companion_cache_repository import CompanionCacheRepository
 from src.ports.companion_memory_repository import CompanionMemoryRepository
 from src.ports.embedding_service import EmbeddingService
+from src.ports.fact_search_port import FactSearchPort
 from src.ports.repository import FactRepository
-from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.services.companion_context_assembler_service import (
     CompanionContextAssemblerService,
 )
@@ -39,8 +38,8 @@ def embedding_service():
 
 
 @pytest.fixture
-def enrichment_port():
-    return AsyncMock(spec=SearchEnrichmentPort)
+def fact_search():
+    return AsyncMock(spec=FactSearchPort)
 
 
 @pytest.fixture
@@ -49,12 +48,12 @@ def fact_repo():
 
 
 @pytest.fixture
-def service(companion_repo, cache_repo, embedding_service, enrichment_port, fact_repo):
+def service(companion_repo, cache_repo, embedding_service, fact_search, fact_repo):
     return CompanionContextAssemblerService(
         companion_repo=companion_repo,
         cache_repo=cache_repo,
         embedding_service=embedding_service,
-        enrichment_port=enrichment_port,
+        fact_search=fact_search,
         fact_repo=fact_repo,
     )
 
@@ -145,7 +144,7 @@ class TestOwnRecords:
 
 
 class TestBiographical:
-    async def test_disabled_by_default(self, service, cache_repo, enrichment_port):
+    async def test_disabled_by_default(self, service, cache_repo, fact_search):
         cache_repo.get_summary = AsyncMock(return_value=None)
 
         ctx = await service.assemble_context(
@@ -153,54 +152,8 @@ class TestBiographical:
             include_own_records=False, include_biographical=False,
         )
 
-        enrichment_port.enrich_context.assert_not_called()
+        fact_search.search.assert_not_called()
         assert ctx.biographical_facts == []
-
-    async def test_calls_enrich_context_with_session_domains(
-        self, service, cache_repo, enrichment_port
-    ):
-        cache_repo.get_summary = AsyncMock(return_value=None)
-        fact = EnrichedFact(fact_id="f1", content="likes spanish soap operas", source="phrase1_text")
-        enrichment_port.enrich_context = AsyncMock(
-            return_value=EnrichedContext(
-                facts=[fact], total_sources=1, dedup_count=0, biographical_dedup_count=0
-            )
-        )
-
-        ctx = await service.assemble_context(
-            session_id="slack:C1", account_id="acc1",
-            query_phrases=["mixed up preterite", "asked about soap operas"],
-            include_own_records=False, include_biographical=True,
-            session_domains=[FactDomain.ENTERTAINMENT],
-            user_id="user-42",
-        )
-
-        enrichment_port.enrich_context.assert_called_once_with(
-            keywords=[],
-            search_phrase_1="mixed up preterite",
-            search_phrase_2="asked about soap operas",
-            relevant_domains=["entertainment"],
-        )
-        assert ctx.biographical_facts == [fact]
-
-    async def test_missing_second_phrase_passes_empty_string(
-        self, service, cache_repo, enrichment_port
-    ):
-        cache_repo.get_summary = AsyncMock(return_value=None)
-        enrichment_port.enrich_context = AsyncMock(
-            return_value=EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
-        )
-
-        await service.assemble_context(
-            session_id="slack:C1", account_id="acc1", query_phrases=["only one"],
-            include_own_records=False, include_biographical=True,
-            user_id="user-42",
-        )
-
-        enrichment_port.enrich_context.assert_called_once_with(
-            keywords=[], search_phrase_1="only one", search_phrase_2="",
-            relevant_domains=None,
-        )
 
 
 class TestStandingDirectives:
@@ -238,32 +191,8 @@ class TestStandingDirectives:
 
 
 class TestRequestContextWiring:
-    async def test_wraps_enrich_context_in_request_context_when_user_id_given(
-        self, service, cache_repo, enrichment_port
-    ):
-        from src.domain.request_context import get_current_account_id, get_current_user_id
-
-        cache_repo.get_summary = AsyncMock(return_value=None)
-        captured = {}
-
-        async def _capture(**kwargs):
-            captured["user_id"] = get_current_user_id()
-            captured["account_id"] = get_current_account_id()
-            return EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
-
-        enrichment_port.enrich_context = AsyncMock(side_effect=_capture)
-
-        await service.assemble_context(
-            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
-            include_own_records=False, include_biographical=True,
-            user_id="user-42",
-        )
-
-        assert captured["user_id"] == "user-42"
-        assert captured["account_id"] == "acc1"
-
     async def test_biographical_fetch_fails_closed_when_user_id_omitted(
-        self, service, cache_repo, enrichment_port
+        self, service, cache_repo, fact_search
     ):
         """Permission-boundary default (RFC §5: 'default is no'): without a user_id to scope
         the fetch, the biographical slice is skipped entirely rather than falling back to
@@ -276,7 +205,7 @@ class TestRequestContextWiring:
             include_own_records=False, include_biographical=True,
         )
 
-        enrichment_port.enrich_context.assert_not_called()
+        fact_search.search.assert_not_called()
         assert ctx.biographical_facts == []
 
 
@@ -320,10 +249,10 @@ class TestPerFetchFailureIsolation:
         assert [r.id for r in ctx.own_records] == ["a"]
 
     async def test_biographical_fetch_failure_returns_empty_list(
-        self, service, cache_repo, enrichment_port
+        self, service, cache_repo, fact_search
     ):
         cache_repo.get_summary = AsyncMock(return_value="cached summary")
-        enrichment_port.enrich_context = AsyncMock(side_effect=RuntimeError("enrichment down"))
+        fact_search.search = AsyncMock(side_effect=RuntimeError("enrichment down"))
 
         ctx = await service.assemble_context(
             session_id="slack:C1", account_id="acc1", query_phrases=["p1"],

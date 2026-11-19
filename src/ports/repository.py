@@ -115,14 +115,18 @@ class FactRepository(ABC):
         cursor_doc_id: Optional[str] = None,
         domain: Optional[str] = None,
         state: str = "current",
+        domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
         """Return one page of `state` facts of account `owner_id` (default `"current"`) and the next cursor.
 
         Args:
             limit: page size.
             cursor_doc_id: document id of the last fact of the previous page.
-            domain: when set, only facts of that domain.
+            domain: when set, only facts whose old `domain` is that value (legacy; no caller since the Cabinet filters
+                by `domain_key`; removed with the old field, fact profile RFC §9 PR 13).
             state: `"current"` or `"stale"`; anything else raises ValueError before any I/O.
+            domain_key: when set, only facts whose profile `domain_keys` holds that registry key (a fact not yet
+                profiled has none, so it is absent). `domain` and `domain_key` together raise ValueError before any I/O.
 
         Order: newest first by created_at; pages do not overlap and together hold every matching fact.
         Returns: (facts, next_cursor); next_cursor is None exactly when no fact follows this page.

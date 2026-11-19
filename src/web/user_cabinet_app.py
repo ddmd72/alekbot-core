@@ -34,6 +34,7 @@ from ..domain.drive_ancestry import Ancestry
 from ..domain.drive_scope_preview import PreviewBucket
 from ..domain.user_drive import DriveItemNotFoundError, DriveNotConnectedError
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
+from ..domain import fact_domains
 from ..domain.fact_review_answers import deciding_answer
 from ..domain.fact_review_digest import last_actor
 from ..domain.fact_review_overview import (
@@ -84,6 +85,15 @@ async def _json_object_body() -> tuple[Optional[Dict[str, Any]], Optional[tuple]
     if not isinstance(body, dict):
         return None, (jsonify({"error": "request body must be a JSON object"}), 400)
     return body, None
+
+
+def _domain_fields(fact: Any) -> Dict[str, Optional[str]]:
+    """The two domain fields of a fact in a Cabinet list: the badge shows the registry label of `primary_domain`, and the
+    old `domain` while the fact has no profile yet (fact profile RFC §6 row 9)."""
+    return {
+        "domain": fact.domain.value if fact.domain else None,
+        "primary_domain": fact.primary_domain or None,
+    }
 
 
 def create_user_cabinet_blueprint(
@@ -893,7 +903,7 @@ def create_user_cabinet_blueprint(
             items = [
                 {
                     "text": f.text,
-                    "domain": f.domain.value if f.domain else None,
+                    **_domain_fields(f),
                     "type": f.type.value if f.type else None,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
                 }
@@ -905,30 +915,46 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error fetching facts: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    @bp.route("/api/user/fact-domains", methods=["GET"])
+    @auth_required
+    async def fact_domain_list():
+        """The life areas of the fact registry for the Cabinet's filter and badges: `{key, label, order}` in Cabinet
+        order, labelled in `?lang=` (the page's UI language; English when absent or not translated)."""
+        lang = (request.args.get("lang") or "en").strip().lower()
+        items = [
+            {"key": entry.key, "label": fact_domains.label(entry.key, lang), "order": entry.cabinet_order}
+            for entry in (fact_domains.domain_entry(key) for key in fact_domains.cabinet_keys())
+            if entry is not None
+        ]
+        return jsonify({"domains": items}), 200
+
     @bp.route("/api/user/facts/browse", methods=["GET"])
     @auth_required
     async def browse_facts():
-        """Paginated facts for the Cabinet browser. Supports domain filter, state filter (current | stale) + cursor."""
+        """Paginated facts for the Cabinet browser: state filter (current | stale), cursor, and `domain` = one registry key
+        (facts whose profile `domain_keys` hold it; any other value is a 400)."""
         state = listable_state(request.args.get("state"))
         if state is None:
             return jsonify({"error": "state must be current or stale"}), 400
         try:
             limit = min(int(request.args.get("limit", 100)), 500)
             cursor = request.args.get("cursor") or None
-            domain = request.args.get("domain") or None
+            domain_key = request.args.get("domain") or None
+            if domain_key is not None and not fact_domains.is_known(domain_key):
+                return jsonify({"error": "domain must be a key of /api/user/fact-domains"}), 400
 
             facts, next_cursor = await fact_repo.get_paginated_facts(
                 owner_id=g.account_id,
                 limit=limit,
                 cursor_doc_id=cursor,
-                domain=domain,
                 state=state,
+                domain_key=domain_key,
             )
             items = [
                 {
                     "id": f.id,
                     "text": f.text,
-                    "domain": f.domain.value if f.domain else None,
+                    **_domain_fields(f),
                     "type": f.type.value if f.type else None,
                     "state": f.state.value,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
@@ -954,7 +980,7 @@ def create_user_cabinet_blueprint(
                 {
                     "id": f.id,
                     "text": f.text,
-                    "domain": f.domain.value if f.domain else None,
+                    **_domain_fields(f),
                     "state": f.state.value,
                     "closed_at": f.valid_to.isoformat() if f.valid_to else None,
                     "actor": last_actor(f),
@@ -1060,7 +1086,7 @@ def create_user_cabinet_blueprint(
                 {
                     "id": f.id,
                     "text": f.text,
-                    "domain": f.domain.value if f.domain else None,
+                    **_domain_fields(f),
                     "type": f.type.value if f.type else None,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
                 }

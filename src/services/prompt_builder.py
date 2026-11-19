@@ -13,7 +13,7 @@ from ..domain.prompt import (
     ANONYMOUS_USER_ID,
     ANONYMOUS_ACCOUNT_ID
 )
-from ..domain.entities import FactDomain
+from ..domain.fact_lifecycle import is_directive
 from ..ports.prompt_builder_port import PromptBuilderPort
 
 if TYPE_CHECKING:
@@ -174,23 +174,23 @@ class PromptBuilder(PromptBuilderPort):
             conversation_history = []
 
         # Partition the flat cache list into named channels (single split point):
-        #   - directives (agent_directive domain)  → standing_directives block (every agent built with the biographical context)
+        #   - directives (`is_directive`)           → standing_directives block (every agent built with the biographical context)
         #   - query-specific (semantic_lens tag)    → query_specific_context (post-boundary)
         #   - static_bio (everything else)          → knowledge_base.biographical_context
         # Router-enriched facts are tagged "semantic_lens" via merge_enriched_context_with_biographical().
         def _tags(f) -> list:
             return f.get("tags", []) if isinstance(f, dict) else []
 
-        def _domain(f) -> str:
-            return f.get("domain", "") if isinstance(f, dict) else ""
+        def _directive(f) -> bool:
+            return isinstance(f, dict) and is_directive(f)
 
         directive_facts = [
-            f for f in biographical_facts if _domain(f) == FactDomain.AGENT_DIRECTIVE.value
+            f for f in biographical_facts if _directive(f)
         ] if include_directives else []
         static_bio = [
             f for f in biographical_facts
             if "semantic_lens" not in _tags(f)
-            and _domain(f) != FactDomain.AGENT_DIRECTIVE.value
+            and not _directive(f)
         ]
         qs_facts = [
             f for f in biographical_facts if "semantic_lens" in _tags(f)

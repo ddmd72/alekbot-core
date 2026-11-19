@@ -309,6 +309,7 @@ class FirestoreFactRepository(FactRepository):
         cursor_doc_id: Optional[str] = None,
         domain: Optional[str] = None,
         state: str = "current",
+        domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
         """
         Cursor-based paginated retrieval of `state` facts ("current" or "stale"), ordered by created_at DESC.
@@ -318,10 +319,13 @@ class FirestoreFactRepository(FactRepository):
 
         Requires Firestore composite indexes:
           (account_id, state, created_at DESC)
-          (account_id, state, domain, created_at DESC)  — when domain filter used
+          (account_id, state, domain, created_at DESC)  — when the legacy domain filter is used
+          (account_id, state, domain_keys CONTAINS, created_at DESC)  — when domain_key is used (the Cabinet filter)
         """
         if state not in LISTABLE_STATES:
             raise ValueError(f"get_paginated_facts reads state one of {LISTABLE_STATES}, not {state!r}")
+        if domain and domain_key:
+            raise ValueError("get_paginated_facts filters by domain or by domain_key, not both")
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", owner_id))
@@ -329,7 +333,9 @@ class FirestoreFactRepository(FactRepository):
             .order_by("created_at", direction=firestore.Query.DESCENDING)
         )
 
-        if domain:
+        if domain_key:
+            query = query.where(filter=FieldFilter("domain_keys", "array_contains", domain_key))
+        elif domain:
             query = query.where(filter=FieldFilter("domain", "==", domain))
 
         if cursor_doc_id:
@@ -420,7 +426,7 @@ class FirestoreFactRepository(FactRepository):
             .where(filter=FieldFilter("state", "==", "current"))  # Only active current facts
             .select([
                 "account_id", "owner_id", "created_by_user_id", "lineage_id",
-                "text", "type", "state", "domain", "tags", "context_priority",
+                "text", "type", "state", "domain", "primary_domain", "tags", "context_priority",
                 "valid_from", "valid_to", "created_at", "source", "version",
                 "visibility", "metadata", "temporal_class", "reported_date", "context",
                 "expiry_kind", "ttl_days", "expires_at",  # the stored expiry decision, shown to the consolidator

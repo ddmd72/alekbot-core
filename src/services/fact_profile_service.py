@@ -34,8 +34,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 
 from ..domain.confirmed_people import ConfirmedPeople, ConfirmedPerson
-from ..domain.entities import FactDomain, FactEntity
+from ..domain.entities import FactEntity
 from ..domain.fact_profile import FactProfile, ProfileReviewItem, ProfileTimePoint, UnresolvedPlace
+from ..domain.fact_lifecycle import is_directive
 from ..domain.fact_profile_answer import ProfileAnswer
 from ..domain.fact_profile_derive import DeriveOutcome, derive_profile, directive_profile, recording_year
 from ..domain.fact_profile_fingerprint import (
@@ -75,11 +76,6 @@ _WRITTEN, _REDERIVED, _DIRECTIVE, _FAILED = "written", "rederived", "directive",
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _is_directive(fact: FactEntity) -> bool:
-    """A standing directive. Until the consolidator marks them itself, the standing-directive channel is the domain."""
-    return fact.domain == FactDomain.AGENT_DIRECTIVE
 
 
 def _stored_time_points(stored: Any) -> Tuple[ProfileTimePoint, ...]:
@@ -263,7 +259,7 @@ class FactProfileService:
         names, atlas = await self._atlas()
         plan = _Plan(names, registry_digest(), atlas, answers, [], confirmed)
         for fact in facts:
-            item = _Item(fact, ProfileStatus.MISSING, _is_directive(fact), "", _stored_answer(fact),
+            item = _Item(fact, ProfileStatus.MISSING, is_directive(fact), "", _stored_answer(fact),
                          tuple(named_people(confirmed, fact.text, fact.metadata)), listed,
                          recording_year(fact.reported_date, fact.created_at))
             # The stored answer is what a re-derivation reads, so its named answers belong to the stored string.
