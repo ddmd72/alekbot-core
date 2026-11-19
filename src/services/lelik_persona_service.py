@@ -2,7 +2,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..domain.entities import FactDomain
 from ..domain.lelik_context import LelikContext
 from ..domain.llm import Message
 from ..domain.messaging import session_id_for
@@ -21,14 +20,15 @@ HISTORY_MESSAGES = 30
 # A user turn is stored in full (pastes, forwarded mail) — bound each entry.
 MAX_ENTRY_CHARS = 700
 
-_KNOWN_DOMAINS = frozenset(d.value for d in FactDomain)
+# The one profile sensitivity a voice call may carry; discreet and intimate facts stay out of it.
+_VOICE_SENSITIVITY = "ordinary"
 
 
 class LelikPersonaService:
     """Assembles the context Lelik's prompt is built from (§4.8); `LelikAgent` builds the prompt.
 
-    Lelik starts warm: the biographical cache restricted to the user's
-    `voice_fact_domains` (default biographical + preference; no standing directives),
+    Lelik starts warm: the biographical cache restricted to the ordinary facts whose primary_domain is in
+    the user's `voice_fact_domains` (default: the registry's voice_open domains; no standing directives),
     the primary channel's recent history, and the local date/time. See decisions/lelik_warm_context.md.
     """
 
@@ -58,11 +58,16 @@ class LelikPersonaService:
         return await self._notifications.resolve_channel(user_id)
 
     def _only_voice_domains(self, facts: List[Dict]) -> List[Dict]:
-        allowed = set(self._config.voice_fact_domains)
-        unknown = allowed - _KNOWN_DOMAINS
+        """A fact reaches the call only when its primary_domain is in the voice list AND it is ordinary; a fact
+        without either profile field never does (absent is not ordinary; FACT_PROFILE_RFC §6 row 4)."""
+        keys, unknown = self._config.voice_domain_keys()
         if unknown:
-            logger.warning(f"[LelikPersona] Ignoring unknown voice_fact_domains: {sorted(unknown)}")
-        return [f for f in facts if isinstance(f, dict) and f.get("domain") in allowed]
+            logger.warning(f"[LelikPersona] Ignoring unknown voice_fact_domains: {sorted(set(unknown))}")
+        allowed = set(keys)
+        return [
+            f for f in facts
+            if isinstance(f, dict) and f.get("primary_domain") in allowed and f.get("sensitivity") == _VOICE_SENSITIVITY
+        ]
 
     async def _recent_history(self, user_id: str) -> List[Dict]:
         channel = await self.primary_channel(user_id)

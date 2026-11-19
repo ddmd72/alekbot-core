@@ -481,6 +481,7 @@ class FirestoreFactRepository(FactRepository):
         account_id: str,
         domain: Optional[str] = None,
         limit: Optional[int] = None,
+        identity_only: bool = False,
     ) -> List[FactEntity]:
         """
         Bounded, priority-ordered query for biographical cache building.
@@ -491,14 +492,19 @@ class FirestoreFactRepository(FactRepository):
         Requires indexes:
           (account_id, state, context_priority_rank, created_at DESC)
           (account_id, state, domain, context_priority_rank, created_at DESC)  — with domain filter
+          (account_id, state, user_identity, context_priority_rank, created_at DESC)  — identity_only
         """
+        if identity_only and domain:
+            raise ValueError("get_active_facts_ordered takes domain or identity_only, not both")
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", account_id))
             .where(filter=FieldFilter("state", "==", "current"))
         )
 
-        if domain:
+        if identity_only:
+            query = query.where(filter=FieldFilter("user_identity", "==", True))
+        elif domain:
             query = query.where(filter=FieldFilter("domain", "==", domain))
 
         query = (
@@ -513,6 +519,7 @@ class FirestoreFactRepository(FactRepository):
                 "valid_from", "valid_to", "created_at", "last_updated",
                 "source", "version", "language", "visibility",
                 "reported_date", "is_current", "metadata",
+                "primary_domain", "sensitivity", "user_identity",
             ])
         )
 
@@ -522,7 +529,7 @@ class FirestoreFactRepository(FactRepository):
         docs = await query.get()
         logger.info(
             f"🗂️ [get_active_facts_ordered] {len(docs)} docs for {account_id[:8]}"
-            f"{f' domain={domain}' if domain else ''}"
+            f"{f' domain={domain}' if domain else ''}{' identity' if identity_only else ''}"
         )
 
         results = []

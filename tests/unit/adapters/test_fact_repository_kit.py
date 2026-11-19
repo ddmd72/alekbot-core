@@ -20,6 +20,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import (
     ContextPriority, ExpiryKind, FactDomain, FactState, FactVisibility, TemporalClass,
 )
+from src.domain.fact_domains import Domain
 from src.domain.request_context import RequestContext
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
@@ -261,6 +262,49 @@ async def test_ordered_omits_a_document_without_a_priority_rank(store):
     put_raw(store, "ranked", "ranked")
     put_raw(store, "unranked", "unranked", context_priority_rank=DROP)
     assert ids(await store.repo.get_active_facts_ordered(ACC)) == ["ranked"]
+
+
+async def _seed_identity(store):
+    """Identity facts of the account by priority and age, plus everything the identity read must leave out."""
+    for text, identity, priority, age in (
+            ("Alex Doe was born on 1980-01-01 in Springfield", True, "high", 1),
+            ("Alex Doe is a Portuguese citizen", True, "critical", 0),
+            ("Alex's partner is Clara Moreira", True, "high", 2),
+            ("Alex is vegetarian", False, "critical", 3),
+            ("Alex does morning yoga for 30 minutes", None, "critical", 4),
+            ("Alex Doe was born in Springfield", True, "archival", 5)):
+        await store.repo.add_fact(make_fact(text, user_identity=identity, context_priority=ContextPriority(priority),
+                                            age_days=age))
+    await store.repo.add_fact(make_fact("Alex Doe lives in Springfield", account=OTHER, user_identity=True))
+    await store.repo.add_fact(make_fact("Alex Doe is from Springfield", user_identity=True, state=FactState.STALE))
+
+
+async def test_ordered_identity_only_returns_the_identity_facts_by_priority_then_newest_first(store):
+    await _seed_identity(store)
+    got = await store.repo.get_active_facts_ordered(ACC, identity_only=True)
+    assert [f.text for f in got] == ["Alex Doe is a Portuguese citizen", "Alex's partner is Clara Moreira",
+                                     "Alex Doe was born on 1980-01-01 in Springfield"]
+
+
+async def test_ordered_identity_only_limit_keeps_the_head_of_the_order(store):
+    await _seed_identity(store)
+    got = await store.repo.get_active_facts_ordered(ACC, identity_only=True, limit=2)
+    assert [f.text for f in got] == ["Alex Doe is a Portuguese citizen", "Alex's partner is Clara Moreira"]
+
+
+async def test_ordered_identity_only_and_a_domain_together_are_refused(store):
+    with pytest.raises(ValueError):
+        await store.repo.get_active_facts_ordered(ACC, domain="health", identity_only=True)
+
+
+async def test_ordered_returns_primary_domain_sensitivity_and_identity_but_no_other_profile_field(store):
+    await store.repo.add_fact(make_fact(
+        "Alex joined the Acme employees' trade union in November 2026, dues 12 EUR a month",
+        primary_domain=Domain.WORK, sensitivity="discreet", user_identity=False, domain_keys=[Domain.WORK],
+        label_words=["trade union"]))
+    (fact,) = await store.repo.get_active_facts_ordered(ACC)
+    assert (fact.primary_domain, fact.sensitivity, fact.user_identity) == (Domain.WORK, "discreet", False)
+    assert (fact.domain_keys, fact.label_words) == (None, None)
 
 
 # --------------------------------------------------------------------------------------- get_longest_facts
@@ -627,12 +671,18 @@ def _cache_refresher(store):
 
 
 async def _seed_account_for_cache(store, account=ACC):
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): the identity block is chosen by the profile's user_identity, not
+    # by the old domain: "bio critical" is the one identity fact, "health high" carries a non-identity profile, and
+    # "bio low" and "be calm" (old domain biographical) carry none, so they are fill like any other fact.
+    profiles = {"bio critical": dict(user_identity=True, primary_domain=Domain.BIOGRAPHY, sensitivity="ordinary"),
+                "health high": dict(user_identity=False, primary_domain=Domain.HEALTH, sensitivity="discreet")}
     for text, domain, priority, tags, age in (
             ("bio low", "biographical", "low", [], 3), ("bio critical", "biographical", "critical", [], 1),
             ("health high", "health", "high", [], 9), ("be calm", "biographical", "high", ["mindset"], 2),
             ("never apologise", "agent_directive", "critical", [], 4)):
+        profile = profiles.get(text, {})
         await store.repo.add_fact(make_fact(f"{account} {text}", account=account, domain=FactDomain(domain), tags=tags,
-                                            context_priority=ContextPriority(priority), age_days=age))
+                                            context_priority=ContextPriority(priority), age_days=age, **profile))
     await store.repo.add_fact(make_fact(f"{account} archived", account=account, state=FactState.ARCHIVED))
     await store.repo.add_fact(make_fact(f"{account} archival", account=account, context_priority=ContextPriority.ARCHIVAL))
 
@@ -644,13 +694,19 @@ async def test_refresh_rebuilds_the_cache_from_the_current_facts(store):
     started = datetime.now(timezone.utc)
     await refresher.refresh_cache(ACC)
     cache = _cache(store)
-    assert [f["text"] for f in cache["biographical_facts"]] == [f"{ACC} bio critical", f"{ACC} bio low",
-                                                                f"{ACC} health high"]
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): the identity fact first, then the fill by priority rank, so the
+    # low-priority biographical-domain fact without a profile now comes after the high-priority health fact.
+    assert [f["text"] for f in cache["biographical_facts"]] == [f"{ACC} bio critical", f"{ACC} health high",
+                                                                f"{ACC} bio low"]
     assert [f["text"] for f in cache["principles"]] == [f"{ACC} be calm"]
     assert [f["text"] for f in cache["directives"]] == [f"{ACC} never apologise"]
     assert (cache["facts_count"], cache["principles_count"], cache["version"]) == (3, 1, "v3_hexagonal_di")
     assert started <= cache["refreshed_at"] <= datetime.now(timezone.utc)
-    assert set(cache["biographical_facts"][0]) == {"id", "text", "domain", "tags", "context_priority", "created_at"}
+    # Reviewer edit (FACT_PROFILE_RFC §6 row 1, PR 11): cached items gain primary_domain and sensitivity.
+    assert set(cache["biographical_facts"][0]) == {"id", "text", "domain", "primary_domain", "sensitivity", "tags",
+                                                   "context_priority", "created_at"}
+    assert [(f["primary_domain"], f["sensitivity"]) for f in cache["biographical_facts"]] == [
+        (Domain.BIOGRAPHY, "ordinary"), (Domain.HEALTH, "discreet"), (None, None)]
     assert _cache(store, OTHER) is None
 
 

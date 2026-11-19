@@ -261,6 +261,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_LINK_LINE.value: "📍 Open the link below on the device you are with to share where you are. It works once, for {minutes} minutes.",
     UIMessage.GEO_LINK_LABEL.value: "Share my location",
     UIMessage.GEO_SAVED.value: "📍 Location saved: {address} ({accuracy}, {time})",
+    UIMessage.GEO_SAVED_WITH_LANDMARKS.value: "📍 Location saved: {address}; nearby: {landmarks} ({accuracy}, {time})",
     UIMessage.GEO_SAVED_NO_ADDRESS.value: "📍 Location saved, no street address found ({accuracy}, {time})",
     UIMessage.GEO_NOT_SAVED.value: "⚠️ The location was not saved. Please share it again.",
     UIMessage.GEO_UNAVAILABLE.value: "Location sharing is not available right now.",

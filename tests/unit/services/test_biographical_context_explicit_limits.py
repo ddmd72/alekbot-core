@@ -9,13 +9,14 @@ from tests.unit.services.test_biographical_context_service import make_fact
 
 
 class _LimitHonouringRepo:
-    """get_active_facts_ordered over a fixed list: filters by domain when given and returns at most `limit`."""
+    """get_active_facts_ordered over a fixed list: filters by domain or identity when given and returns at most `limit`."""
 
     def __init__(self, facts):
         self._facts = list(facts)
 
-    async def get_active_facts_ordered(self, account_id, domain=None, limit=100):
-        return [f for f in self._facts if domain is None or f.domain.value == domain][:limit]
+    async def get_active_facts_ordered(self, account_id, domain=None, limit=100, identity_only=False):
+        return [f for f in self._facts
+                if (domain is None or f.domain.value == domain) and (not identity_only or f.user_identity)][:limit]
 
 
 def _plain(n):

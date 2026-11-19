@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.domain.agent import AgentResponse
-from src.domain.geo_mark import GeoFix, GeoSource
+from src.domain.geo_mark import GeoFix, GeoPlace, GeoSource
 from src.domain.messaging import MessageContext, SmartResponse
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import UIMessage
@@ -36,8 +36,8 @@ def _ui(message: UIMessage, **fmt) -> str:
 
 
 class Geocoder:
-    async def nearest_address(self, latitude, longitude, *, language):
-        return ADDRESS
+    async def look_up(self, latitude, longitude):
+        return GeoPlace(ADDRESS, (), ())
 
 
 class Channel:
