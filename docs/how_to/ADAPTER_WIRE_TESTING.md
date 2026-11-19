@@ -121,6 +121,10 @@ records the request, and checks it against the provider's request contract
   rebuilt as aiohttp builds it (`URL.extend_query(params)`) and split into path and `query`.
 - **Check.** `tests/contracts/openapi_contract.py::assert_request(provider, method, path, headers, body, *, query=None)`:
   closed subset, every violation on its own line; a templated contract path (`/messages/{id}`) matches the URL path.
+- **Aliases** (Microsoft Graph): when the spec writes an operation under another path than the adapter sends (`/me/drive/...` and
+  colon addressing `items/{id}:/{name}:` exist only as `/drives/{drive-id}/items/...`), the provider's `PROVIDERS` entry lists
+  `Alias(pattern, target, reason)` rules, written into the subset as `x-alek-aliases` and applied by `assert_request` before the
+  lookup (in order, first match); every rule must be used by a shape and every target must be a kept operation.
 - **Shapes.** `tests/unit/contracts/<provider>_request_shapes.py` is a table `id -> LLMRequest` (+ model); the shape is an
   input only, the contract says what it must produce. The conformance test also fails when a kept field or union variant of
   the provider's operation is reached by no shape (a dead keep-list entry), when an adapter file has an SDK call site
