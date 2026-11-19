@@ -132,6 +132,7 @@ FREE_FORM = {
             "a server_tool_use block's input: the model's own JSON arguments",
         "/components/schemas/ToolParam/properties/input_examples/items": "ToolParam.input_examples: example JSON arguments",
     },
+    "gmail": {},  # GETs: path and query parameters only, no body and no free-form place
 }
 
 

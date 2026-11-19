@@ -1,0 +1,70 @@
+# Invented OpenAPI 3.1 fragment for tests/unit/scripts/test_extract_subset.py: path and query parameters (no real API).
+openapi: 3.1.0
+info:
+  title: Parcels
+  version: 2.0.0
+servers:
+  - url: https://api.parcels.example.com/v2
+paths:
+  /parcels/{parcelId}:
+    parameters:
+      - name: parcelId
+        in: path
+        required: true
+        description: The parcel.
+        schema:
+          type: integer
+    get:
+      operationId: getParcel
+      parameters:
+        - $ref: '#/components/parameters/top'
+        - name: fields
+          in: query
+          style: form
+          explode: false
+          description: Fields to return.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Field'
+        - name: debug
+          in: query
+          schema:
+            type: boolean
+        - name: x-trace
+          in: header
+          schema:
+            type: string
+    put:
+      operationId: replaceParcel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                weight:
+                  type: integer
+  /parcels/{parcelId}/labels/{labelId}:
+    get:
+      operationId: getLabel
+      parameters:
+        - name: parcelId
+          in: path
+          required: true
+          schema:
+            type: integer
+components:
+  parameters:
+    top:
+      name: $top
+      in: query
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 0
+  schemas:
+    Field:
+      type: string
+      enum: [weight, id]

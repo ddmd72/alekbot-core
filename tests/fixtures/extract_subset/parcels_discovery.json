@@ -1,0 +1,59 @@
+{
+  "kind": "discovery#restDescription",
+  "description": "Invented discovery document for tests/unit/scripts/test_extract_subset.py (shaped like a Google API; no real API).",
+  "id": "parcels:v1",
+  "name": "parcels",
+  "version": "v1",
+  "revision": "20261101",
+  "rootUrl": "https://parcels.example.com/",
+  "servicePath": "parcels/v1/",
+  "parameters": {
+    "alt": {"description": "Data format for response.", "enum": ["json", "media"], "location": "query", "type": "string", "default": "json"},
+    "fields": {"description": "Selector.", "location": "query", "type": "string"}
+  },
+  "schemas": {
+    "Parcel": {"id": "Parcel", "type": "object", "properties": {"weight": {"type": "integer"}}}
+  },
+  "resources": {
+    "depots": {
+      "resources": {
+        "parcels": {
+          "methods": {
+            "list": {
+              "id": "parcels.depots.parcels.list",
+              "httpMethod": "GET",
+              "path": "depots/{depotId}/parcels",
+              "flatPath": "depots/{depotId}/parcels",
+              "parameterOrder": ["depotId"],
+              "parameters": {
+                "depotId": {"description": "The depot.", "location": "path", "required": true, "type": "string", "default": "main"},
+                "limit": {"description": "Page size.", "location": "query", "type": "integer", "format": "uint32", "default": "50", "minimum": "1", "maximum": "500"},
+                "tag": {"location": "query", "repeated": true, "type": "string"},
+                "express": {"location": "query", "type": "boolean", "default": "false"},
+                "status": {"location": "query", "type": "string", "enum": ["shipped", "open"], "enumDescriptions": ["s", "o"]}
+              },
+              "response": {"$ref": "Parcel"}
+            },
+            "create": {
+              "id": "parcels.depots.parcels.create",
+              "httpMethod": "POST",
+              "path": "depots/{depotId}/parcels",
+              "parameters": {"depotId": {"location": "path", "required": true, "type": "string"}},
+              "request": {"$ref": "Parcel"},
+              "response": {"$ref": "Parcel"}
+            },
+            "get": {
+              "id": "parcels.depots.parcels.get",
+              "httpMethod": "GET",
+              "path": "depots/{depotId}/parcels/{+name}",
+              "parameters": {
+                "depotId": {"location": "path", "required": true, "type": "string"},
+                "name": {"location": "path", "required": true, "type": "string"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

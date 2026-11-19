@@ -206,7 +206,7 @@ help: ## Show this help message
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
 	@echo "  make check-pricing   Fetch live model prices and audit billing.py"
-	@echo "  make contract-extract PROVIDER=openai|anthropic [REF=<sha>]  Regenerate contracts/providers/<p>/openapi.yaml"
+	@echo "  make contract-extract PROVIDER=openai|anthropic|gmail [REF=<sha>]  Regenerate contracts/providers/<p>/openapi.yaml"
 	@echo ""
 	@echo "🧪 E2E TESTING (real API flow):"
 	@echo "  make test-e2e-smart / -quick / -router / -consolidation / -websearch / -all"
@@ -636,7 +636,7 @@ check-pricing: ## Fetch live model prices (OpenRouter) and audit billing.py → 
 	@echo "📄 Open: scripts/memory/pricing_report.md"
 
 contract-extract: ## Regenerate a provider's request contract subset (contracts/providers/<p>/openapi.yaml); never hand-edit it
-	@test -n "$(PROVIDER)" || (echo "usage: make contract-extract PROVIDER=openai|anthropic [REF=<sha>]" && exit 2)
+	@test -n "$(PROVIDER)" || (echo "usage: make contract-extract PROVIDER=openai|anthropic|gmail [REF=<sha>]" && exit 2)
 	@$(PYTHON) -m scripts.contracts.extract_subset --provider $(PROVIDER) $(if $(REF),--ref $(REF))
 
 # E2E tests (real API flow)
