@@ -8,8 +8,6 @@ components:
     microsoft.graph.checklistItem:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         checkedDateTime:
           format: date-time
           pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
@@ -46,8 +44,6 @@ components:
     microsoft.graph.dateTimeTimeZone:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         dateTime:
           type: string
         timeZone:
@@ -80,8 +76,6 @@ components:
     microsoft.graph.driveItemSource:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         application:
           anyOf:
           - $ref: '#/components/schemas/microsoft.graph.driveItemSourceApplication'
@@ -117,8 +111,6 @@ components:
           x-alek-extension: the instance annotation of an upload session's item, documented at https://learn.microsoft.com/en-us/graph/api/driveitem-createuploadsession
             (microsoft-graph-docs-contrib driveitem-createuploadsession.md:80), absent from the spec (src/adapters/microsoft/onedrive_adapter.py
             upload, replace_content) (2026-11-19)
-        '@odata.type':
-          type: string
         description:
           type:
           - string
@@ -130,7 +122,7 @@ components:
         fileSize:
           format: int64
           type:
-          - number
+          - integer
           - 'null'
         fileSystemInfo:
           anyOf:
@@ -169,8 +161,6 @@ components:
     microsoft.graph.fileSystemInfo:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         createdDateTime:
           format: date-time
           pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$
@@ -193,14 +183,12 @@ components:
     microsoft.graph.folder:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         childCount:
           format: int32
           maximum: 2147483647
           minimum: -2147483648
           type:
-          - number
+          - integer
           - 'null'
         view:
           anyOf:
@@ -210,8 +198,6 @@ components:
     microsoft.graph.folderView:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         sortBy:
           type:
           - string
@@ -234,8 +220,6 @@ components:
     microsoft.graph.itemBody:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         content:
           type:
           - string
@@ -248,8 +232,6 @@ components:
     microsoft.graph.itemReference:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         driveId:
           type:
           - string
@@ -286,8 +268,6 @@ components:
     microsoft.graph.linkedResource:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         applicationName:
           type:
           - string
@@ -310,8 +290,6 @@ components:
     microsoft.graph.mediaSource:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         contentCategory:
           anyOf:
           - $ref: '#/components/schemas/microsoft.graph.mediaSourceContentCategory'
@@ -333,8 +311,6 @@ components:
     microsoft.graph.patternedRecurrence:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         pattern:
           anyOf:
           - $ref: '#/components/schemas/microsoft.graph.recurrencePattern'
@@ -347,13 +323,11 @@ components:
     microsoft.graph.recurrencePattern:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         dayOfMonth:
           format: int32
           maximum: 2147483647
           minimum: -2147483648
-          type: number
+          type: integer
         daysOfWeek:
           items:
             anyOf:
@@ -372,12 +346,12 @@ components:
           format: int32
           maximum: 2147483647
           minimum: -2147483648
-          type: number
+          type: integer
         month:
           format: int32
           maximum: 2147483647
           minimum: -2147483648
-          type: number
+          type: integer
         type:
           anyOf:
           - $ref: '#/components/schemas/microsoft.graph.recurrencePatternType'
@@ -395,8 +369,6 @@ components:
     microsoft.graph.recurrenceRange:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         endDate:
           format: date
           pattern: ^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])$
@@ -407,7 +379,7 @@ components:
           format: int32
           maximum: 2147483647
           minimum: -2147483648
-          type: number
+          type: integer
         recurrenceTimeZone:
           type:
           - string
@@ -432,8 +404,6 @@ components:
     microsoft.graph.sharepointIds:
       additionalProperties: false
       properties:
-        '@odata.type':
-          type: string
         listId:
           type:
           - string
@@ -612,11 +582,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     get:
       operationId: drives.GetItems
@@ -625,11 +597,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     patch:
       operationId: drives.UpdateItems
@@ -638,11 +612,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -658,11 +634,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - explode: false
         in: query
@@ -678,11 +656,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -698,11 +678,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: query
         name: '@microsoft.graph.conflictBehavior'
@@ -731,11 +713,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -757,11 +741,13 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - explode: false
         in: query
@@ -778,16 +764,19 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: q
         required: true
         schema:
+          pattern: ^([^']|'')*$
           type:
           - string
           - 'null'
@@ -806,16 +795,19 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: query
         name: select
         required: false
         schema:
+          pattern: ^(small|medium|large|c[1-9][0-9]*x[1-9][0-9]*(_crop)?)$
           type: string
         x-alek-extension: the unprefixed select naming one thumbnail size (/thumbnails?select=c300x400_crop), documented at
           https://learn.microsoft.com/en-us/graph/api/driveitem-list-thumbnails (microsoft-graph-docs-contrib driveitem-list-thumbnails.md:121,376);
@@ -828,12 +820,17 @@ paths:
         name: drive-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: driveItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
+  /me:
+    get:
+      operationId: me.user.GetUser
   /me/todo/lists:
     get:
       operationId: me.todo.ListLists
@@ -853,6 +850,7 @@ paths:
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
   /me/todo/lists/{todoTaskList-id}/tasks:
     get:
@@ -862,6 +860,7 @@ paths:
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - explode: false
         in: query
@@ -876,6 +875,7 @@ paths:
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -891,11 +891,13 @@ paths:
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     get:
       operationId: me.todo.lists.GetTasks
@@ -904,11 +906,13 @@ paths:
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     patch:
       operationId: me.todo.lists.UpdateTasks
@@ -917,11 +921,13 @@ paths:
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -937,11 +943,13 @@ paths:
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     post:
       operationId: me.todo.lists.tasks.CreateChecklistItems
@@ -950,11 +958,13 @@ paths:
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -970,16 +980,19 @@ paths:
         name: checklistItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     patch:
       operationId: me.todo.lists.tasks.UpdateChecklistItems
@@ -988,16 +1001,19 @@ paths:
         name: checklistItem-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTask-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       - in: path
         name: todoTaskList-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -1022,6 +1038,7 @@ paths:
         name: subscription-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
     patch:
       operationId: subscriptions.subscription.UpdateSubscription
@@ -1030,6 +1047,7 @@ paths:
         name: subscription-id
         required: true
         schema:
+          pattern: ^[^:]+$
           type: string
       requestBody:
         content:
@@ -1047,19 +1065,19 @@ x-alek-aliases:
 - pattern: '/me/drive/items/{driveItem-id}:/{path}:'
   reason: 'colon addressing: the item at <path> under item <driveItem-id> is an item'
   target: /drives/{drive-id}/items/{driveItem-id}
-- pattern: /me/drive/special/{driveItem-id}/delta
-  reason: a special folder is an item; the adapter writes the function without parentheses, which Graph accepts, the spec
-    writes delta()
+- pattern: /me/drive/special/approot/delta
+  reason: the App Folder (the one special folder the adapter uses) is an item; the adapter writes the function without parentheses,
+    which Graph accepts, the spec writes delta()
   target: /drives/{drive-id}/items/{driveItem-id}/delta()
-- pattern: /me/drive/special/{driveItem-id}/search(q='{q}')
-  reason: a special folder is an item
+- pattern: /me/drive/special/approot/search(q='{q}')
+  reason: the App Folder (the one special folder the adapter uses) is an item
   target: /drives/{drive-id}/items/{driveItem-id}/search(q='{q}')
-- pattern: /me/drive/special/{driveItem-id}
-  reason: /me/drive is the signed-in user's drive
+- pattern: /me/drive/special/approot
+  reason: /me/drive is the signed-in user's drive; approot is the one special folder the adapter uses
   target: /drives/{drive-id}/special/{driveItem-id}
-- pattern: /me/drive/**
+- pattern: /me/drive/items/**
   reason: /me/drive is the signed-in user's drive
-  target: /drives/{drive-id}/**
+  target: /drives/{drive-id}/items/**
 x-retrieved: '2026-11-19'
 x-source: https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/cf55999152ccd93960b5ba2062f5e2bcbef714b5/openapi/v1.0/openapi.yaml
 x-transforms:
@@ -1073,8 +1091,13 @@ x-transforms:
 - 'stringify-dates: YAML dates become ISO strings'
 - 'odata-strip: discriminator and x-ms-* keys dropped from the source before anything is built (entity''s discriminator maps
   every type; the x-ms-* keys are generator annotations)'
-- 'odata-type-not-required: @odata.type dropped from every required list (every complex type requires it; a client sends it
-  only to name a derived type, and we never do)'
+- 'odata-type-dropped: the @odata.type property and its required entry dropped from every schema (every complex type requires
+  it; a client sends it only to name a derived type, and we never do: sending it fails as unknown)'
+- 'odata-integers: {type: number, format: int16|int32|int64} becomes {type: integer} (bounds kept): OData''s whole numbers,
+  which a fraction must fail'
+- 'odata-key-segments: a key path parameter (drive-id, *-id) takes no '':'' (pattern ^[^:]+$): a colon in a segment is OData''s
+  path addressing, never part of a key'
+- 'odata-string-literals: a path parameter inside an OData string literal (''{name}'') has every quote doubled (pattern ^([^'']|'''')*$)'
 - 'nullable-to-3.1: OpenAPI 3.0 nullable becomes JSON Schema 2020-12: {type: T, nullable: true} -> {type: [T, null]} (null
   added to an enum), and the null member of a nullable reference, anyOf [{$ref}, {type: object, nullable: true}], becomes
   {type: null}'

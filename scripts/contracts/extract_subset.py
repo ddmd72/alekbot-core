@@ -146,6 +146,8 @@ _CONFLICT_SESSION_REASON = (
     "the instance annotation of an upload session's item, documented at https://learn.microsoft.com/en-us/graph/api/"
     "driveitem-createuploadsession (microsoft-graph-docs-contrib driveitem-createuploadsession.md:80), absent from "
     f"the spec ({_ONEDRIVE_ADAPTER} upload, replace_content)")
+# The documented sizes: small, medium, large and the custom c{width}x{height} with an optional _crop
+_THUMBNAIL_SIZE = {"type": "string", "pattern": "^(small|medium|large|c[1-9][0-9]*x[1-9][0-9]*(_crop)?)$"}
 _THUMBNAIL_SELECT_REASON = (
     "the unprefixed select naming one thumbnail size (/thumbnails?select=c300x400_crop), documented at "
     "https://learn.microsoft.com/en-us/graph/api/driveitem-list-thumbnails (microsoft-graph-docs-contrib "
@@ -256,6 +258,8 @@ PROVIDERS: dict[str, Provider] = {
                 "changeType", "clientState", "expirationDateTime", "notificationUrl", "resource")),
             Operation(method="patch", path="/subscriptions/{subscription-id}", fields=("expirationDateTime",)),
             Operation(method="delete", path="/subscriptions/{subscription-id}", fields=()),
+            # MicrosoftOAuthProvider.exchange (src/adapters/microsoft/microsoft_oauth_provider.py): the account identity
+            Operation(method="get", path="/me", fields=()),
             # OneDriveAdapter (src/adapters/microsoft/onedrive_adapter.py); the adapter's /me/drive/... paths reach
             # these through the aliases below
             Operation(method="get", path="/drives/{drive-id}/special/{driveItem-id}", fields=()),   # the App Folder
@@ -268,7 +272,7 @@ PROVIDERS: dict[str, Provider] = {
                       allowed=(Allowed(path="", field="@microsoft.graph.conflictBehavior", schema=_CONFLICT,
                                        date="2026-11-19", reason=_CONFLICT_BODY_REASON),)),
             Operation(method="get", path=_DRIVE_ITEM + "/thumbnails", fields=(),          # get_thumbnail
-                      allowed=(Allowed(path="query", field="select", schema={"type": "string"}, date="2026-11-19",
+                      allowed=(Allowed(path="query", field="select", schema=_THUMBNAIL_SIZE, date="2026-11-19",
                                        reason=_THUMBNAIL_SELECT_REASON),)),
             Operation(method="put", path=_DRIVE_ITEM + "/content", fields=(),             # upload, replace_content
                       raw_body="application/octet-stream",
@@ -286,14 +290,14 @@ PROVIDERS: dict[str, Provider] = {
                   "(/content, /createUploadSession) is the item's operation"),
             Alias("/me/drive/items/{driveItem-id}:/{path}:", _DRIVE_ITEM,
                   "colon addressing: the item at <path> under item <driveItem-id> is an item"),
-            Alias("/me/drive/special/{driveItem-id}/delta", _DRIVE_ITEM + "/delta()",
-                  "a special folder is an item; the adapter writes the function without parentheses, which Graph "
-                  "accepts, the spec writes delta()"),
-            Alias("/me/drive/special/{driveItem-id}/search(q='{q}')", _DRIVE_ITEM + "/search(q='{q}')",
-                  "a special folder is an item"),
-            Alias("/me/drive/special/{driveItem-id}", "/drives/{drive-id}/special/{driveItem-id}",
-                  "/me/drive is the signed-in user's drive"),
-            Alias("/me/drive/**", "/drives/{drive-id}/**", "/me/drive is the signed-in user's drive"),
+            Alias("/me/drive/special/approot/delta", _DRIVE_ITEM + "/delta()",
+                  "the App Folder (the one special folder the adapter uses) is an item; the adapter writes the "
+                  "function without parentheses, which Graph accepts, the spec writes delta()"),
+            Alias("/me/drive/special/approot/search(q='{q}')", _DRIVE_ITEM + "/search(q='{q}')",
+                  "the App Folder (the one special folder the adapter uses) is an item"),
+            Alias("/me/drive/special/approot", "/drives/{drive-id}/special/{driveItem-id}",
+                  "/me/drive is the signed-in user's drive; approot is the one special folder the adapter uses"),
+            Alias("/me/drive/items/**", "/drives/{drive-id}/items/**", "/me/drive is the signed-in user's drive"),
         ),
     ),
 }
@@ -330,8 +334,14 @@ _PARAMETER_TRANSFORM = (
 _ODATA_TRANSFORMS = (
     "odata-strip: discriminator and x-ms-* keys dropped from the source before anything is built (entity's "
     "discriminator maps every type; the x-ms-* keys are generator annotations)",
-    "odata-type-not-required: @odata.type dropped from every required list (every complex type requires it; a client "
-    "sends it only to name a derived type, and we never do)",
+    "odata-type-dropped: the @odata.type property and its required entry dropped from every schema (every complex "
+    "type requires it; a client sends it only to name a derived type, and we never do: sending it fails as unknown)",
+    "odata-integers: {type: number, format: int16|int32|int64} becomes {type: integer} (bounds kept): OData's whole "
+    "numbers, which a fraction must fail",
+    "odata-key-segments: a key path parameter (drive-id, *-id) takes no ':' (pattern ^[^:]+$): a colon in a segment "
+    "is OData's path addressing, never part of a key",
+    "odata-string-literals: a path parameter inside an OData string literal ('{name}') has every quote doubled "
+    "(pattern ^([^']|'')*$)",
     "nullable-to-3.1: OpenAPI 3.0 nullable becomes JSON Schema 2020-12: {type: T, nullable: true} -> {type: [T, null]} "
     "(null added to an enum), and the null member of a nullable reference, anyOf [{$ref}, {type: object, nullable: "
     "true}], becomes {type: null}",
@@ -833,14 +843,42 @@ def render(doc: dict) -> str:
 
 
 # ----------------------------------------------------------------------------------------------- OData source
+_KEY_SEGMENT = "^[^:]+$"
+_STRING_LITERAL = "^([^']|'')*$"
+
+
 def odata_document(spec: dict, operations: tuple[Operation, ...]) -> dict:
     """The spec with `_ODATA_TRANSFORMS` applied to its component schemas and the kept operations (in place: the
     source is parsed for this run only). A 45 MB spec: a few seconds."""
     for path in sorted({op.path for op in operations}):
-        _odata_schema_walk((spec.get("paths") or {}).get(path) or {})
+        item = (spec.get("paths") or {}).get(path) or {}
+        _odata_schema_walk(item)
+        _odata_path_parameters(spec, path, item)
     for schema in ((spec.get("components") or {}).get("schemas") or {}).values():
         _odata_schema_walk(schema)
     return spec
+
+
+def _odata_path_parameters(spec: dict, path: str, item: dict) -> None:
+    """A key segment's parameter takes no ':'; one inside an OData string literal has its quotes doubled. A parameter
+    given by $ref is inlined first, so the change stays with this path."""
+    literals = set(re.findall(r"'\{([^}]+)\}'", path))
+    for holder in [item, *(item[m] for m in ("get", "put", "post", "patch", "delete") if isinstance(item.get(m), dict))]:
+        params = holder.get("parameters")
+        if not isinstance(params, list):
+            continue
+        for i, raw in enumerate(params):
+            param = _inline(spec, raw) if "$ref" in raw else raw
+            if param.get("in") != "path":
+                continue
+            name = str(param.get("name"))
+            pattern = _STRING_LITERAL if name in literals else _KEY_SEGMENT if name.endswith("-id") else None
+            if pattern is None:
+                continue
+            schema = dict(param.get("schema") or {})
+            if schema.get("type") not in ("string", ["string", "null"]) or "pattern" in schema:
+                raise ValueError(f"{path}: path parameter {name} is not a plain string: {_canon(schema)[:200]}")
+            params[i] = {**param, "schema": {**schema, "pattern": pattern}}
 
 
 def _odata_schema_walk(node: Any) -> None:
@@ -864,6 +902,10 @@ def _odata_schema_walk(node: Any) -> None:
 def _odata_node(node: dict) -> None:
     for key in [k for k in node if k == "discriminator" or k.startswith("x-ms-")]:
         del node[key]
+    if isinstance(node.get("properties"), dict):
+        node["properties"].pop("@odata.type", None)
+    if node.get("format") in ("int16", "int32", "int64") and node.get("type") == "number":
+        node["type"] = "integer"
     if isinstance(node.get("required"), list) and "@odata.type" in node["required"]:
         node["required"] = [r for r in node["required"] if r != "@odata.type"]
         if not node["required"]:

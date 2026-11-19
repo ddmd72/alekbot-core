@@ -36,6 +36,7 @@ from yarl import URL
 
 from scripts.contracts.extract_subset import PROVIDERS
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
+from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvider
 from src.adapters.microsoft.onedrive_adapter import OneDriveAdapter
 from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from src.composition.connector_registry import ConnectorRegistry
@@ -52,11 +53,19 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ADAPTER_FILES = {
     "todo_adapter": REPO_ROOT / "src" / "adapters" / "microsoft" / "todo_adapter.py",
     "onedrive_adapter": REPO_ROOT / "src" / "adapters" / "microsoft" / "onedrive_adapter.py",
+    "microsoft_oauth_provider": REPO_ROOT / "src" / "adapters" / "microsoft" / "microsoft_oauth_provider.py",
 }
+# A file under src/ that names the Graph host and sends nothing this slice checks: file -> why (none today; graph_auth's
+# token POST goes to login.microsoftonline.com and does not name the Graph host).
+OUT_OF_SLICE: dict[str, str] = {}
 CONTRACT = REPO_ROOT / "contracts" / "providers" / "graph" / "openapi.yaml"
 GRAPH = "https://graph.microsoft.com/v1.0"
 GRAPH_HOST = "graph.microsoft.com"
 CONTENT_HOST = "example.com"   # the invented pre-authenticated download and upload URLs
+TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+# hosts a shape may reach besides Graph -> why they are not checked here
+OTHER_HOSTS = {CONTENT_HOST: "the pre-authenticated download and upload URLs (NOT_COVERED)",
+               "login.microsoftonline.com": "the identity platform's token endpoint (NOT_COVERED)"}
 TODO = f"{GRAPH}/me/todo/lists/{shapes.LIST_ID}"
 DRIVE = f"{GRAPH}/me/drive"
 UPLOAD_URL = f"https://{CONTENT_HOST}/upload/{shapes.FOLDER_ID}"
@@ -143,6 +152,10 @@ def _route(fake: http_boundary_fake.HttpFake) -> None:
     fake.route("GET", f"{root}/children", 200, {"value": [_FILE]})
     fake.route("POST", f"{root}/children", 201, _FOLDER)
     fake.route("GET", f"{root}:/{quote(shapes.FILE_NAME, safe='')}:", 200, _FILE)
+    fake.route("GET", f"{root}:/{quote(shapes.SLASHED_NAME, safe='')}:", 200, _FILE)
+    fake.route("POST", TOKEN_URL, 200, {"access_token": "x", "refresh_token": "x", "expires_in": 3600,
+                                        "scope": "Files.ReadWrite.AppFolder offline_access User.Read"})
+    fake.route("GET", f"{GRAPH}/me", 200, {"id": "subject-1", "userPrincipalName": "owner@example.com"})
     fake.route("PUT", f"{pdf}/content", 201, _PDF)
     fake.route("POST", f"{pdf}/createUploadSession", 200, {"uploadUrl": UPLOAD_URL})
     fake.route("PUT", UPLOAD_URL, 201, _PDF)
@@ -177,6 +190,8 @@ async def _run(shape: shapes.Shape) -> Any:
     credential_id = await store.repo.save(creds(shapes.USER, "microsoft_onedrive", access_token="x",
                                                 token_expiry=valid))
     registry = ConnectorRegistry()
+    if shape.adapter == "oauth":
+        return await shape.call(MicrosoftOAuthProvider("client-id", "client-secret"), None)
     if shape.adapter == "todo":
         adapter: Any = MicrosoftToDoAdapter(
             store.repo, FirestoreTaskConfigRepository(EvalDb(), EnvironmentConfig()), "client-id", "client-secret",
@@ -230,7 +245,7 @@ def test_every_graph_request_of_the_shape_conforms_to_the_contract(shape):
     for request in _graph(sent):
         _check(request)
     others = {s.host for s in sent if s.host != GRAPH_HOST}
-    assert others <= {CONTENT_HOST}, f"{shape.id}: requests to {others}, neither Graph nor a pre-authenticated URL"
+    assert others <= set(OTHER_HOSTS), f"{shape.id}: requests to {others}, neither Graph nor a named other host"
 
 
 @pytest.mark.parametrize("shape", SHAPES, ids=[s.id for s in SHAPES])
@@ -376,6 +391,7 @@ _VERBS = {"get", "post", "put", "patch", "delete"}
 FORWARDERS: dict[str, dict[str, tuple[str | None, int]]] = {
     "todo_adapter": {"_get": ("get", 1), "_post": ("post", 1), "_patch": ("patch", 1), "_delete": ("delete", 1)},
     "onedrive_adapter": {"_call": (None, 3), "_session_upload": ("post", 2)},
+    "microsoft_oauth_provider": {},
 }
 
 
@@ -530,3 +546,103 @@ def test_the_not_covered_and_indirect_lists_have_no_stale_entry():
     assert sorted(s for s in NOT_COVERED if _site_operation(s) is not None) == [], "NOT_COVERED entries now covered"
     assert all(_site_operation(s) is not None for s in INDIRECT), "INDIRECT entries that map to no operation"
     assert all(reason.strip() for reason in NOT_COVERED.values())
+
+
+def test_every_src_file_naming_the_graph_host_is_read_here_or_out_of_slice():
+    naming = {path.relative_to(REPO_ROOT).as_posix() for path in (REPO_ROOT / "src").rglob("*.py")
+              if GRAPH_HOST in path.read_text(encoding="utf-8")}
+    read = {path.relative_to(REPO_ROOT).as_posix() for path in ADAPTER_FILES.values()}
+    assert sorted(naming - read - set(OUT_OF_SLICE)) == [], "files that call Graph outside this test's adapter files"
+    assert sorted(set(OUT_OF_SLICE) - naming) == [], "OUT_OF_SLICE entries that no longer name the Graph host"
+    assert all(reason.strip() for reason in OUT_OF_SLICE.values())
+
+
+# --------------------------------------------------------------------------------- what the alias layer must refuse
+def _wire(path: str) -> tuple[str, str]:
+    """(decoded path, raw path) of a request path as aiohttp sends it (yarl's requoting)."""
+    url = URL("https://graph.microsoft.com" + path)
+    return url.path, url.raw_path
+
+
+def _refused(method: str, path: str, body: Any = None, query: Mapping[str, list[str]] | None = None) -> str:
+    decoded, raw = _wire(path)
+    with pytest.raises(AssertionError) as failure:
+        assert_request("graph", method, decoded, {}, body, query=query or {}, raw_path=raw)
+    return str(failure.value)
+
+
+@pytest.mark.parametrize("method, path", [
+    ("PUT", "/v1.0/me/drive/items/item-1:birth-certificate.pdf:/content"),   # the slash after the id is missing
+    ("PUT", "/v1.0/me/drive/items/item-1:/content"),                         # no name between the colons
+    ("GET", "/v1.0/me/drive/items/item-1:"),                                 # a colon inside the id
+    ("PUT", "/v1.0/me/drive/items/item-1:item-2:/birth-certificate.pdf:/content"),
+    ("PUT", "/v1.0/me/drive/items/item-1:/birth:certificate.pdf:/content"),  # a bare colon inside the name
+    ("GET", "/v1.0/me/drive/special/approot:"),
+])
+def test_a_colon_that_is_not_colon_addressing_is_refused(method, path):
+    _refused(method, path, body=b"%PDF-" if method == "PUT" else None)
+
+
+def test_a_name_with_an_encoded_slash_stays_one_segment():
+    sent = [s for s in _graph(_captured("drive/child_by_name/slash_in_the_name")) if ":/" in s.path]
+    assert sent and all("%2F" in s.raw_path for s in sent)
+    for request in sent:
+        _check(request)
+        assert applied_alias("graph", request.path, raw_path=request.raw_path) == "/me/drive/items/{driveItem-id}:/{path}:"
+
+
+def test_a_key_segment_holds_no_colon_on_the_spec_paths_too():
+    assert "path driveItem-id: value not allowed" in _refused("GET", "/v1.0/drives/drive-1/items/item-1:")
+
+
+@pytest.mark.parametrize("text", ["Tom's plan", "x' or 'y"])
+def test_a_search_text_whose_quote_is_not_doubled_is_refused(text):
+    message = _refused("GET", f"/v1.0/me/drive/special/approot/search(q='{quote(text, safe='')}')", query={"$top": ["5"]})
+    assert "path q: value not allowed" in message
+
+
+@pytest.mark.parametrize("path", ["/v1.0/me/drive/special/documents", "/v1.0/me/drive/special/documents/delta",
+                                  "/v1.0/me/drive/special/documents/search(q='x')", "/v1.0/me/drive/root/items/item-1"])
+def test_only_the_app_folder_is_a_special_folder_and_only_items_take_the_catch_all(path):
+    assert "is not in" in _refused("GET", path)
+
+
+def _first(op: tuple[str, str]) -> Sent:
+    return next(s for s in _all_graph() if _op(s) == op)
+
+
+@pytest.mark.parametrize("op, body, where", [
+    (("post", "/me/todo/lists/{todoTaskList-id}/tasks"),
+     {"recurrence": {"pattern": {"type": "daily", "interval": 1.5}}}, "$.recurrence.pattern.interval"),
+    (("patch", "/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}"),
+     {"recurrence": {"pattern": {"type": "daily", "interval": 1, "dayOfMonth": 2.5}}}, "$.recurrence.pattern.dayOfMonth"),
+    (("post", "/me/todo/lists/{todoTaskList-id}/tasks"),
+     {"recurrence": {"range": {"type": "numbered", "numberOfOccurrences": 2.5}}}, "$.recurrence.range.numberOfOccurrences"),
+    (("post", "/drives/{drive-id}/items/{driveItem-id}/children"),
+     {"name": "R&D", "folder": {"childCount": 0.5}}, "$.folder.childCount"),
+    (("post", "/drives/{drive-id}/items/{driveItem-id}/createUploadSession"),
+     {"item": {"fileSize": 1.5}}, "$.item.fileSize"),
+])
+def test_a_whole_number_field_refuses_a_fraction(op, body, where):
+    request = _first(op)
+    with pytest.raises(AssertionError, match=re.escape(where) + r": wrong type \(expected [^)]*integer"):
+        _check(request, body={**request.body, **body})
+
+
+def test_a_nested_odata_type_is_an_unknown_field():
+    request = _first(("post", "/me/todo/lists/{todoTaskList-id}/tasks"))
+    due = {**request.body["dueDateTime"], "@odata.type": "#microsoft.graph.dateTimeTimeZone"}
+    with pytest.raises(AssertionError, match=r"\$\.dueDateTime\.@odata\.type: unknown field"):
+        _check(request, body={**request.body, "dueDateTime": due})
+
+
+@pytest.mark.parametrize("size", ["anything; $expand=*", "c0x300", "huge", "c300x300_cropped"])
+def test_a_thumbnail_select_outside_the_documented_sizes_is_refused(size):
+    request = _first(("get", "/drives/{drive-id}/items/{driveItem-id}/thumbnails"))
+    with pytest.raises(AssertionError, match="query select: value not allowed"):
+        _check(request, query={"select": (size,)})
+
+
+@pytest.mark.parametrize("size", ["small", "medium", "large", "c300x400_crop"])
+def test_the_documented_thumbnail_sizes_pass(size):
+    _check(_first(("get", "/drives/{drive-id}/items/{driveItem-id}/thumbnails")), query={"select": (size,)})

@@ -85,7 +85,30 @@ paths:
         required: true
         schema:
           type: string
+  /lockers/{locker-id}/items/{item-id}/search(q='{q}'):
+    get:
+      operationId: lockers.items.search
+      parameters:
+        - name: q
+          in: path
+          required: true
+          schema:
+            type: string
+    parameters:
+      - name: locker-id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/item-id'
 components:
+  parameters:
+    item-id:
+      name: item-id
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     ex.entity:
       title: entity
@@ -116,6 +139,14 @@ components:
               type: number
               format: int64
               nullable: true
+            count:
+              type: number
+              format: int32
+              maximum: 2147483647
+              minimum: -2147483648
+            ratio:
+              type: number
+              format: double
             shade:
               type: string
               enum:

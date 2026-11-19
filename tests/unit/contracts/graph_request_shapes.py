@@ -1,4 +1,5 @@
-"""The request shapes the Microsoft Graph adapters send (To Do and OneDrive), for the request-conformance test (P17).
+"""The request shapes the Microsoft Graph adapters send (To Do, OneDrive and the OAuth edge's `GET /me`), for the
+request-conformance test (P17).
 
 A shape is one call of a public adapter method with invented inputs. `test_graph_request_conformance.py` runs it on the
 REAL adapter (`MicrosoftToDoAdapter` or `OneDriveAdapter`) over `tests/support/http_boundary_fake.py` (the test routes each
@@ -13,10 +14,13 @@ contract does not hold, each with its reason; `INDIRECT` names a URL expression 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
+from src.composition.connector_registry import ConnectorRegistry
+from src.domain.flow_intent import FlowIntent
+from src.domain.oauth_flow import OAuthFlow
 from src.domain.task import (
     ChecklistItem,
     LinkedResource,
@@ -39,6 +43,7 @@ FOLDER_ID = "item-3"
 DRIVE_ID = "drive-1"
 ROOT_NAME = "R&D"
 FILE_NAME = "Tom's plan.docx"
+SLASHED_NAME = "R&D/Tom's plan.docx"   # one name: the adapter encodes its slash (%2F), so it stays one segment
 RENAMED = "Tom's plan v2.docx"
 PDF_NAME = "birth-certificate.pdf"
 SEARCH_TEXT = "Tom's plan"   # its quote is doubled inside the search function's literal
@@ -47,6 +52,10 @@ CLIENT_STATE = "state-1"
 LISBON = ZoneInfo("Europe/Lisbon")
 SMALL = b"%PDF-1.7 Invoice FA-0137"
 LARGE = b"%PDF" + b"0" * (4 * 1024 * 1024)   # one byte over the simple-upload limit: an upload session
+REDIRECT_URI = "https://alek.example.invalid/oauth/callback"
+FLOW = OAuthFlow(user_id=USER, kind="microsoft_onedrive", intent=FlowIntent.CONNECT, target_id="", expected_subject="",
+                 hint_label="", pkce_verifier="verifier-1", return_path="/", expires_at=datetime(2026, 11, 19, 12, 0,
+                                                                                                 tzinfo=timezone.utc))
 
 # "<adapter file stem> <METHOD> <URL expression as the adapter writes it>" -> why the request has no operation in the
 # Graph contract. The meta-test fails when an entry is covered by an operation now, or no longer sent.
@@ -63,6 +72,9 @@ NOT_COVERED: dict[str, str] = {
         "a thumbnail rendition's pre-authenticated URL on a content host, not the Graph API"),
     "onedrive_adapter PUT (await self._call(s, handle, 'POST', path, json=body))['uploadUrl']": (
         "an upload session's pre-authenticated uploadUrl, not the Graph API (no bearer token is sent there)"),
+    "microsoft_oauth_provider POST https://login.microsoftonline.com/consumers/oauth2/v2.0/token": (
+        "the identity platform's token endpoint, not the Graph API: its contract comes with Microsoft's identity "
+        "platform (RFC P17 'Still open')"),
 }
 
 # "<adapter file stem> <METHOD> <URL expression>" -> the module constant it stands for, besides Graph's own continuations:
@@ -78,7 +90,7 @@ Call = Callable[[Any, Any], Awaitable[Any]]   # (adapter, drive handle or None) 
 @dataclass(frozen=True)
 class Shape:
     id: str
-    adapter: str   # "todo" | "drive"
+    adapter: str   # "todo" | "drive" | "oauth"
     call: Call
 
 
@@ -137,6 +149,7 @@ SHAPES: tuple[Shape, ...] = (
     Shape("drive/list_children_changes", "drive", lambda a, h: a.list_children_changes(h, ROOT_ID, 50)),
     Shape("drive/search", "drive", lambda a, h: a.search(h, SEARCH_TEXT, 5)),
     Shape("drive/child_by_name", "drive", lambda a, h: a.child_by_name(h, ROOT_ID, FILE_NAME)),
+    Shape("drive/child_by_name/slash_in_the_name", "drive", lambda a, h: a.child_by_name(h, ROOT_ID, SLASHED_NAME)),
     Shape("drive/get_thumbnail", "drive", lambda a, h: a.get_thumbnail(h, FILE_ID, 300)),
     Shape("drive/upload/small_by_name", "drive",
           lambda a, h: a.upload(h, ROOT_ID, PDF_NAME, SMALL, "application/pdf")),
@@ -149,4 +162,7 @@ SHAPES: tuple[Shape, ...] = (
     Shape("drive/move_and_rename", "drive", lambda a, h: a.move(h, FILE_ID, new_parent_id=FOLDER_ID, new_name=RENAMED)),
     Shape("drive/create_folder", "drive", lambda a, h: a.create_folder(h, ROOT_ID, ROOT_NAME)),
     Shape("drive/delete", "drive", lambda a, h: a.delete(h, FILE_ID)),
+    # ------------------------------------------------------------------------------------- the OAuth edge
+    Shape("oauth/exchange", "oauth", lambda a, h: a.exchange(
+        "code-1", FLOW, ConnectorRegistry().get("microsoft_onedrive"), REDIRECT_URI)),
 )

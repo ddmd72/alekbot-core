@@ -97,3 +97,39 @@ def test_a_json_body_sent_to_a_raw_body_operation_fails(body):
 def test_a_required_raw_body_that_is_missing_fails():
     assert _problems("PUT", "/v1.0/lockers/l-1/items/item-1/content") == [
         "$: missing required (a application/octet-stream body)"]
+
+
+# --------------------------------------------------------------------------------------- the raw path of an alias
+def test_a_contract_with_aliases_needs_the_raw_path():
+    with pytest.raises(TypeError, match="raw_path: this contract has aliases"):
+        oc.assert_request("lockers", "GET", "/v1.0/me/locker/items/item-1", {}, None, query={}, contracts_dir=FIXTURES)
+
+
+def test_a_contract_without_aliases_refuses_a_raw_path():
+    with pytest.raises(TypeError, match="raw_path: only a contract with aliases"):
+        oc.operation_path("widgets", "POST", "/v2/widgets", raw_path="/v2/widgets", contracts_dir=FIXTURES)
+
+
+def test_the_raw_path_must_decode_to_the_path():
+    with pytest.raises(ValueError, match="does not decode to path"):
+        oc.operation_path("lockers", "GET", "/v1.0/me/locker/items/item-1", raw_path="/v1.0/me/locker/items/item-2",
+                          contracts_dir=FIXTURES)
+
+
+@pytest.mark.parametrize("path", [
+    "/v1.0/me/locker/items/item-1:item-2:/a.pdf:/content",   # a bare colon inside the captured id
+    "/v1.0/me/locker/items/item-1:/a:b.pdf:/content",        # a bare colon inside the captured name
+])
+def test_a_captured_value_never_holds_a_bare_colon(path):
+    assert _alias(path) != "/me/locker/items/{item-id}:/{path}:/**"
+
+
+def test_an_encoded_slash_stays_inside_its_segment_and_the_parameters_are_decoded_after_the_match():
+    decoded = "/v1.0/me/locker/items/item-1:/R&D/Tom's plan.docx:/content"
+    raw = "/v1.0/me/locker/items/item-1:/R&D%2FTom's%20plan.docx:/content"
+    assert oc.applied_alias("lockers", decoded, raw_path=raw, contracts_dir=FIXTURES) == \
+        "/me/locker/items/{item-id}:/{path}:/**"
+    assert oc.operation_path("lockers", "PUT", decoded, raw_path=raw, contracts_dir=FIXTURES) == \
+        "/lockers/{locker-id}/items/{item-id}/content"
+    oc.assert_request("lockers", "PUT", "/v1.0/lockers/l-1/items/item-1/content", {}, b"%PDF-", query={},
+                      raw_path="/v1.0/lockers/l-1/items/item%2D1/content", contracts_dir=FIXTURES)   # item%2D1: item-1

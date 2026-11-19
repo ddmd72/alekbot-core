@@ -211,3 +211,48 @@ def test_the_graph_table_aliases_every_drive_path_to_a_kept_operation():
     for alias in graph.aliases:
         target = alias.target
         assert (any(p.startswith(target[:-2]) for p in kept) if target.endswith("/**") else target in kept), alias
+
+
+# ------------------------------------------------------------------------- integers, @odata.type and path parameters
+SEARCH = es.Operation(method="get", path=ITEM + "/search(q='{q}')", fields=())
+
+
+def test_an_odata_whole_number_becomes_an_integer_with_its_bounds_and_its_null():
+    props = _odata()["components"]["schemas"]["ex.item"]["allOf"][1]["properties"]
+    assert props["size"] == {"type": ["integer", "null"], "format": "int64"}
+    assert props["count"] == {"type": "integer", "format": "int32", "maximum": 2147483647, "minimum": -2147483648}
+    assert props["ratio"] == {"type": "number", "format": "double"}   # not a whole number: unchanged
+
+
+def test_the_odata_type_property_is_dropped_everywhere():
+    spec = _odata()
+    assert all("@odata.type" not in (node.get("properties") or {}) for node in _walk(spec) if isinstance(node, dict)
+               and isinstance(node.get("properties"), dict))
+
+
+def _path_params(doc: dict, path: str, method: str = "get") -> dict:
+    return {p["name"]: p["schema"] for p in doc["paths"][path][method]["parameters"] if p["in"] == "path"}
+
+
+def test_a_key_path_parameter_takes_no_colon_and_a_string_literal_has_its_quotes_doubled():
+    provider = replace(LOCKERS, operations=(GET, SEARCH), aliases=())
+    doc = es.build_subset(es.odata_document(_source(), provider.operations), provider, source="https://example.com/x",
+                          version="v1.0", retrieved="2026-11-19", transforms=es._TRANSFORMS + es._ODATA_TRANSFORMS)
+    assert _path_params(doc, ITEM) == {"locker-id": {"type": "string", "pattern": es._KEY_SEGMENT},
+                                       "item-id": {"type": "string", "pattern": es._KEY_SEGMENT}}
+    search = _path_params(doc, SEARCH.path)
+    assert search["q"] == {"type": "string", "pattern": es._STRING_LITERAL}
+    assert search["item-id"] == {"type": "string", "pattern": es._KEY_SEGMENT}   # a $ref parameter, inlined first
+    assert es._KEY_SEGMENT == "^[^:]+$" and es._STRING_LITERAL == "^([^']|'')*$"
+
+
+def test_the_shared_parameter_component_is_left_alone():
+    spec = es.odata_document(_source(), (GET, SEARCH))
+    assert "pattern" not in spec["components"]["parameters"]["item-id"]["schema"]
+
+
+def test_a_key_path_parameter_that_is_not_a_plain_string_fails_loudly():
+    spec = _source()
+    spec["paths"][ITEM]["parameters"][1]["schema"] = {"type": "integer"}
+    with pytest.raises(ValueError, match="path parameter item-id is not a plain string"):
+        es.odata_document(spec, (GET,))

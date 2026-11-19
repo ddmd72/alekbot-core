@@ -20,8 +20,11 @@ contract marks `deprecated` fails when sent, unless it carries the extension.
 Aliases: a contract with `x-alek-aliases` (Microsoft Graph) rewrites the request path before the lookup, in order, the
 first matching rule only: `pattern` is written like a contract path (`{name}` is a segment's text or part of one, a
 trailing `/**` the rest of the path), and the path is looked up as `target` with the captured values put in (a `{name}`
-the pattern does not capture becomes `(alias)`; the rest of the path follows). The template match then validates the
-path parameters as usual. A contract without aliases is matched as before.
+the pattern does not capture becomes `(alias)`; the rest of the path follows). Such a contract is matched on the RAW
+path as well (`raw_path=`, still percent-encoded as sent, `yarl.URL.raw_path`; the caller must pass it and it must
+decode to `path`): a captured value never holds a bare `:` (colon addressing would otherwise read `a:b:` as an item),
+an encoded `/` (`%2F`) stays inside its segment, and every path parameter is decoded after the match and validated as
+usual. A contract without aliases is matched on the decoded path, as before, and refuses `raw_path`.
 
 Request bodies: an operation whose body is not JSON (an upload's `application/octet-stream`) accepts bytes or text
 unvalidated and fails a JSON body (a dict or a list).
@@ -37,7 +40,7 @@ import functools
 import re
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import jsonschema
 import yaml
@@ -56,28 +59,45 @@ def assert_request(
     body: Any,
     *,
     query: Mapping[str, Sequence[str]],
+    raw_path: str | None = None,
     contracts_dir: Path = CONTRACTS_DIR,
 ) -> None:
     """Fail (AssertionError, every violation on its own line) unless the request conforms to the provider's contract.
 
     `path` is the decoded URL path the client sent, the server's base path included (see the module docstring). Only the headers the operation declares are checked: the SDK adds
     its own (auth, user agent, retries). `query` maps each query parameter sent to its values in order, as strings;
-    `{}` when none was sent. `body` is None for a request without one. `contracts_dir` is for the tests of this module
-    and of the extractor."""
+    `{}` when none was sent. `body` is None for a request without one. `raw_path` is the same path as sent, still
+    percent-encoded: required by a contract with aliases, refused by any other. `contracts_dir` is for the tests of this
+    module and of the extractor."""
     if query is None:
         raise TypeError("query: pass {} when the request carries no query")
     contract = contracts_dir / provider / "openapi.yaml"
-    template, path_params = _match(contract, method.lower(), _plain_path(path))
+    template, path_params = _match(contract, method.lower(), _plain_path(path), _raw(contract, path, raw_path))
     op = _operation(contract, method.lower(), template)
     problems = sorted(set(op.problems(headers, body, dict(path_params), query)))
     if problems:
         raise AssertionError(f"{provider} {method.upper()} {path} breaks the contract:\n" + "\n".join(problems))
 
 
-def operation_path(provider: str, method: str, path: str, *, contracts_dir: Path = CONTRACTS_DIR) -> str:
+def operation_path(provider: str, method: str, path: str, *, raw_path: str | None = None,
+                   contracts_dir: Path = CONTRACTS_DIR) -> str:
     """The contract path (`paths` key) a request's method and decoded URL path resolve to; AssertionError when none
-    does."""
-    return _match(contracts_dir / provider / "openapi.yaml", method.lower(), _plain_path(path))[0]
+    does. `raw_path` as for `assert_request`."""
+    contract = contracts_dir / provider / "openapi.yaml"
+    return _match(contract, method.lower(), _plain_path(path), _raw(contract, path, raw_path))[0]
+
+
+def _raw(contract: Path, path: str, raw_path: str | None) -> str | None:
+    """The raw path when the contract has aliases (required, and it must decode to `path`); None otherwise."""
+    if not _document(contract).get("x-alek-aliases"):
+        if raw_path is not None:
+            raise TypeError("raw_path: only a contract with aliases is matched on the raw path")
+        return None
+    if raw_path is None:
+        raise TypeError("raw_path: this contract has aliases; pass the URL path as sent, still percent-encoded")
+    if unquote(_plain_path(raw_path)) != path:
+        raise ValueError(f"raw_path {raw_path!r} does not decode to path {path!r}")
+    return raw_path
 
 
 def _plain_path(path: str) -> str:
@@ -103,12 +123,13 @@ def _document(contract: Path) -> dict:
 
 
 @functools.lru_cache(maxsize=None)
-def _match(contract: Path, method: str, path: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+def _match(contract: Path, method: str, path: str, raw: str | None = None) -> tuple[str, tuple[tuple[str, str], ...]]:
     """The `paths` key the request resolves to and its path parameters. A literal path wins; otherwise the templated
-    path with the most literal segments (a tie between two templates is ambiguous and fails)."""
+    path with the most literal segments (a tie between two templates is ambiguous and fails). With `raw` (a contract
+    with aliases) the match runs on the raw path and the parameter values are decoded after it."""
     doc = _document(contract)
     paths = doc.get("paths") or {}
-    stripped = _stripped(doc, path)
+    stripped = _stripped(doc, path if raw is None else raw)
     candidates = [_aliased(doc, candidate) for candidate in stripped]
     for candidate in candidates:
         if method in (paths.get(candidate) or {}):
@@ -118,6 +139,8 @@ def _match(contract: Path, method: str, path: str) -> tuple[str, tuple[tuple[str
         for template, item in paths.items():
             if "{" in template and method in (item or {}) and template not in found:
                 params = _template_params(template, candidate)
+                if params is not None and raw is not None:
+                    params = tuple((name, unquote(value)) for name, value in params)
                 if params is not None:
                     found[template] = (sum("{" not in seg for seg in template.split("/")), params)
     if not found:
@@ -160,10 +183,13 @@ def _template_params(template: str, path: str) -> tuple[tuple[str, str], ...] | 
 _ALIAS_FILL = "(alias)"
 
 
-def applied_alias(provider: str, path: str, *, contracts_dir: Path = CONTRACTS_DIR) -> str | None:
-    """The pattern of the `x-alek-aliases` rule that rewrites a request's URL path (None: no rule applies)."""
-    doc = _document(contracts_dir / provider / "openapi.yaml")
-    for candidate in _stripped(doc, _plain_path(path)):
+def applied_alias(provider: str, path: str, *, raw_path: str | None, contracts_dir: Path = CONTRACTS_DIR) -> str | None:
+    """The pattern of the `x-alek-aliases` rule that rewrites a request's URL path (None: no rule applies); the paths
+    as for `assert_request`."""
+    contract = contracts_dir / provider / "openapi.yaml"
+    doc = _document(contract)
+    raw = _raw(contract, _plain_path(path), raw_path)
+    for candidate in _stripped(doc, raw if raw is not None else path):
         rule, _ = _alias_rule(doc, candidate)
         if rule is not None:
             return rule["pattern"]
@@ -195,14 +221,15 @@ def _alias_rule(doc: dict, path: str) -> tuple[dict | None, str]:
 
 
 def _capture(template: str, segments: list[str]) -> dict[str, str] | None:
-    """The `{name}` values of the (decoded) path segments under `template`; None: no match."""
+    """The `{name}` values of the raw path segments under `template`, still encoded; a value never holds a bare `:`
+    (a bare colon is OData's colon addressing; OneDrive refuses ':' in a name). None: no match."""
     want = template.split("/")
     if len(want) != len(segments):
         return None
     out: dict[str, str] = {}
     for pattern, segment in zip(want, segments):
         parts = re.split(r"\{([^}]+)\}", pattern)
-        hit = re.fullmatch("".join("(.+?)" if i % 2 else re.escape(p) for i, p in enumerate(parts)), segment)
+        hit = re.fullmatch("".join("([^:]+?)" if i % 2 else re.escape(p) for i, p in enumerate(parts)), segment)
         if hit is None:
             return None
         out.update(zip(parts[1::2], hit.groups()))
