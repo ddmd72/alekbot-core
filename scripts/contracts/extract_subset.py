@@ -15,11 +15,16 @@ What a subset holds, per operation in `PROVIDERS`:
   stale and must be removed.
 Transforms (named in the file's `x-transforms`): see `_TRANSFORMS`.
 
-Sources: an OpenAPI spec on GitHub pinned by commit (`Provider.repo`), or a Stainless SDK's generated request types
-(`Provider.sdk`, pinned by the installed version; Anthropic publishes no reachable spec).
+Parameters: every path parameter of a kept operation, the query parameters in `Operation.query` and the headers in
+`Operation.headers`; nothing else. An operation without `fields` sends no body (a GET).
 
-Usage (make contract-extract PROVIDER=openai|anthropic [REF=<sha>]):
+Sources: an OpenAPI spec on GitHub pinned by commit (`Provider.repo`), a Google discovery document on GitHub pinned the
+same way (`Provider.discovery`, converted to OpenAPI by `discovery_document`), or a Stainless SDK's generated request
+types (`Provider.sdk`, pinned by the installed version; Anthropic publishes no reachable spec).
+
+Usage (make contract-extract PROVIDER=openai|anthropic|gmail [REF=<sha>]):
     python -m scripts.contracts.extract_subset --provider openai [--ref <sha>]   # no ref: the default branch's head
+    python -m scripts.contracts.extract_subset --provider gmail [--ref <sha>]    # a discovery document, same pinning
     python -m scripts.contracts.extract_subset --provider anthropic              # the installed SDK
 """
 from __future__ import annotations
@@ -28,6 +33,7 @@ import argparse
 import datetime as _dt
 import importlib
 import json
+import re
 import subprocess
 import sys
 import typing
@@ -40,7 +46,7 @@ import pydantic
 import typing_extensions
 import yaml
 
-from scripts.contracts.spec_drift import _pointer, fetch_url, normalize, parse
+from scripts.contracts.spec_drift import _discovery_methods, _pointer, fetch_url, normalize, parse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS_DIR = REPO_ROOT / "contracts" / "providers"
@@ -70,29 +76,33 @@ class Operation:
 
     method: str                                         # "post"
     path: str                                           # as in the source; an SDK source names the REST path
-    fields: tuple[str, ...]                             # the top-level body fields we send
+    fields: tuple[str, ...]                             # the top-level body fields we send; () = no body
     variants: Mapping[str, tuple[str, ...]] = field(default_factory=dict)   # union path -> variants kept
     open: tuple[str, ...] = ()                          # free-form paths (our own JSON Schemas)
     allowed: tuple[Allowed, ...] = ()
     sdk_body: str = ""                                  # SDK source: the request TypedDict, "module:Name"
     headers: Mapping[str, str] = field(default_factory=dict)        # SDK source: header -> Literal type "module:Name"
     header_aliases: Mapping[str, str] = field(default_factory=dict)  # SDK source: body field -> its header alias
+    query: tuple[str, ...] = ()                         # the query parameters we send (path parameters: all kept)
 
 
 @dataclass(frozen=True)
 class Provider:
-    """A provider's request contract. Exactly one source: `repo` + `spec_file` (OpenAPI on GitHub) or `sdk`."""
+    """A provider's request contract. Exactly one source: `repo` + `spec_file` (OpenAPI on GitHub, or a Google
+    discovery document when `discovery`) or `sdk`."""
 
     name: str
     operations: tuple[Operation, ...]
     repo: str = ""            # "openai/openai-openapi"
     spec_file: str = ""       # "openapi.yaml"
+    discovery: bool = False   # `spec_file` is a Google discovery document: its kept methods become OpenAPI operations
     sdk: str = ""             # "anthropic": the installed package and its version
     server: str = ""          # the base URL operation paths are relative to (an SDK source has no `servers`)
 
 
 _OPENAI_ADAPTER = "src/adapters/openai_adapter.py"
 _CLAUDE_ADAPTER = "src/adapters/claude_adapter.py"
+_GMAIL_PATH = "/gmail/v1/users/{userId}/messages"
 
 PROVIDERS: dict[str, Provider] = {
     "openai": Provider(
@@ -162,6 +172,19 @@ PROVIDERS: dict[str, Provider] = {
             ),
         ),),
     ),
+    "gmail": Provider(
+        name="gmail", repo="googleapis/discovery-artifact-manager", spec_file="discoveries/gmail.v1.json",
+        discovery=True,
+        operations=(
+            # gmail.users.messages.list: GmailProviderAdapter.list_emails, list_headers
+            Operation(method="get", path=_GMAIL_PATH, fields=(), query=("maxResults", "pageToken", "q")),
+            # gmail.users.messages.get: _fetch_meta (format=metadata + metadataHeaders), batch_get_full_content and
+            # _fetch_message (format=full)
+            Operation(method="get", path=_GMAIL_PATH + "/{id}", fields=(), query=("format", "metadataHeaders")),
+            # gmail.users.messages.attachments.get: get_part with an attachment handle
+            Operation(method="get", path=_GMAIL_PATH + "/{messageId}/attachments/{id}", fields=()),
+        ),
+    ),
 }
 
 _TRANSFORMS = (
@@ -180,6 +203,18 @@ _SDK_TRANSFORMS = (
     "drop-sdk-response-models: union members that are SDK response models (accepted as input for convenience) are "
     "dropped; the request types (*Param) are the wire contract",
     "header-literals: a header's allowed values are its SDK type's Literal values",
+)
+_DISCOVERY_TRANSFORMS = (
+    "discovery-to-openapi: each kept method is an operation at /<path> (operationId = the method id) under the server "
+    "rootUrl + servicePath; the API-wide parameters apply to every method",
+    "discovery-parameters: location path|query becomes in path|query (a path parameter is required); repeated becomes "
+    "an array of the type; string-typed default, minimum and maximum take the parameter's type; an integer format "
+    "(int32, uint32, int64, uint64) becomes its range as minimum and maximum unless the method states them; "
+    "deprecated is kept",
+)
+_PARAMETER_TRANSFORM = (
+    "prune-parameters: every path parameter, only the listed query parameters and headers; $refs inlined, "
+    "documentation keys dropped"
 )
 
 
@@ -527,9 +562,47 @@ def _collect_refs(node: Any, out: set[str]) -> None:
             _collect_refs(value, out)
 
 
+def _inline(spec: dict, node: Any, depth: int = 0) -> Any:
+    """The node with every `$ref` replaced by its target (parameters and their schemas are small and acyclic)."""
+    if depth > 50:
+        raise ValueError("a $ref chain in a parameter does not end")
+    if isinstance(node, dict):
+        if "$ref" in node:
+            return _inline(spec, _pointer(spec, node["$ref"]), depth + 1)
+        return {k: _inline(spec, v, depth + 1) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_inline(spec, v, depth + 1) for v in node]
+    return node
+
+
+def _parameters(spec: dict, item: dict, source_op: dict, op: Operation) -> list[dict]:
+    """The parameters we keep, sorted by location and name: the declared headers (as the source writes them), every
+    path parameter and the listed query parameters (inlined, documentation keys dropped). Path-level parameters apply
+    to the operation unless it redeclares them."""
+    declared: dict[tuple[str, str], dict] = {}
+    for raw in [*(item.get("parameters") or []), *(source_op.get("parameters") or [])]:
+        param = _inline(spec, raw) if "$ref" in raw else raw
+        declared[(str(param.get("in")), str(param.get("name")))] = param
+    absent = sorted(set(op.query) - {name for where, name in declared if where == "query"})
+    if absent:
+        raise ValueError(f"{op.method} {op.path}: listed query parameters absent from the source: {absent}")
+    in_path = {name for where, name in declared if where == "path"}
+    templated = set(re.findall(r"\{([^}]+)\}", op.path))
+    if in_path != templated:
+        raise ValueError(f"{op.method} {op.path}: path parameters {sorted(in_path)} do not match the template")
+    kept = []
+    for (where, name), param in sorted(declared.items()):
+        if where == "header" and name in op.headers:
+            kept.append(param)
+        elif where == "path" or where == "query" and name in op.query:
+            kept.append(normalize(_plain(_inline(spec, param))))
+    return kept
+
+
 def build_subset(spec: dict, provider: Provider, *, source: str, version: str, retrieved: str,
                  transforms: tuple[str, ...] = _TRANSFORMS) -> dict:
-    """The subset document of `provider` from `spec` (an OpenAPI document; an SDK source is converted to one first)."""
+    """The subset document of `provider` from `spec` (an OpenAPI document; an SDK or discovery source is converted to
+    one first)."""
     paths: dict[str, Any] = {}
     components: dict[str, Any] = {}
     for op in provider.operations:
@@ -538,25 +611,33 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
         source_op = item.get(op.method)
         if source_op is None:
             raise ValueError(f"operation {op.method} {op.path} absent from the source")
-        media = ((source_op.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
-        if "schema" not in media:
-            raise ValueError(f"{op.method} {op.path}: no application/json request body")
-        builder = _Builder(spec, op)
-        body = builder.body(media["schema"])
-        for name, schema in builder.components.items():
-            if name in components and _canon(components[name]) != _canon(schema):
-                raise ValueError(f"component {name} differs between operations")
-            components[name] = schema
-        built_op: dict[str, Any] = {
-            "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
-        }
+        built_op: dict[str, Any] = {}
+        if op.fields:
+            media = ((source_op.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
+            if "schema" not in media:
+                raise ValueError(f"{op.method} {op.path}: no application/json request body")
+            builder = _Builder(spec, op)
+            body = builder.body(media["schema"])
+            for name, schema in builder.components.items():
+                if name in components and _canon(components[name]) != _canon(schema):
+                    raise ValueError(f"component {name} differs between operations")
+                components[name] = schema
+            built_op["requestBody"] = {"required": True, "content": {"application/json": {"schema": body}}}
+        else:
+            if (source_op.get("requestBody") or {}).get("required"):
+                raise ValueError(f"{op.method} {op.path}: the source requires a request body; list its fields")
+            if op.variants or op.open or any(not a.path.startswith("header:") for a in op.allowed):
+                raise ValueError(f"{op.method} {op.path}: body paths on an operation without body fields")
         if source_op.get("operationId"):
             built_op["operationId"] = source_op["operationId"]
-        params = [p for p in source_op.get("parameters") or [] if p.get("in") == "header" and p["name"] in op.headers]
+        params = _parameters(spec, item, source_op, op)
         if params:
             built_op["parameters"] = params
         paths.setdefault(op.path, {})[op.method] = built_op
     components = _reachable(paths, components)
+    if any(p.get("in") in ("path", "query") for item in paths.values() for o in item.values()
+           for p in o.get("parameters") or []):
+        transforms = transforms + (_PARAMETER_TRANSFORM,)
     servers = spec.get("servers") or ([{"url": provider.server}] if provider.server else [])
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
@@ -692,10 +773,80 @@ def head_commit(repo: str) -> str:
 
 
 def openapi_subset(provider: Provider, ref: str, retrieved: str, fetch: Callable[[str], bytes] = fetch_url) -> dict:
+    """The subset of a provider whose source is a file on GitHub (OpenAPI, or a discovery document), pinned by `ref`."""
     url = spec_url(provider, ref)
     spec = parse(fetch(url))
+    transforms = _TRANSFORMS
+    if provider.discovery:
+        spec = discovery_document(spec, provider.operations)
+        transforms = _TRANSFORMS + _DISCOVERY_TRANSFORMS
     version = (spec.get("info") or {}).get("version", "")
-    return build_subset(spec, provider, source=url, version=version, retrieved=retrieved)
+    return build_subset(spec, provider, source=url, version=version, retrieved=retrieved, transforms=transforms)
+
+
+# ------------------------------------------------------------------------------------------------- discovery source
+def _typed(value: Any, kind: str | None, where: str) -> Any:
+    """A discovery default/minimum/maximum (written as a string) as a value of the parameter's type."""
+    if not isinstance(value, str) or kind in (None, "string"):
+        return value
+    if kind == "integer":
+        return int(value)
+    if kind == "number":
+        return float(value)
+    if kind == "boolean" and value in ("true", "false"):
+        return value == "true"
+    raise ValueError(f"{where}: {value!r} is not a {kind}")
+
+
+# An integer format's range: JSON Schema does not enforce `format`, so the range becomes minimum/maximum.
+_INTEGER_RANGES = {
+    "int32": (-2**31, 2**31 - 1), "uint32": (0, 2**32 - 1), "int64": (-2**63, 2**63 - 1), "uint64": (0, 2**64 - 1),
+}
+
+
+def _discovery_parameter(name: str, param: dict) -> dict:
+    location = param.get("location")
+    if location not in ("path", "query"):
+        raise ValueError(f"parameter {name}: location {location!r} is not converted")
+    kind = param.get("type")
+    schema: dict[str, Any] = {k: param[k] for k in ("type", "format", "enum", "pattern") if k in param}
+    if kind == "integer" and param.get("format") in _INTEGER_RANGES:
+        schema["minimum"], schema["maximum"] = _INTEGER_RANGES[param["format"]]
+    for key in ("default", "minimum", "maximum"):
+        if key in param:
+            schema[key] = _typed(param[key], kind, f"parameter {name}.{key}")
+    if param.get("repeated"):
+        schema = {"type": "array", "items": schema}
+    out = {"name": name, "in": location, "required": location == "path" or bool(param.get("required")),
+           "schema": schema}
+    if param.get("deprecated"):
+        out["deprecated"] = True
+    return out
+
+
+def discovery_document(discovery: dict, operations: tuple[Operation, ...]) -> dict:
+    """An OpenAPI document of the discovery methods the operations name (by method and `/<path>`): each with its own
+    and the API-wide path/query parameters. No request body is converted: a kept method that takes one fails."""
+    wanted = {(op.method, op.path): op for op in operations}
+    shared = discovery.get("parameters") or {}
+    paths: dict[str, Any] = {}
+    for method in _discovery_methods(discovery):
+        key = (str(method.get("httpMethod", "")).lower(), "/" + str(method.get("path", "")))
+        if key not in wanted:
+            continue
+        if "{+" in key[1]:
+            raise ValueError(f"{method.get('id')}: reserved expansion {{+name}} in {key[1]} is not converted")
+        if "request" in method and wanted[key].fields:
+            raise ValueError(f"{method.get('id')}: a discovery request body is not converted (extend the converter)")
+        params = {**shared, **(method.get("parameters") or {})}
+        paths.setdefault(key[1], {})[key[0]] = {
+            "operationId": method["id"],
+            "parameters": [_discovery_parameter(n, p) for n, p in sorted(params.items())],
+        }
+    server = (discovery.get("rootUrl", "") + discovery.get("servicePath", "")).rstrip("/")
+    version = f"{discovery.get('version', '')}-{discovery.get('revision', '')}"
+    return {"openapi": "3.1.0", "info": {"version": version}, "servers": [{"url": server}], "paths": paths,
+            "components": {"schemas": {}}}
 
 
 # ------------------------------------------------------------------------------------------------------------- CLI
@@ -712,7 +863,8 @@ def write(provider_name: str, doc: dict, out_dir: Path = CONTRACTS_DIR) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--provider", required=True, choices=sorted(PROVIDERS))
-    parser.add_argument("--ref", default="", help="OpenAPI source: the commit to pin (default: the branch head)")
+    parser.add_argument("--ref", default="", help="OpenAPI or discovery source: the commit to pin (default: the branch "
+                                                   "head)")
     args = parser.parse_args(argv)
     provider = PROVIDERS[args.provider]
     today = _dt.date.today().isoformat()

@@ -81,9 +81,13 @@ def test_every_ref_resolves_and_every_schema_is_valid(provider):
         assert ref.startswith("#/components/schemas/") and ref.rsplit("/", 1)[-1] in schemas, ref
     for name, schema in schemas.items():
         jsonschema.Draft202012Validator.check_schema(schema)
-    for path_item in doc["paths"].values():
-        for op in path_item.values():
-            jsonschema.Draft202012Validator.check_schema(op["requestBody"]["content"]["application/json"]["schema"])
+    table = {(o.path, o.method): o for o in es.PROVIDERS[provider].operations}
+    for path, path_item in doc["paths"].items():
+        for method, op in path_item.items():
+            # A body exactly when the table lists body fields (Operation.fields == (): no body, e.g. a Gmail GET).
+            assert ("requestBody" in op) == bool(table[(path, method)].fields), (method, path)
+            if "requestBody" in op:
+                jsonschema.Draft202012Validator.check_schema(op["requestBody"]["content"]["application/json"]["schema"])
             for param in op.get("parameters") or []:
                 jsonschema.Draft202012Validator.check_schema(param["schema"])
 
@@ -132,6 +136,7 @@ FREE_FORM = {
             "a server_tool_use block's input: the model's own JSON arguments",
         "/components/schemas/ToolParam/properties/input_examples/items": "ToolParam.input_examples: example JSON arguments",
     },
+    "gmail": {},  # GETs: path and query parameters only, no body and no free-form place
 }
 
 

@@ -337,3 +337,182 @@ def test_the_openapi_source_url_is_pinned_by_the_ref():
     doc = es.openapi_subset(WIDGETS, "0123abc", "2026-11-18", fetch=fetch)
     assert fetched == ["https://raw.githubusercontent.com/example/widgets-openapi/0123abc/openapi.yaml"]
     assert doc["x-source"] == fetched[0] and doc["info"]["version"] == "9.9.9"
+
+
+# ------------------------------------------------------------------------------------- path and query parameters
+PARCELS_OPENAPI = REPO_ROOT / "tests" / "fixtures" / "extract_subset" / "parcels_openapi.yaml"
+PARCELS_DISCOVERY = REPO_ROOT / "tests" / "fixtures" / "extract_subset" / "parcels_discovery.json"
+GET_PARCEL = es.Operation(method="get", path="/parcels/{parcelId}", fields=(), query=("$top", "fields"))
+
+
+def _parcels(*ops: es.Operation) -> dict:
+    provider = es.Provider(name="parcels", repo="example/parcels-openapi", spec_file="openapi.yaml", operations=ops)
+    return es.build_subset(sd.parse(PARCELS_OPENAPI.read_bytes()), provider, source="https://example.com/parcels@abc",
+                           version="2.0.0", retrieved="2026-11-19")
+
+
+def _params(doc: dict, path: str, method: str = "get") -> dict:
+    return {(p["in"], p["name"]): p for p in doc["paths"][path][method].get("parameters") or []}
+
+
+def test_an_operation_without_fields_has_no_request_body():
+    op = _parcels(GET_PARCEL)["paths"]["/parcels/{parcelId}"]["get"]
+    assert "requestBody" not in op and op["operationId"] == "getParcel"
+
+
+def test_path_parameters_are_all_kept_and_query_parameters_only_when_listed():
+    params = _params(_parcels(GET_PARCEL), "/parcels/{parcelId}")
+    assert sorted(params) == [("path", "parcelId"), ("query", "$top"), ("query", "fields")]
+    assert params[("path", "parcelId")] == {"name": "parcelId", "in": "path", "required": True,
+                                            "schema": {"type": "integer"}}
+
+
+def test_a_parameter_ref_and_a_schema_ref_are_inlined_and_documentation_dropped():
+    params = _params(_parcels(GET_PARCEL), "/parcels/{parcelId}")
+    assert params[("query", "$top")] == {"name": "$top", "in": "query", "schema": {"type": "integer", "minimum": 0}}
+    assert params[("query", "fields")] == {
+        "name": "fields", "in": "query", "style": "form", "explode": False,
+        "schema": {"type": "array", "items": {"type": "string", "enum": ["id", "weight"]}}}
+
+
+def test_the_parameter_transform_is_named_only_when_parameters_are_kept():
+    assert es._PARAMETER_TRANSFORM in _parcels(GET_PARCEL)["x-transforms"]
+    assert es._PARAMETER_TRANSFORM not in _build()["x-transforms"]
+
+
+def test_a_listed_header_of_a_bodyless_operation_is_kept_as_written():
+    params = _params(_parcels(replace(GET_PARCEL, headers={"x-trace": "unused"})), "/parcels/{parcelId}")
+    assert params[("header", "x-trace")] == {"name": "x-trace", "in": "header", "schema": {"type": "string"}}
+
+
+@pytest.mark.parametrize("op, message", [
+    (replace(GET_PARCEL, query=("$top", "page")), r"listed query parameters absent from the source: \['page'\]"),
+    (es.Operation(method="get", path="/parcels/{parcelId}/labels/{labelId}", fields=()),
+     r"path parameters \['parcelId'\] do not match the template"),
+    (es.Operation(method="put", path="/parcels/{parcelId}", fields=()), "the source requires a request body"),
+    (replace(GET_PARCEL, variants={"parts[]": ("bolt",)}), "body paths on an operation without body fields"),
+])
+def test_a_parameter_entry_the_source_does_not_match_fails_loudly(op, message):
+    with pytest.raises(ValueError, match=message):
+        _parcels(op)
+
+
+# ------------------------------------------------------------------------------------------------- discovery source
+LIST_PARCELS = es.Operation(method="get", path="/depots/{depotId}/parcels", fields=(),
+                            query=("limit", "tag", "express", "status"))
+PARCELS_D = es.Provider(name="parcels", repo="example/discovery", spec_file="discoveries/parcels.v1.json",
+                        discovery=True, operations=(LIST_PARCELS,))
+
+
+def _discovery() -> dict:
+    return sd.parse(PARCELS_DISCOVERY.read_bytes())
+
+
+def _from_discovery(*ops: es.Operation) -> dict:
+    provider = replace(PARCELS_D, operations=ops or (LIST_PARCELS,))
+    spec = es.discovery_document(_discovery(), provider.operations)
+    return es.build_subset(spec, provider, source="https://example.com/parcels@abc", version="v1-20261101",
+                           retrieved="2026-11-19", transforms=es._TRANSFORMS + es._DISCOVERY_TRANSFORMS)
+
+
+def test_discovery_kept_methods_become_operations_under_root_url_and_service_path():
+    doc = _from_discovery()
+    assert doc["servers"] == [{"url": "https://parcels.example.com/parcels/v1"}]
+    assert list(doc["paths"]) == ["/depots/{depotId}/parcels"]
+    assert list(doc["paths"]["/depots/{depotId}/parcels"]) == ["get"]  # the POST of the same path is not kept
+    assert doc["paths"]["/depots/{depotId}/parcels"]["get"]["operationId"] == "parcels.depots.parcels.list"
+    assert doc["components"] == {"schemas": {}}
+
+
+def test_discovery_parameters_take_their_types_and_repeated_becomes_an_array():
+    params = _params(_from_discovery(), "/depots/{depotId}/parcels")
+    assert params[("path", "depotId")] == {"name": "depotId", "in": "path", "required": True,
+                                           "schema": {"type": "string", "default": "main"}}
+    assert params[("query", "limit")]["schema"] == {"type": "integer", "format": "uint32", "default": 50,
+                                                     "minimum": 1, "maximum": 500}
+    assert params[("query", "tag")] == {"name": "tag", "in": "query", "required": False,
+                                        "schema": {"type": "array", "items": {"type": "string"}}}
+    assert params[("query", "express")]["schema"] == {"type": "boolean", "default": False}
+    assert params[("query", "status")]["schema"] == {"type": "string", "enum": ["open", "shipped"]}
+
+
+def test_discovery_api_wide_parameters_are_kept_only_when_listed():
+    assert ("query", "alt") not in _params(_from_discovery(), "/depots/{depotId}/parcels")
+    params = _params(_from_discovery(replace(LIST_PARCELS, query=("alt",))), "/depots/{depotId}/parcels")
+    assert params[("query", "alt")]["schema"] == {"type": "string", "enum": ["json", "media"], "default": "json"}
+
+
+def test_discovery_subset_renders_deterministically():
+    assert es.render(_from_discovery()) == es.render(_from_discovery())
+
+
+@pytest.mark.parametrize("op, message", [
+    (es.Operation(method="post", path="/depots/{depotId}/parcels", fields=("weight",)),
+     "a discovery request body is not converted"),
+    (es.Operation(method="get", path="/depots/{depotId}/parcels/{+name}", fields=()), "reserved expansion"),
+    (es.Operation(method="get", path="/depots/{depotId}/boxes", fields=()), "absent from the source"),
+])
+def test_a_discovery_method_the_converter_cannot_take_fails_loudly(op, message):
+    with pytest.raises(ValueError, match=message):
+        _from_discovery(op)
+
+
+def test_a_discovery_value_that_does_not_read_as_its_type_fails():
+    spec = _discovery()
+    spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]["express"]["default"] = "no"
+    with pytest.raises(ValueError, match="parameter express.default: 'no' is not a boolean"):
+        es.discovery_document(spec, (LIST_PARCELS,))
+
+
+def test_the_discovery_source_url_is_pinned_by_the_ref_and_names_the_transforms():
+    fetched = []
+
+    def fetch(url: str) -> bytes:
+        fetched.append(url)
+        return PARCELS_DISCOVERY.read_bytes()
+
+    doc = es.openapi_subset(PARCELS_D, "0123abc", "2026-11-19", fetch=fetch)
+    assert fetched == ["https://raw.githubusercontent.com/example/discovery/0123abc/discoveries/parcels.v1.json"]
+    assert doc["x-source"] == fetched[0] and doc["info"]["version"] == "v1-20261101"
+    assert doc["x-transforms"] == [*es._TRANSFORMS, *es._DISCOVERY_TRANSFORMS, es._PARAMETER_TRANSFORM]
+
+
+@pytest.mark.parametrize("fmt, low, high", [
+    ("int32", -2147483648, 2147483647), ("uint32", 0, 4294967295),
+    ("int64", -9223372036854775808, 9223372036854775807), ("uint64", 0, 18446744073709551615),
+])
+def test_a_discovery_integer_format_becomes_its_range(fmt, low, high):
+    spec = _discovery()
+    params = spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]
+    params["page"] = {"location": "query", "type": "integer", "format": fmt}
+    params["limit"]["format"] = fmt  # the method's own minimum and maximum win over the format's range
+    op = replace(LIST_PARCELS, query=("limit", "page"))
+    doc = es.build_subset(es.discovery_document(spec, (op,)), replace(PARCELS_D, operations=(op,)), source="s",
+                          version="v", retrieved="2026-11-19")
+    by_name = _params(doc, "/depots/{depotId}/parcels")
+    assert by_name[("query", "page")]["schema"] == {"type": "integer", "format": fmt, "minimum": low, "maximum": high}
+    assert (by_name[("query", "limit")]["schema"]["minimum"], by_name[("query", "limit")]["schema"]["maximum"]) == (1, 500)
+
+
+def test_a_string_typed_64_bit_discovery_parameter_gets_no_range():
+    spec = _discovery()
+    params = spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]
+    params["since"] = {"location": "query", "type": "string", "format": "uint64"}
+    op = replace(LIST_PARCELS, query=("since",))
+    doc = es.build_subset(es.discovery_document(spec, (op,)), replace(PARCELS_D, operations=(op,)), source="s",
+                          version="v", retrieved="2026-11-19")
+    assert _params(doc, "/depots/{depotId}/parcels")[("query", "since")]["schema"] == {"type": "string",
+                                                                                      "format": "uint64"}
+
+
+def test_a_deprecated_discovery_parameter_keeps_its_mark():
+    spec = _discovery()
+    spec["resources"]["depots"]["resources"]["parcels"]["methods"]["list"]["parameters"]["tag"]["deprecated"] = True
+    params = _params(_from_discovery_spec(spec), "/depots/{depotId}/parcels")
+    assert params[("query", "tag")]["deprecated"] is True
+    assert "deprecated" not in params[("query", "limit")]
+
+
+def _from_discovery_spec(spec: dict) -> dict:
+    return es.build_subset(es.discovery_document(spec, (LIST_PARCELS,)), PARCELS_D, source="s", version="v",
+                           retrieved="2026-11-19")
