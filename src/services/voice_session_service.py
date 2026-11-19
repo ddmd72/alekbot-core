@@ -357,9 +357,8 @@ class VoiceSessionService:
             for label in dropped:
                 logger.warning(f"voice call {fingerprint(ticket)}: remote tool server {label} dropped")
             spec = VoiceSessionSpec.from_dict(config["voice"]) if config.get("voice") else LEGACY_VOICE_SESSION
-            relay_owned = spec.turn_ownership is TurnOwnership.RELAY
             state = _CallState(playback=playback, ticket=ticket, turn_ownership=spec.turn_ownership,
-                               persona_anchor=build_persona_anchor(config["instructions"]) if relay_owned else None)
+                               persona_anchor=build_persona_anchor(config["instructions"]))
             context = RequestContext(user_id=config["user_id"], account_id=config["account_id"])
             if config["user_id"] in self._debug_transcript_users:
                 state.debug = True
@@ -497,9 +496,8 @@ class VoiceSessionService:
             else:
                 # Provider-owned turns get no per-turn anchor, so the persona anchor goes in once at the start.
                 if state.turn_ownership is TurnOwnership.PROVIDER:
-                    start_anchor = build_persona_anchor(config["instructions"])
-                    if start_anchor is not None:
-                        await self._system_note(session, state, start_anchor)
+                    if state.persona_anchor is not None:
+                        await self._system_note(session, state, state.persona_anchor)
                 if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
                     # A user turn, not system text: live, the caller's own request changed how
                     # Lelik spoke where the same rule as system text did not (2026-09-25).
@@ -690,7 +688,7 @@ class VoiceSessionService:
             except Exception as exc:     # the port never raises; a broken adapter still never fails the share
                 logger.warning(f"voice call {fingerprint(state.ticket)}: geo: geocoder raised {type(exc).__name__}")
         mark = GeoMark(fix=fix, address=address)
-        await self._system_note(session, state, render_call_note(mark))
+        await self._mid_call_note(session, state, render_call_note(mark))
         logger.info(f"voice call {fingerprint(state.ticket)}: geo: note inserted, accuracy {accuracy_band(mark)}, "
                     f"address {'found' if address else 'none'}")
         await link.send(geo_state_frame(True, seq, address=address, accuracy=fix.accuracy_m))
@@ -736,12 +734,12 @@ class VoiceSessionService:
         # got there first: the lock holds the note until an offer in flight has been sent.
         await self._sync_pair_tool_offer(state)
         if step.insert_note:
-            await self._system_note(session, state, _ASK_NOTE)
+            await self._mid_call_note(session, state, _ASK_NOTE)
             logger.info(f"voice call {fingerprint(state.ticket)}: ask: note inserted")
         elif step.insert_translate_note:
             # Once the caller set the pair, every translate note names it, so the direction never depends on guessing.
             note = state.language_pair.note() if state.language_pair is not None else _TRANSLATE_NOTE
-            await self._system_note(session, state, note)
+            await self._mid_call_note(session, state, note)
             # Every utterance of an interpreter call: DEBUG, not INFO.
             logger.debug(f"voice call {fingerprint(state.ticket)}: ask: translate note inserted")
         self._apply_ask(state, step)
@@ -766,6 +764,8 @@ class VoiceSessionService:
             return "pair"
         if text in (_PICKUP_NOTE, _WEB_PICKUP_NOTE):
             return "pickup"
+        if state.persona_anchor is not None and text == state.persona_anchor:
+            return "anchor"
         return "other"
 
     @classmethod
@@ -773,6 +773,18 @@ class VoiceSessionService:
         """Every system note the relay inserts goes through here (the debug line names its kind, never its text)."""
         await session.submit_message("system", text)
         cls._debug(state, f"system note inserted: {cls._note_kind(state, text)}")
+
+    @classmethod
+    async def _mid_call_note(cls, session: RealtimeSessionPort, state: _CallState, text: str) -> None:
+        """A system note inserted after the call has started.
+
+        On a provider-owned call the provider starts the next reply itself and no per-turn anchor is placed, so a note
+        would become the freshest system item before that reply; the persona anchor goes in right after it. On a
+        relay-owned call every reply carries the anchor (`_start_response`), so the note goes in alone.
+        """
+        await cls._system_note(session, state, text)
+        if state.turn_ownership is TurnOwnership.PROVIDER and state.persona_anchor is not None:
+            await cls._system_note(session, state, state.persona_anchor)
 
     # ------------------------------------------------------------------ the interpreter's language pair
 
@@ -1163,7 +1175,10 @@ class VoiceSessionService:
         # the realtime twin of the text path's per-turn persona anchor. Anchors are left
         # in the conversation rather than deleted: a delete of a missing item is a
         # provider error, and any provider error ends the call.
-        await self._start_response(session, state, state.persona_anchor, reason)
+        # Provider-owned calls (the pickup and a late tool result reach here too) hold their anchor at the start and
+        # after mid-call notes instead, so no per-reply anchor goes in there.
+        anchor = state.persona_anchor if state.turn_ownership is TurnOwnership.RELAY else None
+        await self._start_response(session, state, anchor, reason)
 
     async def _start_response(
         self, session: RealtimeSessionPort, state: _CallState, note: Optional[str], reason: str,
@@ -1400,7 +1415,7 @@ class VoiceSessionService:
                 note = _LATE_FAILURE_NOTE.format(request=answer.request)
             else:
                 note = _LATE_ANSWER_NOTE.format(request=answer.request, output=answer.output)
-            await self._system_note(session, state, note)
+            await self._mid_call_note(session, state, note)
             channel = "system note"
             self._debug(state, f"tool output {answer.call_id} (as a system note): {answer.output}")
         else:
