@@ -188,6 +188,7 @@ tests/unit/scripts/test_drive_eval_specialist_afc_gold.py :: skip :: 'DriveIndex
 tests/unit/scripts/test_drive_extract_s1.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/scripts/test_drive_extract_s1_reader.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/scripts/test_drive_transcript_fixtures.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
+tests/unit/scripts/test_quality_fix_units.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/scripts/test_s3_benches_route.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/services/test_drive_index_hostile_tree.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/services/test_drive_indexing_card_embedding_outcomes.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
