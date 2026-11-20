@@ -1,9 +1,9 @@
 """Spec drift: re-fetch the providers' published specs and diff the parts our adapters use against a committed baseline.
 
 TEST_COVERAGE_SYSTEMIC_RFC §4a "Contracts checked against reality", mechanism 1, built before P17 (the cheap part of
-P18). P17's `contracts/providers/<provider>/openapi.yaml` subsets do not exist yet, so the baseline is this module's
-own extract: `contracts/spec_drift/<source>.json`, one file per entry of `SOURCES`, written by `--update` and never
-by hand. When P17 lands, the drift run diffs the re-extracted subsets against `contracts/providers/` instead.
+P18). The baseline is this module's own extract: `contracts/spec_drift/<source>.json`, one file per entry of `SOURCES`,
+written by `--update` and never by hand. It is separate from P17's `contracts/providers/<provider>/openapi.yaml`
+request subsets, which `scripts/contracts/extract_subset.py` produces.
 
 What an extract holds, per kind of spec (documentation keywords are dropped, but never a schema property of the same name; set-like lists are sorted):
 - `openapi`: each watched operation (`"<method> <path>"`) and every component its `$ref`s reach, transitively;
