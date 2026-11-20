@@ -33,9 +33,11 @@ async def test_the_recently_closed_list_says_how_many_days_it_covers():
 
 
 async def test_the_review_queue_maps_the_services_entries_and_options_to_json():
+    # Reviewer edit (fact profile PR 13): the entry's domain is the profile's `primary_domain` (a registry key) under the
+    # API key `primary_domain`; the old `domain` field and key are gone.
     service = MagicMock()
     service.review_queue = AsyncMock(return_value=[
-        QueueEntry(question_id="q1", fact_id="f1", text="Drinks green tea", domain="preference", reported_date=None,
+        QueueEntry(question_id="q1", fact_id="f1", text="Drinks green tea", primary_domain="food", reported_date=None,
                    waiting_since=ASKED, asked_at=None, place="waiting"),
     ])
     # P2 revised (C14): answer_options maps each question kind to its options with their labels
@@ -46,7 +48,7 @@ async def test_the_review_queue_maps_the_services_entries_and_options_to_json():
     assert response.status_code == 200
     service.review_queue.assert_awaited_once_with("acc", "u1")
     assert body["questions"] == [{
-        "question_id": "q1", "text": "Drinks green tea", "domain": "preference", "reported_date": None,
+        "question_id": "q1", "text": "Drinks green tea", "primary_domain": "food", "reported_date": None,
         "waiting_since": ASKED.isoformat(), "asked_at": None, "status": "waiting",
         # P2 revised (C15): each item carries its kind, its group and its kind's options; no top-level options
         "kind": "still_true", "group": "questions",

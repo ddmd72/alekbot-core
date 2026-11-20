@@ -24,7 +24,7 @@ uploaded_by: local_script
  *
  * PURPOSE: Transform conversations into high-quality biographical memory that powers:
  *   1. BIOGRAPHICAL BASELINE — injected into every LLM prompt (CRITICAL+HIGH priority facts)
- *   2. SEMANTIC SEARCH — retrieved on-demand by topic (all domains, all priorities)
+ *   2. SEMANTIC SEARCH — retrieved on-demand by topic (all subjects, all priorities)
  *
  * HOW FACTS ARE STORED AND RETRIEVED:
  *   Facts are stored as text vector embeddings. Retrieval happens via semantic similarity search.
@@ -77,27 +77,13 @@ uploaded_by: local_script
     fact_taxonomy {
 
         /**
-         * ALL facts MUST be classified on ALL 4 axes before any tool call.
+         * ALL facts MUST carry the directive decision and be classified on the 3 axes below it before any tool call.
          */
 
-        // AXIS 1: Domain — 15 predefined categories
-        domains: {
-            BIOGRAPHICAL:    "Immutable identity (birthdate, blood type, citizenship, origin)"
-            POSSESSION:      "Owned physical objects (car, house, furniture, clothing, gadgets)"
-            HEALTH:          "Ongoing conditions and biometrics: chronic diseases, allergies, symptoms, weight, height, lifestyle health behaviors. What IS currently true about health state."
-            MEDICAL_RECORDS: "Clinical events with specific dates: lab results, imaging, procedures, prescriptions, point-in-time diagnoses. What WAS measured or performed at a specific time."
-            // Tiebreaker: specific clinical date + test/procedure → MEDICAL_RECORDS. Ongoing state or condition → HEALTH.
-            LOCATION:        "Addresses, residence, travel (home, office, city, country, trips)"
-            WORK:            "Occupation, career, employment (job title, company, salary, methodologies)"
-            NETWORK:         "Contacts, relationships (family, friends, colleagues, mentors)"
-            PREFERENCE:      "Habits, likes, dislikes, values, principles, routines"
-            SKILL:           "Abilities, knowledge, languages (programming, certifications, tools)"
-            PROJECT:         "Active work, temporary endeavors (current projects, evaluations, experiments) — USUALLY EPHEMERAL"
-            FINANCE:         "Money matters (income, expenses, investments, savings, debts, budgets)"
-            EDUCATION:       "Learning, degrees, courses (university, certifications, training, reading)"
-            LEGAL:           "Legal matters (contracts, agreements, licenses, legal issues, rights)"
-            ENTERTAINMENT:   "Leisure, hobbies, media (books, movies, games, sports, music)"
-            COMMUNICATION:   "Contact info, social media (phone, email, social accounts, handles)"
+        // AXIS 1: Directive (true or false) — the one decision you make about what a fact is
+        directive: {
+            purpose: "A fact with directive true is a standing directive: it is loaded into the orchestrator agent's prompt on every request as a binding rule, and the rulebook it joins is capped. A fact with directive false is memory about the owner: it reaches an agent through the biographical baseline or by search when it is relevant. What a fact is about (its subject area, the people, places and time it names) is worked out by a separate step after you write it, so you do not classify subjects."
+            rule: "directive true only for a standing instruction from the owner about how the assistant must behave, reason or respond that holds across most requests. Everything else is directive false: the owner's own life, habits, tastes, values and plans, and an instruction to the assistant that holds only under a specific condition."
         }
 
         // AXIS 2: Temporal Class
@@ -128,7 +114,7 @@ uploaded_by: local_script
         }
 
         tags_vs_metadata: {
-            tags:     "Array of strings — domain keywords for semantic search and tag-based filtering."
+            tags:     "Array of strings — topic keywords for semantic search and tag-based filtering."
             metadata: "Dict — structured data for analysis: numeric values, specific dates, typed fields."
         }
     }
@@ -234,7 +220,7 @@ uploaded_by: local_script
         steps: [
             "1. EXTRACT: Parse conversation → list of candidate facts. Be ruthless: prefer fewer high-quality candidates over many vague ones. Apply the 30-day test immediately — discard obvious non-starters before classifying.",
 
-            "2. CLASSIFY: For each candidate: assign Domain (from predefined list), Temporal Class, State (CURRENT by default), Context Priority, TTL. Extract tags (keyword array) and metadata (structured numeric/date dict).",
+            "2. CLASSIFY: For each candidate: decide directive (true or false), Temporal Class, State (CURRENT by default), Context Priority, TTL. Extract tags (keyword array) and metadata (structured numeric/date dict).",
 
             "3. SEARCH: For each candidate — one search_existing_facts call. Think through the best keywords and phrases before calling.",
 
@@ -274,7 +260,7 @@ uploaded_by: local_script
                 limit:           "Max results to return (default: 20)"
             }
 
-            returns: "List[Dict]: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal: str, state: str, tags: List[str], similarity: float}"
+            returns: "List[Dict]: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, primary_domain: str (the subject area a later step computes; null until then), directive: bool, temporal: str, state: str, tags: List[str], similarity: float}"
         }
 
         @tool create_fact(content: str, fact_attributes: dict) {
@@ -283,12 +269,12 @@ uploaded_by: local_script
             parameters: {
                 content: "Fact text — self-contained sentence, ≤40 words"
                 fact_attributes: {
-                    domain:           "FactDomain (BIOGRAPHICAL, POSSESSION, HEALTH, …)"
+                    directive:        "true or false: true makes the fact a standing directive, loaded into every prompt as a binding rule; every fact that is not a standing instruction from the owner about how the assistant must behave is false"
                     temporal_class:   "TemporalClass (PERMANENT, STABLE, DYNAMIC, EPHEMERAL)"
                     state:            "FactState (default: CURRENT)"
                     context_priority: "ContextPriority (CRITICAL, HIGH, MEDIUM, LOW, HISTORICAL)"
                     ttl_days:         "Auto-calculated from temporal_class (override only when needed)"
-                    tags:             "List[str] — domain keywords for search"
+                    tags:             "List[str] — topic keywords for search"
                     metadata:         "Dict — numeric values, specific dates, structured details"
                     context:          "Optional temporal context (e.g., 'Q1 2026 project')"
                     reported_date:    "Conversation timestamp (now)"
@@ -301,7 +287,7 @@ uploaded_by: local_script
             result = create_fact(
                 content="User started evening swimming practice (45 min daily) in Q1 2026",
                 fact_attributes={
-                    "domain": "HEALTH",
+                    "directive": false,
                     "temporal_class": "DYNAMIC",
                     "state": "CURRENT",
                     "context_priority": "MEDIUM",
@@ -349,7 +335,7 @@ uploaded_by: local_script
             parameters: {
                 fact_ids:       "List of UUIDs to merge"
                 merged_content: "Combined text (≤40 words)"
-                fact_attributes: "Attributes for merged fact (MUST include: domain, temporal_class, state, context_priority, tags, reported_date)"
+                fact_attributes: "Attributes for merged fact (MUST include: directive, temporal_class, state, context_priority, tags, reported_date)"
             }
 
             returns: "{new_fact_id, old_fact_ids, old_facts_state: SUPERSEDED, status, message}"
@@ -359,7 +345,7 @@ uploaded_by: local_script
                 fact_ids=["car-1", "car-2"],
                 merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) in Springfield, with automatic gearbox and tinted windows",
                 fact_attributes={
-                    "domain": "POSSESSION",
+                    "directive": false,
                     "temporal_class": "STABLE",
                     "state": "CURRENT",
                     "context_priority": "MEDIUM",
@@ -393,7 +379,7 @@ uploaded_by: local_script
             Candidate: "User's weight: 64 kg (Mar 10, 2026)"
 
             STEP 2 — CLASSIFY:
-            Domain: HEALTH | Temporal: DYNAMIC | State: CURRENT | Priority: MEDIUM | TTL: 90d
+            Directive: false | Temporal: DYNAMIC | State: CURRENT | Priority: MEDIUM | TTL: 90d
             Tags: ["weight", "health", "biometrics"] | Metadata: {weight_kg: 64, measurement_date: "2026-03-10"}
 
             STEP 3 — SEARCH:
@@ -488,13 +474,13 @@ uploaded_by: local_script
         @critical
         rule Taxonomy_Enforcement() {
             constraints: [
-                "Domain: MUST be from the predefined list of 15.",
+                "Directive: MUST be true or false; it decides whether the fact binds the assistant on every request.",
                 "Temporal Class: MUST be PERMANENT / STABLE / DYNAMIC / EPHEMERAL.",
                 "State: MUST be CURRENT / STALE / ARCHIVED / SUPERSEDED / INVALIDATED.",
                 "Context Priority: MUST be CRITICAL / HIGH / MEDIUM / LOW / HISTORICAL.",
             ]
             important: "HISTORICAL is context_priority (obsolete facts). ARCHIVED is state (inactive facts). Do not confuse."
-            fallback: "If classification unclear → conservative defaults (STABLE, CURRENT, MEDIUM)."
+            fallback: "If classification unclear → conservative defaults (directive false, STABLE, CURRENT, MEDIUM)."
         }
 
         @critical

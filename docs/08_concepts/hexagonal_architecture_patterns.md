@@ -512,10 +512,10 @@ Extract shared normalization into a function in `domain/` — pure logic with ze
 
 ```python
 # src/domain/entities.py
-_FACT_TAXONOMY_FIELDS = ("domain", "temporal_class", "state", "context_priority")
+_FACT_TAXONOMY_FIELDS = ("temporal_class", "state", "context_priority")
 
 def normalize_fact_taxonomy(metadata: dict) -> dict:
-    """Normalize 4D taxonomy fields to lowercase for enum compatibility."""
+    """Normalize taxonomy fields to lowercase for enum compatibility."""
     result = dict(metadata)
     for field in _FACT_TAXONOMY_FIELDS:
         value = result.get(field)

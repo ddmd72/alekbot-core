@@ -12,29 +12,6 @@ class FactType(str, Enum):
     ALERT = "alert"         # Critical alerts / Risks
 
 
-# ========================================================================
-# Deliberate Fact Management (RFC 2026-02-16): 4D Fact Taxonomy
-# ========================================================================
-class FactDomain(str, Enum):
-    """WHAT is this fact about? (Structural category)"""
-    BIOGRAPHICAL = "biographical"
-    POSSESSION = "possession"
-    HEALTH = "health"
-    MEDICAL_RECORDS = "medical_records"
-    LOCATION = "location"
-    WORK = "work"
-    NETWORK = "network"
-    PREFERENCE = "preference"
-    AGENT_DIRECTIVE = "agent_directive"  # standing behavioral orders from the user to the agent
-    SKILL = "skill"
-    PROJECT = "project"
-    FINANCE = "finance"
-    EDUCATION = "education"
-    LEGAL = "legal"
-    ENTERTAINMENT = "entertainment"
-    COMMUNICATION = "communication"
-
-
 class TemporalClass(str, Enum):
     """HOW LONG does this fact live? (Lifecycle category)"""
     PERMANENT = "permanent"
@@ -80,16 +57,16 @@ class FactVisibility(str, Enum):
 
 # ========================================================================
 # ARCHITECTURE FIX: Domain-level normalization for LLM → enum mapping.
-# LLM sometimes returns "CURRENT" / "BIOGRAPHICAL" instead of lowercase.
-# This is a DOMAIN concern (mapping raw output to FactDomain/FactState/etc.),
+# LLM sometimes returns "CURRENT" / "STABLE" instead of lowercase.
+# This is a DOMAIN concern (mapping raw output to FactState/TemporalClass/etc.),
 # not an adapter concern. Previously duplicated 6 times across 2 adapters.
 # ========================================================================
-_FACT_TAXONOMY_FIELDS = ("domain", "temporal_class", "state", "context_priority")
+_FACT_TAXONOMY_FIELDS = ("temporal_class", "state", "context_priority")
 _RETIRED_PRIORITY = "historical"  # the old name of ARCHIVAL (RFC D11); a model still sends it
 
 
 def normalize_fact_taxonomy(metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize 4D taxonomy fields to lowercase for enum compatibility.
+    """Normalize taxonomy fields to lowercase for enum compatibility.
 
     Call this BEFORE constructing FactEntity from LLM output.
     Returns a new dict — does not mutate the input.
@@ -147,9 +124,9 @@ class FactEntity(BaseModel):
     metadata: Dict[str, Any] = {}
 
     # ========================================================================
-    # Deliberate Fact Management: 4D Taxonomy (optional during transition)
+    # Deliberate Fact Management: taxonomy (optional during transition)
     # ========================================================================
-    domain: Optional[FactDomain] = None
+    directive: bool = False   # a standing directive: the consolidator's decision; read by `is_directive` only
     temporal_class: Optional[TemporalClass] = None
     state: FactState = FactState.CURRENT
     context_priority: ContextPriority = ContextPriority.MEDIUM

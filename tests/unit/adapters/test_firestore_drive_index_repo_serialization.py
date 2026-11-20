@@ -160,6 +160,12 @@ class TestRecordSerialization:
         assert doc["content_identity"] == {"family": "quickxor", "digest": "q", "size": 10}
         assert doc["modified_at"] == T and doc["modified_at"].tzinfo is not None
 
+    def test_the_fan_out_field_is_named_and_the_tick_writes_every_other_field(self):
+        # by name, not through the module's constants (the cases above read them): a field moved into the fan-out list
+        # would leave the tick's record writes while the round trip below still passes (§26.2, Δ54)
+        assert RECORD_FANOUT_FIELDS == ("inaccessible_notified_since",)
+        assert set(record_to_doc(full_record())) == {f.name for f in fields(DriveIndexRecord)} - {"inaccessible_notified_since"}
+
     def test_round_trip_through_stored_types(self):
         # the fan-out's field is written by its own field update (set_inaccessible_notified, §26.2, Δ54), not by
         # record_to_doc: the stored document holds both, and record_from_doc reads every field back

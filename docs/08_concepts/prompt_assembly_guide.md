@@ -33,7 +33,7 @@ PromptBuilderPort (port interface)
        └─ build_for_agent(agent_type, user_id, routing_metadata, ...)
             ├─ BiographicalContextService.get_biographical_context_cached(account_id)
             ├─ Split the cached facts into three channels:
-            │    directives (agent_directive domain) → standing_directives
+            │    directives (is_directive)            → standing_directives
             │    query-specific (tagged semantic_lens) → query_specific_context
             │    everything else                      → static biographical context
             └─ PromptAssemblyService.assemble(agent_type, user_id, account_id,
@@ -308,10 +308,10 @@ Facts come from two sources:
 2. **Query-specific (Q-S) context** — semantic search results from the router, tagged `semantic_lens` by `merge_enriched_context_with_biographical()`. These go in the **dynamic** section after the boundary.
 
 The split happens in `UserPromptBuilder.build_for_agent()`, which also takes the standing directives (the
-`agent_directive` domain) out into their own channel. In outline:
+facts `is_directive` marks: the consolidator's `directive` flag) out into their own channel. In outline:
 ```python
-directives  = [f for f in facts if domain(f) == "agent_directive"] if include_directives else []
-static_bio  = [f for f in facts if not directive(f) and "semantic_lens" not in tags(f)]
+directives  = [f for f in facts if is_directive(f)] if include_directives else []
+static_bio  = [f for f in facts if not is_directive(f) and "semantic_lens" not in tags(f)]
 qs_facts    = [f for f in facts if "semantic_lens" in tags(f)]
 ```
 

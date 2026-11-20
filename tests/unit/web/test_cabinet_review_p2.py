@@ -28,7 +28,7 @@ KEYS = ("questions.invoices_title", "questions.one_kind")
 
 
 def _entry(qid: str, kind: str = "still_true", delivery: str = "chat") -> QueueEntry:
-    return QueueEntry(question_id=qid, fact_id=f"f-{qid}", text="a concert on Friday", domain=None, reported_date=None,
+    return QueueEntry(question_id=qid, fact_id=f"f-{qid}", text="a concert on Friday", primary_domain=None, reported_date=None,
                       waiting_since=T0, asked_at=None, place="waiting", question=kind, delivery=delivery)  # type: ignore[arg-type]
 
 

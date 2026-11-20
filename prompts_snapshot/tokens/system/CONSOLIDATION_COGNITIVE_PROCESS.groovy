@@ -24,11 +24,11 @@ steps: [
     "1. EXTRACT: Parse conversation → list of candidate facts",
 
     "2. CLASSIFY: For EACH candidate:",
-    "   - Assign Domain (from predefined list)",
+    "   - Decide directive (true or false)",
     "   - Assign Temporal Class (PERMANENT/STABLE/DYNAMIC/EPHEMERAL)",
     "   - Assign Initial State (CURRENT)",
     "   - Decide expiry from the content (kinds table): date, horizon or none",
-    "   - Extract tags (general classifications: domain keywords, dates)",
+    "   - Extract tags (general classifications: topic keywords, dates)",
     "   - Extract metadata (structured data: numeric values, specific dates, details)",
     "   - Add context (time period, trigger event)",
 
@@ -83,7 +83,7 @@ steps: [
     "   Step A — Apply conflict_resolution rules FIRST (they override heuristics):",
     "   - Negation detected? → INVALIDATED or ARCHIVED (see Negation_And_Invalidation)",
     "   - Core identity contradiction? → CREATE (separate observation, not UPDATE)",
-    "   - Time series domain (HEALTH/FINANCE/SKILL)? → UPDATE with history preserved",
+    "   - A new reading of a value measured or counted over time? → UPDATE with history preserved",
     "   ",
     "   Step B — If no conflict applies, confirm tentative operation from Step 4:",
     "   - UPDATE / CREATE / MERGE / DISCARD per decision_heuristics",

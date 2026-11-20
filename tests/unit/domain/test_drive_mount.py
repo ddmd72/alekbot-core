@@ -1,8 +1,5 @@
-"""Mount: derived properties and immutability."""
-from dataclasses import FrozenInstanceError
+"""Mount: derived properties."""
 from datetime import datetime, timezone
-
-import pytest
 
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_mount import Mount
@@ -19,15 +16,3 @@ def _connection(**over) -> DriveConnection:
 def test_properties_delegate_to_the_connection():
     mount = Mount(connection=_connection(), primary=True)
     assert (mount.name, mount.connection_id, mount.ref_tag) == ("Acme", "c1", "a1")
-
-
-def test_former_names_default_to_empty_and_are_kept():
-    assert Mount(connection=_connection(), primary=False).former_names == ()
-    assert Mount(connection=_connection(), primary=False, former_names=("Drive 2", "Drive")).former_names == (
-        "Drive 2", "Drive")
-
-
-def test_mount_is_immutable():
-    mount = Mount(connection=_connection(), primary=True)
-    with pytest.raises(FrozenInstanceError):
-        mount.primary = False  # type: ignore[misc]

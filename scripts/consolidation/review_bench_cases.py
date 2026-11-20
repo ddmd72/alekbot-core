@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.entities import ExpiryKind, FactEntity, FactState, FactType, TemporalClass
+from src.domain.fact_domains import Domain
 from src.domain.fact_expiry import Expiry
 from src.domain.fact_lifecycle import compute_expiry
 from src.domain.fact_review_frame import (
@@ -48,7 +49,7 @@ class FactCase:
 
     key: str
     text: str
-    domain: FactDomain
+    primary_domain: str
     fact_type: FactType
     reported: datetime
     ttl_days: int
@@ -71,29 +72,29 @@ def stale_cases(now: datetime) -> Tuple[FactCase, ...]:
     return (
         FactCase(
             "plan_date_passed", "Alex will give a talk at the Hamburg conference on 15 October 2026.",
-            FactDomain.WORK, FactType.STATE, _utc(2026, 9, 10), 35,
+            Domain.WORK, FactType.STATE, _utc(2026, 9, 10), 35,
             "a horizon plan whose day passed and that nothing decides: asked with question happened (texts happened, "
             "not_happened, unknown; fallback history) or rewritten as history on evidence; never archived, never a "
             "date_passed history (its text reports no outcome)",
         ),
         FactCase(
             "revive_without_basis", "Alex trains at the Iron Temple gym.",
-            FactDomain.HEALTH, FactType.STATE, now - timedelta(days=100), 30,
+            Domain.SPORT, FactType.STATE, now - timedelta(days=100), 30,
             "nothing in front of the model decides it: asked, not revived",
         ),
         FactCase(
             "duplicate_a", "Alex is recovering from knee surgery.",
-            FactDomain.HEALTH, FactType.STATE, _utc(2026, 10, 6), 10,
+            Domain.HEALTH, FactType.STATE, _utc(2026, 10, 6), 10,
             "the two say one thing: decided together (one closed in favour of the other) or both asked; never both revived",
         ),
         FactCase(
             "duplicate_b", "The user had knee surgery on 2026-10-05 and is recovering.",
-            FactDomain.HEALTH, FactType.STATE, _utc(2026, 10, 7), 10,
+            Domain.HEALTH, FactType.STATE, _utc(2026, 10, 7), 10,
             "the same case as duplicate_a",
         ),
         FactCase(
             "undecidable", "Alex is planning a Prague trip with a hotel budget of about 800 euros.",
-            FactDomain.PROJECT, FactType.STATE, now - timedelta(days=120), 60,
+            Domain.TRAVEL, FactType.STATE, now - timedelta(days=120), 60,
             "no evidence either way: asked, not guessed",
         ),
     )
@@ -104,17 +105,17 @@ def reply_cases(now: datetime) -> Tuple[FactCase, ...]:
     reported = now - timedelta(days=120)
     return (
         FactCase(
-            "reply_unrelated", "Alex takes the pills daily.", FactDomain.HEALTH, FactType.STATE, reported, 90,
+            "reply_unrelated", "Alex takes the pills daily.", Domain.HEALTH, FactType.STATE, reported, 90,
             "the reply is about the car service: no answer to this question, nothing decided from it",
             reply="Can we move the car service to Thursday?",
         ),
         FactCase(
-            "reply_still_true", "Alex walks daily in the park, now with the dog.", FactDomain.HEALTH, FactType.STATE,
+            "reply_still_true", "Alex walks daily in the park, now with the dog.", Domain.HEALTH, FactType.STATE,
             reported, 90, "revived on the reply (basis reply, the quote found in the reply)",
             reply="yes, still the case",
         ),
         FactCase(
-            "reply_stopped", "Alex attends pottery classes.", FactDomain.PREFERENCE, FactType.STATE, reported, 90,
+            "reply_stopped", "Alex attends pottery classes.", Domain.HOBBIES, FactType.STATE, reported, 90,
             "archived on the reply with a history fact in the past tense saying it ended in October",
             reply="stopped in October",
         ),
@@ -125,7 +126,7 @@ def fact_entity(case: FactCase, account_id: str, user_id: str) -> FactEntity:
     """The case's fact as a stored current document (the kit stages it stale): no vector, a horizon that has run out."""
     return FactEntity(
         id=case.fact_id, account_id=account_id, created_by_user_id=user_id, lineage_id=f"L-{case.fact_id}",
-        text=case.text, type=case.fact_type, domain=case.domain, temporal_class=TemporalClass.DYNAMIC,
+        text=case.text, type=case.fact_type, primary_domain=case.primary_domain, temporal_class=TemporalClass.DYNAMIC,
         state=FactState.CURRENT, is_current=True, reported_date=case.reported, created_at=case.reported,
         valid_from=case.reported, last_updated=case.reported, expiry_kind=ExpiryKind.HORIZON, ttl_days=case.ttl_days,
         expires_at=case.expires_at,

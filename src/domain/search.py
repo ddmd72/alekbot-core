@@ -23,7 +23,8 @@ class EnrichedFact:
     vector: Optional[List[float]] = None  # Included for semantic deduplication
     # Taxonomy fields — populated by SearchEnrichmentService; None for callers that don't need them
     fact_type: Optional[str] = None
-    domain: Optional[str] = None
+    primary_domain: Optional[str] = None   # the profile's registry key (None while unprofiled)
+    directive: bool = False
     temporal_class: Optional[str] = None
     state: Optional[str] = None
     context_priority: Optional[str] = None
@@ -47,7 +48,8 @@ class EnrichedFact:
             source=source,
             relevance_score=relevance_score,
             fact_type=fact.type.value if fact.type else None,
-            domain=fact.domain.value if fact.domain else None,
+            primary_domain=fact.primary_domain,
+            directive=fact.directive,
             temporal_class=fact.temporal_class.value if fact.temporal_class else None,
             state=fact.state.value if fact.state else None,
             context_priority=fact.context_priority.value if fact.context_priority else None,
@@ -123,7 +125,8 @@ def consolidation_hit(hit: EnrichedFact, timezone: str) -> Dict[str, Any]:
         "similarity": hit.relevance_score,
         "source": hit.source,
         "type": hit.fact_type,
-        "domain": hit.domain,
+        "primary_domain": hit.primary_domain,
+        "directive": hit.directive,
         "temporal_class": hit.temporal_class,
         "state": hit.state,
         "context_priority": hit.context_priority,

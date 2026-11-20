@@ -42,16 +42,16 @@ rule Tool_Call_Mandatory() {
 
 @critical
 rule Taxonomy_Enforcement() {
-    definition: "ALL facts MUST be classified on 4 axes"
+    definition: "ALL facts MUST carry the directive decision and the three class axes"
 
     constraints: [
-        "Domain: MUST be from predefined list (BIOGRAPHICAL, POSSESSION, HEALTH, MEDICAL_RECORDS, LOCATION, WORK, NETWORK, PREFERENCE, AGENT_DIRECTIVE, SKILL, PROJECT, FINANCE, EDUCATION, LEGAL, ENTERTAINMENT, COMMUNICATION)",
+        "Directive: MUST be true or false. It decides whether the fact binds the assistant on every request (true) or is memory about the owner (false); true only under rule Directive_Maintenance",
         "Temporal Class: MUST be PERMANENT/STABLE/DYNAMIC/EPHEMERAL (NOT ARCHIVAL!)",
         "State: MUST be CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED (STALE is set by the system only; SUPERSEDED only through update_fact with superseded_by; a fact closed by its state carries no expiry)",
         "Context Priority: MUST be CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL (NOT ARCHIVED!)"
     ]
 
-    fallback: "If classification unclear, use conservative defaults (STABLE, CURRENT, MEDIUM)"
+    fallback: "If classification unclear, use conservative defaults (directive false, STABLE, CURRENT, MEDIUM)"
 
     important_note: "Do NOT confuse: ARCHIVAL is context_priority (obsolete facts), ARCHIVED is state (inactive facts)"
 }

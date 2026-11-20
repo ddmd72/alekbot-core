@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.entities import (
-    ContextPriority, ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass,
+    ContextPriority, ExpiryKind, FactEntity, FactState, FactType, TemporalClass,
 )
 from src.domain.fact_expiry import EXPIRY_NONE
 from src.domain.fact_review_answers import ARCHIVE_ONLY, ended_text, history_fact, history_refusal, history_trail
@@ -21,7 +21,7 @@ NOW = SAID + timedelta(minutes=3)
 def old_fact(**over):
     base = dict(
         id="f-old", account_id="acc", created_by_user_id="u1", lineage_id="lin-old", text="works at Acme",
-        type=FactType.STATE, domain=FactDomain.WORK,
+        type=FactType.STATE,
         tags=["job", "consolidated"], metadata={"employer": "Acme"}, temporal_class=TemporalClass.DYNAMIC,
         context_priority=ContextPriority.HIGH, state=FactState.STALE, reported_date=SAID - timedelta(days=400),
         expiry_kind=ExpiryKind.HORIZON, ttl_days=180, expires_at=SAID - timedelta(days=220),
@@ -42,7 +42,9 @@ def test_the_history_fact_says_the_text_holds_forever_and_keeps_the_old_facts_ta
     assert attrs.content == text and attrs.state is FactState.CURRENT
     assert attrs.expiry == EXPIRY_NONE
     assert attrs.expiry_fields == {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
-    assert (attrs.domain, attrs.type, attrs.tags) == (old.domain, old.type, old.tags)
+    # Reviewer edit (fact profile PR 13): the old `domain` is gone; the history fact copies the `directive` flag, either way.
+    assert (attrs.directive, attrs.type, attrs.tags) == (old.directive, old.type, old.tags) == (False, old.type, old.tags)
+    assert history_fact(old_fact(directive=True), text, SAID, "Europe/Madrid").directive is True
     # Reviewer edit (facts S4, T3a re-review, L3/L4 arbiter): a history fact is stable and archival, not copied.
     assert (attrs.temporal_class, attrs.context_priority) == (TemporalClass.STABLE, ContextPriority.ARCHIVAL)
     assert attrs.reported_date == SAID

@@ -121,7 +121,14 @@ def test_taxonomy_states_the_kinds_table_and_its_precedence_over_the_class_line(
 def test_taxonomy_date_rules_compare_with_today_and_resolve_ranges_months_and_years():
     text = body("CONSOLIDATION_TAXONOMY")
     assert "Compare every date with Today, not with the message time" in text
-    assert "DISCARD it if it no longer matters" in text and "{kind: none}" in text
+    # Reviewer edit (fact profile PR 13, owner decision 4): a past plan is no longer discarded for its date; one that took
+    # place is an event kept or discarded on significance grounds; one that did not, or whose outcome is unknown, is
+    # rewritten as history.
+    assert "DISCARD it if it no longer matters" not in text and "{kind: none}" in text
+    assert ("A past plan that took place is an event: keep or discard it on the same significance grounds as any other "
+            "event, never for its date being past") in text
+    assert ("A past plan that did not take place or whose outcome is unknown, and a past validity, are rewritten as "
+            "history (past tense, the outcome if known) with {kind: none}") in text
     assert "A range -> its last day. Only a month -> its last day. Only a year -> none" in text
     assert "then Dec 31 of that year" in text
 

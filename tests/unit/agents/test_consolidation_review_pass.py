@@ -15,6 +15,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.entities import ExpiryKind
+from src.domain.fact_domains import Domain
 from src.domain.fact_review_language import CANONICAL_LABELS, LABEL_KEYS
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_task import FactReviewTask, ReviewItem, encode_review_task
@@ -376,7 +377,11 @@ async def test_mirror_mode_carries_the_owners_messages_and_the_labels_instructio
 
 
 async def test_each_fact_line_is_built_from_the_view_with_versions_neighbours_and_question(world):
-    fact, near = await _stale(world, "plays tennis on Sundays"), await _evidence(world, "joined a tennis club")
+    # Reviewer edit (fact profile PR 13, task item 3): the line shows the profile's `primary_domain` (a registry key) in
+    # place of the old domain; the fact is profiled so the value shows.
+    fact = await world.seed_stale("plays tennis on Sundays", expiry_kind=ExpiryKind.HORIZON, ttl_days=14,
+                                  reported_date=NOW - timedelta(days=60), primary_domain=Domain.SPORT)
+    near = await _evidence(world, "joined a tennis club")
     open_question = build_question(QuestionStatus.ASKED, fact_id=fact, account_id=ACC, user_id=USER,
                                    reply_text="still do", reply_at=NOW - timedelta(days=1))
     version = (await world.repo.get_fact_by_id(near)).model_copy(update={"version": 1, "text": "plays tennis", "valid_from": NOW - timedelta(days=90)})
@@ -386,8 +391,9 @@ async def test_each_fact_line_is_built_from_the_view_with_versions_neighbours_an
 
     line = _line(_user_text(agent))
     stored = await world.repo.get_fact_by_id(fact)
-    assert list(line) == ["fact_id", "content", "domain", "type", "expiry", "due", "reported", "stale_since", "versions",
-                          "neighbours", "question"]
+    assert list(line) == ["fact_id", "content", "primary_domain", "type", "expiry", "due", "reported", "stale_since",
+                          "versions", "neighbours", "question"]
+    assert line["primary_domain"] == stored.primary_domain == Domain.SPORT
     assert line["fact_id"] == fact and line["content"] == "plays tennis on Sundays"
     assert line["expiry"] == {"kind": "horizon", "days": 14} and line["type"] == stored.type.value
     assert line["reported"] == (NOW - timedelta(days=60)).date().isoformat()

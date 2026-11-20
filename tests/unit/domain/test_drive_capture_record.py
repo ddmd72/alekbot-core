@@ -1,10 +1,8 @@
 """Capture on the record (USER_DRIVE_INDEXING_RFC §26.3, D34, Δ47, Δ57): `file_capture` per kind, what the planner's
-`triaged`, `indexed` and `demoted` write, and the Firestore codec writing both fields and reading them back (their
-stored form and a record stored before them are in the every-field case,
-tests/unit/adapters/test_firestore_drive_index_repo_serialization.py)."""
+`triaged`, `indexed` and `demoted` write. The Firestore codec's round trip of both fields (plain strings the rollback tag
+ignores) is in the every-field case (tests/unit/adapters/test_firestore_drive_index_repo_serialization.py)."""
 from datetime import datetime, timezone
 
-from src.adapters.firestore_drive_index_repo import record_from_doc, record_to_doc
 from src.domain.drive_capture import CaptureSignals, file_capture
 from src.domain.drive_extraction import ExtractionOutcome, TriageResult
 from src.domain.document_extraction import ExtractionStatus
@@ -77,9 +75,3 @@ class TestPlanner:
     def test_a_content_demotion_clears_it(self):
         out = demoted(rec(kind="pdf", capture="scan", capture_source="detected"), Reason.NO_TEXT, NOW)
         assert (out.capture, out.capture_source) == ("", "")
-
-
-class TestCodec:
-    def test_round_trip(self):
-        original = rec(capture="document_photo", capture_source="automatic")
-        assert record_from_doc(record_to_doc(original)) == original

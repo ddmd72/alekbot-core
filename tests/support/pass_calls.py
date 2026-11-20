@@ -2,12 +2,11 @@
 
 The stats read `PassCall`s, which the agent builds from each tool call (`consolidation_agent._pass_call`). These
 builders give the values the agent builds for the old scenarios' calls: a create or merge keyed by its text, with its
-sources and domain; an update or ask keyed by its fact id, `closing` when its state closes the fact. The fingerprint
+sources and directive decision; an update or ask keyed by its fact id, `closing` when its state closes the fact. The fingerprint
 names the call's inputs, so two calls with the same inputs are a repeat."""
 from typing import Iterable, Optional, Sequence
 
 from src.domain.consolidation_pass_stats import ConsolidationPassStats, PassCall, PassTool
-from src.domain.entities import FactDomain
 from src.domain.pass_actor import PassActor
 
 __all__ = ["ask", "count", "create", "merge", "search", "stats", "turn", "update"]
@@ -22,21 +21,22 @@ def turn(s: ConsolidationPassStats, calls: Sequence[PassCall], outcomes: Sequenc
     s.record_outcomes(calls, outcomes)
 
 
-def _domain(domain: Optional[str]) -> Optional[FactDomain]:
-    return FactDomain(domain) if domain else None
+def _directive(domain: Optional[str]) -> bool:
+    """The directive decision an old-domain value stood for (the stats compare the decision, not the domain)."""
+    return domain == "agent_directive"
 
 
 def create(text: str, *, derived: Optional[Iterable[str]] = None, domain: Optional[str] = None) -> PassCall:
     sources = frozenset(derived or ())
     return PassCall.with_text(
-        PassTool.CREATE, f"create:{text}:{sorted(sources)}:{domain}", text, sources=sources, domain=_domain(domain),
+        PassTool.CREATE, f"create:{text}:{sorted(sources)}:{domain}", text, sources=sources, directive=_directive(domain),
     )
 
 
 def merge(text: str, ids: Iterable[str] = ("a", "b"), domain: Optional[str] = None) -> PassCall:
     sources = frozenset(ids)
     return PassCall.with_text(
-        PassTool.MERGE, f"merge:{text}:{sorted(sources)}:{domain}", text, sources=sources, domain=_domain(domain),
+        PassTool.MERGE, f"merge:{text}:{sorted(sources)}:{domain}", text, sources=sources, directive=_directive(domain),
     )
 
 

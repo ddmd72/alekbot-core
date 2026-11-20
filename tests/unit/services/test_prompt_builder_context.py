@@ -143,7 +143,7 @@ async def test_directives_split_into_own_channel(mock_repo, mock_assembly_servic
     builder = PromptBuilder(mock_repo, assembly_service=mock_assembly_service)
     facts = [
         {"text": "Born in Springfield", "domain": "biographical", "tags": []},
-        {"text": "Never give partial answers.", "domain": "agent_directive", "tags": []},
+        {"text": "Never give partial answers.", "directive": True, "tags": []},
     ]
     await builder.build_for_agent(agent_type="smart", user_id="u1", biographical_facts=facts)
 
@@ -160,7 +160,7 @@ async def test_include_directives_false_drops_directive_channel(mock_repo, mock_
     builder = PromptBuilder(mock_repo, assembly_service=mock_assembly_service)
     facts = [
         {"text": "Born in Springfield", "domain": "biographical", "tags": []},
-        {"text": "Never give partial answers.", "domain": "agent_directive", "tags": []},
+        {"text": "Never give partial answers.", "directive": True, "tags": []},
     ]
     await builder.build_for_agent(
         agent_type="consolidation", user_id="u1",

@@ -7,7 +7,6 @@ import pytest
 from src.domain.entities import (
     ContextPriority,
     ExpiryKind,
-    FactDomain,
     FactEntity,
     FactState,
     FactType,
@@ -37,24 +36,24 @@ def fact(**overrides):
 
 
 @pytest.mark.parametrize(
-    "domain, type_, tags",
+    "directive, type_, tags",
     [
-        (FactDomain.AGENT_DIRECTIVE, FactType.EVENT, []),
-        (FactDomain.WORK, FactType.PRINCIPLE, []),
-        (None, FactType.EVENT, ["mindset"]),
-        (FactDomain.WORK, FactType.EVENT, ["Mindset", "x"]),
+        (True, FactType.EVENT, []),
+        (False, FactType.PRINCIPLE, []),
+        (False, FactType.EVENT, ["mindset"]),
+        (False, FactType.EVENT, ["Mindset", "x"]),
     ],
 )
-def test_each_pin_trigger_pins(domain, type_, tags):
-    assert expiry_pinned(domain, type_, tags) is True
+def test_each_pin_trigger_pins(directive, type_, tags):
+    assert expiry_pinned(directive, type_, tags) is True
 
 
 @pytest.mark.parametrize(
-    "domain, type_, tags",
-    [(None, FactType.EVENT, []), (FactDomain.PREFERENCE, FactType.STATE, ["habit"]), (FactDomain.WORK, FactType.SYSTEM, ["mind"])],
+    "directive, type_, tags",
+    [(False, FactType.EVENT, []), (False, FactType.STATE, ["habit"]), (False, FactType.SYSTEM, ["mind"])],
 )
-def test_other_facts_are_not_pinned(domain, type_, tags):
-    assert expiry_pinned(domain, type_, tags) is False
+def test_other_facts_are_not_pinned(directive, type_, tags):
+    assert expiry_pinned(directive, type_, tags) is False
 
 
 def test_a_pinned_fact_without_a_decision_gets_none_and_with_none_keeps_it():

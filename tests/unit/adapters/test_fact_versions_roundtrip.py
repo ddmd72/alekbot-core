@@ -34,7 +34,7 @@ def store():
 
 def meta(**over):
     base = {
-        "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
+        "account_id": ACC, "user_id": USER, "directive": False, "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"}, "type": "event",
         "expiry": EXPIRY_NONE,
     }
@@ -594,7 +594,9 @@ async def test_merge_with_a_bad_value_writes_nothing_and_leaves_sources_current(
     store.write._embedding = embedder
     resolutions = count_resolutions(store.repo)
 
-    for bad in ({"domain": "nonsense"}, {"state": "superseded"}, {"reported_date": "Oct 2026"}):
+    # Reviewer edit (fact profile PR 13): a bad `domain` is no longer a refusal (the key is unknown now); its row is a
+    # `directive` that is not a bool.
+    for bad in ({"directive": "nonsense"}, {"state": "superseded"}, {"reported_date": "Oct 2026"}):
         res = await store.adapter.merge_facts([a, b], "likes tea daily", meta(**bad), context=ctx())
         assert res["status"] == "failed" and res["new_fact_id"] is None and res["old_fact_ids"] == []
 

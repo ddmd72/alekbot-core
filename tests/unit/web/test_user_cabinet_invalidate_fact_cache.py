@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 from quart import Quart
 
 from src.adapters.firestore_repo import FirestoreFactRepository
-from src.domain.entities import FactDomain
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
@@ -46,7 +45,7 @@ def _cached_texts(store):
 
 async def _seed(store, bio):
     for i, text in enumerate(("keep me", "drop me")):
-        await store.repo.add_fact(make_fact(text, account=_ACCOUNT_ID, domain=FactDomain.BIOGRAPHICAL, age_days=i))
+        await store.repo.add_fact(make_fact(text, account=_ACCOUNT_ID, age_days=i))
     await bio.refresh_cache(_ACCOUNT_ID)
     assert sorted(_cached_texts(store)) == ["drop me", "keep me"]
 

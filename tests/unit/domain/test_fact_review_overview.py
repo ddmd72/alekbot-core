@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from src.domain.fact_domains import Domain
 from src.domain.fact_review_overview import (
     SET_ASIDE_LIMIT, holds_other_users_question, listable_state, queue_entries, set_aside_since, user_questions,
 )
@@ -67,13 +68,15 @@ def test_a_pending_question_that_is_not_the_current_one_waits():
 
 def test_an_entry_shows_its_fact_as_it_stands_or_what_the_question_quoted():
     q = question(fact_id="f1", quoted_text="Drinks green tea")
-    changed = fact("f1", text="Drinks black tea")
+    changed = fact("f1", text="Drinks black tea", primary_domain=Domain.FOOD)
 
     [shown] = queue_entries(None, [q], {"f1": changed}, "acc")
     [gone] = queue_entries(None, [q], {}, "acc")
 
     assert (shown.text, shown.reported_date, shown.waiting_since) == ("Drinks black tea", changed.reported_date, q.queue_key)
-    assert (gone.text, gone.domain, gone.reported_date) == ("Drinks green tea", None, None)
+    # Reviewer edit (fact profile PR 13): the entry shows the fact's profile domain (`primary_domain`), not the old domain.
+    assert shown.primary_domain == Domain.FOOD
+    assert (gone.text, gone.primary_domain, gone.reported_date) == ("Drinks green tea", None, None)
 
 
 def test_a_question_of_another_user_in_the_account_is_not_the_users_to_answer():

@@ -26,14 +26,15 @@ QueuePlace = Literal["current", "sent", "waiting"]
 @dataclass(frozen=True)
 class QueueEntry:
     """One open question as the owner sees it: its fact in full as it stands now (the quoted text when the fact is gone),
-    the fact's domain and `reported_date` when known, since when it has been waiting (`waiting_since`, the queue key: the
-    fact's `stale_since`), when it was sent (`asked_at`, none while it waits), its place, and the question's kind and
-    delivery (P2-3: a `digest` question is a routine invoice, answered in the Cabinet only)."""
+    the fact's profile domain (`primary_domain`, a registry key the Cabinet shows by its label) and `reported_date` when
+    known, since when it has been waiting (`waiting_since`, the queue key: the fact's `stale_since`), when it was sent
+    (`asked_at`, none while it waits), its place, and the question's kind and delivery (P2-3: a `digest` question is a
+    routine invoice, answered in the Cabinet only)."""
 
     question_id: str
     fact_id: str
     text: str
-    domain: Optional[str]
+    primary_domain: Optional[str]
     reported_date: Optional[datetime]
     waiting_since: datetime
     asked_at: Optional[datetime]
@@ -94,7 +95,7 @@ def _entry(question: FactReviewQuestion, fact: Optional[FactEntity], place: Queu
         question_id=question.question_id,
         fact_id=question.fact_id,
         text=fact.text if fact is not None else question.quoted_text,
-        domain=fact.domain.value if fact is not None and fact.domain is not None else None,
+        primary_domain=fact.primary_domain if fact is not None else None,
         reported_date=fact.reported_date if fact is not None else None,
         waiting_since=question.queue_key,
         asked_at=question.asked_at,

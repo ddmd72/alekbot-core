@@ -188,17 +188,11 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── session.py      # 🆕 Session model with Sliding Window logic
 │   ├── settings.py     # 🆕 SearchConfig dataclass (moved from config/ for hexagonal purity)
 │   ├── tone.py         # 🆕 UserTone enum & validation
-│   ├── tool_result.py  # Standardized tool results
 │   ├── ui_messages.py  # Semantic UI Status Types
 │   └── user.py         # User domain entities + PerformanceTier
 ├── handlers/           # Application Layer (Orchestrators)
 │   ├── agent_worker_handler.py  # 🆕 ASYNC agent execution from Cloud Tasks (ACP v2)
 │   ├── conversation_handler.py # Platform-agnostic main orchestrator. Graceful degradation delegated to AgentFallbackService.
-│   ├── deep_research_delivery.py # 🆕 Shared deep research delivery helpers:
-│   │                     #    upload_html_report()    — wrap markdown in HTML, upload to GCS (debug only)
-│   │                     #    _upload_round()         — upload raw markdown round text to GCS as .md file
-│   │                     #    deliver_deep_research() — upload round files, send named links, enqueue HtmlPageGenerator task
-│   │                     #    NotificationPort — structural Protocol for UserNotificationService
 │   ├── worker_handler.py # 🆕 /worker dispatcher — routes Cloud Tasks by task_type:
 │   │                     #    email_indexing, email_indexing_watchdog, consolidation, agent_execution
 │   └── learning_loop.py # ⚠️ LEGACY
@@ -318,7 +312,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── logger.py              # Centralized logging configuration
 ├── llm_response_parser.py # Unified parser for LLM response envelopes (full_response, response_summary, rich_content)
 ├── groovy_to_markdown_transformer.py # Groovy DSL → Markdown converter (USE_MARKDOWN_PROMPT feature, currently off)
-├── performance_logger.py  # Performance timing helpers
 ├── timer.py               # Timer utilities
 └── server.py
 
@@ -390,7 +383,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`voice_audio_frame.py`**: 🆕 `AudioFrame` — a carrier-agnostic slice of call audio crossing `RealtimeSessionPort`. `payload` holds Twilio's base64 μ-law string **as-is**; nothing in the pipeline decodes or re-encodes it.
 -   **`lelik_context.py`**: 🆕 `LelikContext` — frozen dataclass, what Lelik knows at call start (`biographical_facts`, `conversation_history`): the output of `LelikPersonaService.assemble()`, consumed by `LelikAgent.session_config()` to build the realtime session's prompt. Pure data, zero external deps — the context/prompt-authoring split the Slice 2 rewrite of `LelikPersonaService` introduced (VOICE_COMPANION_RFC §4.7/§4.8).
 -   **`vector_math.py`**: Pure vector math utilities (`cosine_similarity`). Zero external deps.
--   **`tool_result.py`**: Standardized result object for tool executions (`ToolResult`).
 
 ### `handlers/` - Application Layer (Orchestrators)
 -   **`agent_worker_handler.py`**: 🆕 Handles ASYNC agent execution payloads from Cloud Tasks (`task_type="agent_execution"`). Routes via `coordinator.route_message()`.
@@ -578,6 +570,5 @@ The multi-agent system enables specialized task handling with different LLM mode
 -   **`logger.py`**: Centralized logging configuration (human-readable + trace IDs).
 -   **`logging_context.py`**: Context propagation for trace/session/user IDs.
 -   **`telemetry.py`**: OpenTelemetry setup and trace helpers.
--   **`performance_logger.py`**: Timing helper for perf logging.
 -   **`timer.py`**: Lightweight timer utility.
 -   **`server.py`**: HTTP server utilities for Cloud Run (health checks, event endpoints).

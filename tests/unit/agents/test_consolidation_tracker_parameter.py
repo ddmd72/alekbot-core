@@ -253,7 +253,7 @@ async def test_tracker_records_nothing_for_not_found_failed_or_refused(store):
         await tracker.update_fact(fid, {"content": "x", "state": "bogus"}, ACC, context=ctx()),            # failed: bad enum
         await tracker.update_fact(fid, {"state": "superseded"}, ACC, context=ctx()),                       # refused: no successor
         await tracker.update_fact(fid, {"content": "   ", "expiry": EXPIRY_NONE}, ACC, context=ctx()),                            # refused: empty content
-        await tracker.create_fact("x", meta(domain="nonsense"), context=ctx()),                            # failed
+        await tracker.create_fact("x", meta(directive="nonsense"), context=ctx()),                         # failed: a non-bool flag (reviewer edit, PR 13: the old domain is no longer read)
         await tracker.merge_facts(["no-such-id"], "m", meta(), context=ctx()),                             # failed: no source
     ]
 

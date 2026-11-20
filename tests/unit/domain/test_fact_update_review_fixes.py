@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.entities import ExpiryKind, FactEntity, FactState, FactType, TemporalClass
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_basis import ReviewBasis
 from src.domain.fact_review_reasons import (
@@ -28,7 +28,7 @@ REWRITTEN = basis_reason("rewrite", ReviewBasis("evidence", evidence_fact_id="e1
 def fact(state=FactState.STALE):
     return FactEntity(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="meeting with Ana", type=FactType.EVENT,
-        tags=["work"], metadata={}, domain=FactDomain.NETWORK, temporal_class=TemporalClass.DYNAMIC, version=2,
+        tags=["work"], metadata={}, temporal_class=TemporalClass.DYNAMIC, version=2,
         reported_date=REPORTED, last_updated=REPORTED, expiry_kind=ExpiryKind.HORIZON, ttl_days=30,
         expires_at=REPORTED + timedelta(days=30), state=state,
         stale_since=NOW - timedelta(days=5) if state is FactState.STALE else None,

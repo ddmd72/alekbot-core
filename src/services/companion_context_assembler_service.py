@@ -16,7 +16,6 @@ from ..domain.companion import CompanionRecord
 from ..domain.companion_config import session_domain_keys
 from ..domain.companion_context import CompanionContext
 from ..domain.entities import FactEntity
-from ..domain.fact_lifecycle import DIRECTIVE_DOMAIN
 from ..domain.fact_query import FactQuery
 from ..domain.rrf import apply_rrf_ranking
 from ..domain.settings import SearchConfig
@@ -95,10 +94,10 @@ class CompanionContextAssemblerService:
             if not include_standing_directives:
                 return []
             try:
-                # One read whose condition is the directive marker `is_directive` reads (both move together, RFC §6).
+                # The read of the flag `is_directive` reads (FACT_PROFILE_RFC §6 row 15).
                 return await self._fact_repo.get_active_facts_ordered(
                     account_id,
-                    domain=DIRECTIVE_DOMAIN,
+                    directive_only=True,
                     limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
                 )
             except Exception as exc:

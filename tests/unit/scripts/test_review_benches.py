@@ -26,7 +26,7 @@ from scripts.consolidation.review_kit_stand_ins import KitCoordinator, build_rev
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
 from src.agents.base_agent import BaseAgent
 from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
-from src.domain.entities import FactDomain, FactState
+from src.domain.entities import FactState
 from src.domain.fact_review_frame import not_delivered_frame, question_text, reply_part, review_frame
 from src.domain.fact_review_language import CANONICAL_LABELS, LABEL_KEYS, fact_question_message
 from src.domain.fact_review_quote_translation import QuoteTranslation, quote_digest
@@ -379,7 +379,7 @@ def test_staged_live_facts_are_the_soonest_due_with_an_expiry_and_never_a_direct
         fact("a", state=FactState.CURRENT, expires_at=base + timedelta(days=9)),
         fact("b", state=FactState.CURRENT, expires_at=base + timedelta(days=3)),
         fact("c", state=FactState.CURRENT, expires_at=None),
-        fact("d", state=FactState.CURRENT, expires_at=base + timedelta(days=1), domain=FactDomain.AGENT_DIRECTIVE),
+        fact("d", state=FactState.CURRENT, expires_at=base + timedelta(days=1), directive=True),
         fact("e", state=FactState.CURRENT, expires_at=base + timedelta(days=2)),
     ]
 

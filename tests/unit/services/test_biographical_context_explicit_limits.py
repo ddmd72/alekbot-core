@@ -1,6 +1,6 @@
 """BiographicalContextService.refresh_context with explicit limits (facts-fix PR): an explicit limit wins over the
 service's own resolution; None keeps it. Asserted on what the refreshed context holds, against a repository fake that
-honours `domain` and `limit`."""
+honours `directive_only` and `limit`."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,14 +9,14 @@ from tests.unit.services.test_biographical_context_service import make_fact
 
 
 class _LimitHonouringRepo:
-    """get_active_facts_ordered over a fixed list: filters by domain or identity when given and returns at most `limit`."""
+    """get_active_facts_ordered over a fixed list: filters by directive or identity when given and returns at most `limit`."""
 
     def __init__(self, facts):
         self._facts = list(facts)
 
-    async def get_active_facts_ordered(self, account_id, domain=None, limit=100, identity_only=False):
+    async def get_active_facts_ordered(self, account_id, limit=100, identity_only=False, directive_only=False):
         return [f for f in self._facts
-                if (domain is None or f.domain.value == domain) and (not identity_only or f.user_identity)][:limit]
+                if (not directive_only or f.directive) and (not identity_only or f.user_identity)][:limit]
 
 
 def _plain(n):

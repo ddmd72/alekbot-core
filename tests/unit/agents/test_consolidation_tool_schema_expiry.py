@@ -42,7 +42,9 @@ def test_no_tool_offers_ttl_days():
 
 @pytest.mark.parametrize("attrs", [create_attrs, merge_attrs])
 def test_create_and_merge_require_expiry_beside_the_old_required_keys(attrs):
-    assert attrs()["required"] == ["domain", "temporal_class", "context_priority", "tags", "expiry"]
+    # Reviewer edit (fact profile PR 13, task item 3): `directive` (boolean, required) takes the old `domain`'s place.
+    assert attrs()["required"] == ["directive", "temporal_class", "context_priority", "tags", "expiry"]
+    assert attrs()["properties"]["directive"]["type"] == "boolean" and "domain" not in attrs()["properties"]
 
 
 def test_expiry_is_one_flat_described_object_with_only_kind_required():

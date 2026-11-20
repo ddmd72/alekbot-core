@@ -28,8 +28,7 @@ RESULT_EXPLANATION = (
 
 def _domain_label(fact: FactEntity) -> str:
     primary = getattr(fact, "primary_domain", None)
-    group = (fact_domains.label(primary, "en") if primary else None) or getattr(fact, "domain", None) or "general"
-    return str(getattr(group, "value", group))
+    return (fact_domains.label(primary, "en") if primary else None) or "general"
 
 
 def _fact_block(fact: FactEntity, matches: Sequence[int]) -> str:
