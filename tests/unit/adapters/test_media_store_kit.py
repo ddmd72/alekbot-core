@@ -74,10 +74,10 @@ async def test_html_gets_noindex_once(fake, store):
     assert stored.startswith(b"<html><HEAD>\n    " + ROBOTS + b"</HEAD>")
 
 
-async def test_html_without_head_is_stored_unchanged(fake, store):
-    page = b"<html><body>Lisbon trip notes</body></html>"
-    await store.store(page, "html/u1/trip-notes.html", "text/html; charset=utf-8")
-    assert fake.live(BUCKET, "html/u1/trip-notes.html").data == page
+async def test_html_without_head_gets_noindex_after_the_html_tag_and_keeps_every_other_byte(fake, store):
+    page = b"<html><body><p>x</p></body></html>"
+    await store.store(page, "html/u1/page.html", "text/html; charset=utf-8")
+    assert fake.live(BUCKET, "html/u1/page.html").data == b"<html>\n    " + ROBOTS + b"<body><p>x</p></body></html>"
 
 
 async def test_non_html_is_never_rewritten(fake, store):
