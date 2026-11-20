@@ -109,7 +109,7 @@ def _busy_adapter(queue):
     a.app = MagicMock()
     a.slack_bot_token = "x"
     a._localization = None
-    a._resolve_language = AsyncMock(return_value=(LanguageCode.EN, None, True))
+    a._resolve_language = AsyncMock(return_value=LanguageCode.EN)
     a._process_message_event = AsyncMock()
     return a
 

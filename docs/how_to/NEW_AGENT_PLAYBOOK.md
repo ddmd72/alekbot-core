@@ -80,9 +80,7 @@ correctly. Rules (the first, second and last are enforced by tests):
   it `BaseAgent._call_llm` has no breaker accounting and no cross-provider failover, and nothing errors
   (`tests/unit/agents/test_agents_set_execution_context.py`, which lists the deliberate exceptions).
 - **PromptBuilder is mandatory and fails fast.** If `PromptBuilderPort.build_for_agent(agent_type, ...)` raises, return
-  `AgentResponse.failure(...)`; never fall back to an empty or inline prompt. **Trap:** `ComputeAgent`
-  (`src/agents/compute_agent.py`) and `DeepResearchAgent` (`src/agents/deep_research_agent.py`) fall back to an empty
-  prompt when the build fails (and `test_compute_agent.py` pins that). Do not copy that part of either.
+  `AgentResponse.failure(...)`; never fall back to an empty or inline prompt.
 - Convention (no guard): call the model only through `BaseAgent._call_llm`; log through the `_on_agent_*` hooks.
 - Convention (no guard): provider-specific tools are flags on `LLMRequest` (`use_code_execution`, `use_grounding`);
   never import `types.Tool` in an agent or the factory.
@@ -146,8 +144,8 @@ line of `wiring_none_ledger.txt` are the reviewer's decision. These are `slow` t
 One primary test file per agent, `test_foo_agent.py` in `tests/unit/agents/` (where a test goes: `tests/CLAUDE.md`, "Where a test
 goes"). Cover `can_handle`, the happy path, an empty query, an LLM exception, and a prompt-builder failure that must
 return `AgentResponse.failure` (the test asserts `status == FAILED` and the error text; model it on
-`test_execute_prompt_builder_failure` in `tests/unit/agents/test_tutor_agent.py`). Do not model it on
-`tests/unit/agents/test_compute_agent.py`: that file asserts the opposite (a builder failure still succeeds). Script the
+`test_execute_prompt_builder_failure` in `tests/unit/agents/test_tutor_agent.py`, or
+`test_a_prompt_build_failure_fails_without_calling_the_model` in `tests/unit/agents/test_compute_agent.py`). Script the
 model with `tests/support/scripted_llm.py` and assert the outcome, not the call (`tests/CLAUDE.md`); a new descriptor
 needs no test of its own beyond the guards above.
 

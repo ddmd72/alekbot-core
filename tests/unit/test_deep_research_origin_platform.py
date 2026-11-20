@@ -13,6 +13,7 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentRespon
 from src.domain.user import PerformanceTier
 from src.ports.deep_research_port import DeepResearchPort
 from src.ports.job_runner_port import JobRunnerPort
+from src.ports.prompt_builder_port import PromptBuilderPort
 
 
 # --- agent -> port ---------------------------------------------------------
@@ -20,10 +21,12 @@ from src.ports.job_runner_port import JobRunnerPort
 def _agent_and_port():
     port = AsyncMock(spec=DeepResearchPort)
     port.create_interaction.return_value = "job-1"
+    prompt_builder = AsyncMock(spec=PromptBuilderPort)
+    prompt_builder.build_for_agent.return_value = "stub system prompt"
     agent = DeepResearchAgent(
         config=AgentConfig(agent_id="dr", agent_type="deep_research", timeout_ms=60_000,
                            capabilities=["deep_research"]),
-        job_port=port, tier=PerformanceTier.BALANCED, prompt_builder=None, user_id="u1",
+        job_port=port, tier=PerformanceTier.BALANCED, prompt_builder=prompt_builder, user_id="u1",
     )
     return agent, port
 

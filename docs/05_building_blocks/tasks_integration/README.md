@@ -84,8 +84,7 @@ re-reads nothing; it runs from `reindex_all` and heals a missing one.
 
 1. The router delegates to `src/agents/tasks_agent.py::TasksAgent.execute`: a tool loop of at most `_MAX_TURNS`
    turns over the tools in `_TOOL_DECLARATIONS`: a lookup (`list_tasks`), a search for long lists, and create, update and
-   delete. If the prompt build fails, the run goes on with an empty system prompt (not only without the biographical
-   facts), and the failure is only logged.
+   delete. If the prompt build fails, the run fails with `AgentResponse.failure` before any tool runs.
 2. `list_tasks` fetches the primary list from Graph and filters, orders and pages in the agent
    (`TasksAgent._list_page`, `_PAGE_SIZE`): Graph's To Do list call is read as a full fetch, with only a status
    filter sent. Dated tasks come first (soonest first), then undated (newest first). The result carries `total`,
