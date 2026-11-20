@@ -53,6 +53,7 @@ from twilio.twiml.voice_response import VoiceResponse
 
 from src.domain.secret_digest import fingerprint
 from src.domain.voice_auth_decision import AuthDecision
+from src.domain.voice_callback_ref import CALLBACK_REF_AAD, from_callback_ref, to_callback_ref
 from src.domain.voice_ticket_keys import amd_key, ticket_key
 from src.services.voice_call_setup_service import VoiceCallSetupError, VoiceCallSetupService
 from src.utils.logger import logger
@@ -171,7 +172,8 @@ def create_voice_webhook_blueprint(
 
         Passes the EXTERNAL URL (including query string) — see `_external_url`
         — because that is what Twilio computed its HMAC over, and because the
-        call ticket now rides in that query string.
+        encrypted callback reference (`?ref=`) rides in that query string: it is
+        opened only after this check passes.
         """
         signature = request.headers.get("X-Twilio-Signature", "")
         if await signature_verifier(_external_url(), dict(form), signature):
@@ -308,8 +310,9 @@ def create_voice_webhook_blueprint(
             agent = await lelik_agent_provider(pending["user_id"])
             if agent is None:
                 raise RuntimeError("voice companion is not configured on this deployment")
+            callback_ref = to_callback_ref(await cipher.encrypt(pending_ticket, aad=CALLBACK_REF_AAD))
             await agent.execute(
-                purpose="user asked to talk", ticket=pending_ticket,
+                purpose="user asked to talk", callback_ref=callback_ref,
                 answer_url=answer_url, to_number=pending["to_number"],
             )
         except Exception as exc:
@@ -333,6 +336,19 @@ def create_voice_webhook_blueprint(
         )
         return Response("", status=200)
 
+    async def _ticket_from_callback() -> Optional[str]:
+        """The ticket behind the `ref` query of a signed callback, or None when it is missing or unreadable."""
+        try:
+            ciphertext = from_callback_ref(request.args.get("ref", ""))
+        except ValueError:
+            logger.warning("voice callback: malformed callback reference")
+            return None
+        try:
+            return await cipher.decrypt(ciphertext, aad=CALLBACK_REF_AAD)
+        except Exception as exc:
+            logger.error(f"voice callback: callback reference did not decrypt ({type(exc).__name__})")
+            return None
+
     @bp.route("/voice/answer", methods=["POST"])
     async def voice_answer():
         """Twilio's webhook for the callback leg once it is answered.
@@ -342,16 +358,17 @@ def create_voice_webhook_blueprint(
            redeemed, expired, or forged) gets rejected outright - never open
            a session without a known user_id/account_id.
 
-           **The ticket arrives in the QUERY STRING, not the form body.**
+           **The reference arrives in the QUERY STRING, not the form body.**
            `LelikAgent.execute` builds the callback URL as
-           `f"{answer_url}?{urlencode({'ticket': ticket})}"`, and Twilio's
-           callback POST carries only its OWN fields (`CallSid`, `AnsweredBy`,
-           ...) in the body while leaving the configured URL's query string
-           untouched. Reading it from `await request.form` therefore always
-           produced an empty ticket and rejected EVERY real call - the seam
-           neither `test_lelik_agent.py` (producer) nor
-           `test_voice_webhook_app.py` (consumer, against a mocked form dict)
-           crossed. `request.args` is a synchronous Quart property parsed from
+           `f"{answer_url}?{urlencode({'ref': callback_ref})}"`, where `ref` is
+           the ticket sealed under `CALLBACK_REF_AAD` (the raw ticket never
+           appears in a URL, so request logs reveal nothing). Twilio's callback
+           POST carries only its OWN fields (`CallSid`, `AnsweredBy`, ...) in
+           the body while leaving the configured URL's query string untouched,
+           so reading it from `await request.form` would reject EVERY real call.
+           The `ref` is opened (`_ticket_from_callback`) only after the
+           signature check; an unreadable one is rejected like a missing ticket.
+           `request.args` is a synchronous Quart property parsed from
            the URL; only `request.form` needs awaiting.
         2. AMD gate: if Twilio's `AnsweredBy` machine detection says a
            machine/voicemail picked up, hang up immediately without assembling
@@ -383,7 +400,9 @@ def create_voice_webhook_blueprint(
         if forbidden is not None:
             return forbidden
         answered_by = form.get("AnsweredBy", "")
-        ticket = request.args.get("ticket", "")
+        ticket = await _ticket_from_callback()
+        if ticket is None:
+            return _twiml_reject()
 
         redeem_key = ticket_key(digest_key, ticket)
         identity = await ephemeral_store.get(redeem_key)
@@ -432,9 +451,11 @@ def create_voice_webhook_blueprint(
         ticket or the one-call marker and the caller stayed locked out until
         `one_call_ttl_s` (default 3600s) expired.
 
-        The ticket rides in this URL's query string, appended by
-        `LelikAgent.execute` exactly like the answer callback's (and covered by
-        the same Twilio signature, which is computed over the full URL). There
+        The callback reference (the ticket's ciphertext, never the raw ticket)
+        rides in this URL's query string, appended by `LelikAgent.execute`
+        exactly like the answer callback's (and covered by the same Twilio
+        signature, which is computed over the full URL). A missing or
+        unreadable reference answers 200 and releases nothing. There
         is no other correlation path: Twilio's `CallSid` is only known AFTER
         `originate_call` returns, i.e. after the ticket was already minted, and
         mapping it back would need a second store write racing the `initiated`
@@ -451,7 +472,9 @@ def create_voice_webhook_blueprint(
             return forbidden
 
         call_status = (form.get("CallStatus") or "").strip().lower()
-        ticket = request.args.get("ticket", "")
+        ticket = await _ticket_from_callback()
+        if ticket is None:
+            return Response("", status=200)
 
         answered_by = form.get("AnsweredBy")
         if answered_by and not call_status:
@@ -500,8 +523,8 @@ def _external_url() -> str:
     `X-Forwarded-*` headers Cloud Run does set, falling back to the request's
     own scheme/host for local dev.
 
-    The query string is included deliberately: it carries the call ticket, and
-    Twilio's HMAC covers the full URL, so a swapped ticket invalidates the
+    The query string is included deliberately: it carries the callback reference, and
+    Twilio's HMAC covers the full URL, so a swapped `ref` invalidates the
     signature.
     """
     proto = (request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()

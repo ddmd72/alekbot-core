@@ -20,6 +20,7 @@ from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.voice_callback import ticket_of
 from tests.support.voice_tickets import DIGEST_KEY, open_ticket
 from tests.unit.web.test_voice_phone_replaces_web_call import AUTH, CALLER, MARKER, RELAY, SESSION, FakeMediaRoom
 
@@ -138,12 +139,14 @@ def _accepted(twiml):
 @pytest.mark.asyncio
 async def test_a_phone_call_redeems_its_own_ticket_and_its_marker_earns_the_call_ttl():
     """The marker's owner is the digest of the very ticket the relay redeems for the phone call: /voice/auth mints
-    it, the callback carries it, /voice/answer prepares it and the relay presents it at session-config."""
+    it, the callback carries its reference (F19), /voice/answer prepares it and the relay presents it at
+    session-config."""
     w = World()
     assert _accepted(await w.dial())
     await w.client.post("/voice/inbound-status", form={"CallSid": "CA0001", "CallStatus": "completed"})
-    ticket = w.agent.execute.await_args.kwargs["ticket"]
-    answered = await w.client.post(f"/voice/answer?ticket={ticket}", form={"CallSid": "CA0002"})
+    ref = w.agent.execute.await_args.kwargs["callback_ref"]
+    ticket = await ticket_of(CIPHER, ref)
+    answered = await w.client.post(f"/voice/answer?ref={ref}", form={"CallSid": "CA0002"})
     assert "<Connect>" in (await answered.get_data()).decode()
 
     resp = await w.session_config(ticket)
@@ -159,8 +162,9 @@ async def test_a_phone_call_that_replaced_a_web_call_redeems_its_own_ticket():
     await w.live_web_call()
     assert _accepted(await w.dial())
     await w.client.post("/voice/inbound-status", form={"CallSid": "CA0001", "CallStatus": "completed"})
-    ticket = w.agent.execute.await_args.kwargs["ticket"]
-    await w.client.post(f"/voice/answer?ticket={ticket}", form={"CallSid": "CA0002"})
+    ref = w.agent.execute.await_args.kwargs["callback_ref"]
+    ticket = await ticket_of(CIPHER, ref)
+    await w.client.post(f"/voice/answer?ref={ref}", form={"CallSid": "CA0002"})
 
     resp = await w.session_config(ticket)
 

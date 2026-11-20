@@ -19,7 +19,15 @@ from quart import Quart
 
 from src.domain.voice_mode import VoiceMode
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_callback import callback_ref_for
 from tests.support.voice_tickets import ticket_key
+
+# One cipher for the blueprint and the callback reference (`ref`) the answer URL carries instead of the ticket (F19).
+_CIPHER = AesGcmTestCipher()
+
+
+async def _answer_path() -> str:
+    return f"/voice/answer?ref={await callback_ref_for(_CIPHER, 't1')}"
 
 
 def _app(*, ephemeral_store, lelik_agent_provider, alert_sink):
@@ -32,7 +40,7 @@ def _app(*, ephemeral_store, lelik_agent_provider, alert_sink):
         lelik_agent_provider=lelik_agent_provider,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32
     ))
     return app
 
@@ -74,7 +82,7 @@ async def test_answer_webhook_builds_the_persona_for_the_ticket_identity():
     client = _app(
         ephemeral_store=ephemeral_store, lelik_agent_provider=factory, alert_sink=AsyncMock(),
     ).test_client()
-    await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
+    await client.post(await _answer_path(), form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     factory.assert_awaited_once_with("u1")
     agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1", mode=VoiceMode.LELIK)
@@ -92,7 +100,7 @@ async def test_persona_assembly_failure_releases_ticket_and_marker_and_alerts():
         alert_sink=alert_sink,
     ).test_client()
     response = await client.post(
-        "/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"},
+        await _answer_path(), form={"CallSid": "CA1", "AnsweredBy": "human"},
     )
 
     await _assert_failed_closed(response, ephemeral_store, alert_sink)
@@ -111,7 +119,7 @@ async def test_persona_service_construction_failure_takes_the_same_graceful_path
         alert_sink=alert_sink,
     ).test_client()
     response = await client.post(
-        "/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"},
+        await _answer_path(), form={"CallSid": "CA1", "AnsweredBy": "human"},
     )
 
     await _assert_failed_closed(response, ephemeral_store, alert_sink)

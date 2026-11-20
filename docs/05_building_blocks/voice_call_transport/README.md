@@ -27,6 +27,7 @@ covers:
   src/domain/voice_playback_tracker.py
   src/domain/voice_relay_call_options.py
   src/domain/voice_ticket_keys.py
+  src/domain/voice_callback_ref.py
   src/domain/voice_auth_decision.py
   src/domain/voice_amd.py
   src/web/static/call*
@@ -118,9 +119,9 @@ never the call.
    (duplicate deliveries find nothing), rewrites the marker at the full TTL, and `LelikAgent.execute` originates the
    callback through `TelephonyPort` (`TwilioTelephonyAdapter.originate_call`, async answering-machine detection). The
    callback goes out only after the inbound leg ended: from inside `/voice/auth` it raced the caller's own line.
-3. `/voice/answer?ticket=`: `prepare`s the persona and answers TwiML `<Connect><Stream>` to the relay with the ticket as a
+3. `/voice/answer?ref=`: decrypts the callback reference (below), `prepare`s the persona and answers TwiML `<Connect><Stream>` to the relay with the ticket as a
    stream parameter. A persona failure releases and speaks a plain apology.
-4. `/voice/status?ticket=`: records the AMD verdict (weighed at call end so a voicemail greeting is never summarised) and
+4. `/voice/status?ref=`: records the AMD verdict (weighed at call end so a voicemail greeting is never summarised) and
    releases on any terminal status. It is the only release for a callback that rings out and never reaches `/voice/answer`.
 5. Relay: `src/handlers/media_stream_handler.py::MediaStreamHandler.handle_connection` reads the ticket from `start` and
    runs `handle_call`. Audio is base64 mu-law passed through untouched; what the caller heard comes from Twilio's echoed
@@ -168,8 +169,8 @@ the relay's own identity). Routes in
   disconnects, and the relay disconnects exactly when it stops waiting). If the relay stopped waiting, the answer goes to
   chat: delegate and `/voice/delegate/abandon` each write their own marker first and only an atomic `get_and_delete` of
   the result posts, so at most one side does. A failure is kept as a flag, never as text. Interpreter calls never post
-  late answers, but only with the `VOICE_MCP_TOOLS` knob on (the call mode is read, and stored on the kept result,
-  only then).
+  late answers, with the `VOICE_MCP_TOOLS` knob on or off (the call mode is read for every delegation and stored on the
+  kept result).
 - `/voice/relay-warmup`: see the keep-alive trap.
 
 ### Control channel (page to relay)
@@ -193,15 +194,23 @@ buttons, live call text and `listening`. Frames, versions, features and limits: 
 - **The relay must stay at one instance** (`cloudbuild-dev.yaml`, relay `--max-instances`): the SFU's two sockets and the
   page's `/ctl` socket must reach one process, because pairing and the hub are in-process. Raising it breaks calls
   silently; scaling means shards of one instance each, one base URL per call for all three paths. No test pins it.
-- **The raw ticket travels in URLs that Cloud Run logs.** It is in the SFU adapter endpoints (`.../sfu/*?ticket=`), the
-  Twilio answer and status callback query strings (`src/agents/lelik_agent.py::LelikAgent.execute`) and the TwiML stream
-  parameter. Hence a ticket is short-lived, redeemed once and atomically (`get_and_delete`;
-  `tests/unit/handlers/test_relay_refuses_unredeemable_ticket.py`), and is useless without the OIDC-gated
-  `/voice/session-config`. Elsewhere it is never raw: store keys are keyed digests, hand-out records ciphertext, app logs
-  `fingerprint(ticket)` (`tests/unit/test_no_raw_ticket_in_logs.py`, `tests/unit/web/test_voice_ticket_digest.py`). The
-  control token is a separate secret exactly because it must stay out of URLs: first frame only, never logged.
-- **Twilio webhooks verify the signature over the external URL including the query string** (the ticket rides in it, so
-  a swapped ticket fails). `_external_url` rebuilds it from forwarded headers because Cloud Run terminates TLS. The
+- **The raw ticket travels in URLs that Cloud Run logs, on the web path.** The Twilio callbacks carry an encrypted
+  reference instead (`src/domain/voice_callback_ref.py`: `CipherPort` ciphertext of the ticket, URL-safe, `ref=` query
+  of `/voice/answer` and `/voice/status`; `LelikAgent.execute` builds the URLs). Only a request with a valid Twilio
+  signature reaches the code that decrypts it, and the relay never accepts it, so a log reader learns nothing usable;
+  the old `ticket=` query is refused (`tests/unit/web/test_voice_callback_ref_urls.py`). The raw ticket still goes to
+  Twilio in the TwiML stream parameter (a response body, not logged). The SFU adapter endpoints
+  (`.../sfu/*?ticket=`) still carry it: that URL is the media-leg capability itself. A ticket read from a log opens
+  nothing after the call (redeemed once and atomically, `get_and_delete`;
+  `tests/unit/handlers/test_relay_refuses_unredeemable_ticket.py`; useless without the OIDC-gated
+  `/voice/session-config`), but during a live call, after a mid-call egress drop and reattach logs the URL, a reader
+  could speak into the call as the owner without hearing the replies. Pending the owner's choice (refuse a second
+  egress, restrict `/sfu/*` at the network, or accept). Elsewhere the ticket is never raw: store keys are keyed digests,
+  hand-out records ciphertext, app logs `fingerprint(ticket)` (`tests/unit/test_no_raw_ticket_in_logs.py`,
+  `tests/unit/web/test_voice_ticket_digest.py`). The control token is a separate secret exactly because it must stay out
+  of URLs: first frame only, never logged.
+- **Twilio webhooks verify the signature over the external URL including the query string** (the callback reference rides in it, so
+  a swapped reference fails). `_external_url` rebuilds it from forwarded headers because Cloud Run terminates TLS. The
   injected verifier opens when no auth token is configured (local dev only).
   `tests/unit/web/test_twilio_signature_verifier.py`.
 - **Marker release has two rules.** Web start failures, the end-of-call report and `VoiceCallSetupService.release` go

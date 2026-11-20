@@ -6,10 +6,17 @@ from quart import Quart
 
 from src.domain.voice_mode import VoiceMode
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_callback import callback_ref_for, ticket_of
 from tests.support.voice_tickets import open_ticket, seal_ticket, ticket_key as ticket_key_of
 
-# One cipher for the `_app(deps)` blueprint, so a test can seal or open the pending record's ticket.
+# One cipher for every blueprint in this file, so a test can seal or open the pending record's ticket and build the
+# callback reference (`ref`) the Twilio callbacks carry instead of the raw ticket (F19).
 _CIPHER = AesGcmTestCipher()
+
+
+async def _ref(ticket: str) -> str:
+    """The `ref` query value `/voice/inbound-status` puts in the callback URLs for `ticket`."""
+    return await callback_ref_for(_CIPHER, ticket)
 
 
 def _persona_factory(instructions="you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"):
@@ -149,7 +156,9 @@ async def test_inbound_completed_originates_the_parked_callback(deps):
     assert marker and marker[-1].kwargs["ttl_s"] == 3600
     lelik_agent_factory.assert_awaited_once_with("u1")
     lelik_agent.execute.assert_awaited_once()
-    assert lelik_agent.execute.await_args.kwargs["ticket"] == "t1"
+    callback_ref = lelik_agent.execute.await_args.kwargs["callback_ref"]
+    assert "t1" not in callback_ref
+    assert await ticket_of(_CIPHER, callback_ref) == "t1"
     assert lelik_agent.execute.await_args.kwargs["answer_url"] == "https://main.example.com/voice/answer"
     assert lelik_agent.execute.await_args.kwargs["to_number"] == "+15550101"
     notification_service.notify_raw.assert_awaited_once()
@@ -253,11 +262,11 @@ async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
         lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32
     ))
     client = app.test_client()
 
-    response = await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "machine_end_beep"})
+    response = await client.post(f"/voice/answer?ref={await _ref('t1')}", form={"CallSid": "CA1", "AnsweredBy": "machine_end_beep"})
 
     body = (await response.get_data()).decode()
     assert "<Hangup" in body
@@ -281,11 +290,11 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
         lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32
     ))
     client = app.test_client()
 
-    response = await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
+    response = await client.post(f"/voice/answer?ref={await _ref('t1')}", form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     body = (await response.get_data()).decode()
     assert "<Connect>" in body
@@ -315,14 +324,16 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
         lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32
     ))
     client = app.test_client()
 
-    response = await client.post("/voice/answer?ticket=unknown", form={"CallSid": "CA1", "AnsweredBy": "human"})
+    response = await client.post(f"/voice/answer?ref={await _ref('unknown')}", form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     body = (await response.get_data()).decode()
     assert "<Reject" in body
+    # Rejected for the missing record, not for an unreadable reference: the ticket behind the ref was looked up.
+    ephemeral_store.get.assert_awaited_once_with(ticket_key_of("unknown"))
     persona_factory.assert_not_called()
 
 
@@ -342,7 +353,7 @@ def _signed_app(*, ephemeral_store, signature_verifier=None):
         lelik_agent_provider=_persona_factory()[0],
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=signature_verifier or AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32
     ))
     return app
 
@@ -352,11 +363,12 @@ async def test_answer_reads_ticket_from_query_string_as_lelik_agent_actually_sen
     """FIX C1 — the producer/consumer seam neither side's tests crossed.
 
     `LelikAgent.execute` builds the callback URL as
-    `f"{answer_url}?{urlencode({'ticket': ticket})}"`; Twilio POSTs its own
-    fields (CallSid, AnsweredBy, ...) in the BODY and leaves that query string
-    untouched. Reading the ticket from `await request.form` therefore resolved
-    an empty ticket on every real call and rejected all of them. This test
-    constructs the request exactly as Twilio delivers it: ticket in the query
+    `f"{answer_url}?{urlencode({'ref': callback_ref})}"` (F19: the ticket's
+    ciphertext, never the raw ticket); Twilio POSTs its own fields (CallSid,
+    AnsweredBy, ...) in the BODY and leaves that query string untouched.
+    Reading the ticket from `await request.form` therefore resolved an empty
+    ticket on every real call and rejected all of them. This test constructs
+    the request exactly as Twilio delivers it: the reference in the query
     string ONLY, never in the form body.
     """
     ephemeral_store = AsyncMock()
@@ -364,7 +376,7 @@ async def test_answer_reads_ticket_from_query_string_as_lelik_agent_actually_sen
 
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
-        "/voice/answer?ticket=real-ticket",
+        f"/voice/answer?ref={await _ref('real-ticket')}",
         form={"CallSid": "CA1", "AnsweredBy": "human", "From": "+15550101"},
     )
 
@@ -375,22 +387,23 @@ async def test_answer_reads_ticket_from_query_string_as_lelik_agent_actually_sen
 
 @pytest.mark.asyncio
 async def test_answer_does_not_read_the_ticket_from_the_form_body():
-    """The other half of FIX C1's seam: a ticket that arrives ONLY in the POST
-    body (the shape the route used to read) must not resolve. This is what
-    keeps a future edit from quietly reverting to `form.get("ticket")` — with
-    both readers in place the bug would be invisible again."""
+    """The other half of FIX C1's seam: a ticket or reference that arrives ONLY
+    in the POST body (the shape the route used to read) must not resolve. This
+    is what keeps a future edit from quietly reverting to a form read — with
+    both readers in place the bug would be invisible again. With no reference
+    in the query the call is refused before any ticket is looked up (F19)."""
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = None
 
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
         "/voice/answer",
-        form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "body-only"},
+        form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "body-only", "ref": await _ref("body-only")},
     )
 
     body = (await response.get_data()).decode()
     assert "<Reject" in body
-    ephemeral_store.get.assert_awaited_once_with(ticket_key_of(""))
+    ephemeral_store.get.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -407,7 +420,7 @@ async def test_machine_detection_releases_ticket_and_one_call_marker():
 
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
-        "/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "machine_end_beep"},
+        f"/voice/answer?ref={await _ref('t1')}", form={"CallSid": "CA1", "AnsweredBy": "machine_end_beep"},
     )
 
     body = (await response.get_data()).decode()
@@ -434,7 +447,7 @@ async def test_status_callback_releases_both_keys_on_terminal_status(call_status
 
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
-        "/voice/status?ticket=t1", form={"CallSid": "CA1", "CallStatus": call_status},
+        f"/voice/status?ref={await _ref('t1')}", form={"CallSid": "CA1", "CallStatus": call_status},
     )
 
     # Twilio does not parse TwiML from a status callback — a bare 200 is the contract.
@@ -453,7 +466,7 @@ async def test_status_callback_ignores_non_terminal_statuses(call_status):
 
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
-        "/voice/status?ticket=t1", form={"CallSid": "CA1", "CallStatus": call_status},
+        f"/voice/status?ref={await _ref('t1')}", form={"CallSid": "CA1", "CallStatus": call_status},
     )
 
     assert response.status_code == 200
@@ -470,7 +483,7 @@ async def test_status_callback_is_idempotent_when_ticket_already_released():
 
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
-        "/voice/status?ticket=t1", form={"CallSid": "CA1", "CallStatus": "completed"},
+        f"/voice/status?ref={await _ref('t1')}", form={"CallSid": "CA1", "CallStatus": "completed"},
     )
 
     assert response.status_code == 200
@@ -482,8 +495,8 @@ async def test_status_callback_is_idempotent_when_ticket_already_released():
     "path,form",
     [
         ("/voice/auth", {"From": "+15550101"}),
-        ("/voice/answer?ticket=t1", {"CallSid": "CA1", "AnsweredBy": "human"}),
-        ("/voice/status?ticket=t1", {"CallSid": "CA1", "CallStatus": "completed"}),
+        ("/voice/answer?ref=r1", {"CallSid": "CA1", "AnsweredBy": "human"}),
+        ("/voice/status?ref=r1", {"CallSid": "CA1", "CallStatus": "completed"}),
         ("/voice/inbound-status", {"CallSid": "CA1", "CallStatus": "completed"}),
     ],
 )
@@ -511,8 +524,8 @@ async def test_every_twilio_route_rejects_an_invalid_signature(path, form):
 
 @pytest.mark.asyncio
 async def test_signature_verifier_receives_the_full_external_url_including_query_string():
-    """Twilio's HMAC covers the URL it POSTed to, and the call ticket lives in
-    that query string — so the verifier must be handed the external `https://`
+    """Twilio's HMAC covers the URL it POSTed to, and the callback reference
+    lives in that query string — so the verifier must be handed the external `https://`
     URL with the query intact, not Cloud Run's internal `http://` view of it.
     Hypercorn here trusts no forwarded headers (main.py builds a bare
     `HypercornConfig`), so the scheme has to come from `X-Forwarded-Proto`.
@@ -520,12 +533,13 @@ async def test_signature_verifier_receives_the_full_external_url_including_query
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
     verifier = AsyncMock(return_value=True)
+    ref = await _ref("t1")
 
     client = _signed_app(
         ephemeral_store=ephemeral_store, signature_verifier=verifier,
     ).test_client()
     await client.post(
-        "/voice/answer?ticket=t1",
+        f"/voice/answer?ref={ref}",
         form={"CallSid": "CA1", "AnsweredBy": "human"},
         headers={
             "X-Twilio-Signature": "sig-abc",
@@ -535,6 +549,6 @@ async def test_signature_verifier_receives_the_full_external_url_including_query
     )
 
     url, form_params, signature = verifier.await_args.args
-    assert url == "https://main.example.com/voice/answer?ticket=t1"
+    assert url == f"https://main.example.com/voice/answer?ref={ref}"
     assert form_params == {"CallSid": "CA1", "AnsweredBy": "human"}
     assert signature == "sig-abc"

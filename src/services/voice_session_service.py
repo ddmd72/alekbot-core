@@ -576,6 +576,7 @@ class VoiceSessionService:
                     user_id=config["user_id"],
                     account_id=config["account_id"],
                     buffer=buffer,
+                    provider=spec.provider,
                     # Only a provider that issued a handle adds the arguments (other calls report exactly as before).
                     **({"resume_handle": state.resume_handle, "resume_provider": spec.provider}
                        if state.resume_handle else {}),

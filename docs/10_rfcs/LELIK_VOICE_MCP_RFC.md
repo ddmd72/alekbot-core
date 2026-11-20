@@ -230,8 +230,8 @@ owner's lever over what can be read; the knob switches it all off. Memory facts 
 - **`search_memory` (O4).** When the session carries `mcp_servers`, `session_config` leaves `search_memory` out of the
   delegate tool's intent list, so the model has one memory path. The manifest keeps it for sessions without MCP (knob
   off, interpreter, tutor, OpenAI). *As built (S3):* `LelikAgent.permitted_intents(mode)` drops it in the same case, and
-  `/voice/delegate` (knob on) reads the call's mode from the record `prepare` wrote, so a model that still names it is
-  refused. The choice is made at `prepare`, before the mint: a user the whitelist refuses at redemption gets a call with
+  `/voice/delegate` reads the call's mode from the record `prepare` wrote for every delegation, knob on or off (changed
+  2026-11-20: the knob gates minting, not the interpreter rule), so a model that still names it is refused. The choice is made at `prepare`, before the mint: a user the whitelist refuses at redemption gets a call with
   neither the servers nor `search_memory` for that one call (the mint's alert names it). Open for the owner: accept
   this edge, or move the declaration choice to redemption.
 - **Providers (O6).** xAI only. OpenAI's Realtime API documents the same `mcp` tool shape (with `require_approval` and

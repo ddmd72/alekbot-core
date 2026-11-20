@@ -5,7 +5,7 @@ import asyncio
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails
-from src.web.twilio_signature_verifier import verify_twilio_signature
+from src.web.twilio_signature_verifier import twilio_signature_gate
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.main_service_routes import create_main_service_blueprint
@@ -243,15 +243,14 @@ async def main():
                 async def _voice_twilio_signature_verifier(
                     url: str, form_params: dict, signature: str
                 ) -> bool:
-                    # Same bypass shape as _voice_oidc_verifier above and as
-                    # /worker's SERVICE_ACCOUNT_EMAIL gate: with no auth token
-                    # configured (local dev) there is nothing to verify against,
-                    # so the gate opens. In Cloud Run TWILIO_AUTH_TOKEN is always
-                    # present (cloudbuild-dev.yaml --set-secrets).
-                    auth_token = config.get("TWILIO_AUTH_TOKEN")
-                    if not auth_token:
-                        return True
-                    return verify_twilio_signature(auth_token, url, form_params, signature)
+                    # Same shape as _voice_oidc_verifier above: with no auth token
+                    # configured the gate opens locally (nothing to verify against)
+                    # but is closed on Cloud Run (K_SERVICE set), where a missing
+                    # secret must not leave the voice callbacks unauthenticated.
+                    return twilio_signature_gate(
+                        config.get("TWILIO_AUTH_TOKEN"), url, form_params, signature,
+                        on_cloud_run=bool(os.getenv("K_SERVICE")),
+                    )
 
                 async def _voice_summary_consumer(*, call_id, user_id, account_id, transcript_text, turns):
                     # LelikSummarizerAgent-backed consumer (Task 15). Reuses

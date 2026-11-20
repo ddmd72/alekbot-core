@@ -64,3 +64,18 @@ def test_get_style_request_with_no_form_parameters():
     """Twilio signs status callbacks with an empty body the same way."""
     url = "https://main.example.com/voice/status?ticket=t1"
     assert verify_twilio_signature(_AUTH_TOKEN, url, {}, _sign(url, {})) is True
+
+
+def test_gate_with_a_token_delegates_to_the_signature_check(monkeypatch):
+    from src.web.twilio_signature_verifier import twilio_signature_gate
+    good = _sign(_URL, _FORM)
+    assert twilio_signature_gate(_AUTH_TOKEN, _URL, _FORM, good, on_cloud_run=True) is True
+    assert twilio_signature_gate(_AUTH_TOKEN, _URL, _FORM, "bad", on_cloud_run=True) is False
+    assert twilio_signature_gate(_AUTH_TOKEN, _URL, _FORM, "bad", on_cloud_run=False) is False
+
+
+@pytest.mark.parametrize("token", ["", None])
+def test_gate_without_a_token_opens_locally_and_closes_on_cloud_run(token):
+    from src.web.twilio_signature_verifier import twilio_signature_gate
+    assert twilio_signature_gate(token, _URL, _FORM, "", on_cloud_run=False) is True
+    assert twilio_signature_gate(token, _URL, _FORM, "", on_cloud_run=True) is False

@@ -65,7 +65,7 @@ chat history, drive and billing.
   (instructions with the owner's facts, tools, `voice` spec, MCP descriptors without tokens, mode, call kind, ids) and
   `{call_kind, mode}`. Written by `VoiceCallSetupService.prepare`. The ticket is **consumed once** by
 `/voice/session-config` (`get_and_delete`), because it carries the facts. The call-kind record is read at call end (twice:
-  `submit_transcript` and the summary consumer) and by a delegation only with `VOICE_MCP_TOOLS` on; missing means companion.
+  `submit_transcript` and the summary consumer) and by every delegation; missing means companion.
 - **Delegation result and abandoned markers** (`result_key`, `abandoned_key`, TTL `_LATE_ANSWER_TTL_S`): how an answer the
   relay stopped waiting for still reaches chat, exactly once (see Delegation).
 - **Resume record** `voice_resume:{user_id}` (`src/domain/voice_resume.py::resume_key`): the provider's conversation
@@ -77,7 +77,8 @@ chat history, drive and billing.
   (`UserNotificationService.notify_call_summary`). That pair is the only durable trace of a companion call; Lelik has no
   memory store and writes no facts.
 - **Billing and observability**: per-model usage through `QuotaService.record_usage`; one `prompt_content` row per turn
-  (agent type `lelik`), both written at call end.
+  (agent type `lelik`, the provider the relay reports with the call-end report, `unknown` from an older relay), both
+  written at call end.
 
 ## Flows
 
@@ -138,7 +139,7 @@ is a channel, not a worker (decision `lelik_send_to_chat.md`).
 **Late answers.** If the relay times out or the call ends with answers unheard, it posts `/voice/delegate/abandon`; the
 two routes write the result marker and the abandoned marker in opposite orders and the post is claimed by an atomic
 `get_and_delete` on the result key (`_post_claimed`), so the answer reaches chat once, whichever side is second. A late
-failure never reaches chat in any mode (owner rule); the interpreter drop is conditional, see Invariants.
+failure never reaches chat in any mode (owner rule); the interpreter drop holds with the `VOICE_MCP_TOOLS` knob on or off.
 
 ### Modes
 
@@ -207,13 +208,10 @@ An interpreter or tutor web page posts the call's lines to `/api/voice/call-text
   first `await`; answers wait in `queued_answers` and are replied to once. Never add a second starter.
 - **A tool call of a barged-in response is answered, not run.** Its `function_call` still needs an output or it dangles,
   but running it spends a Smart turn on half a question. `tests/unit/services/test_voice_session_cancelled_tool_call.py`.
-- **The interpreter rule is enforced server-side only when `VOICE_MCP_TOOLS` is on.** `/voice/delegate` reads the call-kind
-  record only when `voice_mcp_minting` is on (`_run_delegation`), and the late-answer drop for an interpreter
-  (`_post_claimed`) relies on the mode that delegation stored. With the knob off no mode is read or passed, the companion
-  allowlist applies and an interpreter late answer would be posted. Harmless today because the interpreter declares no
-  tools; `tests/unit/web/test_voice_delegate_call_mode_fallbacks.py` pins the knob-off behaviour as intended, so a fix
-  changes that test (reviewer rule). `tests/unit/agents/test_lelik_interpreter_no_tools.py`,
-  `tests/unit/agents/test_lelik_delegate_intent_allowlist.py`.
+- **The interpreter rule does not depend on the `VOICE_MCP_TOOLS` knob.** `/voice/delegate` reads the call-kind record
+  for every delegation (`_run_delegation`), and the late-answer drop for an interpreter (`_post_claimed`) relies on the
+  mode that delegation stored. `tests/unit/web/test_voice_interpreter_rule_without_the_knob.py`,
+  `tests/unit/agents/test_lelik_interpreter_no_tools.py`, `tests/unit/agents/test_lelik_delegate_intent_allowlist.py`.
 - **Only the companion call leaves a note.** Interpreter and tutor sessions are tools, not conversations to remember:
   `VOICE_MODES_WITH_CALL_SUMMARY` holds `lelik` alone. `tests/unit/domain/test_voice_mode.py`.
 - **The model id is a billing key, and an unpriced model bills at zero without an error.** `calculate_realtime_cost`
@@ -234,8 +232,6 @@ An interpreter or tutor web page posts the call's lines to `/api/voice/call-text
   has an alert. `tests/unit/services/test_lelik_summarizer_has_no_fallback.py`.
 - **A resume handle is consumed once, belongs to one mode and provider, and is never logged or kept after a button
   hangup.** `tests/unit/services/test_voice_resume_service.py`, `tests/unit/services/test_voice_session_resumption.py`.
-- **Prompt-content rows of voice calls are labelled with a fixed provider** (`submit_transcript`), so xAI calls appear under the
-  wrong provider in `prompt_content`.
 
 ## Links
 

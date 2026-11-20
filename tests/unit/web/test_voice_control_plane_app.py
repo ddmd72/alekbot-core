@@ -201,7 +201,8 @@ async def test_submit_transcript_releases_marker_even_if_summary_consumer_fails(
 async def test_submit_transcript_records_each_turn_to_prompt_content_store(app_and_deps):
     """RFC §7 item 10 / plan self-review: the realtime call's actual content
     (not just its cost) must reach PromptContentStore, one record_turn call
-    per VoiceTurnSegment."""
+    per VoiceTurnSegment. The row's provider is the one the relay reports
+    (F21; no longer a hardcoded value)."""
     app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, _, alert_sink = app_and_deps
 
     client = app.test_client()
@@ -211,6 +212,7 @@ async def test_submit_transcript_records_each_turn_to_prompt_content_store(app_a
         "account_id": "a1",
         "transcript_text": "hi there",
         "usage_by_model": {"gpt-realtime-2.1": {"audio_input_tokens": 100}},
+        "provider": "openai",
         "turns": [
             {
                 "request_text": "what's the weather",

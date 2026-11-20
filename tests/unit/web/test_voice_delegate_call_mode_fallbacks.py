@@ -1,8 +1,8 @@
-"""/voice/delegate's call-mode read (LELIK_VOICE_MCP_RFC §8, O4), with the VOICE_MCP_TOOLS knob on: the mode decides
-the allowlist, and anything that is not a readable, known mode counts as the plain companion call (`lelik`): a body
-without a ticket, a missing record, a record without a mode or with an unknown one, and a store that fails (logged by
-error type, never the ticket). With the knob off, no mode is read or passed. Plus the in-flight registry's handling of a
-cancelled delegation task. Ids are invented.
+"""/voice/delegate's call-mode read (LELIK_VOICE_MCP_RFC §8, O4): the mode decides the allowlist, and anything that is
+not a readable, known mode counts as the plain companion call (`lelik`): a body without a ticket, a missing record, a
+record without a mode or with an unknown one, and a store that fails (logged by error type, never the ticket). The mode
+is read for every delegation, whatever the VOICE_MCP_TOOLS knob says (the knob gates minting only; the interpreter rule
+is unconditional). Plus the in-flight registry's handling of a cancelled delegation task. Ids are invented.
 """
 import asyncio
 import logging
@@ -101,13 +101,13 @@ async def test_an_unreadable_record_counts_as_the_companion_call_and_logs_the_er
     assert TICKET not in warnings[0] and "store unavailable" not in warnings[0]
 
 
-async def test_with_the_knob_off_no_mode_is_read_or_passed():
+async def test_with_the_knob_off_the_mode_is_still_read_and_passed():
     store = _Store({call_kind_key(TICKET): {"mode": "interpreter"}})
 
     kwargs = await _delegate(store, minting=False)
 
-    assert "mode" not in kwargs
-    assert call_kind_key(TICKET) not in store.reads
+    assert kwargs["mode"] is VoiceMode.INTERPRETER
+    assert call_kind_key(TICKET) in store.reads
 
 
 async def test_a_cancelled_delegation_task_leaves_the_in_flight_registry_without_raising():

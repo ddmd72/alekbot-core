@@ -15,7 +15,8 @@ class CallControlPlanePort(ABC):
 
     @abstractmethod
     async def submit_transcript(self, call_id: str, user_id: str, account_id: str, buffer: VoiceCallBuffer,
-                                resume_handle: Optional[str] = None, resume_provider: Optional[str] = None) -> None:
+                                resume_handle: Optional[str] = None, resume_provider: Optional[str] = None,
+                                provider: Optional[str] = None) -> None:
         """Flush the call-scoped buffer at call end. No retry on failure
         (RFC §4.7 corner-case table: transport failure fails loudly, does
         not re-run).
@@ -27,6 +28,7 @@ class CallControlPlanePort(ABC):
         `resume_handle` is the provider's conversation id, when the provider has one: the main service keeps it
         for a re-dial within the resume window, unless the call ended by the hang-up button (RFC §6.2).
         `resume_provider` names the provider that issued it; only a later call on the same provider uses it.
+        `provider` is the realtime provider of the call, recorded with each turn (absent when no session existed).
         """
 
     @abstractmethod
