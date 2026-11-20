@@ -39,7 +39,8 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
         return response.json()
 
     async def submit_transcript(self, call_id: str, user_id: str, account_id: str, buffer: VoiceCallBuffer,
-                                resume_handle: Optional[str] = None, resume_provider: Optional[str] = None) -> None:
+                                resume_handle: Optional[str] = None, resume_provider: Optional[str] = None,
+                                provider: Optional[str] = None) -> None:
         payload = {
             "call_id": call_id,
             "user_id": user_id,
@@ -57,6 +58,8 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
                 for t in buffer.turns
             ],
         }
+        if provider:
+            payload["provider"] = provider
         if resume_handle:
             payload["resume_handle"] = resume_handle
             payload["resume_provider"] = resume_provider

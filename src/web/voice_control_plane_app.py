@@ -361,9 +361,7 @@ def create_voice_control_plane_blueprint(
             try:
                 turns = body.get("turns", [])
                 if turns:
-                    # Exactly one realtime provider in Slice 1 (RFC §4.3) — not a
-                    # placeholder, a real hardcoded value.
-                    provider = "openai"
+                    provider = body.get("provider") or "unknown"
                     model = next(iter(body.get("usage_by_model", {})), "")
                     # BigQueryPromptContentAdapter._build_record reads user_id via
                     # src.utils.telemetry.get_request_context(), not from a
