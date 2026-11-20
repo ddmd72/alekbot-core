@@ -225,7 +225,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                        #    channel agents. Agent builds LLMRequest; engine updates only
 │   │                        #    messages each turn. DelegationResult carries text,
 │   │                        #    terminal_tool_args, delivery_items, structured_data.
-│   └── message_queue.py     # Async communication hub
 ├── locales/            # 🆕 Localization System
 │   ├── en.py           # English strings (Stub)
 │   └── uk.py           # Ukrainian strings (Primary)
