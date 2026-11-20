@@ -103,7 +103,8 @@ still stored and still drives the UI language.
 
 `GET /api/user/language` returns `{preferred_language, agent_mirror}` (`null` for no explicit preference).
 `POST /api/user/language` takes the same two fields; `agent_mirror` must be a boolean (400 otherwise) and defaults to
-`true`. With `agent_mirror=false` and no `preferred_language`, the effective response language is the system default.
+`true`. An unsupported `preferred_language` (an unknown code, or a non-string) is a 400 and stores nothing; a code
+is matched case-insensitively. With `agent_mirror=false` and no `preferred_language`, the effective response language is the system default.
 
 ## Invariants and traps
 
@@ -111,10 +112,8 @@ still stored and still drives the UI language.
   reads; `LanguagePreferenceService` writes and takes the resolver for the system default. Readers must never depend on
   the writer, which notifies and refreshes agents. One resolver instance is shared by design
   (`tests/unit/composition/wiring_instance_ledger.txt`).
-- **An unsupported language code in the Cabinet POST is stored as Ukrainian, not rejected.** `LanguageCode.from_str`
-  returns `default or cls.UK`, so `from_str(x, default=None)` never returns `None`, and the route's
-  `if preferred is None: 400` branch in `set_language` cannot fire. Do not rely on that 400, and do not assume
-  `from_str(..., default=None)` signals failure.
+- **`LanguageCode.from_str(x, default=None)` never returns `None`** (it falls back to Ukrainian): validate with
+  `is_supported`, as `set_language` and `set_preference` do.
 - **The "fixed" rule has several copies of one decision.** `set_preference` builds `LANG_FIXED_<CODE>` inline; the same
   rule (with a third copy for the alert key) is `src/domain/language.py::resolve_lang_token_id`, which no production code calls (tests only). Change both, or
   call the function from the service.

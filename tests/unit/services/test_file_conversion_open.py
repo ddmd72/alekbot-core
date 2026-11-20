@@ -277,8 +277,8 @@ async def test_a_native_outcome_leaves_a_readable_file_outside_the_staging_direc
     (ReadStatus.ENCRYPTED, "", conversion_alert("invoice_painting_es.pdf", PDF), logging.WARNING),
     (ReadStatus.ERROR, "crash", conversion_alert("invoice_painting_es.pdf", PDF), logging.ERROR),
     (ReadStatus.MEMORY, "oom", conversion_alert("invoice_painting_es.pdf", PDF), logging.ERROR),
-    (ReadStatus.TIMEOUT, "", conversion_alert("invoice_painting_es.pdf", PDF), logging.ERROR),
-    (ReadStatus.TIMEOUT, "deadline", deadline_note("invoice_painting_es.pdf"), logging.ERROR),
+    (ReadStatus.TIMEOUT, "", conversion_alert("invoice_painting_es.pdf", PDF), logging.WARNING),
+    (ReadStatus.TIMEOUT, "deadline", deadline_note("invoice_painting_es.pdf"), logging.WARNING),
     (ReadStatus.MODEL_UNAVAILABLE, "", model_unavailable_note("invoice_painting_es.pdf"), logging.ERROR),
     (ReadStatus.PARSER_UNAVAILABLE, "busy", parser_unavailable_note("invoice_painting_es.pdf"), logging.ERROR),
     (ReadStatus.TOO_LARGE, "", size_alert("invoice_painting_es.pdf", 6, MAX_FILE_BYTES), logging.WARNING),
@@ -320,3 +320,19 @@ async def test_a_too_large_drive_file_logs_a_warning(world, caplog):
     with caplog.at_level(logging.WARNING):
         await world.service.open(ref, "ann", "ann", deadline_at=DEADLINE)
     assert any(r.levelno == logging.WARNING and "too_large" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_timed_out_open_logs_a_warning(world, caplog):
+    world.documents.outcome = ReadOutcome(status=ReadStatus.TIMEOUT, kind="pdf", detail="deadline")
+    with caplog.at_level(logging.WARNING):
+        await world.service.open("invoice_painting_es.pdf", "ann", "ann", deadline_at=DEADLINE)
+    lines = [r for r in caplog.records if "[FileOpen]" in r.getMessage()]
+    assert len(lines) == 1 and lines[0].levelno == logging.WARNING
+
+
+async def test_a_still_working_open_logs_a_warning(world, caplog):
+    world.documents.outcome = ReadOutcome(status=ReadStatus.STILL_WORKING, kind="pdf")
+    with caplog.at_level(logging.WARNING):
+        await world.service.open("invoice_painting_es.pdf", "ann", "ann", deadline_at=DEADLINE)
+    lines = [r for r in caplog.records if "[FileOpen]" in r.getMessage()]
+    assert len(lines) == 1 and lines[0].levelno == logging.WARNING

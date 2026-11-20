@@ -51,7 +51,9 @@ from ..domain.document_open_texts import (
     action_too_large_note, folder_note, open_failed_note, parser_unavailable_note,
 )
 from ..domain.document_presentation import note_for, present_text
-from ..domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadRequest, ReadStatus
+from ..domain.document_read import (
+    CALLER_OPEN, CALLER_PREFETCH, SYSTEM_FAULT_STATUSES, ReadOutcome, ReadRequest, ReadStatus,
+)
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.email import EmailPart
 from ..domain.email_open_texts import (
@@ -189,15 +191,10 @@ def _native_file(outcome: ReadOutcome, content: bytes, declared_mime: str, name:
     return OpenedFile(outcome, native_path=path, native_mime=native_mime)
 
 
-# Statuses that are the system's, not the file's: they log at ERROR, where the alerting looks (severity >= ERROR).
-_SYSTEM_STATUSES = frozenset({ReadStatus.MEMORY, ReadStatus.TIMEOUT, ReadStatus.ERROR, ReadStatus.PARSER_UNAVAILABLE,
-                              ReadStatus.MODEL_UNAVAILABLE, ReadStatus.STILL_WORKING})
-
-
 def _log_unread(outcome: ReadOutcome, store: str, ref: str) -> None:
     """One structured line for a read that gave no text: ERROR when the system failed, WARNING when the file is at fault."""
     line = "[FileOpen] %s store=%s ref=%s kind=%s detail=%s"
-    level = logger.error if outcome.status in _SYSTEM_STATUSES else logger.warning
+    level = logger.error if outcome.status in SYSTEM_FAULT_STATUSES else logger.warning
     level(line, outcome.status.value, store, ref, outcome.kind, outcome.detail)
 
 

@@ -46,8 +46,10 @@ None of its own. What it leans on:
 5. `handle_queued_event` drops what the processing path ignores (`_ignored_before_lock`), takes the lock, then
    `_process_message_event` or `_process_mention_event`. Both call `iam_service.authorize("slack", ...)`; a `reject`
    posts the IAM message and ends the turn. A message goes on through `_run_authorized_turn` (language, response
-   channel, then a `$` command via `handle_command` or `handle_message`). A mention builds its context inline and
-   always calls `handle_message`: a `$` command inside an @mention is not dispatched as a command.
+   channel, then a `$` command via `handle_command` or `handle_message`). Both paths dispatch a `$` command
+   through `_dispatch_command`; a mention that is not a command builds its context inline and calls `handle_message`.
+   An `app_mention` event carries no `channel_type`, so a mention command gets `channel` (never `im`): the `$geo`
+   DM-only check fails closed.
 
 ### Session lock and busy events
 

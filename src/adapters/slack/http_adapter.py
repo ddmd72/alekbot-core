@@ -19,6 +19,7 @@ from .response_channel import SlackResponseChannel
 from .signature import verify_slack_signature
 from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
 from ...domain.chat_text import unwrapped
+from ...domain.language import LanguageCode
 from ...domain.messaging import MessageContext, FileAttachment, session_id_for
 from ...domain.ui_messages import UIMessage
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
@@ -507,21 +508,11 @@ class HTTPModeAdapter(SlackAdapter):
             on_long_turn=release_lock,
         )
 
-        # A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`).
-        stripped = unwrapped(text)
-
-        if stripped.startswith("$") and geo_mark_note is None:
-            command = stripped.lstrip("$").strip().lower()
-            context = MessageContext(
-                text=text,
-                session_id=session_id,
-                user_id=user_id,
-                account_id=account_id,  # SESSION_26
-                language=ui_lang.value,
-                metadata={"event_type": "command", "platform": "slack", "slack_user_id": slack_user_id, "channel": channel,
-                          "channel_type": (event_metadata or {}).get("channel_type", "im")}
-            )
-            await self.conversation_handler.handle_command(command, context, response_channel)
+        if geo_mark_note is None and await self._dispatch_command(
+            text, session_id=session_id, user_id=user_id, account_id=account_id, ui_lang=ui_lang,
+            slack_user_id=slack_user_id, channel=channel, channel_type=(event_metadata or {}).get("channel_type", "im"),
+            response_channel=response_channel,
+        ):
             return
 
         context = MessageContext(
@@ -602,6 +593,40 @@ class HTTPModeAdapter(SlackAdapter):
         except Exception as e:
             logger.error(f"❌ Error processing message: {e}", exc_info=True)
 
+    async def _dispatch_command(
+        self,
+        text: str,
+        *,
+        session_id: str,
+        user_id: str,
+        account_id: str,
+        ui_lang: LanguageCode,
+        slack_user_id: str,
+        channel: str,
+        channel_type: str,
+        response_channel: SlackResponseChannel,
+        thread_id: Optional[str] = None,
+    ) -> bool:
+        """Hand a `$` command to the conversation handler; True when `text` was one.
+
+        A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`)."""
+        stripped = unwrapped(text)
+        if not stripped.startswith("$"):
+            return False
+        command = stripped.lstrip("$").strip().lower()
+        context = MessageContext(
+            text=text,
+            session_id=session_id,
+            user_id=user_id,
+            account_id=account_id,  # SESSION_26
+            language=ui_lang.value,
+            thread_id=thread_id,
+            metadata={"event_type": "command", "platform": "slack", "slack_user_id": slack_user_id, "channel": channel,
+                      "channel_type": channel_type},
+        )
+        await self.conversation_handler.handle_command(command, context, response_channel)
+        return True
+
     async def _process_mention_event(
         self,
         event: Dict[str, Any],
@@ -646,6 +671,23 @@ class HTTPModeAdapter(SlackAdapter):
 
             ui_lang = await self._resolve_language(user_id)
 
+            response_channel = SlackResponseChannel(
+                self.app.client,
+                channel,
+                self.slack_bot_token,
+                language=ui_lang,
+                localization=self._localization,
+                on_long_turn=release_lock,
+            )
+
+            # An app_mention event carries no channel_type: "channel" keeps the `$geo` DM-only check closed.
+            if await self._dispatch_command(
+                text, session_id=session_id, user_id=user_id, account_id=account_id, ui_lang=ui_lang,
+                slack_user_id=slack_user_id, channel=channel, channel_type=event.get("channel_type") or "channel",
+                response_channel=response_channel, thread_id=event.get("ts"),
+            ):
+                return
+
             context = MessageContext(
                 text=text,
                 session_id=session_id,
@@ -662,15 +704,6 @@ class HTTPModeAdapter(SlackAdapter):
                     "event_time": float(event["ts"]) if event.get("ts") else None,
                     **_reply_to_metadata(event),
                 }
-            )
-
-            response_channel = SlackResponseChannel(
-                self.app.client,
-                channel,
-                self.slack_bot_token,
-                language=ui_lang,
-                localization=self._localization,
-                on_long_turn=release_lock,
             )
 
             await self.conversation_handler.handle_message(context, response_channel)

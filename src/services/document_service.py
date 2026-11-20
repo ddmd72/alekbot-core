@@ -37,7 +37,7 @@ from ..domain.document_limits import (
 )
 from ..domain.document_read import (
     CALLER_CONNECTOR, CALLER_INDEX, CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, READER_SKIPPED, TRANSCRIPT_CACHE_DAYS,
-    ReadOutcome, ReadRequest, ReadStatus, reader_admits,
+    SYSTEM_FAULT_STATUSES, ReadOutcome, ReadRequest, ReadStatus, reader_admits,
 )
 from ..domain.drive_extraction import (
     DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, ParserUnavailable, PdfSplitFailed,
@@ -60,9 +60,6 @@ _TRANSCRIBE_LINK = "transcribe-openai"
 _EXT = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
 # A `text/*` upload of these kinds is read raw (A3); csv, html, eml and subtitles go to the child's readers.
 _RAW_TEXT_KINDS = IN_PROCESS_TEXT_KINDS | {"other", "data_dump", "mhtml"}
-# ERROR: systemic or a bug (Errors-dev pages on it); everything else that is not a success is a WARNING.
-_ERROR_STATUSES = frozenset({ReadStatus.ERROR, ReadStatus.MEMORY, ReadStatus.MODEL_UNAVAILABLE,
-                             ReadStatus.PARSER_UNAVAILABLE})
 # The drive connector never runs the paid model reader; the email index runs it only for an admitted scan (`reader_admits`).
 _QUIET_STATUSES = frozenset({ReadStatus.TEXT, ReadStatus.NATIVE, ReadStatus.NO_TEXT})
 
@@ -333,7 +330,7 @@ class DocumentService(DocumentReadPort):
             line = (f"[DocumentService] read {outcome.status.value}: kind={outcome.kind or '?'} "
                     f"store={request.store} caller={request.caller} detail={outcome.detail[:120]!r} "
                     f"request={request.request_id}")
-            if outcome.status in _ERROR_STATUSES:
+            if outcome.status in SYSTEM_FAULT_STATUSES:
                 logger.error(line)
             else:
                 logger.warning(line)

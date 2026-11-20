@@ -142,7 +142,9 @@ Other platforms use the stored id as it is; a platform with no media port return
   `RETRY_POLICY = NO_RETRY_POLICY`. An agent failure or exception becomes a failure response, the worker answers 200 and
   the user gets the failure notice (`src/infrastructure/agent_coordinator.py::AgentCoordinator.route_message`,
   `src/handlers/worker_handler.py`). Cloud Tasks repeat the whole generation only after a crash, a non-2xx answer or a
-  deadline overrun.
+  deadline overrun. Why no retry: a transient provider error is already absorbed per call (the SDKs' own retries and
+  the cross-provider failover in `BaseAgent._call_llm`), so an error that reaches the task survived both, and a
+  whole-task retry would re-run up to 1100 s of generation and delay the failure notice.
 - **Provider and tier per agent** are in `AgentProviderStrategy` (`src/services/agent_context_builder.py`) and
   `_DEFAULT_AGENT_TIERS` (`src/domain/user.py`), not here; the HTML page default provider is an owner decision
   ([`html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md)).
@@ -150,8 +152,8 @@ Other platforms use the stored id as it is; a platform with no media port return
   model wrote it; the page always ships. Placeholders from `images.unsplash.com` are not matched by the regex and get no
   credit. `UNSPLASH_ACCESS_KEY` is read in `src/composition/user_agent_factory.py`; without it the agent gets no image port.
 - **`noindex` is injected by the storage adapter, not the prompt** (`src/adapters/gcs_media_adapter.py::_inject_noindex`,
-  for every `text/html` upload), but only after a literal lower-case `<head>`: a `<head lang=...>` or a page with no
-  `<head>` is stored unchanged, silently.
+  for every `text/html` upload), on bytes: right after the first `<head ...>` tag, else after `<html ...>`, else after
+  the doctype (a meta before it would force quirks mode), else first.
 - **The delivered object is private.** Reachability is the capability link only; a bare storage URL is 403.
 - **A silent delivery failure is possible.** Upload errors in `notify_file_bytes` and per-item errors in the handler are
   logged and swallowed; the user sees nothing. Only an agent failure produces the failure notice.

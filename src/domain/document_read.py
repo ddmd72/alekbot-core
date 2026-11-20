@@ -21,6 +21,7 @@ Public interface:
     reader_admits(pages_total, reader_pages) -> bool        whether an `index` read may run the reader (all or nothing)
     IN_PROCESS_TEXT_KINDS          the kinds with no converter, read as UTF-8 in the caller (sandbox S-Δ2, A3)
     PARSE_KINDS                    the child readers' kinds that are not in IN_PROCESS_TEXT_KINDS
+    SYSTEM_FAULT_STATUSES          the statuses that are the system's fault (logged at ERROR; a timeout is not one)
     TRANSCRIPT_CACHE_DAYS          how long a chat upload's transcript is kept (P21)
 """
 from __future__ import annotations
@@ -79,6 +80,13 @@ class ReadStatus(str, Enum):
     MODEL_UNAVAILABLE = "model_unavailable"    # the reader cannot run now (429, 5xx, open breaker); spend so far reported
     PARSER_UNAVAILABLE = "parser_unavailable"  # detail: unavailable | misconfigured | busy; systemic, not the file's
     STILL_WORKING = "still_working"            # reserved for a remote adapter (D1); the in-process service never returns it
+
+
+# A status that is the system's fault: something to fix, so its log line is ERROR, where the alerting reads. A timeout
+# or a slow remote read (TIMEOUT, STILL_WORKING) is the clock's, and a file-specific outcome is the file's: a WARNING.
+SYSTEM_FAULT_STATUSES: FrozenSet[ReadStatus] = frozenset({
+    ReadStatus.ERROR, ReadStatus.MEMORY, ReadStatus.MODEL_UNAVAILABLE, ReadStatus.PARSER_UNAVAILABLE,
+})
 
 
 @dataclass(frozen=True)

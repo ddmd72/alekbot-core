@@ -105,3 +105,60 @@ async def test_without_a_resolver_the_read_answers_the_defaults():
         got = await client.get("/api/user/language", headers=TOKEN)
 
     assert await got.get_json() == {"preferred_language": None, "agent_mirror": True}
+
+
+async def test_an_unsupported_code_is_400_and_stores_nothing():
+    world = World()
+    await world.seed()
+    app = world.app(reader=world.resolver, writer=world.writer)
+
+    async with app.test_client() as client:
+        posted = await client.post("/api/user/language", json={"preferred_language": "xx", "agent_mirror": False},
+                                   headers=TOKEN)
+
+    assert posted.status_code == 400
+    assert world.stored_config().get("preferred_language") is None
+    assert world.notifier.sent == []
+    assert "USER_user-1" not in world.db.collection("overrides").docs
+
+
+async def test_a_non_string_code_is_400():
+    world = World()
+    await world.seed()
+    app = world.app(reader=world.resolver, writer=world.writer)
+
+    async with app.test_client() as client:
+        posted = await client.post("/api/user/language", json={"preferred_language": 5, "agent_mirror": False},
+                                   headers=TOKEN)
+
+    assert posted.status_code == 400
+    assert world.stored_config().get("preferred_language") is None
+    assert world.notifier.sent == []
+
+
+async def test_an_upper_case_code_is_accepted_as_lower_case():
+    world = World()
+    await world.seed()
+    app = world.app(reader=world.resolver, writer=world.writer)
+
+    async with app.test_client() as client:
+        posted = await client.post("/api/user/language", json={"preferred_language": "FR", "agent_mirror": False},
+                                   headers=TOKEN)
+
+    assert posted.status_code == 200
+    assert world.stored_config()["preferred_language"] == "fr"
+
+
+async def test_a_null_code_clears_the_choice():
+    world = World()
+    await world.seed()
+    app = world.app(reader=world.resolver, writer=world.writer)
+
+    async with app.test_client() as client:
+        await client.post("/api/user/language", json={"preferred_language": "fr", "agent_mirror": False},
+                          headers=TOKEN)
+        posted = await client.post("/api/user/language", json={"preferred_language": None, "agent_mirror": True},
+                                   headers=TOKEN)
+
+    assert posted.status_code == 200
+    assert world.stored_config().get("preferred_language") is None

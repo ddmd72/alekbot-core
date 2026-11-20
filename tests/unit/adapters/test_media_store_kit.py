@@ -74,10 +74,10 @@ async def test_html_gets_noindex_once(fake, store):
     assert stored.startswith(b"<html><HEAD>\n    " + ROBOTS + b"</HEAD>")
 
 
-async def test_html_without_head_is_stored_unchanged(fake, store):
-    page = b"<html><body>Lisbon trip notes</body></html>"
-    await store.store(page, "html/u1/trip-notes.html", "text/html; charset=utf-8")
-    assert fake.live(BUCKET, "html/u1/trip-notes.html").data == page
+async def test_html_without_head_gets_noindex_after_the_html_tag_and_keeps_every_other_byte(fake, store):
+    page = b"<html><body><p>x</p></body></html>"
+    await store.store(page, "html/u1/page.html", "text/html; charset=utf-8")
+    assert fake.live(BUCKET, "html/u1/page.html").data == b"<html>\n    " + ROBOTS + b"<body><p>x</p></body></html>"
 
 
 async def test_non_html_is_never_rewritten(fake, store):
@@ -230,3 +230,42 @@ async def test_signed_url_with_no_runtime_email_is_a_runtime_error(monkeypatch, 
     with pytest.raises(RuntimeError):
         await store.generate_signed_url(KEY, 60)
     assert fake.signed_urls == []
+
+
+async def _stored_html(fake, store, page: bytes) -> bytes:
+    await store.store(page, "html/u1/page.html", "text/html; charset=utf-8")
+    return fake.live(BUCKET, "html/u1/page.html").data
+
+
+async def test_a_head_with_attributes_gets_noindex_once(fake, store):
+    stored = await _stored_html(
+        fake, store, b'<html lang="en"><head lang="en"><title>T</title></head><body><p>x</p></body></html>')
+    assert stored.count(ROBOTS) == 1
+    assert stored.startswith(b'<html lang="en"><head lang="en">\n    ' + ROBOTS + b"<title>T</title>")
+
+
+async def test_a_page_without_head_gets_noindex_after_the_html_tag(fake, store):
+    stored = await _stored_html(fake, store, b'<!DOCTYPE html><html lang="en"><body><p>x</p></body></html>')
+    assert stored.startswith(b'<!DOCTYPE html><html lang="en">\n    ' + ROBOTS + b"<body>")
+    assert stored.count(ROBOTS) == 1
+
+
+async def test_a_header_element_is_not_taken_for_head(fake, store):
+    stored = await _stored_html(fake, store, b"<html><body><header>T</header></body></html>")
+    assert stored.startswith(b"<html>\n    " + ROBOTS)
+    assert b"<header>T</header>" in stored and stored.count(ROBOTS) == 1
+
+
+async def test_a_doctype_only_page_keeps_the_doctype_first(fake, store):
+    stored = await _stored_html(fake, store, b"<!doctype html><p>x</p>")
+    assert stored == b"<!doctype html>\n    " + ROBOTS + b"<p>x</p>"
+
+
+async def test_a_fragment_gets_noindex_first(fake, store):
+    stored = await _stored_html(fake, store, b"<p>x</p>")
+    assert stored.startswith(ROBOTS) and stored.endswith(b"<p>x</p>")
+
+
+async def test_a_non_utf8_page_is_stored_with_noindex(fake, store):
+    stored = await _stored_html(fake, store, b"<html><head></head><body>caf\xe9</body></html>")
+    assert ROBOTS in stored and b"caf\xe9" in stored

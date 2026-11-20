@@ -710,9 +710,10 @@ def create_user_cabinet_blueprint(
 
             preferred: Optional[LanguageCode] = None
             if lang_raw is not None:
-                preferred = LanguageCode.from_str(lang_raw, default=None)
-                if preferred is None:
+                # from_str never returns None (it falls back to Ukrainian), so validate explicitly.
+                if not isinstance(lang_raw, str) or not LanguageCode.is_supported(lang_raw.lower()):
                     return jsonify({"error": f"Unsupported language: {lang_raw!r}"}), 400
+                preferred = LanguageCode(lang_raw.lower())
 
             if language_preferences:
                 await language_preferences.set_preference(g.user_id, preferred, mirror)

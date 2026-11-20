@@ -248,9 +248,10 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
   the client asks again.
 - **Rotation re-checks the user; the grant check does too.** The refresh and `grant_allowed` both re-read user, email
   and whitelist; the log carries the reason, never the email (`test_mcp_refresh_whitelist.py`).
-- **`/revoke` is routed but not served.** The dispatcher sends it to the facts app, but `AuthSettings` leaves the SDK's
-  revocation option off, so the endpoint does not exist and `MCPSdkOAuthProvider.revoke_token` is unreachable over HTTP.
-  Access tokens are stateless and cannot be revoked before `exp`.
+- **`/revoke` is served** (RFC 7009; `_facts_auth_settings` enables `RevocationOptions`). The SDK authenticates the
+  client and revokes only that client's own refresh token; another client's token answers 200 and changes nothing
+  (`test_mcp_token_revocation.py`). The access token is a stateless JWT and stays valid until `exp`: revoking
+  stops refreshing, not the current access token.
 - **The consent page is hostile-input territory.** The client name comes from anonymous registration; every value is
   HTML-escaped and the page carries a CSP of `default-src 'none'` with only inline style, `frame-ancestors 'none'`,
   `X-Frame-Options`, `nosniff` and `Referrer-Policy: no-referrer` (its URL holds the consent token)

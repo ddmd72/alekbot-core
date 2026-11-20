@@ -70,8 +70,9 @@ index does not come through `open`: it builds its own `ReadRequest` with `CALLER
 
 1. `classify_ref` (`src/domain/file_ref.py::classify_ref`) picks the store: email, skill, workspace, delivered, drive,
    else chat. Trap: a skill, workspace or delivered ref whose name contains `drive:` keeps its own store, because those
-   prefixes are decided first (`file_conversion_service.py::_is_drive_ref`); a bare chat name has no prefix, so a chat file
-   whose name contains `drive:<x>` classifies as DRIVE (`src/domain/drive_ref.py` searches anywhere in the string).
+   prefixes are decided first (`file_conversion_service.py::_is_drive_ref`); a chat ref never holds `:` (the upload's
+   stored name goes through `sanitize_filename`, `src/adapters/gcs_file_storage_adapter.py`), so only a prefixed ref can
+   carry `drive:` in a name.
 2. The ref is resolved in its store. Delivered keys carry an ownership check (the second path segment must be the
    requesting user; `_download_by_ref`). A drive ref goes through `DriveConnectionService` and the access policy's READ
    check before any download or any text that prints its path (`_drive_item`). Store errors propagate; the callers map
@@ -215,9 +216,10 @@ not.
 - **An outage is not the file's outcome.** A parser or reader outage is `PARSER_UNAVAILABLE` / `MODEL_UNAVAILABLE`, so a
   caller never records "unreadable file" for an outage (the email index keeps the mail pending). Never add an in-process
   parser to a deployed composition (`src/services/CLAUDE.md`).
-- **Log levels feed alerting.** `DocumentService` logs ERROR for `ERROR`, `MEMORY`, `MODEL_UNAVAILABLE`,
-  `PARSER_UNAVAILABLE`, WARNING for other failures, nothing for `NO_TEXT`; the open path (`file_conversion_service.py::_log_unread`) also counts
-  `TIMEOUT` and `STILL_WORKING` as ERROR. Alerting reads severity, so a deadline timeout on an open pages.
+- **Log levels feed alerting.** One set decides: `src/domain/document_read.py::SYSTEM_FAULT_STATUSES` (`ERROR`,
+  `MEMORY`, `MODEL_UNAVAILABLE`, `PARSER_UNAVAILABLE`) logs ERROR in `DocumentService`, the open path
+  (`file_conversion_service.py::_log_unread`) and `DriveOperations`; other failures are WARNING, `NO_TEXT` logs nothing.
+  A timeout (`TIMEOUT`, `STILL_WORKING`) is the clock's: WARNING everywhere.
 - **Fail closed on D13.** No container-facts reader, an outage, a run failure, `error` or `too_large` leaves the container
   unchecked, and `active_kind` answers `UNCHECKED`: the file is refused with a "could not be checked" note, never sent.
   Drive and chat refs are not checked. Tests: `tests/unit/domain/test_active_kind.py`, `tests/unit/agents/test_file_management_send_file.py`, `tests/unit/infrastructure/test_drive_operations_copy_email_active.py`.
