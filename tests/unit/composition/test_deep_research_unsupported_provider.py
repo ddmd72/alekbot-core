@@ -9,6 +9,7 @@ setting, submits the research to Claude.
 import logging
 from types import SimpleNamespace
 from typing import List
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,6 +24,7 @@ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, Intent
 from src.infrastructure.agent_registry import AgentRegistry
 from src.ports.agent_factory_port import AgentFactoryPort
 from src.ports.deep_research_port import DeepResearchPort
+from src.ports.prompt_builder_port import PromptBuilderPort
 from src.services.agent_context_builder import AgentContextBuilder
 from src.services.provider_registry import ProviderRegistry
 
@@ -50,7 +52,10 @@ class DeepResearchOnlyFactory(AgentFactoryPort):
     def __init__(self, coordinator: AgentCoordinator, claude: RecordingClaudeResearch, config: UserBotConfig) -> None:
         self._coordinator = coordinator
         self._owner = _owner(claude)
-        self._ctx = _UserContext(user_profile=SimpleNamespace(config=config), prompt_builder=None)  # type: ignore[arg-type]
+        # A working prompt builder: the agent now fails on a prompt-build failure, and this test is about routing.
+        prompt_builder = AsyncMock(spec=PromptBuilderPort)
+        prompt_builder.build_for_agent.return_value = "stub system prompt"
+        self._ctx = _UserContext(user_profile=SimpleNamespace(config=config), prompt_builder=prompt_builder)
 
     async def create_agent_on_demand(self, agent_type: str, user_id: str) -> bool:
         agent = UserAgentFactory._build_deep_research(self._owner, user_id, self._ctx)  # type: ignore[arg-type]

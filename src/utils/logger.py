@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import sys
+from .cloud_run import on_cloud_run
 from .logging_context import get_log_context
 from .telemetry import get_trace_ids
 
@@ -66,7 +67,7 @@ def setup_logger() -> logging.Logger:
     """
     Configure root logger.
 
-    - Cloud Run (K_SERVICE is set): structured JSON → Cloud Logging.
+    - Cloud Run (a service sets K_SERVICE, a job sets CLOUD_RUN_JOB): structured JSON → Cloud Logging.
       Severity, message, and context labels (user_id, session_id, trace_id)
       are parsed automatically by Cloud Logging. No file handler — container
       filesystem is ephemeral.
@@ -79,10 +80,10 @@ def setup_logger() -> logging.Logger:
     if logger.handlers:
         return logger
 
-    if os.getenv("K_SERVICE"):
+    if on_cloud_run():
         # ----------------------------------------------------------------
         # Cloud Run: structured JSON stdout → Cloud Logging
-        # K_SERVICE is automatically set by the Cloud Run runtime.
+        # The runtime sets K_SERVICE (service) or CLOUD_RUN_JOB (job); on_cloud_run() covers both.
         # StructuredLogHandler emits one JSON object per line; Cloud Logging
         # parses severity and labels without any extra configuration.
         # ----------------------------------------------------------------

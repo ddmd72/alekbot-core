@@ -442,7 +442,6 @@ class TasksAgent(BaseAgent):
         self._on_agent_start(query)
         start_time = time.time()
 
-        system_prompt = ""
         try:
             system_prompt = await self.prompt_builder.build_for_agent(
                 agent_type="tasks",
@@ -452,8 +451,11 @@ class TasksAgent(BaseAgent):
                 include_biographical=True,
             )
         except Exception as exc:
-            logger.warning(
-                f"📋 TasksAgent: prompt build failed ({exc}), proceeding without bio context"
+            self._on_agent_error(exc, "prompt_builder")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=f"Failed to build system prompt: {exc}",
             )
         user_text = query
         if reasoning:

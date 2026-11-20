@@ -218,27 +218,17 @@ class TestExecuteFailure:
         assert response.status == AgentStatus.FAILED
         assert "Computation failed" in response.error
 
-    async def test_prompt_builder_failure_non_fatal(self, agent, mock_prompt_builder, mock_llm):
+    async def test_prompt_builder_failure_is_fatal_and_carries_its_cause(self, agent, mock_prompt_builder, mock_llm):
         mock_prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore error")
 
         msg = _make_message()
         response = await agent.execute(msg)
 
-        # Should succeed — prompt builder failure is non-fatal
-        assert response.status == AgentStatus.SUCCESS
-
-    async def test_no_prompt_builder_still_works(self, mock_llm):
-        config = AgentConfig(agent_id="compute_agent_user123", agent_type="compute")
-        agent_no_pb = ComputeAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            prompt_builder=None,
-            user_id="user123",
-        )
-
-        msg = _make_message()
-        response = await agent_no_pb.execute(msg)
-        assert response.status == AgentStatus.SUCCESS
+        # Fatal — no fallback prompt (root CLAUDE.md "No fallback prompts")
+        assert response.status == AgentStatus.FAILED
+        assert "Computation failed" in response.error
+        assert "Firestore error" in response.error
+        mock_llm.generate_content.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +239,15 @@ class TestAlternativeAgents:
 
     def test_returns_web_search(self, agent):
         assert agent._get_alternative_agents() == ["web_search_agent"]
+
+
+async def test_a_prompt_build_failure_fails_without_calling_the_model(
+    agent, mock_prompt_builder, mock_llm
+):
+    mock_prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+    response = await agent.execute(_make_message("2 + 2"))
+
+    assert response.status == AgentStatus.FAILED
+    assert "Computation failed" in response.error
+    mock_llm.generate_content.assert_not_awaited()

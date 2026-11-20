@@ -11,7 +11,7 @@ The adapter owns delivery:
 
 Orchestration responsibilities:
   1. Receive {query, language} from Smart Agent after preparation protocol.
-  2. Assemble system prompt via PromptBuilder (if configured).
+  2. Assemble system prompt via PromptBuilder (a build failure fails the response).
   3. Append language instruction to query.
   4. Call DeepResearchPort.create_interaction() — adapter handles delivery setup.
   5. Return ACK to Smart Agent.
@@ -47,7 +47,8 @@ class DeepResearchAgent(BaseAgent):
         config: AgentConfig,
         job_port: DeepResearchPort,
         tier: PerformanceTier = PerformanceTier.BALANCED,
-        prompt_builder: Optional[PromptBuilderPort] = None,
+        *,
+        prompt_builder: PromptBuilderPort,
         user_id: Optional[str] = None,
         second_pass: bool = False,
     ) -> None:
@@ -58,7 +59,7 @@ class DeepResearchAgent(BaseAgent):
                             The adapter owns delivery — no task_queue or provider_name needed here.
             tier:           Performance tier resolved from user config.
                             Passed to the adapter; adapter maps it internally to a provider model.
-            prompt_builder: Optional PromptBuilder for assembling a system prompt.
+            prompt_builder: PromptBuilder for assembling the system prompt (required).
                             Adapters that do not use a system prompt will ignore it.
             user_id:        User identifier for PromptBuilder profile resolution.
         """
@@ -84,14 +85,17 @@ class DeepResearchAgent(BaseAgent):
 
         self._on_agent_start(query)
 
-        system_prompt = ""
-        if self._prompt_builder:
-            try:
-                system_prompt = await self._prompt_builder.build_for_agent(
-                    "deep_research", self._user_id
-                )
-            except Exception as e:
-                logger.warning("[DeepResearchAgent] PromptBuilder failed, proceeding without system prompt: %s", e)
+        try:
+            system_prompt = await self._prompt_builder.build_for_agent(
+                "deep_research", self._user_id
+            )
+        except Exception as exc:
+            self._on_agent_error(exc, "prompt_builder")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=f"Failed to build system prompt: {exc}",
+            )
 
         full_query = f"{query}\n\nPlease write the entire response in {language}."
         logger.info(

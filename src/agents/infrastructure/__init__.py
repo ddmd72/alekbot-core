@@ -2,10 +2,9 @@
 Infrastructure Agents
 =====================
 
-Cross-cutting agents for system concerns like billing and logging.
+Cross-cutting agents for system concerns like billing.
 """
 
 from .billing_agent import BillingAgent
-from .logger_agent import LoggerAgent
 
-__all__ = ["BillingAgent", "LoggerAgent"]
+__all__ = ["BillingAgent"]

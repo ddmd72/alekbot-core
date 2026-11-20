@@ -127,15 +127,11 @@ class HTTPModeAdapter(SlackAdapter):
         logger.info("🌐 HTTP Mode adapter initialized (Multi-Tenant)")
 
     async def _resolve_language(self, user_id: str):
-        """Return (ui_lang, preferred_language, agent_mirror) for a user."""
+        """Return the UI language of a user; the response language comes only from the USER override."""
         from ...domain.language import LanguageCode
         if self._language_service:
-            ui_lang = await self._language_service.resolve_ui_language(user_id)
-            preferred, mirror = await self._language_service.get_preference(user_id)
-        else:
-            ui_lang = LanguageCode.UK
-            preferred, mirror = None, True
-        return ui_lang, preferred, mirror
+            return await self._language_service.resolve_ui_language(user_id)
+        return LanguageCode.UK
 
     def _translate_files(self, slack_files: list) -> list:
         attachments = []
@@ -453,7 +449,7 @@ class HTTPModeAdapter(SlackAdapter):
             try:
                 decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
                 if decision.user is not None:
-                    return (await self._resolve_language(decision.user.user_id))[0]
+                    return await self._resolve_language(decision.user.user_id)
             except Exception as e:
                 logger.warning(f"⚠️ Busy notice language lookup failed, using default: {e}")
         return LanguageCode.UK
@@ -500,7 +496,7 @@ class HTTPModeAdapter(SlackAdapter):
         set_log_context(user_id=user_id, session_id=session_id)
         logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
 
-        ui_lang, preferred_language, agent_mirror = await self._resolve_language(user_id)
+        ui_lang = await self._resolve_language(user_id)
 
         response_channel = SlackResponseChannel(
             self.app.client,
@@ -542,8 +538,6 @@ class HTTPModeAdapter(SlackAdapter):
                 "channel_type": "im",
                 "channel": channel,
                 "slack_user_id": slack_user_id,
-                "preferred_language": preferred_language,
-                "agent_mirror": agent_mirror,
                 "turn_id": turn_id,
                 **(event_metadata or {}),
             }
@@ -650,7 +644,7 @@ class HTTPModeAdapter(SlackAdapter):
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing mention for user {user_id} ({user_profile.display_name})")
 
-            ui_lang, preferred_language, agent_mirror = await self._resolve_language(user_id)
+            ui_lang = await self._resolve_language(user_id)
 
             context = MessageContext(
                 text=text,
@@ -663,8 +657,6 @@ class HTTPModeAdapter(SlackAdapter):
                 metadata={
                     "event_type": "app_mention",
                     "slack_user_id": slack_user_id,
-                    "preferred_language": preferred_language,
-                    "agent_mirror": agent_mirror,
                     "turn_id": turn_id,
                     "origin_message_id": event.get("ts"),
                     "event_time": float(event["ts"]) if event.get("ts") else None,

@@ -65,11 +65,10 @@ async def test_accounts_are_stored_in_the_environments_account_collection(prod_g
 
 
 @pytest.mark.slow
-async def test_the_coordinator_holds_the_billing_and_the_logger_agent(prod_graph):
+async def test_the_coordinator_holds_the_billing_agent(prod_graph):
     app = prod_graph.app
 
     assert app.coordinator.get_agent("billing_agent") is app.billing_agent
-    assert app.coordinator.get_agent("logger_agent") is app.logger_agent
 
 
 @pytest.mark.slow

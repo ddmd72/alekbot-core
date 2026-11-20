@@ -47,6 +47,9 @@ def _make_agent(
     prompt_builder=None,
     user_id: str = "u1",
 ) -> DeepResearchAgent:
+    if prompt_builder is None:
+        prompt_builder = AsyncMock(spec=PromptBuilderPort)
+        prompt_builder.build_for_agent.return_value = "stub system prompt"
     return DeepResearchAgent(
         config=_make_config(),
         job_port=job_port,
@@ -117,17 +120,8 @@ async def test_execute_passes_system_prompt_from_builder(mock_job_port):
     prompt_builder.build_for_agent.assert_called_once_with("deep_research", "u1")
 
 
-async def test_execute_no_prompt_builder_passes_none(mock_job_port):
-    mock_job_port.create_interaction.return_value = "job_nopb"
-    agent = _make_agent(mock_job_port, prompt_builder=None)
-    await agent.execute(_make_message())
-
-    call_kwargs = mock_job_port.create_interaction.call_args.kwargs
-    assert call_kwargs["system_prompt"] is None
-
-
-async def test_execute_prompt_builder_failure_continues(mock_job_port):
-    """PromptBuilder failure must not block job submission."""
+async def test_execute_prompt_builder_failure_blocks_job_submission(mock_job_port):
+    """A PromptBuilder failure fails the response with its cause and submits no job (no fallback prompt)."""
     prompt_builder = AsyncMock(spec=PromptBuilderPort)
     prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore unavailable")
     mock_job_port.create_interaction.return_value = "job_fallback"
@@ -135,9 +129,10 @@ async def test_execute_prompt_builder_failure_continues(mock_job_port):
     agent = _make_agent(mock_job_port, prompt_builder=prompt_builder)
     response = await agent.execute(_make_message())
 
-    assert response.status == AgentStatus.SUCCESS
-    mock_job_port.create_interaction.assert_called_once()
-    assert mock_job_port.create_interaction.call_args.kwargs["system_prompt"] is None
+    assert response.status == AgentStatus.FAILED
+    assert response.error.startswith("Failed to build system prompt")
+    assert "Firestore unavailable" in response.error
+    mock_job_port.create_interaction.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -199,3 +194,15 @@ async def test_execute_passes_brief_as_original_query(mock_job_port):
     await agent.execute(msg)
 
     assert mock_job_port.create_interaction.call_args.kwargs["original_query"] == "One-line summary"
+
+
+async def test_a_prompt_build_failure_fails_and_submits_no_job(mock_job_port):
+    prompt_builder = AsyncMock(spec=PromptBuilderPort)
+    prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+    agent = _make_agent(mock_job_port, prompt_builder=prompt_builder)
+    response = await agent.execute(_make_message())
+
+    assert response.status == AgentStatus.FAILED
+    assert response.error.startswith("Failed to build system prompt")
+    mock_job_port.create_interaction.assert_not_awaited()
