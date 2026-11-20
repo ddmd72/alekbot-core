@@ -131,12 +131,13 @@ mode, then clears the assembly cache. User-facing language policy: [`localizatio
 
 ### Cache lifetime
 
-The static template is cached in a per-process dict for 24 hours under
-`prompt:{agent_type}:acc:{account_id}:usr:{user_id}` (`_build_cache_key`; the builder substitutes the anonymous ids for
+The static template is cached in a per-process dict with a TTL (the `cache_ttl` default of `PromptAssemblyService`) under the key
+`_build_cache_key` builds from agent type, account id and user id (the builder substitutes the anonymous ids for
 missing ones). `preload_cache` warms the agent types the factory lists (`_preload_agent_types`) when a user's agents are created. `invalidate_cache` clears all;
 `invalidate_assembled` drops one key (`PromptBuilder.invalidate_agent_prompt`). Callers: `$admin_cache_reset`
 (`src/agents/core/router_agent.py`, `src/handlers/conversation_handler.py`), the language change, and agents that
-rewrite their own prompt inputs.
+drop a template that came out with required sections missing (tokens or profile not yet uploaded) so it is rebuilt
+after the upload (`email_card_agent.py`, `fact_profiler_agent.py`, `src/infrastructure/drive_model_call.py`).
 
 ## Invariants and traps
 
@@ -153,34 +154,38 @@ rewrite their own prompt inputs.
   is never overridable (`_apply_overrides`).
 - **`class + category` is the identity of a choice.** A new user-selectable token needs the category its default has, in
   the same class, or the switch silently does nothing.
-- **Two `OwnerType` enums.** Assembly uses `src/domain/prompt_v3/slot.py::OwnerType` (`AGENT`, `ACCOUNT`, `USER`;
-  override ids upper-case the value). `src/domain/prompt.py::OwnerType` is a different four-level enum that
-  includes `SYSTEM`; importing the wrong one gives wrong override ids.
+- **Two `OwnerType` enums.** Assembly uses `src/domain/prompt_v3/slot.py::OwnerType` (three members; override ids
+  upper-case the value). `src/domain/prompt.py::OwnerType` is a different, four-member enum that includes `SYSTEM`.
+  Override ids come out the same from either; the wrong one matters only where code compares against `OwnerType.AGENT`
+  (`FirestoreAgentProfileRepository.delete_profile`).
 - **`set_override_tokens` is a read then a write, not a transaction.** Two concurrent changes of one user's overrides can
   lose one. The language path accepts this.
-- **The cache is per process and 24 hours.** An uploaded token, blueprint or profile reaches a warm instance only after
+- **The cache is per process and expires on a TTL.** An uploaded token, blueprint or profile reaches a warm instance only after
   the TTL, a restart or an invalidation, and `$admin_cache_reset` clears only the instance that handled it. A template
   assembled while an invalidation ran is not saved (`_cache_epoch`); this version counter, not a lock, is the guard
   (`src/services/CLAUDE.md`).
 - **The cache key holds no runtime data.** Anything user- or request-specific belongs in runtime context; putting it in a
-  token makes it stale for 24 hours. Biography is above the boundary on purpose (changes only when consolidation refreshes
+  token makes it stale until the TTL. Biography is above the boundary on purpose (changes only when consolidation refreshes
   its cache); query-specific facts are below it because they change with every message.
 - **Never put a date or other per-request text above the boundary.** It changes the cached prefix on every call
   (`src/agents/CLAUDE.md`). A large static payload goes through `extra_static_blocks`, not the user message.
 - **Untrusted text is validated at injection.** Biography, directives, query-specific context and history pass
   `SecurityPort` in the UNTRUSTED zone; reminders and `extra_static_blocks` are orchestrator-built and are not.
 - **`provenance` is a snapshot fact, not a live one.** `POLICY_SYSTEM_PROVENANCE` is assigned in `prompts_snapshot/profiles/`
-  for Smart and Quick (`non_overridable`); whether the live store holds it is a separate upload
-  (`SYSTEM_TURN_FINGERPRINT_RFC.md` §7). A blueprint without the class, or a profile without the token, renders no head.
+  for Smart and Quick (`non_overridable`); the live store does **not** hold the token, the class or the assignments (not
+  uploaded, by owner decision, `SYSTEM_TURN_FINGERPRINT_RFC.md` §7), so the live prompt has no provenance head. A blueprint without the class, or a profile without the token, renders no head.
 - **Prompt wording lives in Firestore, not in this repo's code.** Tokens ship by upload, not by deploy
   (root `CLAUDE.md`). A change to prompt text is a token edit in `prompts_snapshot/tokens/` plus an owner-run upload;
   this document never copies prompt text.
 - **Open question: the blueprint layer.** The owner has said the blueprint approach may be dropped, since every agent
   has its own profile and sharing a blueprint is the only benefit. Until it is decided, keep using existing blueprints
   for new agents and do not build new mechanics tied to blueprint ids; profile changes are safe.
-- **Tests:** `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` (assembly, overrides, cache),
-  `test_prompt_assembly_tail_categories.py`, `test_prompt_assembly_fingerprint.py`,
-  `test_prompt_resolution_over_stores.py`; adapter store kits `tests/unit/adapters/test_prompt_*_store_kit.py`.
+- **`tail_categories` exists for recency.** The voice blueprint (`lelik_agent_v1`) uses it to put the output-language rule
+  at the very end: facts and chat history follow the middle of the instructions, and on providers that own the turns no
+  per-turn anchor repeats that rule, so it is placed where it is read last.
+- **Tests:** `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` (assembly, overrides, cache) and the
+  store-over-fake resolution test `test_prompt_resolution_over_stores.py`; the real-Firestore parity case is
+  `tests/cloud/test_prompt_4level_cloud.py`.
 
 ## Links
 
