@@ -28,7 +28,15 @@ covers:
   src/adapters/firestore_user_repo.py
   src/adapters/firestore_account_repo.py
   src/adapters/firestore_whitelist_repo.py
-  src/domain/turn_identity.py
+  src/adapters/firestore_invite_code_repo.py
+  src/domain/invite_code.py
+  src/domain/whitelist.py
+  src/ports/account_repository.py
+  src/ports/iam_port.py
+  src/ports/invite_code_repository.py
+  src/ports/platform_auth_port.py
+  src/ports/user_repository.py
+  src/ports/whitelist_repository.py
 -->
 # OAuth Multi-Tenant
 
