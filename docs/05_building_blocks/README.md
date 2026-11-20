@@ -1,5 +1,27 @@
 # 05 Building Blocks
 
+## Contract
+
+A block README tells a developer, a reviewer or the owner how one subsystem works **now**, before they open a file. Why
+the contract is shaped this way:
+[`living_docs_contract.md`](../04_solution_strategy/decisions/living_docs_contract.md).
+
+**Which subsystem gets a README.** One that owns stored data (a collection, a bucket, an index), sits on an external
+boundary (a provider, a mail or chat platform, OAuth, MCP), or runs a flow across three or more layers or processes.
+Anything smaller is described by its code and docstrings.
+
+**What it holds,** in this order:
+
+1. **Purpose** — what the block is for and what it is not for, in a paragraph.
+2. **Owned data** — what it stores, what each field means, who writes it and who reads it.
+3. **Flows** — the main flows step by step, each step naming its entry point as `path::Symbol`.
+4. **Invariants and traps** — what must hold, what breaks silently, and the code or test that enforces it.
+5. **Links** — the RFCs and decision records behind the block.
+6. **Where to start reading** — three to seven `path::Symbol` entry points.
+
+Everything general (the `<!-- living-doc` header and `covers:` ownership, what a living doc never holds, how it stays
+current) is in [`../README.md`](../README.md#living-docs).
+
 ## 📂 Contents
 
 ### Core Systems

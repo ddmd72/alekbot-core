@@ -80,8 +80,7 @@ def _flatten_usage(usage: dict) -> Dict[str, int]:
     reported alongside it) — so it is subtracted from the audio/text input
     legs here, matching this codebase's existing convention that
     ``prompt_tokens`` is always uncached input and cache reads are billed as
-    a separate leg (see docs/05_building_blocks/gmail_email_indexing/README.md § 7,
-    "prompt_tokens in UsageMetadata is always uncached input").
+    a separate leg (see src/adapters/CLAUDE.md, "Usage legs never overlap").
 
     Reasoning tokens bill as text output (RFC §4.3/§6), and they are a SUBSET
     of ``output_tokens`` — and therefore of ``output_token_details.text_tokens``

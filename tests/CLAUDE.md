@@ -335,7 +335,7 @@ scheduled cloud session), which writes the killing assertion or proposes an `equ
   control whose pass could come from an exhausted script, starts with `require(not world.unscripted(), ...)`. Strict xfails follow the
   rules of "Redelivery and interleaving (P15)" (`require` for preconditions, the outcome assert last).
 - **The PromptBuilder and SearchEnrichment seams** run through the real Smart and Router: `tests/unit/agents/core/test_smart_prompt_enrichment_seam.py`
-  (real `PromptBuilder` over a seeded prompt store, `tests/support/prompt_seed.py`; the Smart is built with `tests/support/tool_e2e.smart_rig`).
+  (real `PromptBuilder` over a seeded prompt store, `tests/support/prompt_seed.py`; the Smart is built with `tests/support/tool_e2e.py::smart_rig`).
 - Files: `tests/unit/handlers/test_seam_worker_notices.py` (worker notices and video), `test_seam_agent_worker_delivery.py`,
   `test_seam_chat_turn.py`, `test_seam_background_runs.py`. Open defects are strict xfails with their `P13-D<n>` id
   (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P13)").
@@ -357,7 +357,7 @@ scheduled cloud session), which writes the killing assertion or proposes an `equ
 - **The harness:** `tests/support/scripted_llm.py` scripts only the model; the agent's tool loop runs for real. A script that runs out raises
   `ScriptExhausted` (a `RuntimeError`, never an `AssertionError`, so a strict xfail does not swallow it) and counts in `unanswered`; **every test
   ends with the two script facts**, `llm.unanswered == 0 and llm.pending() == 0` (`require` them inside a strict xfail); each e2e file has one
-  `test_the_scripted_calls_use_every_declared_field` (`unused(surface, tool, calls) == []` per tool), which a new field also fails. `tests/support/tool_e2e.smart_rig` builds a real Smart over a scripted
+  `test_the_scripted_calls_use_every_declared_field` (`unused(surface, tool, calls) == []` per tool), which a new field also fails. `tests/support/tool_e2e.py::smart_rig` builds a real Smart over a scripted
   model; P13 card F uses its keywords.
 - Files: `test_consolidation_tool_fields_e2e.py`, `test_notes_agent_tool_fields_e2e.py`, `test_tasks_agent_tool_fields_e2e.py`,
   `test_drive_agent_tool_fields_e2e.py` (`tests/unit/agents/`), `core/test_smart_local_tools_e2e.py`,
@@ -380,7 +380,7 @@ scheduled cloud session), which writes the killing assertion or proposes an `equ
 - **One full suite at a time** — a session with `-n`, or with 2000+ tests, takes a `flock` on
   `$TMPDIR/alekbot-pytest-suite.lock` (`tests/plugins/suite_lock.py`), prints the holder every 30 s while it waits and
   gives up after `PYTEST_LOCK_TIMEOUT_S` (1800). `PYTEST_SUITE_LOCK=0` disables it. Tests that run an inner pytest through
-  `pytester` start from `tests/support/plugin_runs.py: isolate_switches`, so the outer run's switches and lock do not leak.
+  `pytester` start from `tests/support/plugin_runs.py::isolate_switches`, so the outer run's switches and lock do not leak.
 - Tests of the machinery: `tests/unit/test_pytest_plugins_*.py`.
 
 ## Existing tests are not edited to pass

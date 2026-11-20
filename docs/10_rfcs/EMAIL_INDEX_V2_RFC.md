@@ -248,7 +248,7 @@ path at any date. *Rejected:* every printed number as a key (phone and card frag
 ### 3.1 The writer's static block: the owner and the confirmed people list only
 
 **Decided for v1:** the card writer sees the owner (name and forms from the confirmed list's `user`, the connected
-mailbox address from the credential's identity, `gmail_email_indexing/README.md` §3) and the **confirmed people list**
+mailbox address from the credential's identity, `gmail_email_indexing/README.md` § Flows, Connect and reconnect) and the **confirmed people list**
 (name, forms, relation, entry id) — nothing from memory. *Why not memory lines:* code checks only entities, values and
 dates against the mail; the free-text title and summary are not checkable, so a memory line could ride in them, reach
 the consolidator with the whole card and return as "a fact from email". And the baseline cache carries no sensitivity
