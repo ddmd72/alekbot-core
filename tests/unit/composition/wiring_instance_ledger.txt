@@ -175,7 +175,7 @@ src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design 
 src.services.integration_reconnect_service.IntegrationReconnectService 1  # by-design single instance
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance
 src.services.language_preference_service.LanguagePreferenceService 1  # by-design single instance
-src.services.language_resolver.LanguageResolver 1  # by-design the one language read side, shared by the notification service, the agent factory and the writer (language_setup.py, localization_system README §5)
+src.services.language_resolver.LanguageResolver 1  # by-design the one language read side, shared by the notification service, the agent factory and the writer (language_setup.py, localization_system README, Flows: UI language per request)
 src.services.localization_service.LocalizationService 1  # by-design single instance
 src.services.long_turn_service.LongTurnService 1  # by-design single instance
 src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
