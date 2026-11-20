@@ -8,8 +8,9 @@ claim store on an `EvalDb`, two names the claim does not merge (`t-1`, `t-2`), o
 the world builds its own database inside `RedeliveryWorld.__init__`, before the service can be built on it. Two
 databases are harmless here: the claims and the service's data never meet in one transaction.
 
-Defects pinned as strict xfails (arbiter-confirmed): P15-D5 (a companion batch is extracted by two concurrent deliveries,
-and a batch that always fails is revived and extracted without bound) and P15-D12 (a concurrent double click applies the
+Defects pinned as strict xfails (arbiter-confirmed): P15-D5 (a companion batch is extracted by two concurrent deliveries;
+its other half, a batch that always fails revived without bound, is fixed by the `MAX_FAILED_REVIVALS` cap and its test
+passes) and P15-D12 (a concurrent double click applies the
 answer twice: a second owner-trail entry on the fact and doubled answer counters; the message the owner sees is
 correct). Every strict xfail checks its precondition with `require` (a failed one reports FAILED, never the expected
 failure); only its outcome is a bare `assert`.
@@ -56,8 +57,7 @@ from tests.support.redelivery_world import (
     ACCOUNT, CHANNEL, USER, RedeliveryWorld, Rendezvous, deliver, deliver_twice, require,
 )
 
-D5 = ("P15-D5: a companion batch is extracted again by a concurrent or later delivery (no per-session lease, revival "
-      "without bound); owner decision")
+D5 = ("P15-D5: a companion batch is extracted again by a concurrent delivery (no per-session lease); owner decision")
 D12 = ("P15-D12: a concurrent double click applies the answer twice (a second owner-trail entry, doubled answer "
        "counters); owner decision")
 
@@ -166,8 +166,8 @@ class TestCompanionChainTwice:
     """`_handle_companion_consolidation` (`worker_handler.py:515-530`) → `process_session_batches`
     (`companion_extraction_service.py:49-122`): revive (`:59`), read the oldest pending batch (`:66`, a query), mark it
     PROCESSING (`:71`), extract, store records under deterministic ids (`:152`), delete the batch; a failure counts an
-    attempt and marks FAILED at 3 (`:100-113`). `reset_recoverable_batches` revives every FAILED batch with `attempts: 0`
-    (`firestore_companion_extraction_queue.py:87-110`)."""
+    attempt and marks FAILED at 3 (`:100-113`). `reset_recoverable_batches` revives a FAILED batch with `attempts: 0` at
+    most `MAX_FAILED_REVIVALS` times, counted in its `revivals` (`firestore_companion_extraction_queue.py`)."""
 
     @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D5)
     async def test_two_gathered_deliveries_extract_one_batch_once(self):
@@ -210,17 +210,14 @@ class TestCompanionChainTwice:
         assert companion.record_texts == _texts(THREE)
         assert world.bodies("companion_consolidation") == []
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D5)
     async def test_a_batch_that_always_fails_is_not_extracted_without_bound(self):
-        """A batch whose extraction always raises reaches FAILED at its third attempt; every later delivery of the session
-        revives it with `attempts: 0` and runs the model again, three calls per three deliveries, for ever (30 deliveries,
-        30 calls).
+        """A batch whose extraction always raises reaches FAILED at its third attempt; later deliveries revive it with
+        `attempts: 0` at most `MAX_FAILED_REVIVALS` times (3 x 3 more calls), then leave it FAILED (P15-D5's revival half,
+        fixed; before the cap every delivery ran the model again, 30 deliveries, 30 calls).
 
-        Precondition (today and after the fix): after the third delivery the batch is FAILED with 3 attempts. Outcome:
-        the last 6 of 30 deliveries make no extractor call, and the batch is still stored FAILED. Flipping fix: a revival
-        cap counted in `reset_recoverable_batches` and/or revival only from `sweep_companion_consolidation`, as
-        `firestore_consolidation_queue.py:111-174` does for Alek's batches (pinned there by
-        `tests/unit/adapters/test_consolidation_queue_failed_bounded.py:57,66`)."""
+        Precondition: after the third delivery the batch is FAILED with 3 attempts. Outcome: the last 6 of 30 deliveries
+        make no extractor call, and the batch is still stored FAILED. The cap's exact count is pinned at the adapter by
+        `tests/unit/adapters/test_companion_extraction_queue_failed_bounded.py`."""
         world, companion = await _companion_world(RuntimeError("extractor unavailable"))
         payload = world.payload("companion_consolidation", session_id=SESSION)
 
@@ -239,7 +236,7 @@ class TestCompanionChainTwice:
         assert (companion.batch or {}).get("status") == "failed"
 
     async def test_a_batch_that_fails_twice_then_succeeds_is_stored_and_deleted(self):
-        """Control for the xfail above: two failed attempts leave the batch RETRY_PENDING (never FAILED, never revived),
+        """Control for the test above: two failed attempts leave the batch RETRY_PENDING (never FAILED, never revived),
         the third delivery extracts it, stores its records and deletes it.
 
         Regression: a revival cap that also stops a batch below three attempts (a recoverable batch is lost)."""
