@@ -3,7 +3,7 @@ FirestoreTaskSearchIndex — implements TaskSearchIndex via Firestore vector que
 
 Collection: {env}_task_search_index (doc ID = {user_id}_{task_id})
 Vectors: content_vector, context_vector
-RRF across both vectors; filters: user_id, optionally list_id, status != completed.
+RRF across both vectors; filters: user_id, status != completed.
 
 Mirrors FirestoreIndexedEmailRepository pattern for vector wrap/unwrap and RRF.
 """
@@ -35,8 +35,7 @@ class FirestoreTaskSearchIndex(TaskSearchIndex):
     Collection `EnvironmentConfig.task_search_index_collection` (`{prefix}task_search_index`), document id
     `{user_id}_{task_id}`, vectors stored as `Vector` values. Declared vector indexes (config/firestore.indexes.json):
     (user_id, content_vector), (user_id, context_vector), (user_id, status, content_vector),
-    (user_id, status, context_vector); none serves `list_id`, so a query with it is refused as a missing index (the
-    field query then fails and is logged, see find_nearest).
+    (user_id, status, context_vector).
 
     find_nearest: one cosine vector query per field (`limit * 2` each, distance threshold 0.4, pre-filter user_id and
     `status != completed`), at most 10 in flight, fused by Reciprocal Rank Fusion (k = 60). `status !=` excludes a
@@ -144,7 +143,6 @@ class FirestoreTaskSearchIndex(TaskSearchIndex):
         vectors: Dict[str, List[float]],
         limit: int = 10,
         show_completed: bool = False,
-        list_id: Optional[str] = None,
     ) -> List[TaskSearchEntry]:
         active_vectors = {k: v for k, v in vectors.items() if v is not None}
         if not active_vectors:
@@ -154,8 +152,6 @@ class FirestoreTaskSearchIndex(TaskSearchIndex):
             base = self.collection.where(filter=FieldFilter("user_id", "==", user_id))
             if not show_completed:
                 base = base.where(filter=FieldFilter("status", "!=", TaskStatus.COMPLETED.value))
-            if list_id is not None:
-                base = base.where(filter=FieldFilter("list_id", "==", list_id))
             vq = base.find_nearest(
                 vector_field=field_name,
                 query_vector=query_vector,

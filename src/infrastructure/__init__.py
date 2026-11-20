@@ -2,14 +2,12 @@
 Infrastructure Layer
 ====================
 
-Contains infrastructure abstractions for agent communication.
+Contains infrastructure for agent coordination.
 
 Components:
-- MessageQueue: Abstract interface for agent message passing
-- InMemoryQueue: In-memory implementation for MVP
+- AgentCoordinator: routes agent messages and delegation
 """
 
-from .message_queue import MessageQueue, InMemoryQueue
 from .agent_coordinator import AgentCoordinator
 
-__all__ = ["MessageQueue", "InMemoryQueue", "AgentCoordinator"]
+__all__ = ["AgentCoordinator"]

@@ -48,14 +48,12 @@ class TaskSearchIndex(ABC):
         vectors: Dict[str, List[float]],
         limit: int = 10,
         show_completed: bool = False,
-        list_id: Optional[str] = None,
     ) -> List[TaskSearchEntry]:
         """Up to `limit` entries of `user_id` nearest to `vectors` (field name -> query vector; a None vector is
         skipped, no vector at all -> []). The caller fetches the full tasks from the provider.
 
         Order: best match first, the fields' rankings fused. Results past a fixed similarity bound are dropped.
         Filter: `show_completed=False` excludes completed entries and entries with no status.
-        `list_id`: restricts the search to one list; not supported by the current backend, and no caller passes it.
         Legacy: an entry that does not parse (missing indexed_at or status, unknown status or importance) is skipped.
         Errors: a failing field query is logged and the other fields still answer. When every
         field query fails, the first failure is raised (never [], which the caller would report as "no tasks").

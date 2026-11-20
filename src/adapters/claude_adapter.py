@@ -48,27 +48,6 @@ def _is_account_error(e: Any) -> bool:
     return "credit balance" in (message if isinstance(message, str) else str(e)).lower()
 
 
-def _strip_nullable(schema: Any) -> Any:
-    """Recursively drop the non-standard "nullable" keyword from a JSON-Schema value.
-
-    "nullable" is an OpenAPI/Gemini-ism; Anthropic's tool input_schema is JSON Schema
-    2020-12, which does not define it. This changes nothing else — no
-    ``additionalProperties``/``required`` injection — so mutually-exclusive variant keys
-    (e.g. ``rich_content.data``'s table/widget/file fields) stay optional and are not
-    forced present. Historically shaped the ``respond`` tool's input_schema (removed 2026-07-02);
-    kept for its tests and history.
-
-    Semantic note: Gemini with ``nullable=True`` lets the model return null for a field
-    (e.g. ``"rich_content": null``); Claude without it returns an object (``{}``). Both
-    are handled by the agent parsers.
-    """
-    if isinstance(schema, dict):
-        return {k: _strip_nullable(v) for k, v in schema.items() if k != "nullable"}
-    if isinstance(schema, list):
-        return [_strip_nullable(i) for i in schema]
-    return schema
-
-
 def _nullable_to_union(schema: Any) -> Any:
     """Recursively translate the OpenAPI/Gemini ``"nullable": True`` marker into a
     JSON-Schema 2020-12 nullable ``type`` union (e.g. ``"object"`` -> ``["object", "null"]``).
@@ -76,7 +55,7 @@ def _nullable_to_union(schema: Any) -> Any:
     Shapes the ``output_config.format`` schema for Claude (it once shaped the removed ``respond``
     tool's ``input_schema``; the history below is why the translation is not a plain drop). Anthropic
     JSON Schema is 2020-12, which has no ``nullable`` keyword — so the marker
-    must be *translated*, not merely dropped. Dropping it (the older ``_strip_nullable``
+    must be *translated*, not merely dropped. Dropping it (the older drop-only
     behaviour) left ``rich_content`` declared as a **required, non-null object** while the
     OUTPUT_FORMAT prompt token instructs "null by default" — a contradiction that pushed the
     model off the tool-schema path and made it dump its internal ``<parameter>`` tool-call

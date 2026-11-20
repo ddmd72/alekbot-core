@@ -225,7 +225,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                        #    channel agents. Agent builds LLMRequest; engine updates only
 │   │                        #    messages each turn. DelegationResult carries text,
 │   │                        #    terminal_tool_args, delivery_items, structured_data.
-│   └── message_queue.py     # Async communication hub
 ├── locales/            # 🆕 Localization System
 │   ├── en.py           # English strings (Stub)
 │   └── uk.py           # Ukrainian strings (Primary)
@@ -321,7 +320,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── groovy_to_markdown_transformer.py # Groovy DSL → Markdown converter (USE_MARKDOWN_PROMPT feature, currently off)
 ├── performance_logger.py  # Performance timing helpers
 ├── timer.py               # Timer utilities
-├── weather_parser.py      # 🆕 Structured weather data extraction
 └── server.py
 
 ## `src/`
