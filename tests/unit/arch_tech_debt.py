@@ -143,6 +143,4 @@ PLATFORM_FORMAT_WHITELIST_FILES: set[str] = {
     # Until then the wording is tuned deliberately (see the constant's comment) — it is
     # production behaviour for ~73% of the briefing's web_search cost, not dead code.
     os.path.normpath("src/agents/web_search_agent.py"),
-    # Prompt builder assembles platform-specific formatting rules by design.
-    os.path.normpath("src/services/prompt_builder.py"),
 }
