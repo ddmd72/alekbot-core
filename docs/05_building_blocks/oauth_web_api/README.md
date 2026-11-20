@@ -7,6 +7,7 @@ covers:
   src/adapters/firebase_auth_adapter.py
   src/ports/auth_port.py
   src/domain/auth.py
+  src/domain/safe_redirect.py
 -->
 # OAuth Web API
 
@@ -18,8 +19,8 @@ turns a successful sign-in into a pair of signed session cookies, it renews the 
 finishes the connect of integrations (mail, tasks, drive) under the signed-in session.
 
 It is the web counterpart of the Slack and Telegram adapters: those identify a person by platform id, this one by a
-Google identity, and both land on the same `UserProfile` and `BillingAccount`. A new Google identity gets a new account
-with the person as owner ("Master Account First": the account is created before the user). Who may sign in at all is
+Google identity, and both land on the same `UserProfile` and `BillingAccount`. A Google identity that matches no existing user (by identity or verified email) gets a new account with the person as
+owner ("Master Account First": the account is created before the user). Who may sign in at all is
 decided by the access whitelist, not by Google.
 
 What it is not: it holds no per-session server state (the session is two stateless JWTs), it does not guard the
@@ -33,19 +34,19 @@ The block owns no Firestore collection of its own. What it writes and holds:
 
 - **Session cookies**, set by `/auth/callback` and `/auth/refresh`: `access_token` and `refresh_token`, both HttpOnly,
   Secure, SameSite=Lax. Their lifetimes are `AuthConfig.access_token_ttl` and `AuthConfig.refresh_token_ttl`
-  (`ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, both 86400 s by default).
-- **Sign-in cookies**, set by `/auth/login`, 10 minutes: `oauth_state` (the CSRF value), `auth_next` (where to return)
+  (`ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`).
+- **Sign-in cookies**, set by `/auth/login`, short-lived: `oauth_state` (the CSRF value), `auth_next` (where to return)
   and `invite_code` (a team invite to consume after sign-in). The callback deletes only `oauth_state`; the other two
   expire by themselves.
-- **Access token claims** (`SessionService.create_access_token`): `sub` (user id), `account_id`, `external_user_id`,
-  `role` (from the account's `iam_policy`, `viewer` if absent), `tier`, `email`, `iat`, `exp`, `type: "access"`.
-  **Refresh token claims** (`create_refresh_token`): `sub`, `account_id`, `iat`, `exp`, `type: "refresh"`. Both are
-  HS256, signed with `AuthConfig.oauth_session_secret` (`OAUTH_SESSION_SECRET`).
-- **Written on the user and account** through `AuthenticationService`: a sign-in rewrites `auth_metadata` of the user
-  (`update_user_fields(user, ("auth_metadata",))`, so a concurrent change of another field survives); a first sign-in
+- **Token claims** (`SessionService.create_access_token`, `create_refresh_token`): the access token carries identity,
+  `role` (from the account's `iam_policy`, `viewer` if absent), `tier` and `type: "access"`; the refresh token only
+  `sub`, `account_id` and `type: "refresh"`. Both are HS256, signed with `AuthConfig.oauth_session_secret` (`OAUTH_SESSION_SECRET`).
+- **Written on the user and account** through `AuthenticationService`: a sign-in of a known identity rewrites only `auth_metadata`
+  (`update_user_fields`, so a concurrent change of another field survives); the by-email attach and
+  `link_oauth_identity` do a full `update_user` and also set `external_user_id`; a first sign-in
   creates a `BillingAccount` (tier FREE, the person as `owner` in `iam_policy`) and then the `UserProfile`;
   `external_user_id` is `"{provider}|{sub}"`. `AuthenticationService.resume_session` writes nothing.
-- **The connect flow record** (`oauth_flow:<digest>`, ten minutes) is written by
+- **The connect flow record** (`oauth_flow:<digest>`, TTL `src/services/oauth_connect_service.py::_FLOW_TTL_S`) is written by
   `src/services/oauth_connect_service.py::OAuthConnectService.start` and consumed by `complete`; the credential it ends
   in is described in [`credential_store_cutover.md`](../../04_solution_strategy/decisions/credential_store_cutover.md).
 
@@ -56,7 +57,7 @@ The block owns no Firestore collection of its own. What it writes and holds:
 1. `GET /auth/login` (`src/web/oauth_app.py::create_oauth_blueprint`, route `oauth_login`) takes `provider`, `next`
    and `code`. `next` goes through `src/domain/safe_redirect.py::safe_return_path` (same-site relative path only, else
    `/cabinet`). It generates the state, builds Google's consent URL with
-   `AuthPort.get_authorization_url` (`FirebaseAuthAdapter`, scope `openid email profile`), sets the three cookies and
+   `AuthPort.get_authorization_url` (`FirebaseAuthAdapter`), sets the three cookies and
    redirects. An unknown provider or any failure is a 500.
 2. Google returns to `GET /auth/callback` (`oauth_callback`). A missing `code` is 400; a state that does not equal the
    `oauth_state` cookie is 400.
@@ -80,7 +81,7 @@ token) and an expired one, all 401. `AuthenticationService.resume_session` then 
 checks the whitelist again; the new access token is built from stored data, never from the old token's claims. An absent
 or inactive user, a missing or de-listed email or an absent account is 401 `Session no longer valid`; a store error is
 500. The new access token gets a full `access_token_ttl` and the access cookie is rewritten; the refresh token is not
-rotated. A session therefore lasts at most `REFRESH_TOKEN_TTL + ACCESS_TOKEN_TTL` from login (48 h by default), see
+rotated. A session therefore lasts at most `REFRESH_TOKEN_TTL + ACCESS_TOKEN_TTL` from login, see
 [`cabinet_session_24h_cap.md`](../../04_solution_strategy/decisions/cabinet_session_24h_cap.md).
 
 ### Identity and sign-out
@@ -91,8 +92,9 @@ rotated. A session therefore lasts at most `REFRESH_TOKEN_TTL + ACCESS_TOKEN_TTL
 - `POST /auth/link-oauth` (`link_oauth_to_existing_user`) attaches a Google identity to the signed-in user: it needs the
   access token, a JSON `code` and a `state` equal to the `oauth_state` cookie, then calls
   `AuthenticationService.link_oauth_identity`, which runs the same whitelist gate on the identity being linked. Errors:
-  401 without or with a bad token, 403 for a rejected identity, 400 for a state or code problem **and for an identity
-  already linked to another user** (a `ValueError`), 500 otherwise.
+  401 without a token or with an expired or invalid one (code and state are checked first, so a bad state with a bad
+  token is 400), 403 for a rejected identity, 400 for a state or code problem, a token of the wrong type **and an
+  identity already linked to another user** (all `ValueError`), 500 otherwise.
 
 ### Connect an integration
 
@@ -118,7 +120,7 @@ rotated. A session therefore lasts at most `REFRESH_TOKEN_TTL + ACCESS_TOKEN_TTL
   Tests: `tests/unit/web/test_oauth_app_access_denied.py`, `test_oauth_app_refresh_whitelist.py`. Why:
   [`cabinet_oauth_whitelist_gate.md`](../../04_solution_strategy/decisions/cabinet_oauth_whitelist_gate.md).
 - **Redirect targets are always checked.** `safe_return_path` is applied at `/auth/login`, at the callback and on the
-  connect return path; the cookies a pre-fix deployment issued may hold anything, so the callback does not trust them
+  connect return path; the callback does not trust the `auth_next` cookie
   (`tests/unit/web/test_oauth_app_redirect_target.py`).
 - **Refresh age is capped by the current TTL.** `verify_refresh_token` also rejects a token whose `iat` is older than
   `refresh_token_ttl`, whatever its own `exp`; lowering the TTL kills older tokens at once.
@@ -126,19 +128,19 @@ rotated. A session therefore lasts at most `REFRESH_TOKEN_TTL + ACCESS_TOKEN_TTL
   (`tests/unit/web/test_oauth_app_refresh_stored_identity.py`).
 - **No server-side revocation.** Tokens are stateless; logout and a whitelist removal do not invalidate an issued
   access token.
-- **The CSRF check is a cookie equal to the query value**, nothing stored server-side; the connect flow, by contrast, is
+- **The CSRF check is the `oauth_state` cookie equal to the `state` value** (query on the callback, JSON body on link-oauth), nothing stored server-side; the connect flow, by contrast, is
   keyed and single use.
 - **Startup refuses unsafe configuration.** `AuthConfig.validate` (called from `src/composition/boot_setup.py`) rejects a
-  session secret shorter than 32 characters, the public dev placeholder when `K_SERVICE` is set, and a localhost
-  `OAUTH_REDIRECT_URI` on Cloud Run.  The deploy-side key for the redirect URI: `docs/07_deployment/README.md`.
+  too-short session secret, the public dev placeholder when `K_SERVICE` is set, a localhost `OAUTH_REDIRECT_URI` on
+  Cloud Run, and (with Firebase as provider) a missing Firebase project, web API key or Google OAuth client id/secret.  The deploy-side key for the redirect URI: `docs/07_deployment/README.md`.
 - **Both callbacks must be registered at the provider.** `OAUTH_REDIRECT_URI` (sign-in) and
   `OAUTH_CONNECT_REDIRECT_URI` (connect) are separate callbacks and both must match the Google OAuth client (the
   connect one also the Microsoft app registration); a mismatch fails at the provider, not here.
-- **`/auth/connect/*` reads only the cookie**, not a Bearer header, and needs an `account_id` in it: a credential is
-  never saved under a guessed tenant.
+- **`/auth/connect/*` reads only the cookie**, not a Bearer header. The callback also needs an `account_id` in it: a
+  credential is never saved under a guessed tenant.
 - **This blueprint sets no CORS headers**; nothing in `src/` adds them for these routes.
-- **Every route has a refusal test**: `tests/unit/web/test_every_route_refuses_anonymous.py` lists each route of this
-  blueprint and why it may answer an anonymous caller.
+- **Every route is probed anonymously**: `tests/unit/web/test_every_route_refuses_anonymous.py` walks the URL map and
+  allows an anonymous answer only for the routes it lists with a reason (`/auth/login`, `/auth/logout`).
 
 ## Links
 
