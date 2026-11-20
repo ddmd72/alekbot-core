@@ -12,6 +12,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.adapters.claude_adapter import ClaudeAdapter
 from src.agents.claude_deep_research_runner_agent import ClaudeDeepResearchRunnerAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.infrastructure.agent_manifest import Intent
@@ -58,6 +59,7 @@ def _make_agent(client=None) -> ClaudeDeepResearchRunnerAgent:
     return ClaudeDeepResearchRunnerAgent(
         config=_make_config(),
         anthropic_client=client or MagicMock(),
+        adaptive_thinking=ClaudeAdapter.takes_adaptive_thinking,
     )
 
 
@@ -910,3 +912,4 @@ class TestRefusal:
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
         with pytest.raises(RuntimeError, match="declined"):
             await agent._research_loop("query", "", "claude-fable-5-1")
+
