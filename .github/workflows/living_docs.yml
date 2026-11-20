@@ -1,0 +1,26 @@
+name: Living docs
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  living-docs:
+    name: a PR touching covered code changes its living doc or says why not
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check the PR against the living docs
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python -m scripts.ci.living_docs_pr_check --base origin/${{ github.base_ref }}
