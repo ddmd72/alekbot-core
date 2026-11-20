@@ -133,8 +133,8 @@ it suppresses the agent's own transient retry for the same reason.
   must pass the gate: the argument is required.
 - **Billing prices input and output separately** (`_record_billing`); collapsing them bills a report-sized output at the
   input rate.
-- **A failed prompt build does not stop the run.** `DeepResearchAgent.execute` logs a warning and proceeds with no
-  system prompt, unlike the no-fallback-prompt rule of chat agents.
+- **A failed prompt build stops the run.** `DeepResearchAgent.execute` returns a failure and submits no job, per the
+  repo's no-fallback-prompt rule.
 - **The Job needs the worker identity.** The delivery task and the failure task go to `/worker`, which checks a Google
   OIDC token; `_build_task_queue` reads `SERVICE_ACCOUNT_EMAIL` without refusing when it is missing; the task then carries no
   token and `/worker` answers 401, so the report is never delivered.

@@ -71,10 +71,6 @@ turns `MCPToolError` into `MapsToolError`.
   read `parts`. Keep both when appending the model turn.
 - **No biographical facts.** The prompt is built with `include_biographical=False`: spatial queries do not need them and
   a tool-calling agent should not leak them. Location comes from the user config, time from the prepended line.
-- **Known gap against the no-fallback-prompt rule:** if prompt assembly fails, `_build_system_instruction` logs and uses
-  an empty instruction instead of failing the response. A test pins this
-  (`tests/unit/agents/test_maps_search_agent.py::TestPromptBuilder.test_fallback_to_empty_on_prompt_build_failure`), so fixing the code
-  goes through the reviewer rule.
 - **The routing lever is the fanout, not the description.** Because `MAPS_SEARCH` is internal, its
   `capability_descriptions` text is never shown to a model, and `MCPMapsAdapter.CAPABILITY_DESCRIPTION` is read only by a
   test. To change when Maps runs, change `SEARCH_WEB_MAPS_FANOUT` and who carries it.

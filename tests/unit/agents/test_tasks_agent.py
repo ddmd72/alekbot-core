@@ -355,10 +355,9 @@ class TestCanHandle:
 
 class TestExecuteEdgeCases:
 
-    async def test_prompt_build_failure_still_succeeds(self):
-        """Prompt build exception is swallowed; agent proceeds with empty system prompt."""
-        from src.agents.tasks_agent import TasksAgent
-
+    async def test_prompt_build_failure_fails_with_its_cause(self):
+        """A prompt build exception fails the response with its cause; no model or tool call runs
+        (root CLAUDE.md "No fallback prompts")."""
         agent, provider, indexing = _make_agent()
         agent.prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore down")
         provider.list_tasks.return_value = []
@@ -368,7 +367,11 @@ class TestExecuteEdgeCases:
             response = await agent.execute(_make_message("list my tasks"))
 
         from src.domain.agent import AgentStatus
-        assert response.status == AgentStatus.SUCCESS
+        assert response.status == AgentStatus.FAILED
+        assert response.error.startswith("Failed to build system prompt")
+        assert "Firestore down" in response.error
+        mock_call.assert_not_called()
+        provider.list_tasks.assert_not_awaited()
 
     async def test_legacy_context_key_in_payload_is_not_read(self):
         """payload['context'] is no longer a TasksAgent field: the declared context_schemas
@@ -874,3 +877,20 @@ class TestOutputLengthLimit:
         assert response.result.startswith("Tool note:")
         assert "Call d" not in response.result.split("Tool results:")[0]
         assert mock_call.call_count == 2
+
+
+class TestPromptBuildFailure:
+
+    async def test_a_prompt_build_failure_fails_and_calls_no_tool(self):
+        from src.domain.agent import AgentStatus
+
+        agent, provider, _ = _make_agent()
+        agent.prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            response = await agent.execute(_make_message("list my tasks"))
+
+        assert response.status == AgentStatus.FAILED
+        assert response.error.startswith("Failed to build system prompt")
+        mock_call.assert_not_called()
+        provider.list_tasks.assert_not_awaited()

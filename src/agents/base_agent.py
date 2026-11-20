@@ -150,16 +150,7 @@ class BaseAgent(ABC):
     Subclasses must implement:
     - can_handle(): Determine if agent can process message
     - execute(): Core agent logic
-
-    Class-level flags:
-    - forwards_language_preference: When True the agent extracts preferred_language
-      and agent_mirror from message.context["metadata"] and passes them to
-      prompt_builder.build_for_agent(). Only orchestrators (Quick, Smart) set this True.
-      Internal specialist agents leave it False — they inherit user language from the
-      system prompt assembled by their caller, not from per-call params.
     """
-
-    forwards_language_preference: ClassVar[bool] = False
 
     # Per-agent retry policy. Subclasses override this class attribute
     # (see e.g. RouterAgent → NO_RETRY_POLICY, DocPlannerAgent →

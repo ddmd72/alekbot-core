@@ -9,7 +9,7 @@ conventions and per-agent traps. What an agent does lives in `docs/` (map below)
 
 - `base_agent.py` — ABC. All agents inherit `BaseAgent`.
 - `core/` — orchestrators: `RouterAgent`, `SmartResponseAgent`, `QuickResponseAgent` (fallback/formatter).
-- `infrastructure/` — system agents: `BillingAgent`, `LoggerAgent`.
+- `infrastructure/` — system agents: `BillingAgent`.
 - All other files — specialist agents (map below).
 
 ## Rules for every agent

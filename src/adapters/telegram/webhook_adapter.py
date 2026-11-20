@@ -32,14 +32,12 @@ def _reply_to_metadata(message) -> dict:
     return {}
 
 
-def _message_metadata(message, *, chat_id, telegram_user_id, update_id, preferred_language, agent_mirror) -> dict:
+def _message_metadata(message, *, chat_id, telegram_user_id, update_id) -> dict:
     """The metadata every non-command Telegram turn carries (a text turn and a location pin alike)."""
     return {
         "platform": "telegram",
         "chat_id": chat_id,
         "telegram_user_id": telegram_user_id,
-        "preferred_language": preferred_language,
-        "agent_mirror": agent_mirror,
         "turn_id": f"telegram:{update_id}" if update_id is not None else None,
         "origin_message_id": str(message.message_id),
         "event_time": message.date.timestamp() if message.date else None,
@@ -232,10 +230,8 @@ class TelegramWebhookAdapter(PlatformPort):
             from ...domain.language import LanguageCode
             if self._language_service:
                 ui_lang = await self._language_service.resolve_ui_language(user_id)
-                preferred_language, agent_mirror = await self._language_service.get_preference(user_id)
             else:
                 ui_lang = LanguageCode.UK
-                preferred_language, agent_mirror = None, True
 
             response_channel = TelegramResponseChannel(
                 self.bot, chat_id,
@@ -252,8 +248,7 @@ class TelegramWebhookAdapter(PlatformPort):
                 await self._handle_location(
                     message, location, update_id=update_id, session_id=session_id, user_id=user_id,
                     account_id=account_id, ui_lang=ui_lang, thread_id=thread_id, chat_id=chat_id,
-                    telegram_user_id=telegram_user_id, preferred_language=preferred_language,
-                    agent_mirror=agent_mirror, response_channel=response_channel,
+                    telegram_user_id=telegram_user_id, response_channel=response_channel,
                 )
                 return
 
@@ -319,7 +314,6 @@ class TelegramWebhookAdapter(PlatformPort):
                 thread_id=thread_id,
                 metadata=_message_metadata(
                     message, chat_id=chat_id, telegram_user_id=telegram_user_id, update_id=update_id,
-                    preferred_language=preferred_language, agent_mirror=agent_mirror,
                 ),
             )
 
@@ -331,7 +325,7 @@ class TelegramWebhookAdapter(PlatformPort):
 
     async def _handle_location(
         self, message, location, *, update_id, session_id, user_id, account_id, ui_lang, thread_id, chat_id,
-        telegram_user_id, preferred_language, agent_mirror, response_channel,
+        telegram_user_id, response_channel,
     ) -> None:
         """A venue or a live location gets a one-line notice; a plain pin becomes a GeoFix for the handler."""
         notice = None
@@ -352,7 +346,6 @@ class TelegramWebhookAdapter(PlatformPort):
         logger.info("📍 Telegram pin received (accuracy %s)", "given" if fix.accuracy_m is not None else "absent")
         metadata = _message_metadata(
             message, chat_id=chat_id, telegram_user_id=telegram_user_id, update_id=update_id,
-            preferred_language=preferred_language, agent_mirror=agent_mirror,
         )
         metadata["channel"] = str(chat_id)  # the bound-channel check reads it, as on the command path
         context = MessageContext(

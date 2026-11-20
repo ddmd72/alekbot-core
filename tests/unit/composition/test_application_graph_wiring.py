@@ -87,7 +87,6 @@ def started_state_problems(graph: ProdGraph) -> List[str]:
     app = graph.app
     problems = []
     loops = {"billing_agent._flush_task": app.billing_agent._flush_task,
-             "logger_agent._flush_task": app.logger_agent._flush_task,
              "agent_factory._sweep_task": app.agent_factory._sweep_task}
     for name, task in loops.items():
         if task is None or task.done():

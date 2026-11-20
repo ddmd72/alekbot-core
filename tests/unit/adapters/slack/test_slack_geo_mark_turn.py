@@ -55,7 +55,7 @@ def _adapter(iam: Optional[Iam] = None) -> Tuple[HTTPModeAdapter, Handler]:
     adapter._session_locks = weakref.WeakValueDictionary()
 
     async def resolve(user_id: str):
-        return LanguageCode.EN, "en", True
+        return LanguageCode.EN
 
     adapter._resolve_language = resolve  # type: ignore[method-assign]
     return adapter, handler

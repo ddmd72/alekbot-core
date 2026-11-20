@@ -65,7 +65,7 @@ languages (`normalize_voice_languages`) are a separate, open-ended list that is 
 3. The adapter builds the `ResponseChannel` with `language=ui_lang` and `localization=` the
    `LocalizationService` wrapper (`src/adapters/slack/response_channel.py::SlackResponseChannel`), which asks it for status
    phrases, entertainment intros and fixed strings. A random variant of a phrase list is picked per use.
-4. The same two values also travel in the message metadata as `preferred_language` and `agent_mirror` (see traps).
+4. The adapters pass only the UI language; the response language comes only from the USER override document.
 
 Other consumers of the resolver (notification service, drive operations and indexing, call text files, voice web routes,
 review question texts) call `resolve_ui_language` or `get_preference` directly.
@@ -115,10 +115,6 @@ still stored and still drives the UI language.
   returns `default or cls.UK`, so `from_str(x, default=None)` never returns `None`, and the route's
   `if preferred is None: 400` branch in `set_language` cannot fire. Do not rely on that 400, and do not assume
   `from_str(..., default=None)` signals failure.
-- **Per-call `preferred_language` / `agent_mirror` metadata does nothing for the prompt today.** Both adapters put them in
-  the message metadata, and `BaseAgent.forwards_language_preference` documents an orchestrator opt-in, but no agent sets
-  that flag and nothing under `src/services/prompt_v3/` reads either value. The response language comes only from the
-  USER override document. Changing the metadata without changing the override has no effect on model output.
 - **The "fixed" rule has several copies of one decision.** `set_preference` builds `LANG_FIXED_<CODE>` inline; the same
   rule (with a third copy for the alert key) is `src/domain/language.py::resolve_lang_token_id`, which no production code calls (tests only). Change both, or
   call the function from the service.
