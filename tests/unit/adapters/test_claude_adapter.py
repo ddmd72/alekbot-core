@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, AsyncMock
 import anthropic
 
 from src.adapters.claude_adapter import (
-    ClaudeAdapter, _strip_nullable, _nullable_to_union, _make_strict,
+    ClaudeAdapter, _nullable_to_union, _make_strict,
 )
 from src.domain.user import PerformanceTier
 from src.domain.exceptions import (
@@ -908,26 +908,6 @@ async def test_tool_calls_preserved_under_response_schema():
 # ============================================================================
 # Wire tests: respond-tool safety net (plain-text bypass under tool_choice=auto)
 # ============================================================================
-
-def test_strip_nullable_recursive():
-    """_strip_nullable removes 'nullable' at every level and touches nothing else."""
-    schema = {
-        "type": "object",
-        "nullable": True,
-        "properties": {
-            "rich_content": {"type": "object", "nullable": True, "properties": {"x": {"type": "string"}}},
-            "items": {"type": "array", "items": {"type": "object", "nullable": True, "properties": {}}},
-        },
-    }
-    out = _strip_nullable(schema)
-    assert "nullable" not in out
-    assert "nullable" not in out["properties"]["rich_content"]
-    assert "nullable" not in out["properties"]["items"]["items"]
-    # nothing else injected (no additionalProperties / required)
-    assert "additionalProperties" not in out
-    assert "additionalProperties" not in out["properties"]["rich_content"]
-    assert out["properties"]["rich_content"]["properties"] == {"x": {"type": "string"}}
-
 
 def test_nullable_to_union_converts_to_type_union():
     """_nullable_to_union translates 'nullable: True' into a JSON-Schema nullable

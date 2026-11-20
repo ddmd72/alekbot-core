@@ -462,17 +462,6 @@ class GeminiAdapter(LLMPort):
             return [self._to_json_schema(item) for item in schema]
         return schema
 
-    def _extract_text(self, response) -> str:
-        try:
-            if not response.candidates:
-                return ""
-            candidate = response.candidates[0]
-            if not candidate.content or not candidate.content.parts:
-                return ""
-            return "".join([p.text for p in candidate.content.parts if p.text])
-        except Exception:
-            return ""
-
     def _parse_response(self, response) -> LLMResponse:
         if not response.candidates:
             prompt_feedback = getattr(response, "prompt_feedback", None)

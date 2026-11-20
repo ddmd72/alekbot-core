@@ -9,7 +9,7 @@ Used by: TasksAgent (CRUD), webhook handler, WorkerHandler (reindex).
 import asyncio
 import hashlib
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from ..domain.task import Task, TaskSearchEntry
 from ..ports.embedding_service import EmbeddingService
@@ -127,7 +127,6 @@ class TaskIndexingService:
         user_id: str,
         query: str,
         show_completed: bool = False,
-        list_id: Optional[str] = None,
         limit: int = 10,
     ) -> List[TaskSearchEntry]:
         """
@@ -143,7 +142,6 @@ class TaskIndexingService:
             vectors={"content_vector": query_vector, "context_vector": query_vector},
             limit=limit,
             show_completed=show_completed,
-            list_id=list_id,
         )
 
     # ------------------------------------------------------------------

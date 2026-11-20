@@ -1,14 +1,14 @@
 """The repository side of the fan-out's cap alert (drive_cap_alert, USER_DRIVE_INDEXING_RFC §5.4): `count_capped` answers
 alike on both adapters (Firestore over the evaluating fake), as two count aggregations with equality filters only, which
 the single-field indexes serve (no composite index, none of the fields exempt); and the two cap flags are the fan-out's
-alone: `update_sync_flags` writes them, `save_sync_state` never does, a stored document reads them back."""
+alone: `update_sync_flags` writes them, `save_sync_state` never does (the tick's document leaving them out and a stored
+document reading them back are in the every-field case, test_firestore_drive_index_repo_serialization.py)."""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from src.adapters.firestore_drive_index_repo import state_from_doc, state_to_doc
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_cap_alert import CapCounts
@@ -18,7 +18,6 @@ from tests.unit.adapters.firestore_drive_eval_fakes import RECS, STATES, EvalDb,
 
 _ROOT = Path(__file__).resolve().parents[3]
 T = datetime(2026, 10, 1, tzinfo=timezone.utc)
-CAP_FLAGS = ("card_cap_alerted", "chunk_cap_alerted")
 A = ConnectionScope(user_id="user-a", connection_id="user-a")
 B = ConnectionScope(user_id="user-b", connection_id="user-b")
 NOBODY = ConnectionScope(user_id="nobody", connection_id="nobody")
@@ -102,9 +101,3 @@ async def test_update_sync_flags_writes_the_cap_flags_and_a_save_leaves_them(rep
         assert got.epoch == 2 and got.chunk_cap_alerted and not got.card_cap_alerted
     assert db.cols[STATES].docs["user-a"]["chunk_cap_alerted"] is True
 
-
-def test_the_cap_flags_are_not_in_the_ticks_document_and_read_back_from_a_stored_one():
-    doc = state_to_doc(DriveSyncState(user_id="user-a", connection_id="user-a", card_cap_alerted=True, chunk_cap_alerted=True))
-    assert not set(CAP_FLAGS) & set(doc)
-    back = state_from_doc("user-a", {**doc, "card_cap_alerted": True, "chunk_cap_alerted": True})
-    assert back.card_cap_alerted and back.chunk_cap_alerted

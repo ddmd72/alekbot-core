@@ -1982,7 +1982,6 @@ Mark items `✅` as completed.
 - ✅ `src/ports/indexed_email_repository.py` — ABC (save_batch, find_nearest, indexing state, consolidation batch, repair batch, vector update)
 - ✅ `src/ports/email_exclusions_port.py` — ABC (get/add/delete/list exclusions)
 - ✅ `src/ports/email_indexing_job_repository.py` — ABC (create/update/get/get_latest/list jobs)
-- ✅ `tests/unit/ports/test_email_ports.py` — 35 port contract tests, all passing
 
 ### Block 2 — Adapters + Firestore indexes ✅
 

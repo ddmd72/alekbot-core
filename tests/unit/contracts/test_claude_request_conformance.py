@@ -31,7 +31,9 @@ from scripts.contracts import extract_subset as es
 from src.adapters.claude_adapter import ClaudeAdapter
 from src.domain.exceptions import LLMClientError
 from tests.contracts.openapi_contract import assert_request
+from tests.unit.contracts.allowed_gaps import carries
 from tests.unit.contracts.claude_request_shapes import NOT_REACHABLE, SHAPES
+from tests.unit.contracts.recorded_exchanges import EXCHANGES, provider_of, recording
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ADAPTER_FILE = REPO_ROOT / "src" / "adapters" / "claude_adapter.py"
@@ -184,24 +186,33 @@ def test_the_not_reachable_list_has_no_stale_entry():
     assert not set(NOT_REACHABLE) & _reached(), sorted(set(NOT_REACHABLE) & _reached())
 
 
-def test_every_allowed_gap_is_sent_by_a_shape():
-    """An ALLOWED entry no shape sends is dead: the adapter no longer needs it."""
+def _recorded_requests() -> list[tuple[Mapping[str, str], Any]]:
+    """The committed Anthropic recordings' requests as (headers, body): what the current adapter sends, since
+    `test_recorded_exchanges_replay.py` fails when its requests differ from them."""
+    return [({k.lower(): v for k, v in ex["request"]["headers"].items()}, ex["request"]["body"])
+            for p, n in EXCHANGES if provider_of(p) == "anthropic" for ex in [recording(p)["exchanges"][n]]]
+
+
+def test_every_allowed_gap_is_sent_by_a_shape_or_a_recording():
+    """An ALLOWED entry neither a shape nor a committed recording sends is dead: the adapter no longer needs it. A
+    recording counts: its replay proves the adapter still sends it, and it holds what no offline shape builds (a block
+    the real stream assembled, P17-D1)."""
+    recorded = _recorded_requests()
+    assert recorded, "no Anthropic recording: the recorded half of the evidence is missing"
+    sent_requests = [(r.headers, r.body) for r in all_sent()] + recorded
     for allowed in OPERATION.allowed:
         if allowed.path.startswith("header:"):
             name = allowed.path[len("header:"):]
             sent_values = {
-                v.strip() for r in all_sent() for v in r.headers.get(name, "").split(",") if v.strip()
+                v.strip() for headers, _ in sent_requests for v in headers.get(name, "").split(",") if v.strip()
             }
             assert allowed.value in sent_values, allowed
-        elif allowed.value is not None:
+        elif allowed.value is not None and allowed.variant is None:
             assert allowed.value in {
-                _tag(v, allowed.path) for r in all_sent() for v in _values_at(r.body, allowed.path)
+                _tag(v, allowed.path) for _, body in sent_requests for v in _values_at(body, allowed.path)
             }, allowed
-        elif allowed.path == "":
-            assert any(allowed.field in r.body for r in all_sent()), allowed
         else:
-            assert any(allowed.field in v for r in all_sent() for v in _values_at(r.body, allowed.path)
-                       if isinstance(v, dict)), allowed
+            assert any(carries(allowed, body) for _, body in sent_requests), allowed
 
 # ------------------------------------------------------------------------------------------------- call sites
 def _call_sites(source: str) -> set[tuple[str, ...]]:

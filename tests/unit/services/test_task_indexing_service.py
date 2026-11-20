@@ -270,11 +270,3 @@ class TestSearch:
 
         call_kwargs = index.find_nearest.call_args.kwargs
         assert call_kwargs.get("show_completed") is True
-
-    async def test_passes_list_id_filter(self):
-        svc, _, index, _ = _make_service()
-
-        await svc.search(_USER_ID, "task", list_id=_LIST_ID)
-
-        call_kwargs = index.find_nearest.call_args.kwargs
-        assert call_kwargs.get("list_id") == _LIST_ID

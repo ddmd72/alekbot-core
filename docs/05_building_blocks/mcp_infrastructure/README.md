@@ -249,7 +249,7 @@ Shared `MCPClient` handles protocol. New adapter = ~30 lines of delegation + err
 
 | File | What it tests | Mock boundary |
 |------|--------------|---------------|
-| `tests/unit/ports/test_maps_tools_port.py` | Port contract, MapsToolError | — |
+| `tests/unit/ports/test_maps_tools_port.py` | MapsToolError | — |
 | `tests/unit/adapters/test_mcp_maps_adapter.py` | MCPClient JSON-RPC, schema conversion, MCPMapsAdapter delegation | `aiohttp.ClientSession` |
 | `tests/unit/agents/test_maps_search_agent.py` | Tool loop (single/multi/error/max turns), can_handle | `AsyncMock(spec=MapsToolsPort)` |
 

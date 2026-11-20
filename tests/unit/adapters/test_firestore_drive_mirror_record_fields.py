@@ -1,4 +1,5 @@
-"""The mirror queue fields of the record (§27.9.4) round-trip through the Firestore codecs."""
+"""The mirror queue fields of the record (§27.9.4) round-trip through the Firestore codecs; their neutral defaults are in
+the every-field case (test_firestore_drive_index_repo_serialization.py)."""
 from datetime import datetime, timezone
 
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
@@ -18,8 +19,3 @@ def test_mirror_fields_roundtrip():
               for k, v in doc.items()}
     back = record_from_doc(stored)
     assert back == rec and type(back.mirror_retry_at) is datetime
-
-
-def test_old_doc_reads_neutral_mirror_defaults():
-    rec = record_from_doc({"user_id": "u", "item_id": "i"})
-    assert (rec.mirror_due, rec.mirrored_digest, rec.mirror_retry_at, rec.mirror_held_digest) == (False, "", None, "")

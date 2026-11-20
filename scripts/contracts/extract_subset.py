@@ -1,8 +1,11 @@
-"""Extract a provider's request contract: a small OpenAPI 3.1 subset of the operations and fields our adapters send.
+"""Extract a provider's contract: a small OpenAPI 3.1 subset of the operations and fields our adapters send, and of
+the responses they read.
 
-TEST_COVERAGE_SYSTEMIC_RFC §4a "Contracts", P17 (request side). The output is
-`contracts/providers/<provider>/openapi.yaml`, written by this script only, never by hand;
-`tests/contracts/openapi_contract.py` validates our requests against it.
+TEST_COVERAGE_SYSTEMIC_RFC §4a "Contracts", P17. The output is `contracts/providers/<provider>/openapi.yaml`, written by
+this script only, never by hand; `tests/contracts/openapi_contract.py` validates our requests (`assert_request`) and the
+provider's responses (`assert_response`, `assert_stream`) against it. A response (`Operation.responses`, see `Response`)
+keeps the top-level fields the adapter reads and, by name with any value, the ones it does not; below the top level it
+is built like a request body (variants, ALLOWED gaps, closed objects).
 
 What a subset holds, per operation in `PROVIDERS`:
 - the top-level body fields we send (`Operation.fields`); every other field is pruned, so a new field fails the
@@ -12,7 +15,8 @@ What a subset holds, per operation in `PROVIDERS`:
 - `Operation.open` paths as free-form objects: they carry our own JSON Schemas (tool parameters, output formats);
 - `Operation.allowed`: what our adapter sends although the source lacks it (or marks it deprecated), each injected with
   `x-alek-extension: <reason> (<date>)`. The run refuses to write when the source now has an allowed item: the entry is
-  stale and must be removed.
+  stale and must be removed. A gap can be the value null (`Allowed.null`) and can be kept to one block type
+  (`Allowed.variant`) when the evidence shows no more.
 - `Operation.raw_body`: a request body that is not JSON (an upload's bytes) is kept with its media type and not validated.
 - `Provider.aliases`: the subset's `x-alek-aliases`, the path rewrites `tests/contracts/openapi_contract.py` applies before
   the lookup (Microsoft Graph's `/me/drive/...` and colon addressing name operations the spec writes only as
@@ -62,10 +66,13 @@ MAX_BYTES = 100_000
 # ------------------------------------------------------------------------------------------------------- the table
 @dataclass(frozen=True)
 class Allowed:
-    """Something our adapter sends that the source lacks or marks deprecated. Exactly one of three kinds:
-    `value` (an enum literal, or the `type` of a union variant, at `path`), `field` + `schema` (a field the object at
-    `path` lacks; at path "query": a query parameter the operation lacks), `field` alone (a field of the object at
-    `path` the source marks deprecated, which we keep sending)."""
+    """Something our adapter sends that the source lacks or marks deprecated. Exactly one of four kinds:
+    `value` (an enum literal, or the `type` of a union variant, at `path`), `null` (the JSON value null at `path`),
+    `field` + `schema` (a field the object at `path` lacks; at path "query": a query parameter the operation lacks),
+    `field` alone (a field of the object at `path` the source marks deprecated, which we keep sending). `variant`
+    narrows a `value`, `null` or `field` + `schema` gap to the nodes whose nearest typed object (the object at `path`
+    itself for a field, the object holding the node for a value) has that `type`: a path is transparent to unions, so
+    without it every variant reaching the path gets the gap."""
 
     path: str                                  # body path ("" = the body), "header:<name>" or "query"
     reason: str                                # the fact: what we send, where, why the source lacks it
@@ -73,6 +80,29 @@ class Allowed:
     value: str | None = None
     field: str | None = None
     schema: Mapping[str, Any] | None = None
+    null: bool = False
+    variant: str | None = None
+
+
+@dataclass(frozen=True)
+class Response:
+    """One response of an operation (a status and a media type) and the parts of it our adapter reads. Paths as in
+    `Operation`; the root of a `text/event-stream` response is ONE event's `data` JSON (OpenAPI 3.1 has no item schema
+    for a stream), so its root is the union of the event types.
+
+    Top level: the fields in `fields` are materialised from the source like a request body; every other top-level field
+    of the source is kept BY NAME with an any-value schema (`x-alek-unread`), so the object stays closed (a field the
+    provider adds fails) without copying what we never read (OpenAI echoes the whole request back). Below the top level
+    every kept object is materialised and closed, as on the request side."""
+
+    fields: tuple[str, ...]                             # top-level fields the adapter reads (materialised)
+    status: str = "200"
+    media: str = "application/json"
+    variants: Mapping[str, tuple[str, ...]] = field(default_factory=dict)   # union path -> variants kept
+    open: tuple[str, ...] = ()                          # free-form paths
+    allowed: tuple[Allowed, ...] = ()                   # what the provider sends although the source lacks it
+    sdk_model: str = ""                                 # SDK source: the response type, "module:Name"
+    reads: str = ""                                     # where the adapter reads it (file:lines), for the reader
 
 
 @dataclass(frozen=True)
@@ -91,6 +121,7 @@ class Operation:
     header_aliases: Mapping[str, str] = field(default_factory=dict)  # SDK source: body field -> its header alias
     query: tuple[str, ...] = ()                         # the query parameters we send (path parameters: all kept)
     raw_body: str = ""                                  # a non-JSON body's media type (kept, never validated)
+    responses: tuple[Response, ...] = ()                # the responses our adapter reads
 
 
 @dataclass(frozen=True)
@@ -123,6 +154,15 @@ class Provider:
 
 _OPENAI_ADAPTER = "src/adapters/openai_adapter.py"
 _CLAUDE_ADAPTER = "src/adapters/claude_adapter.py"
+_RECORDINGS = "tests/fixtures/providers"
+# The content blocks a Claude response carries that the adapter reads or passes back: text (with citations), tool_use,
+# thinking and redacted_thinking (replayed in raw_content), and the server tools' blocks of the grounding path (web
+# search and fetch, and the code execution the dynamic search tools bring). Not kept: tool search, container upload.
+_CLAUDE_BLOCKS = (
+    "text", "thinking", "redacted_thinking", "tool_use", "server_tool_use", "web_search_tool_result",
+    "web_fetch_tool_result", "code_execution_tool_result", "bash_code_execution_tool_result",
+    "text_editor_code_execution_tool_result",
+)
 _GMAIL_PATH = "/gmail/v1/users/{userId}/messages"
 _TODO_LISTS = "/me/todo/lists"
 _TODO_LIST = _TODO_LISTS + "/{todoTaskList-id}"
@@ -177,6 +217,29 @@ PROVIDERS: dict[str, Provider] = {
                 reason=f"deprecated in the spec; sent only for models before GPT-5.6, where it still sets the 24h "
                        f"retention ({_OPENAI_ADAPTER} _DEPRECATED_RETENTION_PREFIXES, generate_content)",
             ),),
+            responses=(Response(
+                # Not streamed: one JSON body. _parse_response reads output (message output_text + url_citation
+                # annotations, function_call name/arguments/call_id, web_search_call action) and usage (input, cached
+                # and cache-write input, output); _map_finish_reason reads status and incomplete_details.reason; model
+                # is logged. The output items are passed back as the next request's input (raw_content).
+                reads=f"{_OPENAI_ADAPTER}:735-885 (_map_finish_reason, _parse_response)",
+                fields=("incomplete_details", "model", "output", "status", "usage"),
+                variants={
+                    "output[]": ("message", "function_call", "reasoning", "web_search_call"),
+                    "output[].content[]": ("output_text", "reasoning_text"),
+                },
+                allowed=tuple(Allowed(
+                    path="", field=name, schema=schema, date="2026-11-19",
+                    reason=f"every recorded response carries {name} ({_RECORDINGS}/openai/*.json); the spec's "
+                           f"Response lacks it; not read by the adapter",
+                ) for name, schema in (
+                    ("billing", {"type": "object", "properties": {"payer": {"type": "string"}},
+                                 "required": ["payer"], "additionalProperties": False}),
+                    ("frequency_penalty", {"type": "number"}),
+                    ("presence_penalty", {"type": "number"}),
+                    ("store", {"type": "boolean"}),
+                )),
+            ),),
         ),),
     ),
     "anthropic": Provider(
@@ -217,6 +280,67 @@ PROVIDERS: dict[str, Provider] = {
                     reason=f"sent with the legacy web_search_20250305 tool on the grounding path of models without "
                            f"dynamic search ({_CLAUDE_ADAPTER} generate_content beta_headers), absent from the SDK's "
                            f"AnthropicBetaParam literals",
+                ),
+                Allowed(
+                    path="messages[].content[].caller", null=True, variant="server_tool_use", date="2026-11-19",
+                    reason=f"P17-D1: a server_tool_use block replayed as raw_content carries caller: null (the SDK's "
+                           f"stream accumulator sets it when the block's start event has none); the API answered 200 "
+                           f"to it ({_RECORDINGS}/anthropic/replay_server_tool_blocks.json, second request); the "
+                           f"SDK's ServerToolUseBlockParam has no null caller",
+                ),
+            ),
+            responses=(
+                Response(
+                    # The message the SDK assembles from the stream (stream.get_final_message): _parse_response
+                    # reads content (text, tool_use; thinking skipped), usage (input, output, cache read and creation)
+                    # and stop_reason; _raise_on_refusal reads stop_details; model is logged. The grounded loop sums
+                    # usage per call, branches on stop_reason and passes the content back on pause_turn; raw_content
+                    # replays the whole content list on the next turn.
+                    sdk_model="anthropic.types:Message",
+                    reads=f"{_CLAUDE_ADAPTER}:627-639, 709-742, 1277-1387 (_raise_on_refusal, _grounded_stream_loop, "
+                          f"_map_finish_reason, _parse_response)",
+                    fields=("content", "model", "stop_details", "stop_reason", "usage"),
+                    variants={"content[]": _CLAUDE_BLOCKS},
+                ),
+                Response(
+                    # What is on the wire: we always stream. One event's data; the SDK accumulates the events into
+                    # the Message above, and the grounded loop reads message_delta.delta.container.id itself.
+                    media="text/event-stream", sdk_model="anthropic.types:RawMessageStreamEvent",
+                    reads=f"{_CLAUDE_ADAPTER}:495-499, 678-687 (client.messages.stream, the container id of "
+                          f"message_delta)",
+                    fields=("content_block", "delta", "index", "message", "type", "usage"),
+                    variants={
+                        "": ("message_start", "message_delta", "message_stop", "content_block_start",
+                             "content_block_delta", "content_block_stop"),
+                        "message.content[]": _CLAUDE_BLOCKS,
+                        "content_block": _CLAUDE_BLOCKS,
+                    },
+                    allowed=(
+                        Allowed(
+                            path="", value="ping", date="2026-11-19",
+                            reason="Anthropic's streaming documentation: a stream may carry any number of ping events "
+                                   "(data {\"type\": \"ping\"}); the SDK passes on only the event names it knows "
+                                   "(anthropic/_streaming.py Stream.__stream__) and drops ping, so its event types "
+                                   "lack it",
+                        ),
+                        Allowed(
+                            path="message", field="diagnostics", schema={"type": "null"}, date="2026-11-19",
+                            reason=f"message_start's message carries diagnostics (null) in every recorded stream "
+                                   f"({_RECORDINGS}/anthropic/*.json); the SDK's Message lacks it",
+                        ),
+                        Allowed(
+                            path="message.usage", field="speed", schema={"type": "string"}, date="2026-11-19",
+                            reason=f"message_start's usage carries speed (a string, \"standard\") in every recorded "
+                                   f"stream ({_RECORDINGS}/anthropic/*.json); the SDK's Usage lacks it",
+                        ),
+                        Allowed(
+                            path="content_block.content", field="abort_reason", schema={"type": "null"},
+                            variant="code_execution_result", date="2026-11-19",
+                            reason=f"a code_execution_tool_result block's code_execution_result carries abort_reason "
+                                   f"(null) ({_RECORDINGS}/anthropic/grounding_dynamic_container.json); the SDK's "
+                                   f"CodeExecutionResultBlock lacks it",
+                        ),
+                    ),
                 ),
             ),
         ),),
@@ -319,6 +443,18 @@ _SDK_TRANSFORMS = (
     "dropped; the request types (*Param) are the wire contract",
     "header-literals: a header's allowed values are its SDK type's Literal values",
 )
+_RESPONSE_TRANSFORMS = (
+    "response-unread: a top-level response field the adapter does not read is kept by name with an any-value schema "
+    "(x-alek-unread); the object stays closed",
+    "response-stream-item: a text/event-stream schema is one event's data JSON (OpenAPI 3.1 has no item schema)",
+)
+_SDK_RESPONSE_TRANSFORMS = (
+    "sdk-response-schema: pydantic TypeAdapter(<response model>).json_schema(), $defs as components",
+    "sdk-response-closed: the SDK's response models accept extra fields (additionalProperties true); the subset "
+    "closes every one that declares properties",
+)
+UNREAD = "x-alek-unread"
+_UNREAD_NOTE = "not read by our adapter: any value"
 _DISCOVERY_TRANSFORMS = (
     "discovery-to-openapi: each kept method is an operation at /<path> (operationId = the method id) under the server "
     "rootUrl + servicePath; the API-wide parameters apply to every method",
@@ -384,21 +520,36 @@ def _join(path: str, step: str) -> str:
     return f"{path}.{step}" if path else step
 
 
-class _Builder:
-    """Materialises one operation's body schema from a source spec: path-dependent pruning, refs kept as components."""
+class _Registry:
+    """The components of one subset, shared by every body built into it: the same source schema built the same way is
+    one component; built differently (other variants kept) it gets a numbered name."""
 
-    def __init__(self, spec: dict, op: Operation, registry: tuple[dict, dict] | None = None):
-        """`registry` (components, names) is shared by the operations of one subset: a component pruned or closed
-        differently by two operations gets two names (`<name>`, `<name>_2`), the same one is kept once."""
+    def __init__(self) -> None:
+        self.components: dict[str, Any] = {}
+        self.names: dict[tuple[str, str], str] = {}
+
+
+class _Builder:
+    """Materialises one body schema (an operation's request, or one of its responses) from a source spec:
+    path-dependent pruning, refs kept as components."""
+
+    def __init__(self, spec: dict, op: "Operation | Response", *, registry: _Registry | None = None,
+                 response: bool = False):
         self.spec = spec
         self.op = op
-        self.components, self._names = registry if registry is not None else ({}, {})
+        self.response = response
+        registry = registry or _Registry()
+        self.components = registry.components
+        self._names = registry.names
         self._stack: list[str] = []
         self.reached: set[str] = set()
         self._found: dict[str, set[str]] = {}
+        self._root_fields: set[str] = set()
         self._allowed = {a.path: [] for a in op.allowed}
         for a in op.allowed:
             self._allowed[a.path].append(a)
+        self._typed: list[set[str]] = []        # the `type` values of the typed objects being built, innermost last
+        self._narrowed: set[int] = set()         # the variant-narrowed ALLOWED entries applied somewhere
 
     # -- source navigation
     def resolve(self, node: Any) -> Any:
@@ -485,7 +636,14 @@ class _Builder:
         for path, wanted_variants in self.op.variants.items():
             absent = sorted(set(wanted_variants) - self._found.get(path, set()))
             if absent:
-                raise ValueError(f"variants absent at {path}: {absent}")
+                raise ValueError(f"variants absent at {path or '<body>'}: {absent}")
+        unapplied = [a.path for a in self.op.allowed if a.variant is not None and id(a) not in self._narrowed]
+        if unapplied:
+            raise ValueError(f"ALLOWED narrowed to a variant never applied (typo, or the source moved it): {unapplied}")
+        if self.response:
+            absent_fields = sorted(set(self.op.fields) - self._root_fields)
+            if absent_fields:
+                raise ValueError(f"listed fields absent from the source: {absent_fields}")
         return root
 
     def _check_paths(self) -> None:
@@ -493,9 +651,11 @@ class _Builder:
             if path == "query":
                 continue
             if path.startswith("header:"):
-                if path[len("header:"):] not in self.op.headers:
+                if path[len("header:"):] not in getattr(self.op, "headers", {}):
                     raise ValueError(f"allowed header {path!r} is not a declared header")
                 continue
+            if any(a.null for a in self._allowed.get(path, [])) and path in self.op.variants:
+                raise ValueError(f"ALLOWED null at the union {path!r}: name a path below it")
             head = path.split(".")[0].split("[")[0]
             if path and head not in self.op.fields:
                 raise ValueError(f"path {path!r} is under no listed field")
@@ -564,7 +724,14 @@ class _Builder:
             if key in _DROPPED:
                 continue
             if key == "properties":
-                out[key] = self._properties(value, path)
+                tags = self.type_values(node)
+                if tags:
+                    self._typed.append(tags)
+                try:
+                    out[key] = self._properties(value, path)
+                finally:
+                    if tags:
+                        self._typed.pop()
             elif key in ("anyOf", "oneOf"):
                 out["anyOf"] = [self.build(m, path, whole=False) for m in value]
             elif key in _SCHEMA_LISTS:
@@ -580,7 +747,7 @@ class _Builder:
             if any("properties" in self.merged(m) for m in node.get("anyOf") or node.get("oneOf") or []):
                 raise ValueError(f"object with a union of objects at {path or '<body>'}: cannot be closed")
             out.setdefault("additionalProperties", False)
-        if path == "":
+        if path == "" and not self.response:
             self._check_root_required(out)
         if "anyOf" in out:
             out["anyOf"] = self._without_redundant_literals(out["anyOf"])
@@ -609,6 +776,19 @@ class _Builder:
 
     def _properties(self, props: dict, path: str) -> dict:
         names = sorted(props)
+        if path == "" and self.response:
+            # Every source field by name: the ones we read materialised, the others any-value (`x-alek-unread`).
+            # A response root can be a union (stream events): a listed field must be in one of its objects at least.
+            self._root_fields.update(n for n in names if n in self.op.fields)
+            out = {name: self.build(props[name], name) if name in self.op.fields else {UNREAD: _UNREAD_NOTE}
+                   for name in names}
+            for a in self._applicable(""):
+                if a.field is None:
+                    continue
+                if a.field in props:
+                    raise ValueError(f"stale ALLOWED at <body>: the source now has field {a.field!r}")
+                out[a.field] = {**_plain(dict(a.schema or {})), "x-alek-extension": _note(a)}
+            return dict(sorted(out.items()))
         if path == "":
             absent = [f for f in self.op.fields if f not in props
                       and not any(a.path == "" and a.field == f and a.schema is not None for a in self.op.allowed)]
@@ -616,7 +796,7 @@ class _Builder:
                 raise ValueError(f"listed fields absent from the source: {absent}")
             names = [n for n in names if n in self.op.fields]
         out = {name: self.build(props[name], _join(path, name)) for name in names}
-        for a in self._allowed.get(path, []):
+        for a in self._applicable(path):
             if a.field is None:
                 continue
             if a.schema is not None:
@@ -635,6 +815,18 @@ class _Builder:
                 built["x-alek-extension"] = _note(a)
         return dict(sorted(out.items()))
 
+    def _applicable(self, path: str) -> list[Allowed]:
+        """The ALLOWED entries at `path` that apply to the node being built: a `variant` one only inside (or on) the
+        typed object of that type; each such application is noted for `body`'s never-applied check."""
+        out = []
+        for a in self._allowed.get(path, []):
+            if a.variant is not None:
+                if not self._typed or a.variant not in self._typed[-1]:
+                    continue
+                self._narrowed.add(id(a))
+            out.append(a)
+        return out
+
     def _check_root_required(self, out: dict) -> None:
         dropped = [r for r in out.get("required") or [] if r not in self.op.fields]
         if dropped:
@@ -642,14 +834,16 @@ class _Builder:
 
     def _inject_values(self, built: Any, path: str) -> Any:
         """A scalar ALLOWED value: the node at `path` becomes anyOf [node, const]. A variant value is `_variants`'."""
-        extras = [a for a in self._allowed.get(path, []) if a.value is not None and path not in self.op.variants]
+        extras = [a for a in self._applicable(path) if (a.value is not None or a.null) and path not in self.op.variants]
         for a in extras:
             schema = {**built, "components": {"schemas": self.components}} if isinstance(built, dict) else built
-            if jsonschema.Draft202012Validator(schema).is_valid(a.value):
-                raise ValueError(f"stale ALLOWED at {path}: the source now accepts {a.value!r}; remove the entry")
+            if jsonschema.Draft202012Validator(schema).is_valid(None if a.null else a.value):
+                raise ValueError(f"stale ALLOWED at {path}: the source now accepts "
+                                 f"{'null' if a.null else repr(a.value)}; remove the entry")
         if not extras:
             return built
-        return {"anyOf": [built, *({"const": a.value, "x-alek-extension": _note(a)} for a in extras)]}
+        return {"anyOf": [built, *({"const": None if a.null else a.value, "x-alek-extension": _note(a)}
+                                   for a in extras)]}
 
 
 def _note(a: Allowed) -> str:
@@ -661,15 +855,39 @@ def _is_body_path(path: str) -> bool:
 
 
 def _check_allowed_kinds(op: Operation) -> None:
-    for a in op.allowed:
+    for a in [*op.allowed, *(a for r in op.responses for a in r.allowed)]:
         if not a.reason.strip() or not a.date:
             raise ValueError(f"ALLOWED at {a.path!r} without a reason or a date")
-        if (a.value is None) == (a.field is None):
-            raise ValueError(f"ALLOWED at {a.path!r}: exactly one of value / field")
+        if (a.value is not None) + (a.field is not None) + a.null != 1:
+            raise ValueError(f"ALLOWED at {a.path!r}: exactly one of value / field / null")
+        if a.variant is not None and a.field is not None and a.schema is None:
+            raise ValueError(f"ALLOWED at {a.path!r}: a variant narrows a value, null or new field only")
         if a.path.startswith("header:") and a.value is None:
             raise ValueError(f"ALLOWED at {a.path!r}: a header allows values only")
         if a.path == "query" and (a.field is None or a.schema is None):
             raise ValueError("ALLOWED at 'query': a query parameter needs a field (its name) and a schema")
+    for r in op.responses:
+        for a in r.allowed:
+            if a.path.startswith("header:"):
+                raise ValueError(f"response ALLOWED at {a.path!r}: a response header is not supported")
+            if a.field is not None and a.schema is None:
+                raise ValueError(f"response ALLOWED at {a.path!r}: a field needs a schema (the provider sends it "
+                                 f"although the source lacks it; a deprecated field is accepted in a response anyway)")
+
+
+def _response_schema(spec: dict, source_op: dict, op: Operation, resp: Response) -> Any:
+    """The source schema of one response (a `$ref` to `components/responses` resolved)."""
+    item = (source_op.get("responses") or {}).get(resp.status)
+    seen = 0
+    while isinstance(item, dict) and "$ref" in item:
+        item = _pointer(spec, item["$ref"])
+        seen += 1
+        if seen > 10:
+            raise ValueError("a response $ref chain does not end")
+    media = ((item or {}).get("content") or {}).get(resp.media) or {}
+    if "schema" not in media:
+        raise ValueError(f"{op.method} {op.path}: no {resp.status} {resp.media} response in the source")
+    return media["schema"]
 
 
 def _header_parameter(name: str, literals: list[str], op: Operation) -> dict:
@@ -760,8 +978,7 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
     """The subset document of `provider` from `spec` (an OpenAPI document; an SDK or discovery source is converted to
     one first)."""
     paths: dict[str, Any] = {}
-    registry: tuple[dict, dict] = ({}, {})
-    components = registry[0]
+    registry = _Registry()
     for op in provider.operations:
         _check_allowed_kinds(op)
         item = (spec.get("paths") or {}).get(op.path) or {}
@@ -775,7 +992,7 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
             media = ((source_op.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
             if "schema" not in media:
                 raise ValueError(f"{op.method} {op.path}: no application/json request body")
-            body = _Builder(spec, op, registry).body(media["schema"])
+            body = _Builder(spec, op, registry=registry).body(media["schema"])
             built_op["requestBody"] = {"required": True, "content": {"application/json": {"schema": body}}}
         elif op.raw_body:
             media = ((source_op.get("requestBody") or {}).get("content") or {}).get(op.raw_body) or {}
@@ -797,8 +1014,14 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
         params = _parameters(spec, item, source_op, op)
         if params:
             built_op["parameters"] = params
+        for resp in op.responses:
+            schema = _Builder(spec, resp, registry=registry, response=True).body(
+                _response_schema(spec, source_op, op, resp))
+            built_resp = built_op.setdefault("responses", {}).setdefault(
+                resp.status, {"description": f"the parts our adapter reads: {resp.reads}", "content": {}})
+            built_resp["content"][resp.media] = {"schema": schema}
         paths.setdefault(op.path, {})[op.method] = built_op
-    components = _reachable(paths, components)
+    components = _reachable(paths, registry.components)
     if any(p.get("in") in ("path", "query") for item in paths.values() for o in item.values()
            for p in o.get("parameters") or []):
         transforms = transforms + (_PARAMETER_TRANSFORM,)
@@ -808,9 +1031,15 @@ def build_subset(spec: dict, provider: Provider, *, source: str, version: str, r
         _check_aliases(provider.aliases, paths)
         transforms = transforms + (_ALIAS_TRANSFORM,)
     servers = spec.get("servers") or ([{"url": provider.server}] if provider.server else [])
+    has_responses = any(op.responses for op in provider.operations)
+    if has_responses:
+        transforms = transforms + _RESPONSE_TRANSFORMS[:1]
+    if any(r.media == "text/event-stream" for op in provider.operations for r in op.responses):
+        transforms = transforms + _RESPONSE_TRANSFORMS[1:]
+    title = f"{provider.name} {'request and response' if has_responses else 'request'} subset"
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
-        "info": {"title": f"{provider.name} request subset", "version": str(version)},
+        "info": {"title": title, "version": str(version)},
         "x-source": source, "x-retrieved": retrieved, "x-transforms": list(transforms),
         "paths": paths, "components": {"schemas": dict(sorted(components.items()))},
     }
@@ -1021,8 +1250,45 @@ def sdk_document(op: Operation, version: str) -> dict:
     }
     if params:
         source_op["parameters"] = params
+    for resp in op.responses:
+        name, schemas = _sdk_response_schemas(resp)
+        for def_name, schema in schemas.items():
+            # A response model nested in a request type's model is left in the request's $defs (unreached once
+            # the models are dropped from the unions): the same schema, still open.
+            if def_name in defs and _canon(_close_models(defs[def_name])) != _canon(schema):
+                raise ValueError(f"SDK schema {def_name} differs between the request and a response")
+            defs[def_name] = schema
+        source_op.setdefault("responses", {}).setdefault(resp.status, {"content": {}})["content"][resp.media] = {
+            "schema": {"$ref": _REF_PREFIX + name}}
     return {"openapi": "3.1.0", "info": {"version": version},
             "paths": {op.path: {op.method: source_op}}, "components": {"schemas": defs}}
+
+
+def _sdk_response_schemas(resp: Response) -> tuple[str, dict[str, Any]]:
+    """The JSON Schemas of an SDK response type (its name, and every schema by name), each model closed: the SDK's
+    response models accept extra fields, the contract does not."""
+    if not resp.sdk_model:
+        raise ValueError(f"an SDK source needs sdk_model on its {resp.status} {resp.media} response")
+    name = resp.sdk_model.partition(":")[2]
+    schema = pydantic.TypeAdapter(_import(resp.sdk_model)).json_schema(ref_template=_REF_PREFIX + "{model}")
+    defs = schema.pop("$defs", {})
+    if name in defs and _canon(defs[name]) != _canon(schema):
+        raise ValueError(f"SDK response type {name} has two schemas")
+    defs[name] = schema
+    return name, {def_name: _close_models(s) for def_name, s in defs.items()}
+
+
+def _close_models(node: Any) -> Any:
+    """The schema with `additionalProperties: true` dropped from every object that declares properties (the builder
+    then closes it)."""
+    if isinstance(node, dict):
+        node = {k: _close_models(v) for k, v in node.items()}
+        if "properties" in node and node.get("additionalProperties") is True:
+            del node["additionalProperties"]
+        return node
+    if isinstance(node, list):
+        return [_close_models(v) for v in node]
+    return node
 
 
 def sdk_subset(provider: Provider, retrieved: str) -> dict:
@@ -1034,8 +1300,11 @@ def sdk_subset(provider: Provider, retrieved: str) -> dict:
         for path, item in doc["paths"].items():
             merged["paths"].setdefault(path, {}).update(item)
         merged["components"]["schemas"].update(doc["components"]["schemas"])
+    transforms = _TRANSFORMS + _SDK_TRANSFORMS
+    if any(op.responses for op in provider.operations):
+        transforms += _SDK_RESPONSE_TRANSFORMS
     return build_subset(merged, provider, source=f"{provider.sdk}-sdk-python@{version}", version=version,
-                        retrieved=retrieved, transforms=_TRANSFORMS + _SDK_TRANSFORMS)
+                        retrieved=retrieved, transforms=transforms)
 
 
 # --------------------------------------------------------------------------------------------------- OpenAPI source

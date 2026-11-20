@@ -129,5 +129,5 @@ executions bill their own tokens; multi-turn executions still sum their turns; a
 inline-awaited nested agent does not capture the caller's ledger.
 `tests/unit/domain/test_billing_accounting.py` — ledger arithmetic and crossing
 predicate incl. rotation and exact-boundary cases.
-`tests/unit/adapters/test_firestore_quota_service_alert.py` — alert fires once, stays
+`tests/unit/adapters/test_quota_service_kit.py` — alert fires once, stays
 silent when already over, survives a dead sink, and never displaces the billing write.

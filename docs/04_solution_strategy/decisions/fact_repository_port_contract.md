@@ -21,10 +21,6 @@ REQ-ARCH-01 + the test density of this codebase are the two mechanical guardrail
 
 - `src/ports/repository.py` — `search_facts` signature widened with `vector_field`; new `search_facts_by_domain` abstract.
 - Adapter (`src/adapters/firestore_repo.py`) unchanged — already had both.
-- `tests/unit/ports/test_core_port_contracts.py` — port-contract test updates (3 test changes, all explicitly approved):
-  - `test_all_abstract_methods_count`: 20 → 21.
-  - `test_search_facts_signature`: added `vector_field` to expected params list + default assertion.
-  - New `test_has_search_facts_by_domain` matching the `test_has_*` pattern.
 - No production code changes needed at callsites — they already used the wider shape.
 - All existing `AsyncMock(spec=FactRepository)` test mocks (conftest + ~14 files) gain `search_facts_by_domain` automatically via spec.
 

@@ -1,0 +1,198 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "plain_text",
+    "purpose": "a text answer, thinking off",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:21Z",
+    "model": "claude-haiku-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 3e-05,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=plain_text"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 50,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Clara Moreira and Alex Doe spend Mar 6-8 in Coimbra. Which city? One word."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "system": [],
+          "tools": [],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCg9z4axZ5ju2frH8Eii",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 46,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 3,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "thinking",
+                "thinking": "",
+                "signature": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "thinking_delta",
+                "thinking": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "signature_delta",
+                "signature": "CAQSvAUKEAgUGAI4AUIIdGhpbmtpbmcSDJVqAUxwEN1jSXEHoBoMRKC3OlzxohwFYiWxIjBK1a/2wAtg7io3d9yGBaD0jS5e6DQ2pinltQ+N4a5sEYuZEfy97AnRzbDS/3KLF84q2QT9infP8aJo6jftLxjxzjWImU9DnooTmhEW/aCfSF4UUAZfKMHTR/0wRRwcmoMtmJFiGwN2OC2OgtjoPYySCUl/EMIzUDA5SBjtHtr62G3xCQ0B5xyhQBJv++yMYcYjCFxVX2g8UAO/4Ma1OG6r9kGyVIlYvTZyjbJR9v3UJ9JZD4fn+D3UzuLKfybq4yPiwS1XOFH4NAWhdY/+6r2QksBM8ifuKCKF+cvNCw3Q66DSURT/TpntdF5Z/EnhQYlX8AKe+T8mM9VV0ITJhiySKoOIjIMKa+bdC61/AQDs/T3MUw36i067Khju+0Nn/ZVtNfGfdlVYPt17buUl0mIsz9javyepSVvZDMhvFknsptOn8SJT84QB4hRbHKThRVnlXyQ3vupFNFlj1N67XbfFv5RFBABXyATeAfbCB8MJOsieIoMjs6HpN4vB4xRBqtf0Qij7/d09OHRUmjNrnLrJNypZnGlmbaBuCNXCjt2h5uz7650lO5r1aS+WqgT2uquQs5iJrw0XyK+4geCFhX5ij5Io4CaViXRYVYknZqEDao6CbQ62JvsY7a0iSELOYSdSHtMEwSTAg1q3Y7g/UtKWXbcmtMdvZuyVLSnxW5Fawy4jVj3CPxsSMEsRcPd50i5kTH7hGIFhpH30mbcLmdqeMHgY5k+Nc58Jn/EkhXTKEsyGB5fslHdxza8i3nXur45ykWMH2Fc3RX++LOK1wadFmXPMi9SuarjnEsEvRisHKmZuqIqvaLnWSkw0tZDGp6HuXTPNAOy0yKgQhydwJen8MSUYlW1uw938ILb1GAE="
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "Coimbra"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "max_tokens",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 46,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 50,
+                "output_tokens_details": {
+                  "thinking_tokens": 45
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 5.5e-05,
+      "cost": {
+        "input": 46,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 50,
+        "searches": 0,
+        "usd": 3e-05
+      }
+    }
+  ]
+}

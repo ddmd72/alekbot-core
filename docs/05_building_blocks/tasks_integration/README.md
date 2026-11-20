@@ -210,7 +210,7 @@ Vector search interface backed by Firestore.
 | `upsert(entry)` | Insert or replace index entry. |
 | `delete(user_id, task_id)` | Remove from index. |
 | `delete_by_list(user_id, list_id)` | Remove all tasks in a list (used on list deletion). |
-| `find_nearest(user_id, vectors, limit, show_completed, list_id)` | Multi-vector RRF search. Returns `TaskSearchEntry` list. |
+| `find_nearest(user_id, vectors, limit, show_completed)` | Multi-vector RRF search. Returns `TaskSearchEntry` list. |
 | `get_by_short_id(user_id, short_id)` | Look up a single entry by stable short_id. Returns `None` if not found. |
 | `delete_all_for_user(user_id)` | Remove all entries for a user (called on disconnect). |
 
@@ -320,7 +320,7 @@ Fetches the full task from Graph API via `TasksProviderPort.get_task()`, then ca
 Fetches all tasks in a list (including completed) and re-indexes them. Bounded concurrency=5.
 Used by `WorkerHandler` for the `reindex_task_list` Cloud Task.
 
-### 6.5 search(user_id, query, show_completed, list_id, limit)
+### 6.5 search(user_id, query, show_completed, limit)
 
 Embeds the query string and calls `TaskSearchIndex.find_nearest()` with the same query
 vector for both `content_vector` and `context_vector`. Returns `List[TaskSearchEntry]`.

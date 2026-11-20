@@ -469,9 +469,6 @@ class UserProfile(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
     
-    def get_platform_id(self, platform: str) -> Optional[str]:
-        return self.platform_identities.get(platform)
-
 
 # ============================================================================
 # Pydantic v2: Resolve forward references

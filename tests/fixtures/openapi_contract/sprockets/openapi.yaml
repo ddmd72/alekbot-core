@@ -1,0 +1,119 @@
+# Invented mini contract for tests/unit/contracts/test_openapi_contract_response.py (shaped like an extracted subset
+# with responses; no real API).
+openapi: 3.1.0
+info:
+  title: sprockets request and response subset
+  version: 9.9.9
+x-source: https://example.com/sprockets@abc
+x-retrieved: '2026-11-19'
+x-transforms: []
+servers:
+  - url: https://api.sprockets.example.com/v1
+paths:
+  /sprockets:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: the parts our adapter reads
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sprocket'
+            text/event-stream:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/StartEvent'
+                  - $ref: '#/components/schemas/DeltaEvent'
+                  - type: object
+                    additionalProperties: false
+                    required: [type]
+                    properties:
+                      type:
+                        const: ping
+                    x-alek-extension: the stream may carry pings (2026-11-19)
+components:
+  schemas:
+    Sprocket:
+      type: object
+      additionalProperties: false
+      required: [id, teeth, items]
+      properties:
+        id:
+          x-alek-unread: 'not read by our adapter: any value'
+        teeth:
+          type: integer
+        finish:
+          anyOf:
+            - type: string
+              enum: [matte, gloss]
+            - type: 'null'
+        legacy_grade:
+          type: string
+          deprecated: true
+        items:
+          type: array
+          items:
+            anyOf:
+              - $ref: '#/components/schemas/Cog'
+              - $ref: '#/components/schemas/Spacer'
+        usage:
+          $ref: '#/components/schemas/Usage'
+    Cog:
+      type: object
+      additionalProperties: false
+      required: [type, size]
+      properties:
+        type:
+          const: cog
+        size:
+          type: integer
+    Spacer:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: spacer
+        width:
+          type: number
+    Usage:
+      type: object
+      additionalProperties: false
+      required: [input_tokens]
+      properties:
+        input_tokens:
+          type: integer
+        details:
+          type: object
+          additionalProperties: false
+          properties:
+            cached_tokens:
+              type: integer
+    StartEvent:
+      type: object
+      additionalProperties: false
+      required: [type, sprocket]
+      properties:
+        type:
+          const: start
+        sprocket:
+          $ref: '#/components/schemas/Sprocket'
+    DeltaEvent:
+      type: object
+      additionalProperties: false
+      required: [type, text]
+      properties:
+        type:
+          const: delta
+        text:
+          type: string

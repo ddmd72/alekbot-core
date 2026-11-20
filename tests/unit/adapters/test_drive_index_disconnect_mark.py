@@ -1,12 +1,11 @@
 """R1's deliberate-disconnect mark on the drive sync state (SECRETS_AT_REST_RFC §6.2, F1): a fan-out flag like the
 others. `update_sync_flags(disconnected_by_user_at=...)` writes it on both adapters (Firestore over the evaluating fake),
-`Cleared.MARK` empties it, `save_sync_state` never touches it, a missing state stays missing, and the tick's document
-does not carry it."""
+`Cleared.MARK` empties it, `save_sync_state` never touches it, and a missing state stays missing (the tick's document
+not carrying it is in the every-field case, test_firestore_drive_index_repo_serialization.py)."""
 from datetime import datetime, timezone
 
 import pytest
 
-from src.adapters.firestore_drive_index_repo import state_from_doc, state_to_doc
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveSyncState
@@ -55,9 +54,3 @@ async def test_a_missing_state_stays_missing():
     await repo.update_sync_flags(A, disconnected_by_user_at=MARK)
     assert await repo.get_sync_state(A) is None
 
-
-def test_the_mark_is_not_in_the_ticks_document_and_reads_back_from_a_stored_one():
-    doc = state_to_doc(DriveSyncState(user_id="user-a", connection_id="user-a", disconnected_by_user_at=MARK))
-    assert "disconnected_by_user_at" not in doc
-    assert state_from_doc("user-a", {**doc, "disconnected_by_user_at": MARK}).disconnected_by_user_at == MARK
-    assert state_from_doc("user-a", doc).disconnected_by_user_at is None

@@ -10,7 +10,7 @@ from google.cloud import firestore
 
 from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepository
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
-from tests.unit.adapters.prompt_v3.test_firestore_repositories import MockSecurityPort
+from tests.support.prompt_security_fake import MockSecurityPort
 
 
 class _Snap:

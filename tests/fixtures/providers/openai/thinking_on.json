@@ -1,0 +1,166 @@
+{
+  "_meta": {
+    "provider": "openai",
+    "operation": "POST /responses",
+    "scenario": "thinking_on",
+    "purpose": "a reasoning / thinking block before the answer",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:27Z",
+    "model": "gpt-6-luna",
+    "sdk": "openai 2.53.0",
+    "outcome": "ok",
+    "cost_usd": 1.9e-05,
+    "regenerate": "make contract-record PROVIDER=openai ONLY=thinking_on"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "input": [
+            {
+              "role": "user",
+              "content": "Alex Doe's 2015 Skoda Fabia had its oil changed at 10,000 km and was serviced at 90,000 km. How many km lie between the two? Think it through, then answer with the number only."
+            }
+          ],
+          "max_output_tokens": 2048,
+          "model": "gpt-6-luna",
+          "reasoning": {
+            "effort": "low"
+          },
+          "store": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_0b4055d95a3f0c34006aff30c95f2487d29973c55fa1d183c4",
+          "object": "response",
+          "created_at": 1795109065,
+          "status": "completed",
+          "access_programs": null,
+          "background": false,
+          "billing": {
+            "payer": "developer"
+          },
+          "completed_at": 1795109066,
+          "error": null,
+          "frequency_penalty": 0.0,
+          "image": {
+            "context_compression": "disabled"
+          },
+          "incomplete_details": null,
+          "input_transformations": [],
+          "instructions": null,
+          "max_output_tokens": 2048,
+          "max_tool_calls": null,
+          "model": "gpt-6-luna",
+          "moderation": null,
+          "output": [
+            {
+              "id": "rs_0b4055d95a3f0c34006aff30ca5a8487d2a0e2a5e3918334c1",
+              "type": "reasoning",
+              "content": [],
+              "encrypted_content": "gAAAAABq_zDLfGobwj7JYebKBebJS8XdfljppeD9HBZRJBe1fo9WRpUGFhismEmMroUH31g2UikEnhm-9tdhcpPDGs2sw7xhr_8OAByUBkKlu4YMLENwV6fKy_IrPLu62xITCYzhlrK2ZV7gGpyZyr2FTPsVpkCq34pzVLGHbxOyxYkv-xw1bJAPZzFU10OQfaB1HByWhjxwXS8KYMnVYXo_vdKvUwPP6d_fcXAmmZQ_7bP7iS3CFLka025airhnMDu2YaabDVpCrhMsNM7RQD-03JDhEqVDD8NJTWNTq9EHmHnPfze-a-GJMexxU5GMygltlroRUYu0e-pwq6kUqY5MSw-QufAYWKkh5yHpHrzoDPSk-RhOdNJ9pGz5CZrocTnmDRgl5Ixt0L_bPyJvzW_DWbOCxfJoYA6N87fKkPzuhlQF5pZurKsWgtIHynQEMv18PAiQVFlZ1C4j_H0QIfkxZiBU6DUVruZ4hEL7SPPwy56WtI6ybF6fAeh-2I5bVjUzkIBMB6LkvzbQRoTFYnFY5AEn4wgi4ILUOuyUnM5d5Fm58Kz3MQF9JXdu0i4RRv2knTl_RIP7JTNE1QwHm-Il7-qBfisRRQt_KzjWynT7V87O3gLIp4c590j3ltpi79_2Sb4PSqKvSbzKTWNozhFZ0GDtF8fO5HMYC217UcOv4twX3yJPOrjPv9Rn-o94WWaHbYnSTIcOUPUpwtbUZs81mXui-emUHe0SVd9uZ7sMjUYtVOtpMuEaiTqVTe886BsUyNXHbx_zlMmlEdaCOqThg5EpyWlMgAiI-qBRSgF43i1oFedBZAXU3AfdcLUJ4ca3tcX2U6yM6AXAS0dlsN8eJUSmBDERmF35Rqt1ykEFfgXnx9-Ah0qAYkBxW7gNYM5ralWiOXYCfqjU_j-y-k2mlrxxBiU_iuvtQrsBOqRkRlAQOtZ9d12pl4U_ZYqO85SuHGdw16fZDJSKUiEeil2Mi-3yTcFHuF_StKmTHoLNqbWbXGs0cUnfSIY5iqs5EF9HRiZt5CKx5JNLQneqJf3MbOLdF8o9B5IzT3AOjVf2bFvurNuE3IavTadUE0LdKWdzAGAwuzy5qA0O0qaEgumAvwvEqpvtadAVMKJ9yUtSlMYEZk8H48dlxjuyQsBpAHt1J3woOXgq9nqEo4b2dQWR9hjsZi5mQpC4ZIj-QzxehoE7bI3akpe-5brBIcjHOLdB4RtTp-ue3iULzzL7of0my0hSicDj3zR36vnmu-lw80y-YDG5DVU7XUz_x7aThG8D-EDb7ROknyBxqfF7epeY6ZQWcMZKGi37NdQxmNVNYe5KZkqJc-RWz7XyTnwBmzGXv3wq0uY6eT2XSiGswi_v1WJ5Zj-2SzNf9oqWyb55pEFO6V0VdF07-YAyBX9Q_3BeVLnknv-LlJpBh6gNIIxQZoGu9kkEZr_wq5DWSAgVV3gPc5SAOGeRuqhJGUI9fkZ_3tWVAUssV0L-YOncPq5RgMr7hTuQ3ghzDBu0DsW-XTPoxunoiGMZGGwNaOH5UDQyQpIlqyrYrvs6Q8cALSUzMVEX1qUku84lwKBzYhLhYi56hSU1OP2N3dTb0hsQehcur5n9PNVh1IosXzsfCtXA8E5P4Uh00EaxEcxsDK4LFlgq04WHWrfMo2yk_MbLxdnvmM9ZVvpw_xI8z1njq3iyXI61cSphzB7270GWbXn6pjtatxdLpbKmB59F_OyDqdR5NRbc5Oi8RecTt4MN4jLYv6JEnvWiIy3PpnjRi7Z6zkKyFlLQUL5LAw_HLQcHTKgPI-Yijndf3abFAlJcnnmZ5iGPGT5bGhurdx0eVGRaaGYwgPoBXQqkoFmNBa8mgTymJj5XwtDt",
+              "summary": []
+            },
+            {
+              "id": "msg_0b4055d95a3f0c34006aff30ca946487d2b385b61d7a9c6472",
+              "type": "message",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "output_text",
+                  "annotations": [],
+                  "logprobs": [],
+                  "text": "80000"
+                }
+              ],
+              "phase": "final_answer",
+              "role": "assistant"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "presence_penalty": 0.0,
+          "previous_response_id": null,
+          "prompt_cache_key": null,
+          "prompt_cache_retention": "24h",
+          "reasoning": {
+            "context": "all_turns",
+            "effort": "low",
+            "mode": "standard",
+            "summary": null
+          },
+          "safety_identifier": null,
+          "service_tier": "default",
+          "store": true,
+          "temperature": 1.0,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "auto",
+          "tool_usage": {
+            "image_gen": {
+              "input_tokens": 0,
+              "input_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "output_tokens": 0,
+              "output_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+              },
+              "total_tokens": 0
+            },
+            "web_search": {
+              "num_requests": 0
+            }
+          },
+          "tools": [],
+          "top_logprobs": 0,
+          "top_p": 0.98,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 55,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_12h_tokens": 0,
+                "ttl_30m_tokens": 0
+              },
+              "cached_tokens": 0
+            },
+            "output_tokens": 27,
+            "output_tokens_details": {
+              "reasoning_tokens": 19
+            },
+            "total_tokens": 82
+          },
+          "user": null,
+          "metadata": {}
+        }
+      },
+      "estimate_usd": 0.001064,
+      "cost": {
+        "input": 55,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 27,
+        "searches": 0,
+        "usd": 1.9e-05
+      }
+    }
+  ]
+}

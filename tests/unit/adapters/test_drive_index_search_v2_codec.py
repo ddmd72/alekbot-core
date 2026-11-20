@@ -1,15 +1,15 @@
 """Search v2 fields through the drive index codecs (USER_DRIVE_INDEXING_RFC §25.2.1, §25.2.2, §25.4.6, §25.13.3): every
-v2 record field, the sync state's per-agent backoff and the chunk keys round-trip through Firestore-shaped documents;
-the v1 stream projections leave the chunk keys out; the in-memory and Firestore repositories read chunks alike."""
+v2 record field and the chunk keys round-trip through Firestore-shaped documents (the sync state's per-agent backoff is in
+the every-field case, test_firestore_drive_index_repo_serialization.py); the v1 stream projections leave the chunk keys
+out; the in-memory and Firestore repositories read chunks alike."""
 from dataclasses import fields, replace
 from datetime import date, datetime, timedelta, timezone
 
-import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_drive_index_repo import (
-    CHUNK_FIELDS, CHUNK_VECTOR, RECORD_FIELDS, STREAM_FIELDS, chunk_from_doc, chunk_to_doc, record_from_doc,
-    record_to_doc, state_from_doc, state_to_doc,
+    CHUNK_FIELDS, CHUNK_VECTOR, STREAM_FIELDS, chunk_from_doc, chunk_to_doc, record_from_doc,
+    record_to_doc, state_from_doc,
 )
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileDate, ProfileEntity
@@ -74,41 +74,18 @@ class TestRecordFields:
         default = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert [n for n in V2_RECORD_FIELDS if getattr(v2_record(), n) == getattr(default, n)] == []
 
-    def test_every_v2_field_is_a_stored_field(self):
-        assert set(V2_RECORD_FIELDS) <= set(RECORD_FIELDS)
-
-    def test_round_trip_through_stored_types(self):
-        assert record_from_doc(stored(record_to_doc(v2_record()))) == v2_record()
-
     def test_profile_dates_are_iso_strings_in_the_document(self):
         doc = record_to_doc(v2_record())
         assert doc["profile"]["dates"][0] == {"label": "event", "iso": "2026-05-12", "printed": ""}
         assert doc["photo_objects"] == [{"name": "fountain", "forms": ["fuente", "фонтан"]}]
-
-    @pytest.mark.parametrize("name", ["valid_until", "profile_defer_until", "passages_defer_until",
-                                      "passages_done_at", "enrich_wake_at"])
-    def test_timestamps_read_back_as_plain_utc(self, name):
-        back = getattr(record_from_doc(stored(record_to_doc(v2_record()))), name)
-        assert type(back) is datetime and back.utcoffset() == timedelta(0)
 
     def test_neutral_defaults(self):
         rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert rec.profile is None and rec.profile_state == "none" and rec.passages_state == "none"
         assert rec.about_keys == () and rec.keys_version == 0 and not rec.enrich_ready and not rec.keys_capped
 
-    def test_a_v1_document_reads_with_the_defaults(self):
-        v1 = {f: v for f, v in record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i")).items()
-              if f not in V2_RECORD_FIELDS}
-        assert record_from_doc(v1) == DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
-
 
 class TestStateField:
-    def test_backoff_by_agent_round_trips_as_plain_utc(self):
-        state = DriveSyncState(user_id="u", connection_id="u", model_backoff_by_agent={"drive_profiler": T, "drive_passages": T})
-        back = state_from_doc("u", stored(state_to_doc(state)))
-        assert back == state
-        assert all(type(v) is datetime for v in back.model_backoff_by_agent.values())
-
     def test_default_is_empty(self):
         assert DriveSyncState(user_id="u", connection_id="u").model_backoff_by_agent == {}
         assert state_from_doc("u", {}).model_backoff_by_agent == {}

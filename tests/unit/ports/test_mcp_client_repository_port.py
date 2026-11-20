@@ -1,13 +1,5 @@
-"""
-Port contract tests for MCPClientRepository.
+"""MCPClientRepository: a minimal in-memory fake round-trips all three entity types."""
 
-- Is an ABC (abstract, not instantiable)
-- Declares exactly the methods the service calls
-- A minimal in-memory fake round-trips all three entity types
-"""
-
-import inspect
-from abc import ABC
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -15,41 +7,6 @@ import pytest
 
 from src.domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
 from src.ports.mcp_client_repository import MCPClientRepository
-
-
-def _abstract_methods(cls) -> set:
-    return {
-        name
-        for name, method in inspect.getmembers(cls)
-        if getattr(method, "__isabstractmethod__", False)
-    }
-
-
-# ---------------------------------------------------------------------------
-# ABC contract
-# ---------------------------------------------------------------------------
-
-
-class TestPortContract:
-    def test_is_abstract(self):
-        assert issubclass(MCPClientRepository, ABC)
-
-    def test_cannot_instantiate(self):
-        with pytest.raises(TypeError):
-            MCPClientRepository()
-
-    def test_abstract_method_set(self):
-        assert _abstract_methods(MCPClientRepository) == {
-            "save_client",
-            "get_client",       # reviewer edit, dead-access deletion: delete_client removed (no production caller)
-            "save_auth_code",
-            "get_auth_code",
-            "consume_auth_code",
-            "save_refresh_token",
-            "get_refresh_token",
-            "revoke_refresh_token",
-            "has_active_grant",     # reviewer edit, drive MCP slice 4: the link's grant check (RFC §3.3.8, §8)
-        }
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,17 @@ components:
       - $ref: '#/components/schemas/UrlCitationBody'
       - $ref: '#/components/schemas/ContainerFileCitationBody'
       - $ref: '#/components/schemas/FilePath'
+    CacheWriteTokensDetails:
+      additionalProperties: false
+      properties:
+        ttl_12h_tokens:
+          type: integer
+        ttl_30m_tokens:
+          type: integer
+      required:
+      - ttl_12h_tokens
+      - ttl_30m_tokens
+      type: object
     CallableToolAllowedCaller:
       enum:
       - direct
@@ -762,6 +773,154 @@ components:
       - text
       - type
       type: object
+    Response:
+      additionalProperties: false
+      properties:
+        access_programs:
+          x-alek-unread: 'not read by our adapter: any value'
+        background:
+          x-alek-unread: 'not read by our adapter: any value'
+        billing:
+          additionalProperties: false
+          properties:
+            payer:
+              type: string
+          required:
+          - payer
+          type: object
+          x-alek-extension: every recorded response carries billing (tests/fixtures/providers/openai/*.json); the spec's Response
+            lacks it; not read by the adapter (2026-11-19)
+        completed_at:
+          x-alek-unread: 'not read by our adapter: any value'
+        conversation:
+          x-alek-unread: 'not read by our adapter: any value'
+        created_at:
+          x-alek-unread: 'not read by our adapter: any value'
+        error:
+          x-alek-unread: 'not read by our adapter: any value'
+        frequency_penalty:
+          type: number
+          x-alek-extension: every recorded response carries frequency_penalty (tests/fixtures/providers/openai/*.json); the
+            spec's Response lacks it; not read by the adapter (2026-11-19)
+        id:
+          x-alek-unread: 'not read by our adapter: any value'
+        image:
+          x-alek-unread: 'not read by our adapter: any value'
+        incomplete_details:
+          anyOf:
+          - additionalProperties: false
+            properties:
+              reason:
+                enum:
+                - content_filter
+                - max_messages
+                - max_output_tokens
+                - steered
+                type: string
+            type: object
+          - type: 'null'
+        input_transformations:
+          x-alek-unread: 'not read by our adapter: any value'
+        instructions:
+          x-alek-unread: 'not read by our adapter: any value'
+        max_output_tokens:
+          x-alek-unread: 'not read by our adapter: any value'
+        max_tool_calls:
+          x-alek-unread: 'not read by our adapter: any value'
+        metadata:
+          x-alek-unread: 'not read by our adapter: any value'
+        model:
+          $ref: '#/components/schemas/ModelIdsResponses'
+        moderation:
+          x-alek-unread: 'not read by our adapter: any value'
+        object:
+          x-alek-unread: 'not read by our adapter: any value'
+        output:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/OutputMessage'
+            - $ref: '#/components/schemas/FunctionToolCall'
+            - $ref: '#/components/schemas/WebSearchToolCall'
+            - $ref: '#/components/schemas/ReasoningItem'
+          type: array
+        output_text:
+          x-alek-unread: 'not read by our adapter: any value'
+        parallel_tool_calls:
+          x-alek-unread: 'not read by our adapter: any value'
+        presence_penalty:
+          type: number
+          x-alek-extension: every recorded response carries presence_penalty (tests/fixtures/providers/openai/*.json); the
+            spec's Response lacks it; not read by the adapter (2026-11-19)
+        previous_response_id:
+          x-alek-unread: 'not read by our adapter: any value'
+        prompt:
+          x-alek-unread: 'not read by our adapter: any value'
+        prompt_cache_diagnostics:
+          x-alek-unread: 'not read by our adapter: any value'
+        prompt_cache_key:
+          x-alek-unread: 'not read by our adapter: any value'
+        prompt_cache_options:
+          x-alek-unread: 'not read by our adapter: any value'
+        prompt_cache_retention:
+          x-alek-unread: 'not read by our adapter: any value'
+        reasoning:
+          x-alek-unread: 'not read by our adapter: any value'
+        safety_identifier:
+          x-alek-unread: 'not read by our adapter: any value'
+        service_tier:
+          x-alek-unread: 'not read by our adapter: any value'
+        status:
+          enum:
+          - cancelled
+          - completed
+          - failed
+          - in_progress
+          - incomplete
+          - queued
+          type: string
+        store:
+          type: boolean
+          x-alek-extension: every recorded response carries store (tests/fixtures/providers/openai/*.json); the spec's Response
+            lacks it; not read by the adapter (2026-11-19)
+        temperature:
+          x-alek-unread: 'not read by our adapter: any value'
+        text:
+          x-alek-unread: 'not read by our adapter: any value'
+        tool_choice:
+          x-alek-unread: 'not read by our adapter: any value'
+        tool_usage:
+          x-alek-unread: 'not read by our adapter: any value'
+        tools:
+          x-alek-unread: 'not read by our adapter: any value'
+        top_logprobs:
+          x-alek-unread: 'not read by our adapter: any value'
+        top_p:
+          x-alek-unread: 'not read by our adapter: any value'
+        truncation:
+          x-alek-unread: 'not read by our adapter: any value'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/ResponseUsage'
+          - type: 'null'
+        user:
+          x-alek-unread: 'not read by our adapter: any value'
+      required:
+      - access_programs
+      - created_at
+      - error
+      - id
+      - incomplete_details
+      - instructions
+      - metadata
+      - model
+      - object
+      - output
+      - parallel_tool_calls
+      - temperature
+      - tool_choice
+      - tools
+      - top_p
+      type: object
     ResponseFormatJsonObject:
       additionalProperties: false
       properties:
@@ -780,6 +939,43 @@ components:
           - $ref: '#/components/schemas/ResponseFormatJsonObject'
         verbosity:
           $ref: '#/components/schemas/Verbosity'
+      type: object
+    ResponseUsage:
+      additionalProperties: false
+      properties:
+        input_tokens:
+          type: integer
+        input_tokens_details:
+          additionalProperties: false
+          properties:
+            cache_write_tokens:
+              type: integer
+            cache_write_tokens_details:
+              $ref: '#/components/schemas/CacheWriteTokensDetails'
+            cached_tokens:
+              type: integer
+          required:
+          - cache_write_tokens
+          - cached_tokens
+          type: object
+        output_tokens:
+          type: integer
+        output_tokens_details:
+          additionalProperties: false
+          properties:
+            reasoning_tokens:
+              type: integer
+          required:
+          - reasoning_tokens
+          type: object
+        total_tokens:
+          type: integer
+      required:
+      - input_tokens
+      - input_tokens_details
+      - output_tokens
+      - output_tokens_details
+      - total_tokens
       type: object
     SummaryTextContent:
       additionalProperties: false
@@ -1043,7 +1239,7 @@ components:
       - type
       type: object
 info:
-  title: openai request subset
+  title: openai request and response subset
   version: 2.3.0
 openapi: 3.1.0
 paths:
@@ -1056,6 +1252,13 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateResponse'
         required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+          description: 'the parts our adapter reads: src/adapters/openai_adapter.py:735-885 (_map_finish_reason, _parse_response)'
 servers:
 - url: https://api.openai.com/v1
 x-retrieved: '2026-11-19'
@@ -1069,3 +1272,5 @@ x-transforms:
 - 'drop-redundant-literals: a literal next to a plain {type: T} in a union accepts nothing more (model id lists)'
 - 'drop-doc-keys: documentation keys and vendor doc extensions dropped (spec_drift.normalize); property names kept'
 - 'stringify-dates: YAML dates become ISO strings'
+- 'response-unread: a top-level response field the adapter does not read is kept by name with an any-value schema (x-alek-unread);
+  the object stays closed'

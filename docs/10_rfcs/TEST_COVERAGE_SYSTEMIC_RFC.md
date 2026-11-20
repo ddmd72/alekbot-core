@@ -534,7 +534,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 | (built 2026-10-27; see "Built (P14)"; the two deep-research `MATRIX` rows are 200)
 | P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (built 2026-10-27; see "Built (P15, part 1)" and "Built (P15, part 2)"; the three `MATRIX` rows are 200 (matrix card M))
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
-| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised"; request slice for OpenAI and Claude built 2026-11-19, see "Built (P17 request slice)") |
+| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised"; request slice for OpenAI and Claude built 2026-11-19, see "Built (P17 request slice)"; response side and recorder built 2026-11-19, see "Built (P17 response side + recorder)") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 | (cheap part built 2026-11-07: the spec-drift workflow and the review skill; see "Built (P18 cheap part)"; `make contract-probe` waits for P17 and the owner's sandboxes)
 | P19 | **Web surfaces, the rest**: `oauth_app`, `user_cabinet_app` route-level tests through the Quart test client on H1 stores — connect flows (with Google token mocks), session cap, every Cabinet write route | check | 1.5–2 | data-exposure bugs beyond the gates of P7 | 3 |
 | P20 | **Field registry and spec drift**: H5 for facts (AST); H6 with the normalisation table; one Firestore database default (§1.4 item 13) and a lint test requiring `database=` in scripts | check | 1.5–2.5 | write-only fields, spec drift, wrong database | 3 |
@@ -1037,9 +1037,6 @@ Deviations and results:
   field, union variant and `Allowed` gap is sent by a shape (a dead keep-list entry fails); every `self.client.<a>.<b>(` call site of the adapter file maps to an operation.
 - **Claude gaps the SDK types lack, allowed with a reason and a date:** `thinking.type = between_tools` (Sonnet 5.5's no-thinking floor) and the beta header
   `web-search-2025-03-05` (the legacy search tool). No shape failed on the first run, so no adapter change was needed.
-- **Still open for P17:** the other providers (Slack, Twilio, Telegram, Cloudflare SFU, Google OAuth, and Microsoft's identity platform: the token
-  POST of `src/adapters/microsoft/graph_auth.py` and the token endpoint of `microsoft_oauth_provider.py`, both on `login.microsoftonline.com`; that
-  file's Graph `GET /me` is in the Graph slice), the recordings, WebSocket event schemas, and the low-coverage adapters listed in the table.
 
 **Built (P17 Gmail request side, 2026-11-19).** Gmail joins the slice, and the core gains what every later provider needs. Files:
 `contracts/providers/gmail/openapi.yaml` (regenerated by `make contract-extract PROVIDER=gmail [REF=<sha>]`), `tests/unit/contracts/gmail_request_shapes.py` +
@@ -1107,6 +1104,82 @@ conformance test nor listed out of the slice with a reason (none is).
 - **Out of scope, by decision:** the spec's own looseness (no required fields beyond the path, free-text `dateTime`, a free-text `changeType`).
 - **Deviations.** The subset is converted from OAS 3.0 to 3.1 (validated with Draft 2020-12 like every subset), against the "native version" line
   above. The shared fake has no `put`; the test adds it in a subclass of its session, the fake's file is unchanged. No shape failed: no adapter change.
+
+**Built (P17 response side + recorder, 2026-11-19).** The response side of the OpenAI and Anthropic contracts and the regeneration
+command of the recordings, before any recording. Test-only (plus the extractor's table and `scripts/contracts/record.py`).
+- **Responses in the subsets.** `Operation.responses` in the extractor's `PROVIDERS` (`Response`: status, media type, the top-level
+  fields the adapter reads, union variants, ALLOWED gaps, an SDK model for the Anthropic source; `reads` cites the adapter lines).
+  Below the top level every kept object is materialised and closed, as on the request side; a top-level field the adapter does not
+  read stays by name with an any-value schema (`x-alek-unread`), so the object stays closed without copying what OpenAI echoes back
+  of the request. OpenAI: the `Response` JSON (output: message, function_call, reasoning, web_search_call). Anthropic: the SSE
+  stream on the wire (`text/event-stream`, one event's data; `ping` an ALLOWED gap, the SDK's event types lack it) and the `Message`
+  the SDK assembles from it (`application/json`; blocks: text, thinking, redacted_thinking, tool_use, server_tool_use and the five
+  server-tool result blocks). The request parts of both subsets are byte-for-byte unchanged.
+- **Check:** `assert_response` and `assert_stream` beside `assert_request` (`tests/contracts/openapi_contract.py`).
+- **Conformance through the real SDK:** `tests/unit/contracts/<provider>_response_samples.py` (bodies as the wire carries them; Claude
+  rendered as a stream) + `test_<provider>_response_conformance.py`: each sample conforms, is read by the real SDK and adapter, and
+  replayed as `raw_content` conforms to the request contract; unknown and wrong-typed fields fail at the top level and at depth;
+  every kept field, variant and gap is exercised. The grounded loop's pause_turn continuation (the request side's `NOT_REACHABLE`
+  `container`) now runs offline over a scripted stream.
+- **P17-D1 (resolved 2026-11-19 as an ALLOWED gap, see "Built (P17 recordings replay)"):** the Anthropic SDK's stream accumulator sets `caller: null` on every tool_use / server_tool_use
+  block whose start event has no `caller`, and a replay (raw_content, the pause_turn continuation) sends it; the request contract has
+  no null there. The recordings `replay_thinking_and_tool_use` and `grounding_dynamic_container` settle whether the API accepts it
+  (accepted: an ALLOWED gap; refused: an adapter fix).
+- **Recorder:** `make contract-record PROVIDER=openai|anthropic [ONLY=] [MAX_USD=1.0] [DRY_RUN=1] [ENV_FILE=]` runs named scenarios
+  (one per response kind, the `NOT_REACHABLE` replays; the same-provider fallback is `UNREACHABLE`: no real call yields a 529)
+  through the real adapter and SDK with a recording transport, and writes `tests/fixtures/providers/<provider>/<scenario>.json`
+  (`_meta` with the regeneration command, every exchange, its cost legs; headers scrubbed to an allowlist). Money is enforced in the
+  script: a pessimistic estimate before each call against the cap, the `billing.py` cost after it, a stop on a call with tokens and
+  a $0 cost; `DRY_RUN=1` builds the first requests in process (no network, no key). Web search is priced by the script ($0.01 per
+  search, both providers): `billing.py` has no per-search leg.
+- **Recordings (2026-11-19):** 16 scenarios (7 OpenAI, 9 Claude) recorded on the owner's machine after a one-call cost probe;
+  the replayed tool-use block with `caller: null` was accepted by the API.
+
+**Built (P17 recordings replay, 2026-11-19).** The 16 recorded exchanges (`tests/fixtures/providers/<provider>/`, written on the
+owner's machine by `make contract-record`) are read by tests, discovered from the folder (`tests/unit/contracts/recorded_exchanges.py`),
+so a new recording is covered without a test edit. Tests, plus the extractor's table and two `Allowed` kinds.
+- **Format and contracts** (`test_recorded_exchanges.py`): every `_meta` names provider, operation, scenario (one of the recorder's
+  `SCENARIOS`), source `recorded`, date, outcome and its `make contract-record PROVIDER=<p> ONLY=<scenario>` command; every scenario
+  of the recorder (minus `UNREACHABLE`) has a recording; every recorded request passes `assert_request`, every recorded response
+  `assert_stream` (Anthropic) or `assert_response` (OpenAI).
+- **Replay through the real adapter and SDK** (`test_recorded_exchanges_replay.py`): each scenario's own steps run again through
+  `record.build_adapter`, the transport answering exchange N with recording N's response (a stream re-rendered as SSE). The adapter's
+  requests must equal the recorded ones (body, path, kept headers, no query), so an adapter change that alters the wire fails and
+  names the regeneration command. The `LLMResponse` is compared with values derived from the recording: text (OpenAI with the
+  sources footer from the `url_citation` annotations), tool calls, finish reason, usage legs by each adapter's formula (the Claude
+  grounded loop summed over its calls), thinking blocks, citations; the cache scenario's second call reads exactly what the first
+  wrote, and a replay scenario sends the first answer back block for block with its tool results. Every replay passed on the
+  first run: no adapter change.
+- **`NOT_REACHABLE` `container` stays:** the dynamic search recording (`grounding_dynamic_container`, Sonnet 5.5) ended with
+  `stop_reason` `end_turn` (the provider did not pause), so no continuation carried `container`. A test fails when a recording
+  reaches a listed entry.
+- **P17-D1 resolved: an ALLOWED gap.** In `replay_server_tool_blocks` the `server_tool_use` block's start event carries no
+  `caller`, the SDK assembles `caller: null`, the second request sends `"caller": null`, and the API answered 200. The request
+  contract now allows null on `messages[].content[].caller` of a `server_tool_use` block only (`Allowed(null=True,
+  variant="server_tool_use")`, reason naming the recording, 2026-11-19). The other replayed callers were received as
+  `{type: direct}` and sent back as received (the `web_search_tool_result` there, the `tool_use` of
+  `replay_thinking_and_tool_use`), also answered 200; no recording shows a null on those blocks, so they get no gap.
+- **Contract gaps closed from the recordings.** Every recorded response carried fields the pinned source lacks (checked: the
+  OpenAI spec's `Response` at the pinned commit; the installed SDK's `Message`, `Usage` and `CodeExecutionResultBlock`), so
+  each is a response `Allowed` field with the schema the recording shows, its reason naming the recording (2026-11-19).
+  Anthropic stream: `message.diagnostics` (null) and `message.usage.speed` (string) of `message_start`, and `abort_reason`
+  (null) on the `code_execution_result` inside a `content_block` only. OpenAI: the top-level `billing` (`{payer: string}`),
+  `frequency_penalty`, `presence_penalty` (numbers) and `store` (boolean). The stale-entry refusal applies: once the source
+  has a field, the run refuses until the entry is removed.
+- **Extractor additions.** `Allowed(null=True)`: the JSON value null at a path (`const: null` beside the source schema;
+  stale once the source accepts null). `Allowed.variant`: a null, value or new-field gap applies only where the nearest typed
+  object (the object at the path for a field, the object holding the node for a value) has that `type`, since a path reaches
+  every kept variant of a union; a narrowed entry never applied fails the run.
+- **Tests decided by a reviewer:** the strict xfails written before the gaps were closed are gone (every recorded request and
+  response must conform outright); the "every ALLOWED gap is exercised" meta-tests count a gap as live when a sample, a shape or
+  a committed recording carries it (`tests/unit/contracts/allowed_gaps.py`); the hand-written Claude samples carry the `caller`
+  the recordings show (`{type: direct}` on `tool_use` and the search result; the code-execution caller on a fetch run by code
+  execution), so every replayed sample conforms; `test_the_replayed_tool_block_carries_caller_null_p17_d1` still pins the SDK
+  assembling a missing caller as null, the mechanism the gap rests on.
+- **Still open for P17:** the other providers (Slack, Twilio, Telegram, Cloudflare SFU, Google
+  OAuth, and Microsoft's identity platform: the token POST of `src/adapters/microsoft/graph_auth.py` and the token endpoint of
+  `microsoft_oauth_provider.py`, both on `login.microsoftonline.com`; that file's Graph `GET /me` is in the Graph slice),
+  WebSocket event schemas, and the low-coverage adapters listed in the table.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years

@@ -1,0 +1,226 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "forced_tool_call",
+    "purpose": "a forced tool call",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:22Z",
+    "model": "claude-haiku-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 7.3e-05,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=forced_tool_call"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 200,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Use the lookup_value tool to find the date of the car service, then answer in one sentence."
+                }
+              ]
+            }
+          ],
+          "model": "claude-haiku-5-5",
+          "system": [],
+          "tools": [
+            {
+              "name": "lookup_value",
+              "description": "Look a value up in the household notes by its key.",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "the note's key"
+                  }
+                },
+                "required": [
+                  "key"
+                ]
+              }
+            }
+          ],
+          "tool_choice": {
+            "type": "any"
+          },
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-haiku-5-5",
+                "id": "msg_011ChCgA4KKmmXotiT57Amtv",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 528,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 8,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "tool_use",
+                "id": "toolu_017fAUQpT3tQvxLkxF2vAZAz",
+                "name": "lookup_value",
+                "input": {},
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "{\"key\":"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " \"car s"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "ervice "
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "date\"}"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "tool_use",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": null
+              },
+              "usage": {
+                "input_tokens": 528,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 41,
+                "output_tokens_details": {
+                  "thinking_tokens": 0
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.000164,
+      "cost": {
+        "input": 528,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 41,
+        "searches": 0,
+        "usd": 7.3e-05
+      }
+    }
+  ]
+}

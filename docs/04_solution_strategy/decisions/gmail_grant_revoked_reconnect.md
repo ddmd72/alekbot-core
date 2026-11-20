@@ -45,7 +45,7 @@ in the account settings. That side is not visible to us.
 
 - **A new `mark_needs_reconnect` method on `OAuthCredentialsPort`** (an atomic
   read-and-set in the adapter). It is cleaner, but it changes a port contract that
-  `tests/unit/ports/test_email_ports.py` pins exactly. A get, then a save through the existing
+  `mypy --strict` on `src/ports` enforces. A get, then a save through the existing
   methods, is enough: the only race is the daily review and an indexing page failing within the
   same few milliseconds, and the worst case is a duplicate notice.
 - **Stop running the review and indexing while flagged.** That saves one HTTP call a day. The
@@ -66,7 +66,7 @@ disconnect marks the state so R1 skips it. Neither flag is derived from the othe
 
 The flag write (and every token refresh write) now goes through `OAuthCredentialsPort.update_credentials`, which
 writes only if the record still exists, so it cannot bring back a grant the user disconnected meanwhile;
-`save_credentials` stays the consent write. The method set pinned by `tests/unit/ports/test_email_ports.py` includes
+`save_credentials` stays the consent write. The `OAuthCredentialsPort` method set includes
 `update_credentials`. The get-then-write shape and its accepted race described above are unchanged.
 
 ## Update 2026-10-30 (insufficient scope)

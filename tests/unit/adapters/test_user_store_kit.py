@@ -206,3 +206,37 @@ async def test_field_update_of_a_missing_user_raises_not_found(repo):
     with pytest.raises(NotFound):
         await repo.update_user_fields(alex(), ("display_name",))
     assert "u1" not in docs(repo)
+
+
+# ------------------------------------------------------------------------------- moved from the mock-SDK tests
+
+async def test_lookup_by_external_id_returns_the_whole_stored_profile(repo):
+    await repo.create_user(alex(external_user_id="google|sub-1"))
+    assert await repo.get_user_by_external_id("google|sub-1") == alex(external_user_id="google|sub-1")
+
+
+async def test_a_refused_link_says_already_linked_and_names_the_holder(repo):
+    """The cabinet routes answer 409 when the message contains "already linked" (`user_cabinet_app.py`)."""
+    await repo.create_user(alex())
+    await repo.create_user(clara(platform_identities={"telegram": "777"}))
+    with pytest.raises(ValueError, match="already linked to user u2"):
+        await repo.link_platform_identity("u1", "telegram", "777")
+
+
+@pytest.mark.h1_only("interfere_on_txn_read: a commit between the transaction's read and its write exists only on the fake")
+async def test_link_reads_the_user_inside_its_transaction(repo):
+    """A commit to the user after the link's read aborts the link, whose re-run keeps that commit's change."""
+    await repo.create_user(alex(platform_identities={"slack": "U1"}))
+    repo.db.interfere_on_txn_read(USERS, "u1", {"display_name": "Alex"}, after_read=True)
+    user = await repo.link_platform_identity("u1", "telegram", "777")
+    assert docs(repo)["u1"]["display_name"] == "Alex" == user.display_name
+    assert docs(repo)["u1"]["platform_identities"] == {"slack": "U1", "telegram": "777"}
+
+
+@pytest.mark.h1_only("interfere_on_txn_query: a commit after a transactional query exists only on the fake")
+async def test_link_runs_its_conflict_query_inside_its_transaction(repo):
+    """A commit to a user the conflict query returned aborts the link, whose re-run keeps that commit's change."""
+    await repo.create_user(alex(platform_identities={"telegram": "777"}))
+    repo.db.interfere_on_txn_query(USERS, "u1", {"display_name": "Alex"})
+    user = await repo.link_platform_identity("u1", "telegram", "777")
+    assert docs(repo)["u1"]["display_name"] == "Alex" == user.display_name

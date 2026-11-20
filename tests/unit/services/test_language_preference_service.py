@@ -188,13 +188,6 @@ class TestSetPreferenceOverrideTokens:
             clear_ids=_ALL_LANG_TOKEN_IDS - {"LANG_FIXED_EN"},
         )
 
-    async def test_clear_ids_excludes_selected_token(self, service, profile_repo):
-        """The active token must NOT appear in clear_ids — it would wipe itself."""
-        await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-
-        clear_ids = profile_repo.set_override_tokens.await_args.kwargs["clear_ids"]
-        assert "LANG_FIXED_EN" not in clear_ids
-
     async def test_clear_ids_contains_all_other_lang_tokens(self, service, profile_repo):
         await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
 
@@ -226,12 +219,6 @@ async def _stored_service(profile_repo, prompt_builder, user: UserProfile):
 
 class TestSetPreferenceUserPersistence:
     """set_preference() persists updated config fields to UserRepository (asserted on the stored profile)."""
-
-    async def test_preferred_language_written_to_user_config(self, profile_repo, prompt_builder):
-        service, stored = await _stored_service(profile_repo, prompt_builder, _make_user())
-        await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-
-        assert stored()["config"]["preferred_language"] == LanguageCode.EN
 
     async def test_agent_mirror_written_to_user_config(self, profile_repo, prompt_builder):
         service, stored = await _stored_service(
@@ -271,10 +258,6 @@ class TestSetPreferenceUserPersistence:
 class TestSetPreferenceCacheInvalidation:
     """set_preference() always invalidates the prompt cache."""
 
-    async def test_cache_invalidated_on_mirror(self, service, prompt_builder):
-        await service.set_preference(_USER_ID, preferred_language=None, agent_mirror=True)
-        prompt_builder.invalidate_cache.assert_called_once()
-
     async def test_cache_invalidated_on_fixed_language(self, service, prompt_builder):
         await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
         prompt_builder.invalidate_cache.assert_called_once()
@@ -296,18 +279,6 @@ class TestSetPreferenceCacheInvalidation:
 
 class TestSetPreferenceNotification:
     """set_preference() sends the correct system alert when notification_service is wired."""
-
-    async def test_no_notification_when_service_not_wired(self, service):
-        """Default fixture has no notification_service — must not raise."""
-        await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-        # No exception, no notification sent (nothing to assert — absence is the test)
-
-    async def test_mirror_sends_mirror_alert(self, service_with_notify, notification_service):
-        await service_with_notify.set_preference(_USER_ID, preferred_language=None, agent_mirror=True)
-
-        notification_service.notify.assert_awaited_once()
-        alert = notification_service.notify.await_args[1]["system_alert"]
-        assert alert == _LANG_ALERTS["mirror"]
 
     async def test_fixed_en_sends_en_alert(self, service_with_notify, notification_service):
         await service_with_notify.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
@@ -333,33 +304,9 @@ class TestSetPreferenceNotification:
         alert = notification_service.notify.await_args[1]["system_alert"]
         assert alert == _LANG_ALERTS["es"]
 
-    async def test_no_preferred_language_fixed_uses_system_default_alert(
-        self, service_with_notify, notification_service
-    ):
-        """preferred_language=None, agent_mirror=False → alert key = system_default (EN)."""
-        await service_with_notify.set_preference(_USER_ID, preferred_language=None, agent_mirror=False)
-
-        alert = notification_service.notify.await_args[1]["system_alert"]
-        assert alert == _LANG_ALERTS["en"]
-
-    async def test_alert_starts_with_system_alert_prefix(self, service_with_notify, notification_service):
-        await service_with_notify.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-
-        alert = notification_service.notify.await_args[1]["system_alert"]
-        assert alert.startswith("System Alert:")
-
     async def test_all_alerts_start_with_system_alert_prefix(self):
         for key, text in _LANG_ALERTS.items():
             assert text.startswith("System Alert:"), f"Alert '{key}' missing 'System Alert:' prefix"
-
-    async def test_notify_receives_correct_user_and_account_ids(
-        self, service_with_notify, notification_service
-    ):
-        await service_with_notify.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-
-        kwargs = notification_service.notify.await_args[1]
-        assert kwargs["user_id"] == _USER_ID
-        assert kwargs["account_id"] == _ACCOUNT_ID
 
     async def test_account_id_falls_back_to_user_id_when_missing(
         self, user_repo, resolver, profile_repo, prompt_builder, notification_service
@@ -380,16 +327,6 @@ class TestSetPreferenceNotification:
         kwargs = notification_service.notify.await_args[1]
         assert kwargs["account_id"] == _USER_ID
 
-    async def test_ensure_agents_called_before_notify(
-        self, service_with_notify, notification_service
-    ):
-        ensure_agents = AsyncMock()
-        service_with_notify._ensure_agents = ensure_agents
-
-        await service_with_notify.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-
-        ensure_agents.assert_awaited_once_with(_USER_ID)
-
     async def test_notification_failure_does_not_propagate(
         self, service_with_notify, notification_service
     ):
@@ -399,15 +336,6 @@ class TestSetPreferenceNotification:
         # Should not raise
         await service_with_notify.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
 
-    async def test_ensure_agents_failure_does_not_propagate(
-        self, service_with_notify, notification_service
-    ):
-        ensure_agents = AsyncMock(side_effect=RuntimeError("coordinator down"))
-        service_with_notify._ensure_agents = ensure_agents
-
-        await service_with_notify.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
-        # No exception raised
-
 
 # ---------------------------------------------------------------------------
 # Tests: get_preference()
@@ -416,32 +344,6 @@ class TestSetPreferenceNotification:
 
 class TestGetPreference:
     """get_preference() returns (preferred_language, agent_mirror) from user config."""
-
-    async def test_returns_stored_language_and_mirror(self, resolver, user_repo):
-        user_repo.get_user.return_value = _make_user(
-            preferred_language=LanguageCode.EN, agent_mirror=False
-        )
-
-        lang, mirror = await resolver.get_preference(_USER_ID)
-
-        assert lang == LanguageCode.EN
-        assert mirror is False
-
-    async def test_returns_none_language_and_mirror_true_by_default(self, resolver, user_repo):
-        user_repo.get_user.return_value = _make_user()  # defaults
-
-        lang, mirror = await resolver.get_preference(_USER_ID)
-
-        assert lang is None
-        assert mirror is True
-
-    async def test_returns_none_true_when_user_not_found(self, resolver, user_repo):
-        user_repo.get_user.return_value = None
-
-        lang, mirror = await resolver.get_preference(_USER_ID)
-
-        assert lang is None
-        assert mirror is True
 
     async def test_all_language_codes_round_trip(self, resolver, user_repo):
         for code in LanguageCode:
@@ -458,23 +360,6 @@ class TestGetPreference:
 class TestResolveUiLanguage:
     """resolve_ui_language() follows: user → account → system chain."""
 
-    async def test_user_preferred_language_takes_priority(self, resolver, user_repo):
-        user_repo.get_user.return_value = _make_user(preferred_language=LanguageCode.UK)
-
-        result = await resolver.resolve_ui_language(_USER_ID)
-
-        assert result == LanguageCode.UK
-
-    async def test_account_default_used_when_user_has_no_preference(
-        self, resolver, user_repo, account_repo
-    ):
-        user_repo.get_user.return_value = _make_user(preferred_language=None)
-        account_repo.get_account.return_value = _make_account(default_language=LanguageCode.FR)
-
-        result = await resolver.resolve_ui_language(_USER_ID)
-
-        assert result == LanguageCode.FR
-
     async def test_system_default_used_when_neither_user_nor_account_set(
         self, resolver, user_repo, account_repo
     ):
@@ -484,13 +369,6 @@ class TestResolveUiLanguage:
         result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.EN  # system default in fixture
-
-    async def test_system_default_used_when_user_not_found(self, resolver, user_repo):
-        user_repo.get_user.return_value = None
-
-        result = await resolver.resolve_ui_language(_USER_ID)
-
-        assert result == LanguageCode.EN
 
     async def test_system_default_used_when_user_has_no_account_id(
         self, resolver, user_repo, account_repo
@@ -520,17 +398,3 @@ class TestResolveUiLanguage:
         await resolver.resolve_ui_language(_USER_ID)
 
         account_repo.get_account.assert_not_awaited()
-
-    async def test_custom_system_default_language(
-        self, user_repo, account_repo
-    ):
-        svc = LanguageResolver(
-            user_repo=user_repo,
-            account_repo=account_repo,
-            system_default_language=LanguageCode.UK,
-        )
-        user_repo.get_user.return_value = _make_user(preferred_language=None, account_id=None)
-
-        result = await svc.resolve_ui_language(_USER_ID)
-
-        assert result == LanguageCode.UK

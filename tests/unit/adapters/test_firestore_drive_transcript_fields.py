@@ -1,4 +1,5 @@
-"""Transcript fields of the record and the sync state round-trip through the Firestore codecs (§27.14 T1)."""
+"""Transcript fields of the record and the sync state round-trip through the Firestore codecs (§27.14 T1); their
+defaults are in the every-field case (test_firestore_drive_index_repo_serialization.py)."""
 from datetime import datetime, timezone
 
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
@@ -37,12 +38,3 @@ def test_purge_keep_transcripts_roundtrip():
     state = DriveSyncState(user_id="u", connection_id="u", purge_keep_transcripts=True)
     back = state_from_doc("u", _stored(state_to_doc(state)))
     assert back.purge_keep_transcripts is True and back == state
-
-
-def test_old_doc_without_fields_reads_defaults():
-    rec = record_from_doc({"user_id": "u", "item_id": "i"})
-    assert (rec.transcript_state, rec.transcript_key, rec.transcript_version, rec.transcript_wake_at,
-            rec.transcript_attempts, rec.transcript_hold, rec.transcript_hold_version, rec.transcript_stub,
-            rec.transcript_seconds, rec.transcript_speakers, rec.transcript_languages,
-            rec.transcript_body_version) == ("none", "", 0, None, 0, None, "", "", 0, 0, (), 0)
-    assert state_from_doc("u", {}).purge_keep_transcripts is False

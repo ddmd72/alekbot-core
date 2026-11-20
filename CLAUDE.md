@@ -380,6 +380,13 @@ no assertion changed (a different value, condition or count asserted; renaming a
 rename is mechanical). **Tests of deleted code are deleted in the same PR** by the implementer and listed in the PR body;
 the reviewer checks that each deleted test's subject is gone (not a weakening).
 
+**Tests of moved or superseded behaviour are retired in the same PR.** When code moves (a runner extracted from a
+handler, logic pulled into a service) its tests move with it; when a stronger test of the same behaviour is written (a
+store kit over a fake next to a mock-SDK test, a real-stack test next to a mock-level one) the older tests are deleted.
+The implementer lists each retired test in the PR body with the test that now covers it; the reviewer checks that the
+covering test asserts at least as much and that no coverage floor fell. Retiring a covered test is neither a weakening
+nor a coverage reduction. Where a new test goes and what needs no test: `tests/CLAUDE.md` -> "Where a test goes".
+
 This applies to test files (`tests/`), conftest.py, shared test helpers and fixtures. Tests are the specification and
 load-bearing: this codebase is AI-pair-programmed, and tests are the only enforcement that runs faster than generated
 code. A failing test is signal, not an obstacle. Never propose reducing coverage as "cleanup" or "simplification".

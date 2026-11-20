@@ -1,0 +1,1134 @@
+{
+  "_meta": {
+    "provider": "anthropic",
+    "operation": "POST /v1/messages",
+    "scenario": "grounding_dynamic_container",
+    "purpose": "NOT_REACHABLE container: the dynamic search tools bring code execution; a pause_turn continuation sends the container id and replays the code-execution blocks (a pause is the provider's choice)",
+    "source": "recorded",
+    "recorded_at": "2026-11-19T17:24:50Z",
+    "model": "claude-sonnet-5-5",
+    "sdk": "anthropic 0.121.0",
+    "outcome": "ok",
+    "cost_usd": 0.060678,
+    "regenerate": "make contract-record PROVIDER=anthropic ONLY=grounding_dynamic_container"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "accept": "application/json",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "max_tokens": 1024,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Fetch https://example.com, then count the words of its first paragraph with code. Answer with the number and cite the page."
+                }
+              ]
+            }
+          ],
+          "model": "claude-sonnet-5-5",
+          "system": [],
+          "tools": [
+            {
+              "type": "web_search_20260209",
+              "name": "web_search"
+            },
+            {
+              "type": "web_fetch_20260209",
+              "name": "web_fetch"
+            }
+          ],
+          "thinking": {
+            "type": "between_tools"
+          },
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "event": "message_start",
+            "data": {
+              "type": "message_start",
+              "message": {
+                "model": "claude-sonnet-5-5",
+                "id": "msg_011ChCgBFtsTMPbLbzogVsK3",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "container": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                  "input_tokens": 6532,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "output_tokens": 1,
+                  "service_tier": "standard",
+                  "inference_geo": "global",
+                  "speed": "standard"
+                },
+                "diagnostics": null
+              }
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "ping",
+            "data": {
+              "type": "ping"
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "I"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "'ll start"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": " by fetching the page."
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "server_tool_use",
+                "id": "srvtoolu_01U19ybA8NMmSk6WSaN6fSAz",
+                "name": "code_execution",
+                "input": {}
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "{\"code\": \"r = await web"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "_fetch({\\\"url\\\":"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " \\\"https://example.com\\\"})"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\\nprint(r)"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\"}"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 1
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 2,
+              "content_block": {
+                "type": "server_tool_use",
+                "id": "srvtoolu_01815gBLkfTB3ZoEaFd3YRBt",
+                "name": "web_fetch",
+                "input": {
+                  "url": "https://example.com"
+                },
+                "caller": {
+                  "type": "code_execution_20260120",
+                  "tool_id": "srvtoolu_01U19ybA8NMmSk6WSaN6fSAz"
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 2
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 3,
+              "content_block": {
+                "type": "web_fetch_tool_result",
+                "tool_use_id": "srvtoolu_01815gBLkfTB3ZoEaFd3YRBt",
+                "content": {
+                  "type": "web_fetch_result",
+                  "url": "https://example.com",
+                  "retrieved_at": "2026-11-19T17:23:33+00:00",
+                  "content": {
+                    "type": "document",
+                    "source": {
+                      "type": "text",
+                      "media_type": "text/plain",
+                      "data": "---\nmeta-viewport: width=device-width,initial-scale=1\ntitle: Example Domain\n---\n\nThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes."
+                    },
+                    "title": "Example Domain"
+                  }
+                },
+                "caller": {
+                  "type": "code_execution_20260120",
+                  "tool_id": "srvtoolu_01U19ybA8NMmSk6WSaN6fSAz"
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 3
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 4,
+              "content_block": {
+                "type": "code_execution_tool_result",
+                "tool_use_id": "srvtoolu_01U19ybA8NMmSk6WSaN6fSAz",
+                "content": {
+                  "type": "code_execution_result",
+                  "stdout": "{\"type\": \"web_fetch_result\", \"url\": \"https://example.com\", \"retrieved_at\": \"2026-11-19T17:23:33+00:00\", \"content\": {\"type\": \"document\", \"source\": {\"type\": \"text\", \"media_type\": \"text/plain\", \"data\": \"---\\nmeta-viewport: width=device-width,initial-scale=1\\ntitle: Example Domain\\n---\\n\\nThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\"}, \"title\": \"Example Domain\"}}\n",
+                  "stderr": "",
+                  "return_code": 0,
+                  "content": [],
+                  "abort_reason": null
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 4
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 5,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": "Let me count the words in"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 5,
+              "delta": {
+                "type": "text_delta",
+                "text": " the first paragraph."
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 5
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 6,
+              "content_block": {
+                "type": "server_tool_use",
+                "id": "srvtoolu_01G9sNdF8TkFsDZ2DDYoxzjx",
+                "name": "code_execution",
+                "input": {}
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "{\"code\": \"data = r[\\\""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "content\\\"][\\\"source\\\"][\\\""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "data\\\"]\\nbody = data."
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "split(\\\"---\\\\n\\\\"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "n\\\",1"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ")[1]\\nfirst"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " = body.split(\\\"\\\\n\\\\"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "n\\\")[0]\\nprint("
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "repr(first))\\nprint("
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "len(first.split()))"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 6,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\"}"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 6
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 7,
+              "content_block": {
+                "type": "code_execution_tool_result",
+                "tool_use_id": "srvtoolu_01G9sNdF8TkFsDZ2DDYoxzjx",
+                "content": {
+                  "type": "code_execution_result",
+                  "stdout": "",
+                  "stderr": "Traceback (most recent call last):\n  File \"/tmp/srvtoolu_01G9sNdF8TkFsDZ2DDYoxzjx/cell.py\", line 12, in <module>\n    data = r[\"content\"][\"source\"][\"data\"]\n           ~^^^^^^^^^^^\nTypeError: string indices must be integers, not 'str'\n",
+                  "return_code": 1,
+                  "content": [],
+                  "abort_reason": null
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 7
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 8,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 8,
+              "delta": {
+                "type": "text_delta",
+                "text": "The"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 8,
+              "delta": {
+                "type": "text_delta",
+                "text": " result is a string, so I'"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 8,
+              "delta": {
+                "type": "text_delta",
+                "text": "ll parse it first"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 8,
+              "delta": {
+                "type": "text_delta",
+                "text": "."
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 8
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 9,
+              "content_block": {
+                "type": "server_tool_use",
+                "id": "srvtoolu_018gB5RkzkH5SfbdaKoL9iBD",
+                "name": "code_execution",
+                "input": {}
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "{\"code\": \"import json"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ","
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " ast\\nrr = r"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " if isinstance(r,"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " dict) else None"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\\nif r"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "r is None:\\n    try:"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": " rr = json.loads("
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "r)\\n    except Exception"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": ": rr = ast.liter"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "al_eval(r)"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\\ndata = rr[\\\"content\\\"]"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "[\\\"source\\\"][\\\"data\\\"]"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\\nbody = data.split(\\\"---"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\\\\n\\\\n\\\",1)["
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "1]\\nfirst = body.split"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "(\\\"\\\\n\\\\n\\\")[0"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "]\\nprint(repr(first"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "))\\nprint(len(first."
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "split()))"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 9,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "\"}"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 9
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 10,
+              "content_block": {
+                "type": "code_execution_tool_result",
+                "tool_use_id": "srvtoolu_018gB5RkzkH5SfbdaKoL9iBD",
+                "content": {
+                  "type": "code_execution_result",
+                  "stdout": "'This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.'\n25\n",
+                  "stderr": "",
+                  "return_code": 0,
+                  "content": [],
+                  "abort_reason": null
+                }
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 10
+            }
+          },
+          {
+            "event": "content_block_start",
+            "data": {
+              "type": "content_block_start",
+              "index": 11,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "The first paragraph of https"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "://example.com has **25 "
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "words**,"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " counted by spl"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "itting on whitespace in"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " code.\n\nThe paragraph"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " re"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "ads: \"This domain is for"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " use in documentation examples without"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " needing permission. This is not"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " a service; avoid relying"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " on it for testing and monit"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "oring purposes.\""
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": " (Source: Example Dom"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "ain, https"
+              }
+            }
+          },
+          {
+            "event": "content_block_delta",
+            "data": {
+              "type": "content_block_delta",
+              "index": 11,
+              "delta": {
+                "type": "text_delta",
+                "text": "://example.com)"
+              }
+            }
+          },
+          {
+            "event": "content_block_stop",
+            "data": {
+              "type": "content_block_stop",
+              "index": 11
+            }
+          },
+          {
+            "event": "message_delta",
+            "data": {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "stop_details": null,
+                "container": {
+                  "id": "container_01TuA3cKT9GwySUbDmPwe4j9",
+                  "expires_at": "2026-11-19T18:24:48.219904Z"
+                }
+              },
+              "usage": {
+                "input_tokens": 27779,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 512,
+                "output_tokens_details": {
+                  "thinking_tokens": 0
+                },
+                "server_tool_use": {
+                  "web_search_requests": 0,
+                  "web_fetch_requests": 1
+                }
+              }
+            }
+          },
+          {
+            "event": "message_stop",
+            "data": {
+              "type": "message_stop"
+            }
+          }
+        ]
+      },
+      "estimate_usd": 0.21133,
+      "cost": {
+        "input": 27779,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 512,
+        "searches": 0,
+        "usd": 0.060678
+      }
+    }
+  ]
+}

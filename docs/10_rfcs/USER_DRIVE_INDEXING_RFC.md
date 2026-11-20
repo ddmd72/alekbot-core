@@ -3634,7 +3634,7 @@ word was phrasing or the subject."
 - **Chunks and `content_terms` storage:** `tests/unit/adapters/test_firestore_drive_index_chunks.py`,
   `…_codec_content.py`, `…_repo_serialization.py`, `…_stream_projection.py`, `…_chunk_provisioning.py`,
   `test_in_memory_drive_index_repo_chunks.py`, `…_content_queries.py`, `test_drive_index_repo_next_file_with_term.py`,
-  `firestore_drive_chunk_fakes.py`, `tests/unit/ports/test_drive_index_repository_port.py`,
+  `firestore_drive_chunk_fakes.py`,
   `tests/unit/scripts/test_drive_index_smoke_chunks.py`.
 - **Card, README, caption:** `tests/unit/domain/test_drive_card_content.py`,
   `test_drive_index_planner_readme_extractors.py`, `tests/unit/services/test_drive_indexing_readme.py`,
@@ -3658,13 +3658,10 @@ word was phrasing or the subject."
 - **Model wiring:** `tests/unit/composition/test_drive_model_setup*.py`, `test_drive_model_provider_strategy.py`,
   `test_drive_model_fallback_strategy.py`; `BaseAgent` failover tests (`LLMFallbackClientError`).
 - **Part 0 scaffolds, meant to flip:** `test_drive_search_v2_frozen_core.py::TestVersions::test_v2_keys_are_not_current_yet`
-  (P5) and `TestParameters::test_v1_values_still_in_use_are_unchanged` (P3, P6);
-  `test_drive_search_v2_ports.py::TestModelPorts::test_image_triage_port_is_unchanged` (P3) and
-  `TestRepositoryV2Methods::test_both_adapters_stub_them_until_p2` (P2).
-- **Part 0 itself broke** (record and state fixtures, port contract): `test_firestore_drive_index_repo_serialization.py`
+  (P5) and `TestParameters::test_v1_values_still_in_use_are_unchanged` (P3, P6).
+- **Part 0 itself broke** (record and state fixtures): `test_firestore_drive_index_repo_serialization.py`
   (both `test_fixture_sets_every_field`), `test_firestore_drive_index_codec_types.py::
-  test_state_timestamp_reads_back_as_plain_utc_datetime[model_backoff_by_agent]`,
-  `test_drive_index_repository_port.py::test_abstract_methods_are_exactly_the_contract`.
+  test_state_timestamp_reads_back_as_plain_utc_datetime[model_backoff_by_agent]`.
 
 ---
 
