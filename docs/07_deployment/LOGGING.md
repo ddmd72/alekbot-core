@@ -34,7 +34,7 @@ How logs are structured, where to find them, and how to query them — for both 
 ### LLM prompt/response content
 Enable with `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET` set in `.env` → one row per LLM
 call captured to BigQuery `alek_observability_dev.prompt_content` (day-partitioned, 30-day TTL).
-Read it with `bq query` — see the [Agent Logging Guide](../05_building_blocks/agent_logging/README.md).
+Read it with `bq query`; what is recorded and why: [Observability](../05_building_blocks/observability_strategy/README.md).
 
 ---
 
@@ -217,7 +217,7 @@ summary-only `logger.info` line per pass via `_debug_raw_turn` (no GCS, no stora
 
 For all agents that go through `LLMPort`, full LLM prompt/response content lands in the BigQuery
 `prompt_content` store (table `alek_observability_dev.prompt_content`, gated by `DEBUG_PROMPTS=true`
-+ `BIGQUERY_PROMPT_DATASET`). See the [Agent Logging Guide](../05_building_blocks/agent_logging/README.md).
++ `BIGQUERY_PROMPT_DATASET`). What is recorded and why: [Observability](../05_building_blocks/observability_strategy/README.md).
 
 ---
 
