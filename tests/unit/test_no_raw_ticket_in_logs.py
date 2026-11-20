@@ -9,6 +9,7 @@ import pytest
 
 from src.handlers.sfu_stream_handler import SfuStreamHandler
 from tests.support.firestore_eval import eval_transactions
+from tests.support.voice_callback import ticket_of
 from tests.unit.handlers.test_relay_refuses_unredeemable_ticket import World as RelayWorld
 from tests.unit.handlers.test_sfu_stream_handler import FakeSessionService, FakeSfuWs
 from tests.unit.web.test_voice_ticket_digest import World as MainWorld
@@ -77,15 +78,25 @@ async def test_phone_and_web_setup_log_no_ticket(caplog):
         w = MainWorld()
         await w.client.post("/voice/auth", form={"From": "+15550100", "CallSid": "CA0001"})
         await w.client.post("/voice/inbound-status", form={"CallSid": "CA0001", "CallStatus": "completed"})
-        phone = w.agent.execute.await_args.kwargs["ticket"]
-        await w.client.post(f"/voice/answer?ticket={phone}", form={})
-        await w.client.post(f"/voice/status?ticket={phone}", form={"CallStatus": "completed"})
+        # The callbacks address the call by its reference (F19); the ticket behind it is what must not be logged.
+        ref = w.agent.execute.await_args.kwargs["callback_ref"]
+        phone = await ticket_of(w.cipher, ref)
+        await w.client.post(f"/voice/answer?ref={ref}", form={})
+        await w.client.post(f"/voice/status?ref={ref}", form={"CallStatus": "completed"})
         await w.client.post("/voice/session-config", json={"ticket": phone})
         await w.client.post("/voice/session-config", json={"ticket": "ticket-a1"})
         w.agent.session_config.side_effect = RuntimeError("no prompt")
-        await w.client.post(f"/voice/answer?ticket={phone}", form={})
+        await w.client.post(f"/voice/answer?ref={ref}", form={})
         await w.client.post("/voice/delegate/abandon", json={"ticket": phone, "call_id": "CA0002"})
-    _no_ticket_in(caplog, phone, "ticket-a1")
+        # The reference's own failure paths: a malformed one and a tampered one that does not decrypt.
+        tampered = ref[:-4] + ("AAAA" if not ref.endswith("AAAA") else "BBBB")
+        for bad in ("%2B%2F", tampered):
+            await w.client.post(f"/voice/answer?ref={bad}", form={})
+            await w.client.post(f"/voice/status?ref={bad}", form={"CallStatus": "completed"})
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("malformed callback reference" in m for m in messages)
+    assert any("did not decrypt" in m for m in messages)
+    _no_ticket_in(caplog, phone, "ticket-a1", ref, tampered)
 
 
 @pytest.mark.asyncio

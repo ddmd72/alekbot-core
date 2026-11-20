@@ -20,14 +20,15 @@ def _build_agent(telephony):
 
 
 @pytest.mark.asyncio
-async def test_execute_originates_call_with_answer_url_carrying_ticket():
+async def test_execute_originates_call_with_answer_url_carrying_the_callback_ref():
+    # F19: the callback URLs carry the callback reference (the ticket's ciphertext), never the raw ticket.
     telephony = AsyncMock()
     telephony.originate_call.return_value = "CA123"
 
     agent = _build_agent(telephony)
 
     response = await agent.execute(
-        purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer",
+        purpose="user asked to talk", callback_ref="r1", answer_url="https://main.example.com/voice/answer",
         to_number="+15550101",
     )
 
@@ -36,15 +37,17 @@ async def test_execute_originates_call_with_answer_url_carrying_ticket():
     call = telephony.originate_call.await_args
     assert call.kwargs["from_"] == "+15550102"
     assert call.kwargs["to"] == "+15550101"
-    assert "ticket=t1" in call.kwargs["answer_url"]
+    assert "ref=r1" in call.kwargs["answer_url"]
+    assert "ticket=" not in call.kwargs["answer_url"]
     assert call.kwargs["answer_url"].startswith("https://main.example.com/voice/answer?")
     # FIX I1(b), final whole-branch review: the status callback carries the
-    # ticket too. It is the only correlation path from a call-status event back
+    # callback reference too. It is the only correlation path from a call-status event back
     # to the ticket/user whose one-call marker must be released when the
     # callback rings out, is busy, or fails at the carrier — in all of which
     # /voice/answer is never reached at all. (Was asserted as the bare base URL
     # before /voice/status existed as a route; the base URL is still asserted.)
-    assert "ticket=t1" in call.kwargs["status_callback_url"]
+    assert "ref=r1" in call.kwargs["status_callback_url"]
+    assert "ticket=" not in call.kwargs["status_callback_url"]
     assert call.kwargs["status_callback_url"].startswith("https://main.example.com/voice/status?")
 
 
@@ -60,7 +63,7 @@ async def test_execute_propagates_origination_failure():
 
     with pytest.raises(RuntimeError, match="origination boom"):
         await agent.execute(
-            purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer",
+            purpose="user asked to talk", callback_ref="r1", answer_url="https://main.example.com/voice/answer",
             to_number="+15550101",
         )
 

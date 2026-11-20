@@ -18,6 +18,7 @@ from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb, eval_transactions
+from tests.support.voice_callback import ticket_of
 
 DIGEST_KEY = b"k" * 32
 AUTH = {"Authorization": "Bearer tok"}
@@ -75,11 +76,13 @@ def world():
         yield World()
 
 
-async def _phone_setup(world: World) -> str:
-    """Dial in, end the dial, and return the ticket the callback was originated with."""
+async def _phone_setup(world: World) -> tuple:
+    """Dial in, end the dial, and return the ticket the callback was originated with and the callback reference
+    (`ref`) its URLs carry instead of it (F19)."""
     await world.client.post("/voice/auth", form={"From": "+15550100", "CallSid": "CA0001"})
     await world.client.post("/voice/inbound-status", form={"CallSid": "CA0001", "CallStatus": "completed"})
-    return world.agent.execute.await_args.kwargs["ticket"]
+    ref = world.agent.execute.await_args.kwargs["callback_ref"]
+    return await ticket_of(world.cipher, ref), ref
 
 
 async def _web_setup(world: World):
@@ -92,7 +95,7 @@ async def _web_setup(world: World):
 
 @pytest.mark.asyncio
 async def test_phone_call_stores_no_raw_ticket_and_hands_it_back_through_ciphertext(world):
-    ticket = await _phone_setup(world)
+    ticket, _ = await _phone_setup(world)
     assert UUID.fullmatch(ticket)
     assert ticket not in world.dump()
     assert ticket_key(DIGEST_KEY, ticket) in world.docs
@@ -118,9 +121,9 @@ async def test_phone_hand_out_ciphertext_does_not_decrypt_under_another_record(w
 
 @pytest.mark.asyncio
 async def test_phone_ticket_redeems_by_the_presented_value_exactly_once(world):
-    ticket = await _phone_setup(world)
+    ticket, ref = await _phone_setup(world)
     # the persona was assembled on the answer webhook
-    await world.client.post(f"/voice/answer?ticket={ticket}", form={})
+    await world.client.post(f"/voice/answer?ref={ref}", form={})
     first = await world.client.post("/voice/session-config", json={"ticket": ticket})
     second = await world.client.post("/voice/session-config", json={"ticket": ticket})
     assert first.status_code == 200 and (await first.get_json())["call_kind"] == "phone"
@@ -130,7 +133,7 @@ async def test_phone_ticket_redeems_by_the_presented_value_exactly_once(world):
 
 @pytest.mark.asyncio
 async def test_a_stored_key_is_not_a_redeemable_ticket(world):
-    ticket = await _phone_setup(world)
+    ticket, _ = await _phone_setup(world)
     digest = ticket_key(DIGEST_KEY, ticket).split(":", 1)[1]
     resp = await world.client.post("/voice/session-config", json={"ticket": digest})
     assert resp.status_code == 404
@@ -165,8 +168,8 @@ async def test_web_ticket_redeems_by_the_presented_value_exactly_once(world):
 
 @pytest.mark.asyncio
 async def test_amd_verdict_and_delegation_markers_are_keyed_by_digest(world):
-    ticket = await _phone_setup(world)
-    await world.client.post(f"/voice/status?ticket={ticket}", form={"AnsweredBy": "machine_start"})
+    ticket, ref = await _phone_setup(world)
+    await world.client.post(f"/voice/status?ref={ref}", form={"AnsweredBy": "machine_start"})
     await world.client.post("/voice/delegate/abandon", json={"ticket": ticket, "call_id": "CA0001"})
     assert ticket not in world.dump()
     assert not any(ticket in key for key in world.docs)

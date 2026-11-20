@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock
 from quart import Quart
 
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_callback import callback_ref_for
 from tests.support.voice_tickets import amd_key
+
+# One cipher for the blueprint and the callback reference (`ref`) the status URL carries instead of the ticket (F19).
+_CIPHER = AesGcmTestCipher()
 
 
 def _app(ephemeral_store):
@@ -19,7 +23,7 @@ def _app(ephemeral_store):
         notification_service=AsyncMock(),
         lelik_agent_provider=AsyncMock(),
         answer_url="https://main.example.com/voice/answer",
-        signature_verifier=AsyncMock(return_value=True), cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        signature_verifier=AsyncMock(return_value=True), cipher=_CIPHER, digest_key=b"k" * 32
     ))
     return app
 
@@ -31,7 +35,7 @@ async def test_amd_verdict_is_recorded_for_the_ticket_and_releases_nothing(answe
 
     client = _app(ephemeral_store).test_client()
     response = await client.post(
-        "/voice/status?ticket=t1",
+        f"/voice/status?ref={await callback_ref_for(_CIPHER, 't1')}",
         form={"CallSid": "CA1", "AccountSid": "AC1", "AnsweredBy": answered_by, "MachineDetectionDuration": "4200"},
     )
 
@@ -56,7 +60,7 @@ async def test_amd_verdict_is_rejected_when_unsigned():
     ))
 
     response = await app.test_client().post(
-        "/voice/status?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"},
+        "/voice/status?ref=r1", form={"CallSid": "CA1", "AnsweredBy": "human"},
     )
 
     assert response.status_code == 403
