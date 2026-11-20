@@ -22,15 +22,21 @@ and most adapters state the document layout in their module docstring.
   second dataset; the live collections keep their prefix by decision
   (`../04_solution_strategy/decisions/collection_prefix_retained.md`,
   `../04_solution_strategy/decisions/dead_prod_collections_deletion.md`).
-- **Names live in `src/config/environment.py`** (`EnvironmentConfig.*_collection`). Three adapters build their name
-  from the prefix themselves, with no property: `channel_bindings`, `short_links`, `user_primary_channel`.
-- **Subcollections carry the prefix too** (`drive_transcript_windows`, `drive_transcript_parts`), because Firestore
-  collection-group ids are not scoped by parent.
+- **Names live in `src/config/environment.py`** (`EnvironmentConfig.*_collection`). Exceptions: three adapters build
+  their name from the prefix themselves, with no property (`channel_bindings`, `short_links`, `user_primary_channel`),
+  and the prompt token collections get their `_system` / `_user` suffix in `src/composition/prompt_assembly_setup.py`
+  (the property returns the base `domain_prompt_tokens_v3`).
+- **Only two subcollections are prefixed** (`drive_transcript_windows`, `drive_transcript_parts`, from
+  `EnvironmentConfig`), because Firestore collection-group ids are not scoped by parent. The others are unprefixed
+  literals: the skills' `versions` and `files`, skill drafts' `draft_files`, drive notes' `versions`.
+  **`draft_files` is a collection group with a TTL policy on `expires_at` across the whole database** (registry entry
+  with `prefixed: false`): a subcollection named `draft_files` anywhere, in any environment, expires.
 - **Schema versions** appear in the names of the domain collections (`domain_users_v2`, `domain_facts_v2`,
   `domain_prompt_*_v3`, `invite_codes_v2`); infrastructure collections have none. A replaced collection is never
   migrated in place and never read again: `oauth_credentials` (replaced by `credentials`) and `mcp_oauth_clients`
   (replaced by `mcp_clients`) stay in the database unread
-  (`../04_solution_strategy/decisions/credential_store_cutover.md`).
+  (`../04_solution_strategy/decisions/credential_store_cutover.md`,
+  `../04_solution_strategy/decisions/secrets_at_rest_cipher_and_digest.md`).
 - **Secret-bearing ids are digests, never the raw value.** Invite codes, MCP authorization codes, `$geo` links, connect
   flows and drive download links use the keyed digest of the secret as document id
   (`../04_solution_strategy/decisions/secrets_at_rest_cipher_and_digest.md`); an MCP refresh token uses its sha256.
@@ -42,17 +48,19 @@ and most adapters state the document layout in their module docstring.
   new query needs must be `READY` before the code that runs the query is deployed: a missing index fails at query
   time, not at deploy time.
 - **Two expiry field names carry meaning.** A Firestore TTL policy deletes every document whose policy field has
-  passed, and policies are set on `expires_at` or `purge_after`. A field that must not delete anything is never given
-  either name (the memory-write lease uses `lease_until`).
-- **`config/ttl_registry.json` lists every writer of `expires_at` or `purge_after`** and who deletes the document: a
-  TTL policy, the janitor, a provider, or nobody. The policy runbook in `../07_deployment/README.md` is generated from
+  passed, and policies are set on `expires_at` or `purge_after`. A collection whose documents must not be deleted gets no policy, and the janitor's state uses other names (the
+  memory-write lease uses `lease_until`). Some collections still write `expires_at` with no policy on them
+  (`sessions`, `invite_codes_v2`, `task_config`, `drive_links`): the field is checked in code, and the registry
+  says `never`.
+- **`config/ttl_registry.json` lists every writer of `expires_at` or `purge_after`** and what deletes the document
+  (`deleted_by`: a TTL policy, the janitor, a provider, nobody, or not yet verified). The policy runbook in `../07_deployment/README.md` is generated from
   it by `scripts/generate_ttl_runbook.py`; `tests/unit/test_ttl_registry.py` fails when a writer is not registered or
   the runbook is stale.
 - **Never a TTL policy on the facts collection** or on the janitor's collections (`fact_lifecycle_*`,
   `memory_write_leases`, `fact_review_state`): a fact's expiry is a decision, the janitor stales the fact and never
   deletes it. `tests/unit/test_facts_have_no_ttl_policy.py` scans the tree for such a command.
-- **`sessions` writes `expires_at` but has no policy:** expiry is the lazy 90-day check in
-  `FirestoreSessionStore.load_session`. Do not add a policy on the belief that the field is live.
+- **`sessions` writes `expires_at` but has no policy:** expiry is a lazy check in
+  `FirestoreSessionStore.load_session` (`FirestoreSessionStore.ttl_hours`). Do not add a policy on the belief that the field is live.
 
 ## 3. Collections
 
@@ -70,8 +78,7 @@ and most adapters state the document layout in their module docstring.
 | `{p}oauth_flows` | `oauth_flow:<keyed digest of the state>`; single use | `src/services/oauth_connect_service.py` |
 | `{p}channel_bindings` | `channel_id` | `ChannelBinding`, `src/domain/channel_binding.py` |
 
-Account usage counters written before 2026-07-28 are inflated; for historical cost use BigQuery `prompt_content`, not
-`usage.*` (`../04_solution_strategy/decisions/billing_execution_scoped_ledger.md`).
+Old account usage counters are unreliable; for historical cost use BigQuery `prompt_content`, not `usage.*` (`../04_solution_strategy/decisions/billing_execution_scoped_ledger.md`).
 
 ### 3.2 Memory
 
@@ -112,7 +119,8 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is in `../05
 **Sessions per channel.** `session_id = f"{user_id}:{channel_id}"` (`src/domain/messaging.py::session_id_for`) is
 deterministic: each channel (a Slack channel or DM, a Telegram chat) has its own session, history and consolidation
 stream. History is a sliding window; batches past it are handed to `{p}consolidation_queue`
-(`FirestoreSessionStore`, parameter `max_history_length`).
+(a channel bound to a companion hands them to `{p}companion_extraction_queue`:
+`src/services/overflow_routing_service.py`).
 
 ### 3.4 Prompts
 
@@ -133,10 +141,10 @@ How these combine into a prompt: `../05_building_blocks/prompt_design_system_v3/
 | `{p}email_indexing_state` | `{user_id}_{provider}` | `IndexingState`, `src/domain/email.py` |
 | `{p}email_indexing_jobs_v1` | `job_id` | `IndexingJob`, `src/domain/email.py` |
 | `{p}email_reader_pages` (one document per user, overwritten each UTC day) | `user_id` | `src/adapters/firestore_email_reader_budget.py` |
-| `{p}email_exclusions` | `{user_id}_{pattern_type}_{pattern}` | `EmailExclusion`, `src/domain/email.py` |
+| `{p}email_exclusions` | truncated sha256 of `{user_id}|{pattern_type}|{pattern}` | `EmailExclusion`, `src/domain/email.py` |
 | `{p}task_search_index` (To Do is the source of truth) | `{user_id}_{task_id}` | `TaskSearchEntry`, `src/domain/task.py` |
 | `{p}task_config` | `user_id` | `TaskUserConfig`, `src/domain/task.py` |
-| `{p}orchestrator_notes` | `{epoch_ms}-{uuid4 hex}` (older: epoch ms) | `AgentNote`, `src/domain/agent_note.py` |
+| `{p}orchestrator_notes` | `{epoch_ms}-{uuid4 hex}` | `AgentNote`, `src/domain/agent_note.py` |
 | `{p}skills` (`versions/v<n>`, `files/{sha256}` below each) | `{user_id}:{name}` | `src/adapters/firestore_skill_repository.py` |
 | `{p}skill_drafts` (awaiting `$skill save`) | `{user_id}:{code}` | same |
 
@@ -158,9 +166,11 @@ expiry: a document the TTL sweep has not yet deleted still reads as absent.
 
 ### 3.7 User drive
 
-Meaning, lifecycles and what each purge keeps: `../05_building_blocks/user_drive/README.md`. The doc-id builders
-(`record_doc_id`, `chunk_doc_id`, `sync_state_doc_id`, `usage_doc_id`, the transcript ids) are listed in the module
-docstring of `src/adapters/firestore_drive_index_repo.py`. Records, chunks, hints, transcript jobs and batches and the
+Meaning, lifecycles and what each purge keeps: `../05_building_blocks/user_drive/README.md`. Index, usage and transcript collections are written by
+`FirestoreDriveIndexRepository` (`src/adapters/firestore_drive_index_repo.py`, module docstring); the mirror roots and
+ledger by `FirestoreDriveMirrorRepository` (`src/adapters/firestore_drive_mirror_repo.py`); the doc-id builders are in
+`src/domain/drive_index.py`, `drive_usage.py`, `drive_transcript.py`, `drive_mirror.py`, `drive_note.py` and
+`drive_connection.py`. Records, chunks, hints, transcript jobs and batches and the
 sync state are keyed by connection scope; usage, initial build, transcript store, mirror roots and ledger are user- or
 drive-scoped on purpose (drive map, "Keys by scope").
 
