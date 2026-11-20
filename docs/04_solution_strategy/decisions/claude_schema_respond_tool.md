@@ -83,7 +83,7 @@ rendering unchanged. This lives in `SmartResponseAgent._RESPONSE_SCHEMA`.
 - Removed from the adapter: the `respond` tool injection, `_schema_tool_active`, `tool_choice=any`
   forcing, the plain-text-bypass safety net, `_retry_respond_any`, and the respond-call intercept.
 - `_make_strict` / `_nullable_to_union` are **live** (they shape the `output_config.format` schema).
-  `_strip_nullable` is now dead (superseded) but retained pending a separate test-cleanup.
+  `_strip_nullable` (superseded) was deleted with its test in the dead-code cleanup.
 - `_RESPONSE_SCHEMA.rich_content` is a discriminated `anyOf` (was a flat variant bag).
 - Verified live on `claude-sonnet-5` (widget + table render, JSON valid, no leak) and via a
   provider smoke test that Gemini accepts the `anyOf` schema.
