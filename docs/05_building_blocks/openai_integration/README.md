@@ -20,10 +20,11 @@ OpenAI is the default provider of some agents (`default_provider` entries in `Ag
 
 None stored. The adapter keeps no state between calls. Its configuration:
 
-- `OPENAI_API_KEY` is a required-configuration key in `src/config/settings.py::load_settings` (from `.env`, else Secret
+- `OPENAI_API_KEY` is an optional secret listed in `src/config/settings.py::load_settings` (from `.env`, else Secret
   Manager). `ServiceContainer._init_openai` (`src/composition/service_container.py`) builds the adapter only when the
-  key is set and registers it in the `ProviderRegistry` under `"openai"`; without a key OpenAI is simply absent and the
-  bot runs on the other providers.
+  key is set and `ServiceContainer.__init__` registers it in the `ProviderRegistry` under `"openai"`; without a key
+  OpenAI is simply absent and the bot runs on the other providers. The drive indexer builds its own adapter
+  (`src/composition/drive_model_setup.py`); without the key its OpenAI-backed drive models are unavailable.
 - `OPENAI_TIER_OVERRIDES` (`tier=model,tier=model`) is an optional knob read with `os.getenv` in
   `OpenAIAdapter.__init__`, so it needs no `load_settings` entry. It remaps `OpenAIAdapter.MODEL_TIERS` without a
   redeploy; a malformed pair is logged and skipped (`_parse_tier_overrides`), never fatal. `make openai-model`
@@ -40,9 +41,9 @@ None stored. The adapter keeps no state between calls. Its configuration:
    the cache key (step 8).
 2. `USER_TURN_SYSTEM_ANCHOR` is searched backwards through all messages, found in the newest user message that holds it
    and cut out of that message. It moves into a leading `developer` item together with the persona anchor
-   (`build_persona_anchor`), because the developer role outweighs user text. Searching only the last message misses it
-   from the second delegation turn on, when the last message is a tool result
-   (`decisions/openai_personality_grounding.md`).
+   (`build_persona_anchor`), because the developer role outweighs user text (`decisions/openai_personality_grounding.md`).
+   Searching only the last message would miss it from the second delegation turn on, when the last message is a tool
+   result; the loop in `generate_content` exists for that.
 3. Messages become Responses API input items (`_convert_input`); the system instruction goes to `instructions`, not
    into the items. A model message with `raw_content` (the earlier `response.output` list) is replayed as is; a tool
    result becomes `function_call_output` whose `call_id` is found from the preceding call (`_find_call_id`). The
@@ -52,12 +53,12 @@ None stored. The adapter keeps no state between calls. Its configuration:
    prepended.
 5. Output format (`text.format`): grounding sends none; a dict `response_schema` sends `json_schema` with
    `strict=False` (`_to_openai_json_schema` lower-cases Gemini-style `OBJECT`/`STRING` types); `application/json`
-   alone sends `json_object` plus a `developer` item `Respond in JSON.`, since the API demands the word "json" in the
+   alone sends `json_object` plus a short `developer` item asking for JSON, since the API demands the word "json" in the
    input.
-6. Reasoning effort (see Invariants) and `reasoning.summary="concise"` for the PERFORMANCE and ULTRA models only.
+6. Reasoning effort (see Invariants), plus a reasoning summary for the PERFORMANCE and ULTRA tier models only.
 7. `store` is `request.allow_provider_storage`; callers such as the drive agents set it to `False`.
 8. Caching: with `cache_config.enabled`, models in `_DEPRECATED_RETENTION_PREFIXES` get `prompt_cache_key`
-   (`_prompt_cache_key`, a hash of the static prefix, sent via `extra_body`); others get `prompt_cache_retention="24h"`.
+   (`_prompt_cache_key`, a hash of the static prefix, sent via `extra_body`); others get `prompt_cache_retention`.
 9. The call runs under the request timeout twice: as the SDK `timeout` and as an outer `asyncio.wait_for` that bounds
    total wall time including SDK retries. SDK errors map to the `LLM*Error` types (`src/domain/exceptions.py`) that
    `BaseAgent._call_llm` uses to decide on failover: 429 rate limit, 503 unavailable, other 5xx server error, connection
@@ -72,11 +73,11 @@ arguments become `{"_parse_error": "truncated_json", ...}` rather than an except
 **Files** (`_file_input_part`): an image becomes inline `input_image`, any other file inline `input_file` with a
 base64 data URL; there is no Files API upload (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §24.2). A part that cannot be
 read or has no content raises `LLMClientError`, because a request silently missing its file answers about nothing. A
-file part holding only a `ref` is skipped. What the models read natively (images, PDF) is `native_formats`.
+file part carrying a `ref` key is skipped. What the models read natively (images, PDF) is `native_formats`.
 
 ## Invariants and traps
 
-- **No sampling parameter is ever sent** (`decisions/temperature_removed.md`). `_REASONING_PREFIXES` now gates only
+- **No sampling parameter is ever sent** (`decisions/temperature_removed.md`). `_REASONING_PREFIXES` gates only
   `reasoning.effort` (`_is_reasoning_model`); other models get no `reasoning` block at all.
 - **Effort rules are per model and verified by live probes, not by documentation.** `thinking` values in `_EFFORTS`
   pass through, anything else becomes `medium`. Grounding without `thinking` forces `low`, so agentic web search stays
@@ -86,7 +87,7 @@ file part holding only a `ref` is skipped. What the models read natively (images
   `medium`); without them the API answers 400. The floors matter on the provider-rotation path, where a Smart run
   that lost its primary provider is rebuilt on OpenAI at the same tier (`decisions/cross_provider_execution_retry.md`).
   Tests: `tests/unit/adapters/test_openai_adapter.py`. A new model: probe its accepted efforts first and extend the
-  constants, which carry the probe dates.
+  constants.
 - **Tools are sent with `strict=False` explicitly.** Omitted, the API defaults to strict and rewrites the schema (every
   property required); with the delegation tool's shared `context` object the model then streamed whitespace for
   minutes (`decisions/delegate_tool_contract_and_strict.md`).
@@ -94,15 +95,17 @@ file part holding only a `ref` is skipped. What the models read natively (images
   and both sit in `input_tokens_details`. `_parse_response` subtracts both so `prompt_tokens`, `cache_read_tokens` and
   `cache_creation_tokens` are disjoint; subtracting only the read leg billed written tokens twice
   (`decisions/openai_cache_write_tokens_location.md`, `decisions/billing_cache_write_and_voice_seconds.md`).
-- **`CAPABILITIES.context_caching` is `True` while `supports_caching()` returns `False`.** The first says the provider
-  caches prefixes implicitly; the second says the adapter has no explicit cache object to manage, so `CachingLLMProxy`
-  does nothing for it. Do not "fix" one to match the other.
+- **`CAPABILITIES.context_caching` is `True` while `supports_caching()` returns `False`.** The flag is what counts:
+  `PromptCacheStrategy.resolve` (`src/services/prompt_cache_strategy.py`) gates on it and `CachingLLMProxy` injects the
+  resulting `cache_config` that step 8 consumes; consolidation also requires it in `AgentProviderStrategy`.
+  `supports_caching()` has no caller beyond the proxies delegating it. Do not set the flag to `False` to match.
 - **Grounding and JSON mode exclude each other** (the API answers 400), hence step 5; a grounded call that needs
   structured output has to parse text.
 - **`call_id` carries the tool-call identity.** `_find_call_id` raises `ValueError` when no earlier call matches a tool
   result; a history that lost its model turn cannot be replayed on OpenAI.
-- The model is a prefix match everywhere (`startswith`), so an unknown future model with a known prefix inherits that
-  family's rules. Check the gates when a new family ships.
+- The effort gates match by `startswith`, so an unknown future model with a known prefix inherits that family's rules;
+  `_THINKING_OFF_EFFORT` and the summary gate match exact ids and need an entry per model. Check them when a new family
+  ships.
 
 ## Links
 
