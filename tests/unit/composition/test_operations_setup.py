@@ -1,5 +1,7 @@
 """`build_operations`: the agent-task queue only with a GCP project, the ops alert sink only with its webhook knob, one
 quota service shared by the billing agent and the budget alert."""
+import importlib.util
+
 import pytest
 
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
@@ -60,3 +62,8 @@ async def test_the_agents_carry_their_ids(ops):
     built = ops()
 
     assert built.billing_agent.config.agent_id == "billing_agent"
+
+
+async def test_operations_build_no_logging_agent(ops):
+    assert not hasattr(ops(), "logger_agent")
+    assert importlib.util.find_spec("src.adapters.gcp_log_sink") is None
