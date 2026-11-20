@@ -7,6 +7,7 @@ from quart import Quart
 
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.agents.lelik_agent import LelikAgent
+from src.domain.voice_callback_ref import to_callback_ref
 from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES
 from src.domain.voice_ticket_keys import ticket_key
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
@@ -114,3 +115,16 @@ async def test_a_raw_ticket_query_is_not_accepted(world):
     assert await ticket_of(world.cipher, parse_qs(urlsplit(world.urls()["answer"]).query)["ref"][0]) == ticket
     resp = await world.client.post(f"/voice/answer?ticket={ticket}", form={})
     assert "<Reject" in await resp.get_data(as_text=True)
+
+
+@pytest.mark.asyncio
+async def test_a_ref_sealed_under_another_label_is_refused_like_a_tampered_one(world):
+    ticket = await world.dial()
+    # Same key, wrong AAD: the label the stored ticket ciphertext uses.
+    wrong_label = to_callback_ref(await world.cipher.encrypt(ticket, aad="voice/voice_pending_callback:CA0001"))
+    answer = await world.client.post(f"/voice/answer?ref={wrong_label}", form={})
+    assert "<Reject" in await answer.get_data(as_text=True)
+    status = await world.client.post(f"/voice/status?ref={wrong_label}", form={"CallStatus": "failed"})
+    assert status.status_code == 200
+    assert ticket_key(DIGEST_KEY, ticket) in world.docs
+    assert "voice_one_call:u1" in world.docs
