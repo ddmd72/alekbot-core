@@ -6,7 +6,6 @@
 # A loop that start() creates (_flush_task, _sweep_task) is never listed: the test requires it to be running.
 
 # ---- off in production
-LoggerAgent.log_sink  # off-in-prod APP_ENV=development in cloudbuild-dev.yaml:23, operations_setup.py builds GcpLogSink only when not is_development
 
 # ---- optional settings production leaves unset
 AuthConfig.firebase_service_account  # optional-knob GOOGLE_APPLICATION_CREDENTIALS is not in the deploy (config/auth.py:62, Cloud Run uses ADC)
@@ -58,10 +57,6 @@ BillingAgent._agent_execution_context  # by-design no _call_llm, usage goes stra
 BillingAgent._prompt_content_store  # by-design no _call_llm, nothing to capture (the bind_runtime loop in user_agent_factory.py:619-623 skips it)
 BillingAgent._quota_service  # by-design no _call_llm, it is the usage writer itself (billing_agent.py)
 BillingAgent.coordinator  # by-design no _call_llm, nothing to bill (user_agent_factory.py:619-623 binds per-user agents only)
-LoggerAgent._agent_execution_context  # by-design no _call_llm (logger_agent.py)
-LoggerAgent._prompt_content_store  # by-design no _call_llm, nothing to capture (logger_agent.py)
-LoggerAgent._quota_service  # by-design no _call_llm, nothing to bill (logger_agent.py)
-LoggerAgent.coordinator  # by-design no _call_llm, nothing to bill (logger_agent.py)
 AlekGatewayAgent._agent_execution_context  # by-design zero-LLM gateway, no _call_llm (alek_gateway_agent.py)
 ClaudeDeepResearchRunnerAgent._agent_execution_context  # by-design talks to the Anthropic client directly, no _call_llm (claude_deep_research_runner_agent.py)
 DeepResearchAgent._agent_execution_context  # by-design uses DeepResearchPort, no _call_llm (agent_context_builder.py deep_research entry comment)

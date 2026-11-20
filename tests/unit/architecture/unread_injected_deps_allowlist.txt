@@ -10,7 +10,6 @@ src/agents/core/router_agent.py::RouterAgent::embedding_service  # composition-r
 src/agents/core/router_agent.py::RouterAgent::execution_context  # composition-root refactor (assessment S1: stored, never read)
 src/agents/core/smart_response_agent.py::SmartResponseAgent::embedding_service  # composition-root refactor (assessment S1: stored, never read)
 src/agents/email_search_agent.py::EmailSearchAgent::execution_context  # composition-root refactor (assessment S1: stored, never read)
-src/agents/infrastructure/logger_agent.py::LoggerAgent::env_config  # composition-root refactor (assessment S1: stored, never read)
 src/agents/lelik_agent.py::LelikAgent::_notifications  # composition-root refactor (assessment S1: stored, never read)
 src/agents/maps_search_agent.py::MapsSearchAgent::execution_context  # composition-root refactor (assessment S1: stored, never read)
 src/agents/tasks_agent.py::TasksAgent::execution_context  # composition-root refactor (assessment S1: stored, never read)

@@ -1,7 +1,5 @@
 """`build_operations`: the agent-task queue only with a GCP project, the ops alert sink only with its webhook knob, one
-quota service shared by the billing agent and the budget alert, and the log sink only outside development."""
-from types import SimpleNamespace
-
+quota service shared by the billing agent and the budget alert."""
 import pytest
 
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
@@ -21,10 +19,9 @@ class _Recorded:
 @pytest.fixture
 def ops(monkeypatch):
     monkeypatch.setattr(operations_setup, "GcpTaskQueue", _Recorded)
-    monkeypatch.setattr(operations_setup, "GcpLogSink", _Recorded)
     monkeypatch.delenv("BILLING_SLACK_WEBHOOK_URL", raising=False)
 
-    def build(config=None, *, development=True):
+    def build(config=None):
         return build_operations(config or {}, topology=TOPOLOGY, account_repo="ACCOUNTS")  # type: ignore[arg-type]
     return build
 
@@ -59,23 +56,7 @@ async def test_without_the_webhook_knob_there_is_no_alert_sink(ops):
     assert built.alert_sink is None and built.quota_service.alert_sink is None
 
 
-async def test_the_log_sink_is_built_only_outside_development(ops):
-    assert ops(development=True).logger_agent.log_sink is None
-    production = ops(development=False)
-    assert isinstance(production.logger_agent.log_sink, _Recorded)
-    assert production.logger_agent.env_config.is_development is False
-
-
-async def test_a_log_sink_that_fails_to_build_refuses_the_start(ops, monkeypatch):
-    def broken():
-        raise RuntimeError("no logging client")
-    monkeypatch.setattr(operations_setup, "GcpLogSink", broken)
-
-    with pytest.raises(RuntimeError, match="no logging client"):
-        ops(development=False)
-
-
 async def test_the_agents_carry_their_ids(ops):
     built = ops()
 
-    assert (built.billing_agent.config.agent_id, built.logger_agent.config.agent_id) == ("billing_agent", "logger_agent")
+    assert built.billing_agent.config.agent_id == "billing_agent"
