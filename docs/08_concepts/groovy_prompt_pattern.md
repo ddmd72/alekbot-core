@@ -19,8 +19,9 @@ story. What this buys:
 - **Separation of identity and function.** Personality blocks (`archetype`, `voice`, `humor_engine`) are kept apart from
   functional blocks (`policies`, `protocols`, `cognitive_process`, `output_format`). That separation is what lets a user
   swap a personality token without touching behaviour.
-- **Procedures as steps.** A protocol or `cognitive_process` is a numbered `steps: [...]` list with a verb per step.
-  Ordered, verb-led steps make the model plan, execute, verify and only then answer.
+- **Procedures as steps.** The recommended shape for a procedure is a numbered `steps: [...]` list with a verb per
+  step, so the model plans, executes, verifies and only then answers. Many live tokens use named sub-blocks instead;
+  `steps` is the shape to prefer for a sequence, not a rule every token follows.
 - **Modularity.** Each block is a separately stored token, so one block is changed without rewriting the prompt.
 
 The form is a convention the model reads, not code anything executes. Nothing parses the Groovy.
@@ -42,13 +43,17 @@ level (`src/domain/prompt_v3/slot.py::OwnerType`).
 
 1. **Tokens are static text.** A token holds bare block content, without the outer section wrapper
    (`src/domain/prompt_v3/token.py::Token`). Biography, conversation history, date and reminders are injected by code
-   after substitution (`PromptAssemblyService._inject_runtime_context`). A variable inside a token would either be
+   after assembly (`PromptAssemblyService._inject_runtime_context`). A variable inside a token would either be
    dead text or break caching.
-2. **Validation happens when a token is created, not when it is used.** `Token.create` runs the content through
-   `SecurityPort`; direct construction skips that and is wrong.
+2. **Validation runs whenever a `Token` is built.** `Token.create` runs the content through `SecurityPort`, and the
+   repository rebuilds tokens through it on every read (`src/adapters/prompt_v3/firestore_token_repository.py`).
+   Direct construction skips validation and is wrong; the token upload script writes raw content without validating
+   (`firestore_utils/upload.py`).
 3. **Static before the boundary, dynamic after.** `src/domain/llm.py::PROMPT_CACHE_BOUNDARY` splits the system
    instruction. Everything before it is identical across requests of one agent and user, so the Claude adapter marks
-   it for prompt caching (`src/adapters/claude_adapter.py`, the split on the boundary). Reminders, the optional
+   it for the provider's prompt cache (`src/adapters/claude_adapter.py`, the split on the boundary). That cache has the
+   provider's own lifetime (`cache_control: ephemeral`, no TTL set by us) and is separate from the in-process template
+   cache in section 4: a prefix idle past it is rewritten on the next request. Reminders, the optional
    `current_date_time`, query-specific context and the turn key come after it. Anything that varies per request placed
    before the boundary silently destroys the cache hit.
 4. **Runtime blocks exist only when they have content.** `knowledge_base`, `available_skills` and `standing_directives`
