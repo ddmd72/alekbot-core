@@ -65,8 +65,11 @@ item is fixed, delete it; a new item takes the next free id.
   correction replaces all of it.
 - It matters because the firing alert (`src/domain/reminder_alert.py::build_reminder_alert`) shows the firing agent the
   reminder's `note_id` and invites it to act on it, including updating it. A long-crafted recurring reminder can
-  rewrite itself with no way back.
-- Fix, phase 1: snapshot the prior content to an append-only `revisions` subcollection before a content edit; add
+  rewrite itself with no way back. `NotesAgent._notify` (`src/agents/notes_agent.py`) sends a `notify_raw` receipt on
+  every mutation, which detects a self-rewrite but cannot undo it.
+- Fix, phase 1: snapshot the prior content to an append-only `revisions` subcollection before a content edit (only
+  `NotesAgent` and the Cabinet call `update_note`; reminder fires reschedule through `RemindersService`, so fires add
+  no revisions); add
   `protected: bool` to `AgentNote` and leave the update/delete invitation out of a protected note's alert. Phase 2:
   refuse content edits to a protected note from an autonomous fire, and show a diff for the user to confirm.
 
