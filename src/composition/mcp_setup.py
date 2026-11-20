@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Annotated, Awaitable, Callable, List, Optional
 from urllib.parse import urlparse
 
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
@@ -108,6 +108,10 @@ def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
             valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
             default_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
         ),
+        # RFC 7009 `/revoke`: the SDK authenticates the client and revokes only that client's own token
+        # (`load_refresh_token` checks `client_id`). An access token is a stateless JWT and stays valid until it
+        # expires: the provider revokes refresh tokens only.
+        revocation_options=RevocationOptions(enabled=True),
     )
 
 
