@@ -30,7 +30,6 @@ from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from src.services.rich_content_service import RichContentService
 from src.agents.infrastructure.billing_agent import BillingAgent
-from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition.agents_setup import Agents, build_agents
 from src.composition.background_jobs_setup import BackgroundJobs, build_background_jobs
 from src.composition.boot_setup import BootChecks, build_boot_checks
@@ -141,7 +140,6 @@ class ApplicationGraph:
     # needed by start() and shutdown()
     agent_task_queue: Optional[GcpTaskQueue]
     billing_agent: BillingAgent
-    logger_agent: LoggerAgent
     html_renderer: Optional[HtmlRendererPort]
     # the fact search (FACT_PROFILE_RFC §5); no caller yet
     fact_search: FactSearchPort
@@ -152,7 +150,7 @@ class ApplicationGraph:
     place_atlas: Optional[LazyAtlas] = None
 
     async def start(self) -> None:
-        """Create the agent-task queue if there is one, then start the billing and logger agents and the agent factory.
+        """Create the agent-task queue if there is one, then start the billing agent and the agent factory.
         The place table is loaded first (about 6 s), so the first search of a new instance does not time out."""
         if self.place_atlas is not None:
             await self.place_atlas.warm()
@@ -160,18 +158,16 @@ class ApplicationGraph:
             await self.agent_task_queue.create_queue_if_not_exists()
             logger.info(f"📬 Agent task queue initialized: {self.agent_task_queue.queue_name}")
         await self.billing_agent.start()
-        await self.logger_agent.start()
         await self.agent_factory.start()
 
     async def shutdown(self) -> None:
-        """Drain the session store's background tasks, then stop the factory, the agents and the renderer."""
+        """Drain the session store's background tasks, then stop the factory, the billing agent and the renderer."""
         logger.info("🛑 Draining background tasks...")
         session_store = self.container.session_store
         if session_store._pending_tasks:
             await asyncio.gather(*list(session_store._pending_tasks), return_exceptions=True)
         await self.agent_factory.shutdown()
         await self.billing_agent.shutdown()
-        await self.logger_agent.shutdown()
         if self.html_renderer:
             await self.html_renderer.stop()
 
@@ -183,7 +179,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     env_config = config["ENVIRONMENT_CONFIG"]
     boot = build_boot_checks(config, env_config)    # refuses the start before anything touches the database
     identity = build_identity(config, db_client, env_config, auth_config=boot.auth_config, digest_key=boot.digest_key)
-    ops = build_operations(config, env_config, topology=boot.deploy_topology, account_repo=identity.account_repo)
+    ops = build_operations(config, topology=boot.deploy_topology, account_repo=identity.account_repo)
     routing = build_session_routing(db_client, env_config, user_repo=identity.user_repo, task_queue=ops.task_queue)
     documents = build_document_backends(config, parser=boot.parse_adapter)
     logger.info("🏭 Initializing Service Container...")
@@ -252,7 +248,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         geo_marks=chat.geo_mark_service,
         language_service=languages.resolver, language_preferences=agents.language_preferences,
         localization=languages.localization, cipher=boot.cipher, digest_key=boot.digest_key,
-        agent_task_queue=ops.task_queue, billing_agent=ops.billing_agent, logger_agent=ops.logger_agent,
+        agent_task_queue=ops.task_queue, billing_agent=ops.billing_agent,
         html_renderer=notifications.html_renderer, fact_search=memory_search.fact_search,
         place_atlas=memory_search.place_atlas, voice_mcp_signing_key=boot.voice_mcp_signing_key,
     )
@@ -264,7 +260,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
 def _build_coordinator(container: ServiceContainer, ops: Operations) -> AgentCoordinator:
     """The coordinator over every declared agent, with the container's file-ref resolver for specialist delegation and
-    the billing and logger agents registered; the agent factory is bound to it once built."""
+    the billing agent registered; the agent factory is bound to it once built."""
     logger.info("🎯 Initializing Agent Registry and Coordinator...")
     agent_registry = AgentRegistry()
     for descriptor in ALL_DESCRIPTORS:
@@ -278,7 +274,6 @@ def _build_coordinator(container: ServiceContainer, ops: Operations) -> AgentCoo
         alert_sink=ops.alert_sink,
     )
     coordinator.register_agent(ops.billing_agent)
-    coordinator.register_agent(ops.logger_agent)
     return coordinator
 
 
