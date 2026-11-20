@@ -1,6 +1,7 @@
 # RFC: ComputeAgent — Precise Calculations via Python Code Execution
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [CLAUDE.md](../../src/agents/CLAUDE.md)
 **Date:** 2026-03-05
 **Owner:** AI Engineering
 **Milestone:** Specialist Agents — Phase 3

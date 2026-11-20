@@ -1,6 +1,7 @@
 # RFC: System-turn fingerprint — telling the model which text in a user message came from the system
 
 **Status:** Implemented (code, S1–S3). The rule token stays in `prompts_snapshot/` and is **not uploaded**: the owner
+**History:** a point-in-time design record; how it works now: root [CLAUDE.md](../../CLAUDE.md) § Where things live
 closed the rollout after the S4 gate (§7, "S4 outcome"), so S5 is not done.
 **Date:** rev 1 2026-10-18; rev 2 2026-11-06 (the owner decided to build it).
 **Owner decisions (rev 1, unchanged):** per-turn random key (not a daily one); history is history (no provenance field

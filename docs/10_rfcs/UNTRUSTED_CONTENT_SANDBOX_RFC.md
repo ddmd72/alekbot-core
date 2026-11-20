@@ -1,6 +1,7 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
 **Status:** Implemented (rev 4, 2026-11-05). Built and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
+**History:** a point-in-time design record; how it works now: [sandbox_render_service.md](../04_solution_strategy/decisions/sandbox_render_service.md)
 (S1) and `render.pdf` (S2) as the only DOCX/PDF path of the main service (the in-process render path is removed, 2026-11-05), media for transcripts (S5, accepted 2026-11-05);
 the main service's edit-video duration probe through `media.probe` (S5b, built 2026-11-05).
 `render.png` is built and tested but not wired: widgets render in-process by owner decision O16, the one intended exception. S6 is done: the in-process parse, media, DOCX and PDF paths are removed, and the no-egress network is built (both services deploy onto a deny-all-egress VPC, §4.5). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,

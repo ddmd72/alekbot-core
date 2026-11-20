@@ -1,6 +1,7 @@
 # RFC: Execution Context & Hexagonal Architecture Cleanup
 
 **Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.
+**History:** obsolete; kept for its reasoning. Living doc: [per_call_execution_context.md](../04_solution_strategy/decisions/per_call_execution_context.md)
 **Created:** 2026-02-01
 **Scope:** Domain layer, Service layer, Dependency Injection
 

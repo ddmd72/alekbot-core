@@ -1,6 +1,7 @@
 # RFC: Remote MCP Server — Expose alekbot Memory to claude.ai
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/remote_mcp_server/README.md)
 **Date:** 2026-04-15
 **Owner:** Dmytro
 **Milestone:** External Interop — Custom Connectors

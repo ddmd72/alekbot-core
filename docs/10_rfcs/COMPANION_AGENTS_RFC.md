@@ -1,6 +1,7 @@
 # RFC: Companion agents and session-scoped memory
 
 **Status:** Implemented (Phases A-G, 2026-09-01) — text language tutor shipped as the pilot companion
+**History:** a point-in-time design record; how it works now: [CLAUDE.md](../../src/agents/CLAUDE.md)
 **Date:** 2026-08-17
 **Owner:** Dmytro
 **Milestone:** A second agent family

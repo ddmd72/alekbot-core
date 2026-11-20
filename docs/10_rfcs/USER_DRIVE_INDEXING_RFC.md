@@ -1,6 +1,6 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.21 (2026-10-14) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
+**Status:** Implemented, revision 3.21 (2026-10-14) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
 the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24 and
 built and live since 2026-10-14 (PR #60); §24 overrides the text above where they disagree and was brought in line with the
 code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; rev 3.17 records the owner's model

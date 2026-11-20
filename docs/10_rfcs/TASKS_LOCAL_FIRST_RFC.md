@@ -1,6 +1,7 @@
 # RFC: Microsoft To Do Integration with Thin Search Index
 
 **Status:** IMPLEMENTED (2026-03-19)
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/tasks_integration/README.md)
 **Date:** 2026-03-18
 **Supersedes:** `TASKS_AGENT_RFC.md` (Google Tasks adapter approach)
 

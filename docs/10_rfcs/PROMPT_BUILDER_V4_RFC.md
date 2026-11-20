@@ -1,6 +1,7 @@
 # Prompt Builder v4 RFC
 
 **Status:** ✅ IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/prompt_design_system_v3/README.md)
 **RFC Date:** 2026-02-27
 **Implementation Date:** 2026-02-27
 **Replaces:** Prompt Builder v3 (see Section 1 for archive)

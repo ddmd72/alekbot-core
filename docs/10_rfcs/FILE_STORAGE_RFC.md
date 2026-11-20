@@ -1,6 +1,7 @@
 # RFC: File Storage & Reference-Based File Handling
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/file_storage/README.md)
 **Date:** 2026-03-31
 **Implemented:** 2026-04-01
 **Owner:** AI Engineering
