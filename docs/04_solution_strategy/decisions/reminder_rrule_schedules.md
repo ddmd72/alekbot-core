@@ -95,6 +95,6 @@ The orchestrator edits by quoting the rule it can now see.
 DTSTART, unknown/sub-hourly FREQ, never-occurring patterns), parity with the old arithmetic
 (hourly/daily/weekly/monthly, DST wall clock, UTC output), the schedules the old model could not
 express, and the creation-time snap. `tests/unit/ports/test_recurrence_port.py` — contract.
-`tests/unit/adapters/test_firestore_agent_note_adapter.py` — RRULE persistence, `clear_recurrence`,
+`tests/unit/adapters/test_agent_note_store_kit.py` — RRULE persistence, `clear_recurrence`,
 legacy-map reads. `tests/unit/agents/test_notes_agent.py` — rule normalization + tool paths.
 `tests/unit/services/test_reminders_service.py` — claim/enqueue flow against the real evaluator.

@@ -9,6 +9,8 @@ non-timestamp `due`) are not pinned: their behaviour waits for the data audit.
 """
 import asyncio
 import dataclasses
+import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,6 +125,20 @@ async def test_create_refuses_more_than_25_words_and_writes_nothing(notes):
     with pytest.raises(ValueError):
         await create(notes, texts=dict(text=" ".join(["garden"] * 26), instruction="Remind Kim."))
     assert notes.docs == {}
+
+
+async def test_create_accepts_exactly_25_words(notes):
+    text = " ".join(["garden"] * 25)
+    note = await create(notes, texts=dict(text=text, instruction="Remind Kim."))
+    assert note.text == text and notes.docs[note.note_id]["text"] == text
+
+
+async def test_a_note_id_is_the_creation_millisecond_and_a_uuid4_hex(notes):
+    note = await create(notes)
+    ms, _, suffix = note.note_id.partition("-")
+    assert ms == str(int(T0.timestamp() * 1000)) and len(ms) == 13
+    assert re.fullmatch(r"[0-9a-f]{32}", suffix) and uuid.UUID(hex=suffix).version == 4
+    assert list(notes.docs) == [note.note_id]
 
 
 async def test_create_refuses_the_31st_active_note_and_past_notes_do_not_count(notes, monkeypatch):
@@ -416,6 +432,14 @@ async def test_mark_fire_delivered_stamps_and_a_repeat_is_identical(notes):
     await notes.port.mark_fire_delivered(note.note_id, T0)
     assert notes.docs[note.note_id] == first
     assert (await notes.port.get_note("u1", note.note_id)).last_delivered_due == T0
+
+
+async def test_a_naive_stored_last_delivered_due_reads_as_utc_defensive_branch(notes):
+    """A defensive branch, not a contract: the client always returns an aware Timestamp."""
+    notes.seed("m1", user_id="u1", text="call dad", due=DUE, created_at=T0,
+               last_delivered_due=(T0 - timedelta(days=1)).replace(tzinfo=None))
+    note = await notes.port.get_note("u1", "m1")
+    assert note.last_delivered_due == T0 - timedelta(days=1) and note.last_delivered_due.tzinfo is timezone.utc
 
 
 async def test_mark_fire_delivered_on_a_deleted_note_raises_not_found(notes):
