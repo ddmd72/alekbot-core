@@ -30,7 +30,7 @@ read from Graph on demand, so the two systems cannot diverge on content; the ind
 notifications and by full re-reads of the list.
 
 What it is not: it does not write memory facts, it does not mirror tasks, and it works on one list only, the primary
-list named "Alek Bot Tasks" (`src/adapters/microsoft/todo_adapter.py::_PRIMARY_LIST_NAME`). Google Tasks is frozen:
+list the bot creates for itself (`src/adapters/microsoft/todo_adapter.py::_PRIMARY_LIST_NAME`). Google Tasks is frozen:
 `GoogleTasksAdapter` still implements `TasksProviderPort` but is not wired (`src/composition/service_container.py`
 keeps it commented out), and its consent runs no setup.
 
@@ -42,7 +42,7 @@ Firestore, `us-production` database, environment prefix on collection names.
 (`src/adapters/firestore_task_search_index.py::FirestoreTaskSearchIndex`). Written by `TaskIndexingService.index_task`,
 read by `TaskIndexingService.search` and `resolve_short_id`. One `TaskSearchEntry` (`src/domain/task.py`) holds:
 - identity and display: `task_id`, `list_id`, `list_name`, `title`, `status`, `tags`, `importance`, `indexed_at`;
-- `short_id`: `md5(task_id)[:8]`, the only task reference the model sees (a Graph id is ~180 characters);
+- `short_id`: a short hash of `task_id` (`TaskIndexingService.index_task`), the only task reference the model sees (a Graph id is ~180 characters);
 - `content_vector`: embedding of title, body and checklist item titles (`TaskIndexingService._content_text`);
 - `context_vector`: embedding of list name, tags and importance (`TaskIndexingService._context_text`).
 
@@ -56,8 +56,9 @@ The body is not stored. Vector indexes must exist before search works: `config/f
 document.
 
 **Credential** — the user's grant is a record of kind `microsoft_todo` in the shared credential store
-(`src/composition/connector_registry.py::MICROSOFT_TODO`, scope `Tasks.ReadWrite`). Microsoft grants are never revoked at
-the provider; disconnect only deletes the stored record.
+(`src/composition/connector_registry.py::MICROSOFT_TODO`, its `required_scopes`). Microsoft grants are never revoked at
+the provider (`src/adapters/microsoft/microsoft_oauth_provider.py::MicrosoftOAuthProvider.revoke` does nothing);
+disconnect only deletes the stored record.
 
 ## Flows
 
@@ -72,7 +73,8 @@ the provider; disconnect only deletes the stored record.
 
 ### Setup is a re-subscribe, not a no-op
 
-A consent is a new grant, so Graph may have dropped subscriptions a stored config still calls active. `setup` therefore
+A consent is a new grant; per the `setup` docstring, Graph may have dropped subscriptions a stored config still calls
+active. `setup` therefore
 deletes every stored subscription (best effort), registers one for the primary list, saves the config and enqueues
 `reindex_task_list` once (`TaskSetupService._resubscribe`). The reindex is an upsert that deletes nothing, so changes
 made while the grant was gone are read back. `ensure_subscriptions`, by contrast, keeps an active subscription and
@@ -81,8 +83,9 @@ re-reads nothing; it runs from `reindex_all` and heals a missing one.
 ### Task lookup and change (chat turn)
 
 1. The router delegates to `src/agents/tasks_agent.py::TasksAgent.execute`: a tool loop of at most `_MAX_TURNS`
-   turns with five tools (`list_tasks`, `search_tasks`, `create_task`, `update_task`, `delete_task`). A failed prompt
-   build only drops the biographical context.
+   turns over the tools in `_TOOL_DECLARATIONS`: a lookup (`list_tasks`), a search for long lists, and create, update and
+   delete. If the prompt build fails, the run goes on with an empty system prompt (not only without the biographical
+   facts), and the failure is only logged.
 2. `list_tasks` fetches the primary list from Graph and filters, orders and pages in the agent
    (`TasksAgent._list_page`, `_PAGE_SIZE`): Graph's To Do list call is read as a full fetch, with only a status
    filter sent. Dated tasks come first (soonest first), then undated (newest first). The result carries `total`,
@@ -92,18 +95,21 @@ re-reads nothing; it runs from `reindex_all` and heals a missing one.
    `TasksProviderPort.batch_get_tasks`. A miss returns a `note` that another wording will not find more.
 4. `create_task` / `update_task` write to Graph, then re-index the returned task; `delete_task` deletes at Graph, then
    `deindex_task`. A new due date on a task that had none, or on a new task with no explicit reminder, gets an
-   automatic reminder at 20:00 the evening before, in the user's zone (`TasksAgent._derive_reminder`).
+   automatic reminder in the evening before the due date, in the user's zone (`TasksAgent._derive_reminder`).
 5. Times: a time of day without an offset is the user's wall time and is converted with `wall_time_instant`; a date
    alone stays that day (`TasksAgent._parse_user_time`).
-6. Recurrence: only `daily`, `weekdays` (sent as `weekly`, Monday to Friday), `weekly`, `absoluteMonthly` and
-   `absoluteYearly` are exposed, always with no end date (`TasksAgent._parse_recurrence`). The relative patterns are
-   deliberately not in the tool enum.
+6. Recurrence: the tool enum exposes the daily, weekly and absolute monthly/yearly patterns, plus a `weekdays` alias
+   sent as weekly Monday to Friday, always with no end date (`TasksAgent._parse_recurrence`). The relative
+   monthly/yearly patterns are left out on purpose: the recorded reason is that Graph turns them into daily for
+   personal accounts, so they would silently misbehave.
 
-**Time budget.** A run's budget is its timeout. No tool turn starts past the budget minus `_ANSWER_RESERVE_S`, and each
-turn is bounded by `asyncio.wait_for`. When the turn cap or the budget stops the loop, one tool-less turn answers
+**Time budget.** A run's budget is its timeout. No tool turn starts past the budget minus `_ANSWER_RESERVE_S`, and the model call
+of each turn is bounded by `asyncio.wait_for` (the tool executions of a turn are not, so a slow tool can run past the
+budget). When the turn cap or the budget stops the loop, one tool-less turn answers
 (`_FORCE_ANSWER`, ending `_FINAL_MARGIN_S` before the timeout); if that cannot run or returns no text, the answer is the
 tool results themselves (`TasksAgent._facts_answer`). A run that has tool results never ends as a timeout, because the
-orchestrator could repeat a write.
+orchestrator could repeat a write. A run with no tool results whose first turn times out, or whose text is cut at the
+output limit, fails (`AgentResponse.failure`).
 
 ### Index freshness (webhook)
 
@@ -115,9 +121,9 @@ orchestrator could repeat a write.
 3. For each notification: check `clientState`; parse the list id (and, if present, the task id) from `resource`;
    require `TaskSetupService.owns_subscription(user_id, sub_id, list_id)`; then update the index.
    - With a task id: `deleted` calls `deindex_task`; `created` and `updated` call `index_task_by_ref`.
-   - Without one (what consumer accounts send, a list-level resource): enqueue `reindex_task_list` for the list
+   - Without one (per the code comments, what consumer accounts send: a list-level resource): enqueue `reindex_task_list` for the list
      (`TaskSetupService.enqueue_reindex_list`).
-   - Then `TaskSetupService.handle_subscription_renewal` (self-healing). The reply is always `202`.
+   - Then `TaskSetupService.handle_subscription_renewal` (self-healing). Once the body parses, the reply is `202`; a body that is not JSON gets `400`.
 
 ### Subscription lifetime
 
@@ -134,8 +140,8 @@ reindex (`_replace_orphan`); if that fails the entry is dropped and `setup` or `
 
 ### Cabinet and disconnect
 
-The Cabinet endpoints under `/api/tasks/microsoft/` (`src/web/user_cabinet_app.py`) call `TaskSetupService`:
-`status`, `reindex` (`reindex_all`), `lists` (live Graph call) and `disconnect`. `TaskSetupService.disconnect` deletes
+The Cabinet endpoints under `/api/tasks/microsoft/` (`src/web/user_cabinet_app.py`) mostly call `TaskSetupService` (status, reindex via `reindex_all`, disconnect); the lists endpoint calls
+`TasksProviderPort.list_task_lists` directly (a live Graph call). `TaskSetupService.disconnect` deletes
 the Graph subscriptions (best effort), the stored credentials, every index entry of the user, and resets the config.
 
 ## Invariants and traps
@@ -148,7 +154,7 @@ the Graph subscriptions (best effort), the stored credentials, every index entry
   Binding to the URL's user is `owns_subscription`; a notification for another user's subscription, or one whose check
   fails, touches nothing. With no secret configured the check is skipped locally, but a deployed service (`K_SERVICE`
   set) rejects every notification.
-- **The webhook never blocks Graph.** Every per-notification error is logged and the reply stays `202`; a failed index
+- **The webhook never blocks Graph.** Every per-notification error is logged and the reply stays `202` for a parsed body; a failed index
   update is repaired by the next notification or reindex.
 - **Config writes are read-modify-write.** `save_config` replaces the whole document. `ensure_subscriptions` carries a
   freshly stored `primary_list_id` into the config it saves, or the save would erase it. Only
@@ -157,11 +163,11 @@ the Graph subscriptions (best effort), the stored credentials, every index entry
 - **A 204 renewal has no body**, so the adapter returns an empty `list_id`; `TaskSetupService._preserve_list_id` keeps
   the stored one.
 - **The list name and the first page of tasks are read concurrently** (`MicrosoftToDoAdapter._fetch_tasks_for_list`), so
-  a lookup is one Graph round trip and two model turns; a task lookup must answer within seconds.
+  a lookup over one Graph page is one round trip (further pages add more) and two model turns; a task lookup must answer within seconds.
 - **Checklists are diffed, never replaced** (`MicrosoftToDoAdapter._sync_checklist`): a full replace destroys the
   items' checked timestamps.
-- **Graph throttling.** `batch_get_tasks` runs at most `_BATCH_SEMAPHORE` fetches at once, retries a 429 with backoff
-  up to three times and drops a task that still fails instead of failing the search.
+- **Graph throttling.** `batch_get_tasks` runs at most `_BATCH_SEMAPHORE` fetches at once, makes a bounded number of
+  attempts (a 429 is retried with backoff) and drops a task that still fails instead of failing the search.
 - **Search is two-vector RRF.** `find_nearest` runs one cosine query per vector field, drops entries beyond
   `_MAX_COSINE_DISTANCE`, fuses with `_RRF_K`, and filters `status != completed` unless completed tasks are requested.
   A missing vector index fails at query time, not at deploy.
