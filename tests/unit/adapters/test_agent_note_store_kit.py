@@ -221,6 +221,31 @@ async def test_update_clear_flags_set_none(notes, flag, field):
     assert getattr(updated, field) is None
 
 
+SINGLE_FIELD_PATCHES = {     # case -> (update_note keywords, or None for mark_fire_delivered; the field; its new value)
+    "clear_recurrence": ({"clear_recurrence": True}, "recurrence", None),
+    "clear_workspace_file": ({"clear_workspace_file": True}, "workspace_file", None),
+    "instruction": ({"instruction": "Remind Alex to call dad after dinner."}, "instruction",
+                    "Remind Alex to call dad after dinner."),
+    "recurrence": ({"recurrence": "FREQ=WEEKLY;BYDAY=SU"}, "recurrence", "FREQ=WEEKLY;BYDAY=SU"),
+    "mark_fire_delivered": (None, "last_delivered_due", DUE),
+}
+
+
+@pytest.mark.parametrize("case", list(SINGLE_FIELD_PATCHES))
+async def test_a_single_field_operation_changes_exactly_that_field(notes, case):
+    kwargs, field, value = SINGLE_FIELD_PATCHES[case]
+    note = await create(notes, due=DUE, recurrence="FREQ=DAILY", workspace_file="projects/dad.md")
+    before = dict(notes.docs[note.note_id])
+    if kwargs is None:
+        await notes.port.mark_fire_delivered(note.note_id, DUE)
+    else:
+        await notes.port.update_note(NoteUpdate(note_id=note.note_id, user_id="u1", **kwargs))
+    after = notes.docs[note.note_id]
+    changed = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
+    assert changed == {field}
+    assert after[field] == value
+
+
 async def test_update_sets_recurrence_instruction_and_workspace_file(notes):
     note = await create(notes)
     updated = await notes.port.update_note(NoteUpdate(
