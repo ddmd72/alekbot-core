@@ -36,16 +36,21 @@ The block stores nothing. It reads these `UserBotConfig` fields and produces the
 **Read from the user's config** (`src/domain/user.py::UserBotConfig`): `complexity_settings_overrides` (per
 `TaskComplexity`, a `ComplexitySettings`), `agent_tiers` (default tier per agent type, `_DEFAULT_AGENT_TIERS`),
 `agent_providers` and `provider_preference` (provider choice), `model_overrides` (a model pin per agent type),
-`agent_thinking` (thinking effort per agent type). `ComplexitySettings` has `tier` (required), `thinking_effort`,
-`provider_override` and `intent_remap`. Every `TaskComplexity` has an entry in `DEFAULT_COMPLEXITY_SETTINGS`.
+`agent_thinking` (thinking effort per agent type). Only `tier` of a `ComplexitySettings` is required. Every
+`TaskComplexity` has an entry in `DEFAULT_COMPLEXITY_SETTINGS`.
+
+These are read from the `UserBotConfig` snapshot the user's agents took when they were built
+(`UserAgentFactory`). A Firestore edit of any of them reaches Smart only after the user's agents are rebuilt: run
+`$admin_cache_reset` as a command (see Invariants). A blank `thinking_effort` or `provider_override` is coerced to
+`None` and a non-dict `intent_remap` to `{}` (`ComplexitySettings` validators), so a blank console field inherits the
+default.
 
 **Written by the router into the routed message's context** (`RouterAgent.execute`): `classification` (the raw triage
 dict), `routing` (`RoutingMetadata.to_dict()`), `task_complexity` (the enum's string value, so it survives a Cloud
 Tasks hop), `enriched_context` (the prefetched facts, as a dict), `agent_notes` (active reminders, one dict per note,
 `RouterAgent._note_context`), `routed_by`.
 
-`RoutingMetadata` (`src/domain/agent.py`) is `user_tone`, `task_complexity`, `needs_tools`, `reasoning`,
-`needs_memory_search`; `build_routing_metadata` in `src/domain/tone.py` builds it from the triage dict.
+`RoutingMetadata` (`src/domain/agent.py`) is built from the triage dict by `src/domain/tone.py::build_routing_metadata`.
 
 ## Flows
 
@@ -56,10 +61,10 @@ Tasks hop), `enriched_context` (the prefetched facts, as a dict), `agent_notes` 
 2. `RouterAgent.execute` loads the last `RouterAgentConfig.context_window` messages and starts the memory prefetch
    (`RouterAgent._start_prefetch`): the slots agent (`FactQuerySlotsAgent.query_for_messages`, `path="router"`) reads
    the same messages as triage, in parallel with it (`FACT_PROFILE_RFC` §5.4).
-3. Triage (`RouterAgent._classify_with_llm`): one JSON call on the router's own context (ECO tier by default,
-   `_DEFAULT_AGENT_TIERS["router"]`), prompt from `PromptBuilderPort.build_for_agent(agent_type="router")`, schema
+3. Triage (`RouterAgent._classify_with_llm`): one JSON call on the router's own context (tier from
+   `_DEFAULT_AGENT_TIERS["router"]`, provider from `AgentProviderStrategy.STRATEGIES["router"]`), prompt from `PromptBuilderPort.build_for_agent(agent_type="router")`, schema
    `RouterAgent.TRIAGE_RESPONSE_SCHEMA`, text parts only (an image would make the model answer instead of classify).
-   Output: `search_intent`, `needs_memory_search`, `metadata.user_tone`, `metadata.task_complexity`.
+   The triage dict also carries `search_intent`, read in step 6.
 4. `build_routing_metadata` turns the dict into `RoutingMetadata`. An unknown or empty complexity becomes
    `simple_analytics` (`src/domain/tone.py::_safe_complexity`, mirrored by `src/domain/agent.py::_coerce_task_complexity`).
 5. Vision override: a native binary image in the current message forces `deep_reasoning`. A `file_data` entry that
@@ -88,16 +93,17 @@ classifier `RouterAgent._classify_request`: the dict has no `metadata`, so `buil
    else `agent_thinking["smart"]`.
 4. `SmartResponseAgent._run` runs `DelegationEngine.execute` with that context for every turn of the loop.
 
-Background work reaches step 1 without the router: `UserNotificationService.notify` and the reminder, daily email
-review and deep-research delivery tasks put `task_complexity` into the context themselves, and reminders address the
+Background work reaches step 1 without the router: `UserNotificationService.notify` and the reminder and daily email
+review tasks put `task_complexity` into the context themselves, and reminders address the
 Smart agent directly (`src/services/execute_reminder_task.py`).
 
 ### 3. The delegation loop
 
 `DelegationEngine.execute` (Quick and Smart share it; Lelik and bound agents use it or `dispatch`):
 
-1. The orchestrating LLM sees one tool, `delegate_to_specialist` (`DELEGATE_TOOL_NAME`), with an intent argument, plus
-   the terminal tool `deliver_response`. The intents offered are `AgentRegistry.get_available_intents_for(descriptor)`:
+1. The orchestrating LLM sees one delegation tool, `delegate_to_specialist` (`DELEGATE_TOOL_NAME`), with an intent
+   argument, the terminal tool `deliver_response`, and, for Smart, local tools (skills, workspace, memory proposals;
+   `SmartResponseAgent._run`). The intents offered are `AgentRegistry.get_available_intents_for(descriptor)`:
    every non-internal intent when `allowed_intents is None` (Quick and Smart both).
 2. All tool calls of one turn run in a single `asyncio.gather` (`DelegationEngine._execute_tool_calls`). There is no
    memory-first ordering; a specialist that needs another's result is called in a later turn.
@@ -107,8 +113,9 @@ Smart agent directly (`src/services/execute_reminder_task.py`).
    carries the reconciliation hint. The first intent is primary: its failure is shown to the LLM. A failed secondary is
    skipped silently.
 4. A failed single delegation returns `Tool note: ...` to the LLM so it can correct its input; the loop is bounded by
-   `QUICK.max_delegation_turns` / `SMART.max_delegation_turns` (`src/infrastructure/agent_config.py`). Exhausting the
-   turns returns `DelegationResult(failed=True)`; Quick turns that into `TURN_CAP_ERROR`.
+   `QUICK.max_delegation_turns` / `SMART.max_delegation_turns` (`src/infrastructure/agent_config.py`); under a turn
+   clock Smart is bounded by `clock.max_loop_turns` instead (`src/domain/turn_clock.py`). Exhausting the turns returns
+   `DelegationResult(failed=True)`; both agents turn that into `TURN_CAP_ERROR`.
 5. A turn that calls `deliver_response` ends the loop. Calls emitted beside it are still dispatched, their results are
    not read (`decisions/terminal_tool_co_emitted_calls.md`).
 
@@ -119,8 +126,8 @@ Smart agent directly (`src/services/execute_reminder_task.py`).
   so it apologises in the user's language; if Quick fails too, the caller gets a static apology.
 - Notifications: `UserNotificationService.notify` addresses `quick_response_agent_{user_id}` unless
   `agent_id_override` names another agent.
-- Quick's context is the fixed one `AgentContextBuilder.build("quick", ...)` gives (default tier ECO, default provider
-  Claude, `AgentProviderStrategy`), never the complexity-resolved one. Its prompt is `agent_type="quick"`.
+- Quick's context is the fixed one `AgentContextBuilder.build("quick", ...)` gives (tier from `_DEFAULT_AGENT_TIERS["quick"]`,
+  provider from `AgentProviderStrategy.STRATEGIES["quick"]`), never the complexity-resolved one. Its prompt is `agent_type="quick"`.
 
 ### 5. Provider rotation (Smart)
 
@@ -132,7 +139,7 @@ exhausted the failure goes to the Quick fallback. A long-running turn does not r
 
 ### 6. Web search light
 
-`WebSearchLightAgent.execute` makes one `use_grounding` call on the `web_search_light` context (ECO tier) with the
+`WebSearchLightAgent.execute` makes one `use_grounding` call on the `web_search_light` context (tier from `_DEFAULT_AGENT_TIERS`) with the
 `websearch_light` prompt profile, without biography or standing directives (a search model should not see them). It
 answers `search_web_light`, an `internal=True` intent that only an explicit `allowed_intents` names; Lelik is the one
 that does (`src/infrastructure/agent_manifest.py::LELIK`).
@@ -147,8 +154,9 @@ that does (`src/infrastructure/agent_manifest.py::LELIK`).
 - **The triage prompt is cached on the `RouterAgent` instance** (`_cached_triage_prompt`). A changed router token
   reaches a user only after the agent is rebuilt: `$admin_cache_reset` as a command
   (`ConversationHandler.handle_command`) clears the prompt cache and evicts the user's agents. The text reaching
-  `RouterAgent._handle_admin_cache_reset` clears the prompt cache only. Without a reset, the user-agent cache lives
-  for `UserAgentFactory._cache_ttl`.
+  `RouterAgent._handle_admin_cache_reset` clears the prompt cache only. Without a reset the cache expires by idle time
+  (`UserAgentFactory._cache_ttl`, refreshed on every use), so a user who writes at least once per TTL never gets
+  rebuilt agents: a changed router token or config never reaches them.
 - **A complexity default always applies when `task_complexity` is present.** `agent_tiers["smart"]` is the tier only
   when the context carries no (valid) complexity. A `model_overrides` pin beats any tier in both cases
   (`AgentContextBuilder._build`).
@@ -159,15 +167,17 @@ that does (`src/infrastructure/agent_manifest.py::LELIK`).
   (`tests/unit/infrastructure/test_task_execution_resolver.py`).
 - **An override entry without `tier` is dropped on load** (`src/adapters/firestore_user_repo.py::_sanitize_user_doc`),
   so one blank console edit cannot block the user's messages.
-- **`provider_override` is a registry key** (`claude`, `openai`, `gemini`, `grok`), not a vendor name, and
+- **`provider_override` is a `ProviderRegistry` key, not a vendor name** (the Claude provider is `claude`), and
   `resolve_for_task` does not check it against the strategy's allowed providers; an unknown name raises `ValueError`
   from `ProviderRegistry.get`.
 - **`ComplexitySettings.intent_remap` is dead.** The resolver copies it into `ExecutionOverride`, but
-  `SmartResponseAgent` passes no remap to the engine. Remaps come only from the descriptor.
-- **Thinking effort means different things per adapter** (a Haiku-class Claude model ignores it). The mapping lives in
-  the adapters (`src/adapters/CLAUDE.md`), not here.
-- **Code text to the model says `Tool note:`/`Tool error:`**, never `SYSTEM:` (the fan-out preamble, the unknown-tool
-  result); current-turn system text goes through `wrap_system` with the turn key.
+  `SmartResponseAgent` passes no remap to the engine, not even its descriptor's. Only Quick passes its descriptor's
+  `intent_remap`; a remap added to `SMART_RESPONSE` would be dead too.
+- **Thinking effort means different things per adapter, and some models skip it.** The mapping lives in the adapters
+  (`src/adapters/CLAUDE.md`), not here.
+- **Engine text to the model says `Tool note:`/`Tool error:`**, never `SYSTEM:` (the fan-out preamble, the
+  unknown-tool result); current-turn system text goes through `wrap_system` with the turn key. Quick's own inputs do not
+  all follow this yet: the notification frame in `UserNotificationService` is a bare `[System: ...]`.
 - **`task_complexity` travels as a string** in `message.context`, never the enum, so it survives serialisation.
 - **Quick's fallback role is why its config is fixed.** Do not make it depend on the complexity resolver: it is the last
   LLM-backed line before the static apology.

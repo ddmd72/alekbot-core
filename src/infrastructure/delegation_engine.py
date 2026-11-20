@@ -651,7 +651,7 @@ class DelegationEngine:
                     async_dispatches=list(all_async),
                 )
 
-            # --- Execute tool calls (memory-first parallel) ---
+            # --- Execute tool calls (one parallel batch) ---
             logger.info(
                 "🔄 [DelegationEngine] Turn %s — dispatching %s tool call(s)",
                 turn + 1, len(response.tool_calls),
