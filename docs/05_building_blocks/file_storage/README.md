@@ -19,16 +19,16 @@ This block keeps what the user attaches in chat and what the system generates fo
 review, research reports, videos) in one **private** GCS bucket, and hands it out two ways: a capability link on our own
 domain for the user, and a server-side re-read by key for the agents.
 
-The central rule is **by reference**: file bytes never enter the session history or the orchestrator's prompt. An upload
-becomes a label plus a small `file_data` dict (`ref`, `mime_type`, `size_bytes`); the model reads the content on demand
-through the `open_file` intent, and specialists get it pre-read by the coordinator. History therefore holds about a
+The central rule is **by reference**: file bytes never enter the session history, and the orchestrator does not get them on the upload turn
+or when it delegates. An upload becomes a label plus a small `file_data` dict (`ref`, `mime_type`, `size_bytes`); the model reads the content on demand
+through the `open_file` intent (a native image or PDF then reaches it on that tool turn only), and specialists get it pre-read by the coordinator. History therefore holds about a
 line per file, and a file stays readable on later turns.
 
 What it is not: parsing and text extraction are [file_conversion](../file_conversion/README.md); the user's long-term
 drive (OneDrive App Folder) is [user_drive](../user_drive/README.md); generating documents is
 [document_generation](../document_generation/README.md); the agent's own working files are the agent workspace
 (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md`). This block only stores, addresses and serves bytes, and routes `open_file`,
-`delete_file` and `send_file_to_user` for the chat-file stores.
+`delete_file` and `send_file_to_user` (the last takes any ref, email and drive ones included).
 
 ## Owned data
 
@@ -54,7 +54,7 @@ One bucket, `GCS_MEDIA_BUCKET`, with no public access. Two adapters write to it 
   name differs from the given one, plus a temporary `path` for a native binary (image, PDF), present on the upload turn
   only.
 - **Ports:** `FileStoragePort` (uploads, by file name and `user_id`; the adapter assembles the key) and
-  `MediaStoragePort` (delivered content, by full key; adds `fetch` and `generate_signed_url`). Neither returns a public
+  `MediaStoragePort` (delivered content, by full key, with a server-side read and a signed-URL mint). Neither returns a public
   URL. `FileStoragePort.get_url` assembles a bare `storage.googleapis.com` path that the private bucket answers with 403;
   nothing in `src/` calls it.
 
@@ -75,11 +75,11 @@ Entry: `src/handlers/conversation_handler.py::ConversationHandler._handle_messag
    (`AgentFallbackService`): the primary agent is healthy and one input is missing.
 3. `FileConversionService.process_attachment` reads the bytes, uploads them through `FileStoragePort.upload`, and returns
    the reference-only part. A failed upload (storage outage) or a handler built without the service puts
-   `storage_unavailable_alert` in the slot instead, and the second case also logs an ERROR line that the
-   Errors-dev alert watches. The turn goes on in all cases
+   `storage_unavailable_alert` in the slot instead; both cases log an ERROR line, which the Errors-dev alert watches.
+   The turn goes on in all cases
    (`tests/unit/handlers/test_conversation_handler_upload_storage_down.py`,
    `tests/unit/handlers/test_conversation_handler_no_file_service.py`).
-4. A turn with attachments and no text gets a localized file prompt as its text.
+4. A turn with attachments and no text gets a localized file prompt as its text (set before the downloads, step 2).
 5. In a bound channel (`SessionMode.is_bound`) the handler strips `path` from `file_data` before the agent runs, so
    adapters cannot inline the binary; the agent opens the file by `open_file` when it needs it.
 6. Before the history save, `ConversationHandler._clean_user_parts` strips `path` from every part
@@ -102,8 +102,7 @@ Entry: `src/agents/file_management_agent.py::FileManagementAgent.execute`, a zer
 3. Exceptions to plain reading: a video ref is resent to the user's chat as a file (`DriveOperations._fetch_video`,
    capped by `MAX_VIDEO_ATTACH_BYTES`); a `workspace:` ref opens only under `binary_files/`
    (`DriveOperations._fetch_workspace`).
-4. A missing object answers "not found in storage, files are kept for 30 days, ask the user to re-upload"
-   (`DriveOperations.fetch_stored`).
+4. A missing object answers as "not found" with a re-upload hint (`DriveOperations.fetch_stored`).
 5. `delete_file` deletes only a chat upload (`FileStoragePort.delete`). It refuses `drive:`, `workspace:` and `skill:`
    refs with a pointer to the right tool.
 6. `send_file_to_user` resolves the bytes through `FileConversionService.resolve_file(..., action=ACTION_SEND)` and
@@ -127,7 +126,7 @@ Entry: `src/services/document_delivery_service.py::DocumentDeliveryService.store
 
 1. `store` writes the bytes through `GcsMediaAdapter.store` (private; HTML gets a `noindex` meta) and returns the **key**,
    then `FileLinkService.build_link` mints the token and the link `<base>/f/<token>`. The prefix decides policy:
-   `email_review/` is gated and short-lived, everything else is not gated and lives 30 days.
+   `email_review/` is gated and short-lived, everything else is not gated and takes the default lifetime (`DEFAULT_FILE_LINK_TTL`).
 2. The channel gets the link; the **history note** gets the key (`UserNotificationService.notify_document_link`), worded
    to send the agent back to `open_file` with that key. A video key gets a note that says `open_file` resends it as a
    file.
@@ -146,9 +145,11 @@ Entry: `src/services/document_delivery_service.py::DocumentDeliveryService.store
   `image (4).png`. A label showing `image.png` would open whatever old object holds that un-suffixed name, and the bot would
   describe the wrong picture. `original_name` is metadata only. Enforced by
   `tests/unit/services/test_file_conversion_service_gcs.py::TestProcessAttachmentDedup.test_label_uses_deduped_ref_not_original_name`.
-- **The orchestrator is meant to be blind to an attachment on the upload turn.** Every LLM adapter (Claude, OpenAI,
-  Gemini, Grok) skips a `file_data` that has a `ref`, so only the label reaches the model; the image arrives on the
-  `open_file` tool turn. This is the design, not a bug: do not make an adapter inline the image.
+- **The orchestrator is meant to be blind to an attachment on the upload turn.** In every LLM adapter (Claude, OpenAI,
+  Gemini, Grok) the part loop is `if part.text ... elif part.file_data`, and the upload part carries the label as
+  `text`, so only the label is emitted; the image arrives on the `open_file` tool turn. This is the design, not a bug:
+  do not make an adapter emit the file part next to the label, and do not simplify that chain. (OpenAI and Grok also skip
+  a `file_data` with a `ref`; Claude and Gemini would inline a ref plus `path` one if the chain let it through.)
 - **Vision routing follows the same rule.** `RouterAgent` forces deep reasoning only for a `ref` file whose mime type is
   `image/*` (or a legacy `file_data` without `ref`); a PDF label alone does not
   (`src/agents/core/router_agent.py`, `tests/unit/agents/core/test_router_agent.py`).
@@ -160,7 +161,7 @@ Entry: `src/services/document_delivery_service.py::DocumentDeliveryService.store
   (`tests/unit/services/test_file_conversion_service_gcs.py`,
   `tests/integration/offline/test_private_file_storage_roundtrip.py::TestPrivateStorageRoundTrip::test_refetch_by_other_user_rejected`).
 - **The bucket is private; the long-lived thing is the token, not a storage signature.** A click mints a signed URL
-  that lives `_SIGNED_URL_TTL`, so the link's 30 or 5 days do not run into the 7-day cap on GCS signed URLs. A direct
+  that lives `_SIGNED_URL_TTL`, so the link's lifetime (the two TTL constants in `src/domain/file_access.py`) does not run into the 7-day cap on GCS signed URLs. A direct
   `storage.googleapis.com` path is 403. The token's `uid` is enforced only when `gated`.
 - **Gating comes from the key prefix**, decided in one place, `FileLinkService.build_link`; the storage adapters return
   keys and know nothing of tokens. `DocumentDeliveryService` repeats the TTL per storage class in `_TTL_SECONDS` for its
@@ -178,6 +179,8 @@ Entry: `src/services/document_delivery_service.py::DocumentDeliveryService.store
 - **A temp-file suffix is bounded in bytes.** `safe_temp_suffix` keeps `tempfile` under NAME_MAX (255 bytes; one
   Cyrillic character costs 2). An unbounded suffix made a long browser-saved file name raise `OSError` in the response
   channel's `download_file`, which swallowed it, and the file vanished (`tests/unit/utils/test_safe_temp_suffix.py`).
+  A failed `download_file` is still loud: the response channels log it with `logger.error`, which the ops alert
+  watches (`src/adapters/slack/response_channel.py`).
 - **Voice transcription precedes the file path.** A voice attachment sent down the file path would leave history with
   only a "no text plus attachment" fallback and consolidation would have nothing to read.
 - **Without `GCS_MEDIA_BUCKET` the block is off.** `ServiceContainer` builds no `GcsFileStorageAdapter`, no
