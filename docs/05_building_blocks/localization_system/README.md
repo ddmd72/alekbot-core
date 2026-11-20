@@ -136,8 +136,8 @@ still stored and still drives the UI language.
 - **Unknown codes fall back, they do not fail.** The adapter falls back to English (`FileLocalizationAdapter._DEFAULT`);
   a `ResponseChannel` built with no `localization` falls back to the Ukrainian module, and an adapter with no language
   service uses Ukrainian as the UI language (not the system default).
-- **Mirror is the only mode that follows a mid-conversation switch.** A fixed policy says "regardless of what language
-  the user writes in"; for calls this made the model refuse an explicit request to switch, so the spoken-reply anchor in
+- **Mirror is the only mode that follows a mid-conversation switch.** A fixed policy tells the model to keep the configured
+  language whatever the user writes in; for calls this made the model refuse an explicit request to switch, so the spoken-reply anchor in
   `src/domain/llm.py` states that the configured language is a default, not a lock (`tests/unit/domain/test_persona_anchor.py`).
   Text chats keep the strict rule.
 - **A cache must be invalidated or the change is invisible.** The assembled static prompt is cached
