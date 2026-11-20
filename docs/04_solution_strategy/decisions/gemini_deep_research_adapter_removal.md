@@ -22,7 +22,7 @@ Delete `GeminiDeepResearchAdapter` and its wiring. Bump `google-genai>=2.0.0,<3.
 - `main.py` — drop import + `job_registry.register("gemini", …)` block + `GEMINI_DEEP_RESEARCH_MODEL` env read.
 - `src/services/agent_context_builder.py` — remove `"gemini"` from `deep_research.allowed_providers`.
 - `requirements.txt` — `google-genai>=2.0.0,<3.0.0`.
-- Doc sweep: `STRUCTURE.md`, `TARGET_ARCHITECTURE.md`, `DEEP_RESEARCH_RFC.md`, `agent_registry/README.md`, `multi_agent_system/README.md`, `openai_integration/README.md`, CLAUDE.md, port + agent docstrings.
+- Doc sweep: the former structure overview and target architecture (deleted), `DEEP_RESEARCH_RFC.md`, `agent_registry/README.md`, `multi_agent_system/README.md`, `openai_integration/README.md`, CLAUDE.md, port + agent docstrings.
 
 ## Rejected alternatives
 

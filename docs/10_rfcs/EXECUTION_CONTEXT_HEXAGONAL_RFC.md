@@ -341,5 +341,5 @@ prompt = await service.get_assembled_prompt(
 - Prompt Builder v4 (Session 8) - 4-level token/override system (see PROMPT_BUILDER_V4_RFC.md)
 
 **See also:**
-- `docs/04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md` - Hexagonal principles
+- the former target-architecture document (deleted) - hexagonal principles now live in the root `CLAUDE.md` § Architecture
 - `docs/05_building_blocks/prompt_design_system_v3/README.md` - Prompt token system (current)

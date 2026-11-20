@@ -3032,7 +3032,7 @@ USER: Yes, exactly.
 
 **Architecture:**
 
-- [Hexagonal Architecture Patterns](../08_concepts/hexagonal_architecture_patterns.md)
+- Hexagonal rules: the root `CLAUDE.md` (§ Architecture, § Import Rules) and `src/adapters/CLAUDE.md`; the former patterns guide is deleted
 - [Building Blocks Overview](../05_building_blocks/README.md)
 
 ---

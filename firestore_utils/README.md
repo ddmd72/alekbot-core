@@ -28,7 +28,7 @@ gcloud auth application-default login
 
 ## Collection Names Reference
 
-Collections follow the semantic naming convention (ADR-006):
+Collections follow the semantic naming convention (`docs/04_solution_strategy/decisions/collection_prefix_retained.md`):
 
 **Production Collections** (no prefix):
 

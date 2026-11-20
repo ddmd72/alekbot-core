@@ -28,7 +28,7 @@ This document MUST be updated when:
 ### Cross-References
 
 - **RFC:** [../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md](../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md)
-- **ADR:** [../../09_decisions/adr-008-local-first-external-provider/README.md](../../09_decisions/adr-008-local-first-external-provider/README.md)
+- **Decision record:** [../../04_solution_strategy/decisions/local_first_thin_search_index.md](../../04_solution_strategy/decisions/local_first_thin_search_index.md)
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
 - **OAuth Web API:** [../oauth_web_api/README.md](../oauth_web_api/README.md)
 

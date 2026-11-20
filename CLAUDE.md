@@ -323,13 +323,11 @@ Skip only when the task is unambiguous, isolated and trivial (typo / rename / si
 
 ## Project Documentation
 
-Detailed docs in `docs/` (arc42): architecture `docs/04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md`,
-structure `docs/04_solution_strategy/current_implementation/STRUCTURE.md`, RFCs `docs/10_rfcs/`, risks and technical
-debt `docs/12_risks/IMPLEMENTATION_ROADMAP.md`.
+Detailed docs in `docs/` (arc42): the living docs index and its contract `docs/README.md`, RFCs `docs/10_rfcs/`,
+decision records `docs/04_solution_strategy/decisions/`, risks and technical debt `docs/12_risks/IMPLEMENTATION_ROADMAP.md`.
 
 **Where to write records:** multi-step refactors with a migration plan → `docs/10_rfcs/`; single backward-looking
-decision records (50–150 lines: decision + alternatives + why) → `docs/04_solution_strategy/decisions/`. Do NOT add
-records to `docs/09_decisions/` (it keeps only the older ADR-004–ADR-008).
+decision records (50–150 lines: decision + alternatives + why) → `docs/04_solution_strategy/decisions/`.
 
 ## Language
 
