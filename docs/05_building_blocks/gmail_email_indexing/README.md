@@ -1,4 +1,4 @@
-<!-- block
+<!-- living-doc
 covers:
   src/services/email_indexing_service.py
   src/services/email_search_service.py
@@ -10,8 +10,6 @@ covers:
   src/services/daily_email_review_task.py
   src/services/start_daily_email_review_task.py
   src/services/gmail_reconnect_flag.py
-  src/services/integration_reconnect_service.py
-  src/services/oauth_connect_service.py
   src/agents/email_classification_agent.py
   src/agents/email_card_agent.py
   src/agents/email_search_agent.py
@@ -22,8 +20,6 @@ covers:
   src/adapters/firestore_email_card_index.py
   src/adapters/firestore_email_exclusions_adapter.py
   src/adapters/firestore_email_reader_budget.py
-  src/adapters/firestore_credential_store.py
-  src/adapters/google/google_oauth_provider.py
   src/domain/email.py
   src/domain/email_*.py
   src/domain/auto_index_slot.py
@@ -31,10 +27,6 @@ covers:
   src/composition/email_classifier_runner.py
   src/composition/email_card_setup.py
   src/composition/email_search_setup.py
-  src/composition/oauth_connect_setup.py
-  src/handlers/worker_handler.py
-  src/web/oauth_app.py
-  src/web/user_cabinet_app.py
   scripts/email/
 -->
 # Gmail Email Indexing
