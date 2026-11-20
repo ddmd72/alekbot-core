@@ -53,7 +53,7 @@ def voice_call_id(digest_key: bytes, ticket: str) -> str:
 
 
 def voice_call_key(cid: str) -> str:
-    """The live-call record's store key; the record holds `{"user_id"}` and nothing else."""
+    """The live-call record's store key; the record holds `{"user_id", "account_id"}`."""
     return f"voice_mcp_call:{cid}"
 
 
