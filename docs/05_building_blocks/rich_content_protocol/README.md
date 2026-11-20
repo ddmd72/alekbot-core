@@ -34,11 +34,12 @@ the user (`FileLinkService` mints the link), and it does not write memory.
 ## Owned data
 
 - **Last active channel**: `EnvironmentConfig.user_notification_state_collection`, document id `user_id`
-  (`platform`, `channel_id`, `updated_at`). Written on every incoming chat message
-  (`UserNotificationService.save_channel`), last writer wins.
+  (`platform`, `channel_id`, `updated_at`). Written on an incoming chat message
+  (`UserNotificationService.save_channel`) only when the session mode has `update_notification_channel`; bound
+  (companion or platform-binding) channels do not set it. Last writer wins.
 - **Primary channel**: `{firestore_collection_prefix}user_primary_channel`, same shape. Written by the `$primary`
   command (`UserNotificationService.save_primary`). Both are read through `NotificationStatePort`;
-  `channel_id` for Slack may be a user id (`U...`), for Telegram it is the chat id.
+  `channel_id` for Telegram is the chat id; the notification code also handles a Slack user id (`U...`).
 - **Stored html pages**: the private media bucket under `html/<uuid>-<filename>`
   (`RichContentService._store_html`). The key never reaches the user; the user gets a `/f/<token>` link.
 - Nothing else is stored: files and images are posted to the platform and kept nowhere here.
@@ -55,8 +56,7 @@ the user (`FileLinkService` mints the link), and it does not write memory.
    with no `channel_id`, goes to `send_rich_content`; a media type goes to `RichContentService.process` on the
    channel's id. A link `process` returns is posted as a plain message.
 3. `process` by type: `file` converts by extension and uploads through `PlatformMediaPort.upload_file`
-   (`.xlsx` from CSV via openpyxl, `.docx` from Markdown via python-docx, anything else UTF-8 bytes; a failed
-   conversion falls back to a `.txt`). An `.html` file with a storage port, a link service and a `user_id` is stored
+   (`.xlsx` and `.docx` are converted from the text the model wrote; a failed conversion falls back to a `.txt`). An `.html` file with a storage port, a link service and a `user_id` is stored
    and returned as a `/f/<token>` link; otherwise it is uploaded like any file. `widget` renders the html to a PNG and
    uploads it as an inline image (`upload_image`). Any other type is logged and skipped.
 4. Platform end: `src/adapters/slack/media_adapter.py::SlackMediaAdapter` (`files_upload_v2`) and
@@ -81,21 +81,21 @@ A body with one child is screenshotted as that child, otherwise the body is, wit
    when the caller passes a tier.
 3. The alert goes to the agent as the current message (`AgentCoordinator.route_message`, with `origin_channel_id` and
    `origin_platform` in the context so an async document returns to this channel). The reply text is sent by
-   `_send_answer_text` (a Slack DM id gets an `<@U...>` mention), the history pair is saved, and a `structured_data`
+   `_send_answer_text` (a stored Slack user id, `U...`, gets an `<@U...>` mention), the history pair is saved, and a `structured_data`
    item goes through `_send_rich_content` into step 2 above.
-4. `NotifyResult` (`src/domain/notify_result.py`) tells the caller how far it got: `delivered`, `sent`, `turn_started`.
-   Callers use `is_retryable_failure` and friends to decide whether a Cloud Task may retry.
-5. Other entry points skip the agent: `notify_raw` (text as given, `literal=True` for text the bot did not write),
-   `notify_ui_notice`, `notify_call_summary` and `notify_drive_note_receipt` (text plus a history pair),
-   `notify_answer_copy` (the chat copy of a call answer, `notify`'s delivery without the agent),
-   `notify_document_link`, `notify_file_bytes`.
+4. `NotifyResult` (`src/domain/notify_result.py`) tells the caller how far it got: whether the user got a message and whether the turn started.
+   Callers decide their own retry rule: reminder and daily review retry only when `is_retryable_failure` (turn never
+   started); the deep-research notice retries whenever nothing was sent (see `notify`'s docstring).
+5. The other `notify_*` entry points skip the agent and post fixed or given text, files or links; the ones that also
+   append a history pair are `notify_call_summary`, `notify_drive_note_receipt` and `notify_document_link`.
+   `notify_answer_copy` is the chat copy of a call answer. `notify_raw(literal=True)` is for text the bot did not write.
 
 ### Wiring
 
 `src/composition/notification_setup.py::build_notifications` builds Slack's media adapter, its one `RichContentService`
 (with the graph's media storage and `FileLinkService`) and the renderer; the chat adapter factory and the notification
-service get the same instance. Telegram's is built in `src/composition/application_graph.py` once its adapter exists
-(no storage port) and bound by `src/composition/platform_kit.py::register_late_platform`; Telegram is all or nothing,
+service get the same instance. Telegram's is built in `src/composition/application_graph.py` after its media adapter and before the chat adapter
+that takes it (no storage port) and bound by `src/composition/platform_kit.py::register_late_platform`; Telegram is all or nothing,
 so a failed build registers nothing. The renderer is stopped in `ApplicationGraph.shutdown`.
 
 ### link_list
@@ -126,21 +126,26 @@ A `Title [N]` pair is first rewritten to `[Title][N]` so the name is not printed
   every link would be dropped silently. `ConversationHandler._append_unanchored_sources` appends a localized
   `UIMessage.SOURCES_HEADING` block of bare `[N]` lines, once, before chunking (an adapter-level append would repeat
   per Telegram chunk). `notify` and `notify_answer_copy` do not call it, so an unanchored `link_list` there is dropped.
-  `tests/unit/test_ui_message_strings.py`; `decisions/unanchored_links_sources_block.md`.
+  `tests/unit/test_ui_message_strings.py`, `tests/unit/agents/core/test_quick_response_agent.py::TestLinkListPassThrough`
+  (`link_list` survives the agent); `decisions/unanchored_links_sources_block.md`.
 - **Anchor resolvers differ in order on purpose**: Slack before formatting, Telegram after, because Telegram escaping
   turns `[N]` into `\[N\]`. `tests/unit/adapters/test_slack_link_resolution.py`,
   `tests/unit/adapters/test_telegram_link_resolution.py`.
 - **Model html is never trusted in the renderer**: scripts off, network blocked.
   `tests/unit/adapters/test_playwright_html_renderer_filter.py`.
-- **`NotifyResult.sent` is set before the first send**, so a send that raised still counts; a retry is allowed only
-  when the turn never started. `tests/unit/services/test_notify_turn_started.py`,
+- **`NotifyResult.sent` is set before the first send**, so a send that raised still counts; a caller that retries only
+  while the turn never started relies on `turn_started`. `tests/unit/services/test_notify_turn_started.py`,
   `tests/unit/services/test_notify_result_sent.py`.
 - **Every `NotificationKind` needs an SLA entry.** `tests/unit/infrastructure/test_notification_sla.py`.
-- **Trap: bare `[System: ...]` frames.** The root rule is that code-written text never claims the system's voice and
-  uses `wrap_system` (`src/domain/system_fingerprint.py::wrap_system`). `UserNotificationService` builds bare frames:
-  `src/services/user_notification_service.py:506` (the alert sent to the agent as `[System: {system_alert}{framing_suffix}]`)
-  and `:692` (the `[System: async document ready - ...]` history turn of `notify_document_link`). The drive-note history
-  lines (`drive_note_call_event`, `drive_note_late_event`) come from `src/domain/drive_note_receipt.py` in the same bare form. Not fixed here.
+- **`[System: ...]` frames stay unkeyed by design; never wrap them in `wrap_system`.** `UserNotificationService.notify`
+  frames the alert it sends the agent as `[System: {alert}{suffix}]`, `notify_document_link` saves an
+  `[System: async document ready ...]` history turn, and `src/domain/drive_note_receipt.py` builds drive-note history
+  turns the same way. `SYSTEM_TURN_FINGERPRINT_RFC.md` keeps them bare: the notify frame is "not keyed" (§4.3, §8
+  rev-2 decision: keying it would give a poisoned reminder body more authority), and persisted text is saved as is
+  (§4.4). The literal `[System:` prefix is load-bearing: `src/domain/fact_review_task.py::SYSTEM_FRAME_PREFIX` is how
+  fact review (line 38) skips frames that are not the owner's words, and protocol tokens name these lines verbatim.
+- **Adapters never convert or render.** `PlatformMediaPort` and `HtmlRendererPort` implementations only call the
+  platform API or the browser; conversion and rendering belong in `RichContentService`.
 
 ## Links
 
