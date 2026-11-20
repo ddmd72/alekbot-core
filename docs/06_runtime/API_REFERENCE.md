@@ -1,131 +1,86 @@
+<!-- living-doc
+covers:
+  src/web/main_service_routes.py
+  src/web/landing_app.py
+  src/web/static/landing.html
+-->
 # API Reference
 
-HTTP routes of the main Quart service (`main.py` registers the blueprints in `src/web/` and the platform adapters).
-None of them is a public API: they serve the Cabinet, the chat platforms, Google Cloud (Cloud Tasks / Scheduler),
-Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking changes ship with the deploy.
+The HTTP surface of the services, by route family: which module serves it, who may call it, what is public. None of it
+is a public API: callers are the Cabinet, the chat platforms, Google Cloud (Cloud Tasks, Scheduler), Twilio, Microsoft
+Graph and the claude.ai connectors. There is no version prefix; a breaking change ships with the deploy.
 
-**Auth legend**
-- **JWT** — Cabinet session: `access_token` HttpOnly cookie (web UI) or `Authorization: Bearer <token>`
-  (`src/web/cabinet_auth.py`). Invalid or expired → `401`. A login gives 24 h; a refresh slides the session
-  (`decisions/cabinet_session_24h_cap.md`).
-- **owner** — JWT plus the account-owner check.
-- **OIDC** — Google-signed ID token of an allowed service account (`decisions/worker_oidc_and_docx_sandbox.md`).
-- **none** — public, or protected by its own signature/state as noted.
+**Where the exact list lives.** The route list of the main service's Quart app is the sorted file
+`tests/unit/main_boots_offline_url_map.txt`; the MCP ASGI paths served before Quart are pinned in `MCP_DISPATCHED` of the probe below. `tests/unit/web/test_every_route_refuses_anonymous.py` builds every
+blueprint with its real gate, sends each route without credentials and asserts a refusal and that nothing behind the
+gate was touched; a route that is anonymous by design is listed in its `PUBLIC` set. A new route is pinned in both
+(`src/web/CLAUDE.md`). This page groups routes by family and module; the route module holds exact paths, bodies and status codes.
 
-## Sign-in and connections (`/auth/*`, `src/web/oauth_app.py`)
+## Auth kinds
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/auth/login` | none | Redirect to Google sign-in |
-| `GET` | `/auth/callback` | none (OAuth state) | Sign-in callback; whitelist gate; sets the session cookies |
-| `POST` | `/auth/refresh` | cookie | New access token (a full TTL) from the stored user and account |
-| `POST` | `/auth/logout` | cookie | Revoke the refresh token, clear cookies |
-| `GET` | `/auth/me` | JWT | Current user and account |
-| `POST` | `/auth/link-oauth` | JWT | Link another OAuth identity to the user |
-| `GET` | `/auth/connect/<kind>` | Cabinet session | Start an integration connect; `kind` is `gmail`, `google_tasks`, `microsoft_todo` or `microsoft_onedrive`. `?credential=<id>` reconnects that stored credential; `?intent=add` connects another account of the kind as a new connection. Every intent shows the provider's account chooser. Unknown kind 404; a realm with no OAuth client on this deployment 501 |
-| `GET` | `/auth/connect/callback` | Cabinet session / server-side flow state | The one callback of every integration (Google and Microsoft). The flow is stored server-side and consumed once; the user returns to the Cabinet with `?connected=<kind>` or `?connect_error=<status>`. The To Do activation enqueues `setup_microsoft_todo`. Google Tasks is frozen: no connect button, stored grants keep working |
+| Kind | What it is | Refusal |
+|---|---|---|
+| JWT | Cabinet session: `access_token` HttpOnly cookie (web UI) or `Authorization: Bearer` (`src/web/cabinet_auth.py::make_auth_required`, shared by every Cabinet blueprint) | 401 |
+| account owner | JWT whose `role` claim is `owner` (invite codes) | 403 |
+| docs owner | The one user id configured as `DOCS_OWNER_USER_ID` (`src/web/user_cabinet_app.py`, `owner_only`) | 404 on every failure, so the page looks absent |
+| OIDC | Google-signed ID token of an allowed service account (`src/web/worker_oidc_verifier.py::build_oidc_gate`; `decisions/worker_oidc_and_docx_sandbox.md`) | 401 |
+| signature | Slack (`src/adapters/slack/signature.py`), Telegram secret-token header, Twilio (`src/web/twilio_signature_verifier.py`) | 401 / 403 |
+| capability | The id or token in the URL is the credential | a refusal that reveals nothing more where the module says so (`/d`, `GET /geo`); `/f` and `/s` answer with different bodies, and `/f` also 403 for a gated link opened by another user |
 
-## Cabinet API (`src/web/user_cabinet_app.py`, JWT on every route)
+A login gives short-lived tokens (the TTL defaults of `src/services/session_service.py`) and `/auth/refresh` mints a full-TTL access token, so a session slides; an expired or
+over-age refresh token is refused (`decisions/cabinet_session_24h_cap.md`).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/user/platforms` | Linked Slack / Telegram identities |
-| `POST`, `DELETE` | `/api/user/link-platform` | Link / unlink Slack (`?platform=slack` on delete) |
-| `POST` | `/api/user/link-telegram` | Link Telegram |
-| `POST` | `/api/user/request-phone-otp`, `/api/user/verify-phone-otp` | Prove a phone number (Twilio Verify) for voice calls |
-| `GET` | `/api/user/facts` | Latest facts |
-| `GET` | `/api/user/fact-domains` | The fact registry's domains in Cabinet order, labelled in `lang` (`{key, label, order}`) |
-| `GET` | `/api/user/facts/browse` | Cursor-paginated facts (`limit`, `cursor`, `state`, `domain` = one registry key, matched against `domain_keys`) |
-| `POST` | `/api/user/facts/search` | Semantic search over facts |
-| `POST` | `/api/user/facts/<fact_id>/invalidate` | Invalidate a fact (no LLM; the baseline cache is rebuilt) |
-| `GET`, `POST` | `/api/user/invite-codes` | List codes / create one (**owner**) |
-| `POST` | `/api/user/join-team` | Join an account with an invite code |
-| `GET`, `PUT` | `/api/user/timezone` | User timezone |
-| `GET`, `PUT` | `/api/user/location` | User location (`knowledge_base { user_location }`) |
-| `GET`, `POST` | `/api/user/language` | UI / response language |
-| `GET`, `PUT` | `/api/user/voice-languages` | Spoken languages for voice-message transcription |
-| `GET`, `PUT` | `/api/user/deep-research` | Deep research settings |
-| `GET`, `POST` | `/api/user/reminders` | List / create reminders |
-| `PUT`, `DELETE` | `/api/user/reminders/<note_id>` | Edit / delete a reminder |
-| `GET` | `/api/connectors` | The connectors the Cabinet offers a connect button for: `kind`, `integration`, `label` (a kind whose realm has no OAuth client here is left out) |
-| `GET` | `/api/gmail/status` | Gmail connection, `needs_reconnect`, indexing cursor |
-| `POST` | `/api/gmail/index` | Start an indexing job (`incremental` / `backfill`; `reindex` is refused with 400) |
-| `GET` | `/api/gmail/jobs/<job_id>` | Job status |
-| `POST` | `/api/gmail/jobs/<job_id>/cancel` | Cancel a running job |
-| `GET`, `PUT` | `/api/gmail/auto-index` | Scheduled indexing settings |
-| `GET`, `PUT` | `/api/gmail/daily-review` | Daily email review settings |
-| `DELETE` | `/api/gmail/disconnect` | Revoke Gmail and remove credentials |
-| `DELETE` | `/api/gmail/data` | Delete all indexed email data |
-| `GET` | `/api/tasks/status` | Task-list connection state |
-| `DELETE` | `/api/tasks/disconnect` | Revoke task-list access |
-| `GET` | `/api/tasks/microsoft/status` | To Do connection and change subscriptions |
-| `POST` | `/api/tasks/microsoft/reindex` | Re-index all task lists (Cloud Tasks) |
-| `GET` | `/api/tasks/microsoft/lists` | The user's To Do lists (proxied from Graph) |
-| `DELETE` | `/api/tasks/microsoft/disconnect` | Drop subscriptions, revoke tokens, clear the search index |
-| `GET` | `/api/drive/connections` | The drive card: one row per live connection (name, kind, account, primary, write folder, scope with `empty_means`, searched by default, indexing and its status, note, reconnect), the default name for "Add a drive", the primary's id |
-| `PUT` | `/api/drive/connections/<connection_id>/name` | Rename a drive (`{name}`); a refused name 400, a valid one returns `{name, warning}` |
-| `PUT` | `/api/drive/connections/<connection_id>/scope` | Set the indexed folders or the whole drive (`{whole_drive, folder_ids}`) |
-| `PUT` | `/api/drive/connections/<connection_id>/write-folder` | Set the write folder (`{folder_id}`: an id, `""` the root, null read-only) |
-| `PUT` | `/api/drive/connections/<connection_id>/searched-by-default` | Whether an unnamed search reads the drive (`{enabled}`) |
-| `PUT` | `/api/drive/connections/<connection_id>/indexing` | Indexing (search over the drive) on or off for one connection (`{enabled}`) |
-| `PUT` | `/api/drive/primary` | Make a connection the primary (`{connection_id}`) |
-| `GET` | `/api/drive/connections/<connection_id>/folders` | Folder picker: the folder children of `?parent=<item id>` (the root without it) |
-| `GET`, `PUT` | `/api/drive/deep-research-copy` | Copy deep research reports to the drive (opt-in) |
-| `DELETE` | `/api/drive/connections/<connection_id>` | Disconnect one drive (optional `{heir_id}` names the next primary) |
+## Main service (`main.py`)
 
-## Web pages
+| Family | Module | Auth |
+|---|---|---|
+| `/` landing, `/og.png`, `/alek.jpg`, `/robots.txt` | `src/web/landing_app.py` | public. `/` redirects a holder of a valid login cookie to `/cabinet`; `robots.txt` allows only the exact root |
+| `/health`, `/favicon.ico`, `/worker` | `src/web/main_service_routes.py` | `/worker` OIDC; the others public |
+| `/auth/*` sign-in and connect | `src/web/oauth_app.py` | see below |
+| `/cabinet`, `/join`, `/cabinet/docs`, `/api/user/*`, `/api/gmail/*`, `/api/tasks/*`, `/api/drive/*`, `/api/connectors` | `src/web/user_cabinet_app.py` | JWT on every `/api/*` route; `/cabinet` and `/join` are not gated (the SPA calls the API with its cookie; `/join` consumes the invite when the cookie is valid, else redirects to sign-in); `/cabinet/docs` is docs owner |
+| `/cabinet/call*` pages, `/api/voice/web-call*`, `/api/voice/ui-language`, `/api/voice/call-text/file` | `src/web/voice_web_call_app.py` | call pages and their manifests and icons are public static HTML; every `/api/voice/*` route is JWT |
+| `/voice/auth`, `/voice/inbound-status`, `/voice/answer`, `/voice/status` | `src/web/voice_webhook_app.py` | Twilio signature (403) |
+| `/voice/session-config`, `/voice/submit-transcript`, `/voice/delegate`, `/voice/delegate/abandon`, `/voice/relay-warmup` | `src/web/voice_control_plane_app.py` | OIDC: the voice relay's control plane |
+| `/slack/events`, `/slack/interactivity` | `src/adapters/slack/http_adapter.py` | Slack signature, checked on the raw capped body before it is parsed |
+| `/telegram/webhook` | `src/adapters/telegram/webhook_adapter.py` | secret-token header |
+| `/webhook/microsoft-tasks/<user_id>` | `src/web/microsoft_tasks_webhook.py` | `clientState` plus a subscription stored for that user |
+| `/f/<token>`, `/f/<token>/raw` | `src/web/file_access_app.py` | capability token; a gated token also needs the Cabinet cookie of the file's owner |
+| `/s/<code>` | `src/web/short_link_app.py` | capability; redirects to the target URL |
+| `/d/<link_id>` | `src/web/drive_link_app.py` | capability; one-time drive download link |
+| `/geo/<link_id>` | `src/web/geo_mark_app.py` | one-time link id (`GEO_MARKS_RFC`) |
+| `/mcp/consent` | `src/web/mcp_consent_app.py` | Cabinet cookie; anonymous is sent to `/auth/login` |
+| `/mcp`, `/drive-mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-*` | `src/web/mcp_dispatcher.py` to the `mcp` SDK apps | `/mcp` and `/drive-mcp` take a bearer token; `/authorize`, `/token`, `/register`, `/revoke` are the OAuth protocol endpoints; `/.well-known/oauth-*` is public by design (`MCP_PUBLIC` in the probe); see `docs/05_building_blocks/remote_mcp_server/README.md` |
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/` | none | Public landing, one self-contained file (`src/web/static/landing.html`, no external requests, hand-maintained numbers), the GitHub repo's homepage; a signed-in owner is redirected to `/cabinet` (`src/web/landing_app.py`) |
-| `GET` | `/og.png`, `/robots.txt`, `/favicon.ico` | none | Landing assets: the share image, and a `robots.txt` that allows only `/$` and closes everything else |
-| `GET` | `/cabinet` | none (its API calls need JWT) | Cabinet SPA; on a touch device it opens `/cabinet/call` |
-| `GET` | `/cabinet/call` (+ `manifest.webmanifest`, `icon-<size>.png`) | none (its API calls need JWT) | Voice call page, installable |
-| `GET` | `/cabinet/call/modes`, `/cabinet/call/<mode>` (`interpreter`, `tutor`) (+ `<path>/manifest.webmanifest`, and for a mode `<path>/icon-<size>.png`) | none (its API calls need JWT) | Voice modes list and one page per mode, each installable with its own manifest (`decisions/lelik_voice_modes.md`) |
-| `GET` | `/join?code=…` | cookie / redirect | Team invite deep link |
-| `GET` | `/cabinet/docs[/<path>]` | owner | The `docs/` tree, rendered |
-| `GET` | `/f/<token>`, `/f/<token>/raw` | capability token | Private file access (`src/web/file_access_app.py`) |
-| `GET`, `POST` | `/geo/<link_id>` | one-time link id (the Slack `$geo` link) | The geolocation page, and its fix route: the page posts one position, the server redeems the link, stores the geo mark and, when the owner wrote text, queues a `geo_mark_turn` task (`src/web/geo_mark_app.py`, `GEO_MARKS_RFC` §4.5) |
-| `GET` | `/s/<code>` | none | Short link to a `/f/<token>` URL |
-
-## Voice
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/voice/auth`, `/voice/inbound-status`, `/voice/answer`, `/voice/status` | Twilio signature | Phone-call webhooks (`src/web/voice_webhook_app.py`) |
-| `POST` | `/voice/session-config`, `/voice/submit-transcript`, `/voice/delegate`, `/voice/delegate/abandon`, `/voice/relay-warmup` | OIDC | Control plane for the voice relay (`src/web/voice_control_plane_app.py`); `/voice/submit-transcript` skips the after-call summary for modes outside `VOICE_MODES_WITH_CALL_SUMMARY` |
-| `POST` | `/api/voice/web-call` | JWT | Start a web call (Cloudflare SFU). Optional body field `mode` (`lelik` default, `interpreter`, `tutor`); 400 `unknown_mode`, 409 `mode_unavailable` (provider has no profile for the mode; 409 also when a call is in progress). The 201 body carries `file_to_drive` (bool): true only for `interpreter`/`tutor` when the user's primary drive takes a save |
-| `GET` | `/api/voice/ui-language` | JWT | The owner's UI language (`LanguageServicePort.resolve_ui_language`: user, account, system), the one the server uses for the call file's drive folder and summary. The call pages (`call.html`, `call_modes.html`) are public static HTML, so they fetch it with the session cookie after the first render: page language = last server language stored in `localStorage`, else the phone language when the page has it, else English; a different answer re-renders the visible texts. 200 `{language}`; 500 `{error}` on a resolution error (the page keeps its fallback); 404 when no language service is wired |
-| `POST` | `/api/voice/call-text/file` | JWT | Keep an interpreter or tutor call's text as a `.md` file. Body `{target: "drive"\|"chat", mode, duration_s, entries}` (an entry is `{source, translation, interrupted?}` or `{question, answer}`; at most 2,000 entries and 512 KB). 200 `{ok, path}`; 400 malformed; 413 over a cap; 409 `{ok: false, reason: not_connected\|refused\|no_chat}`; 502 `{reason: failed}`; 503 when not wired |
-| `POST` | `/api/voice/web-call/<call_id>/connect`, `/renegotiate`, `/hangup` | JWT | Web call signalling |
-| `GET` | `/api/voice/web-call/<call_id>/status` | JWT | Web call state |
-
-## Platforms, workers and webhooks
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/slack/events` | Slack signature | Slack Events API; enqueues a named Cloud Task |
-| `POST` | `/telegram/webhook` | Telegram secret token | Telegram updates; enqueues `telegram_update` |
-| `POST` | `/worker` | OIDC | Cloud Tasks / Scheduler entry; `WorkerHandler` dispatches on `task_type` (`docs/07_deployment/SCHEDULERS.md`) |
-| `POST` | `/webhook/microsoft-tasks/<user_id>` | `clientState` + the subscription stored for `<user_id>` | Graph change notifications (`?validationToken=` is echoed); re-indexes the task, renews the subscription |
-| `GET` | `/health` | none | Liveness probe |
-
-## Remote MCP server (claude.ai connector)
-
-Routed by the ASGI dispatcher in `src/web/mcp_dispatcher.py` to the `mcp` SDK app: `/mcp` (streamable HTTP, bearer token),
-`/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-authorization-server`,
-`/.well-known/oauth-protected-resource…`; the consent page is `GET`/`POST /mcp/consent`
-(`src/web/mcp_consent_app.py`). A second, resource-server-only app serves the drive connector: `/drive-mcp`
-(scope `drive_read`) and `/.well-known/oauth-protected-resource/drive-mcp`; it shares the authorization server
-above, and the dispatcher checks the drive paths first. See `docs/05_building_blocks/remote_mcp_server/`.
+Sign-in (`src/web/oauth_app.py`): `/auth/login` and `/auth/callback` are public (the callback is protected by its OAuth
+state cookie and applies the whitelist gate, `decisions/cabinet_oauth_whitelist_gate.md`); `/auth/refresh` reads the
+`refresh_token` cookie and re-checks the user and the whitelist; `/auth/me` and `/auth/link-oauth` need the JWT;
+`/auth/connect/<kind>` starts an integration connect (the kinds are the offered entries of `src/composition/connector_registry.py`; an unknown or not offered kind 404, a kind with no
+OAuth client on this deployment 501) and `/auth/connect/callback` is the one callback of every integration, its flow
+stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).
 
 ## Other services
 
-- **Drive indexer** (`indexer_main.py`): `POST /worker` (`drive_sync` only, OIDC, internal ingress), `GET /health`.
-- **Sandbox render service** (`sandbox_main.py`): `POST /v1/<op>` (OIDC, per-op callers), `GET /health`.
-- **Voice relay** (`relay_main.py`): WebSocket server for Twilio media streams and the SFU `/sfu/*` legs; not Quart.
+| Service | Entry | Routes | Auth |
+|---|---|---|---|
+| Drive indexer | `indexer_main.py`, `src/web/indexer_worker_app.py` | `POST /worker` (`drive_sync` only, a payload without `connection_id` is refused), `GET /health` | OIDC with its own audiences (`indexer_audiences`); the service also runs with `--ingress=internal` (comment in `src/web/indexer_worker_app.py`) |
+| Sandbox render service | `sandbox_main.py`, `src/web/sandbox_app.py` | `POST /v1/<op>`, `GET /health` | OIDC; `src/web/sandbox_caller_gate.py::SandboxCallerGate` lets each caller email use only the op prefixes it is configured for (403 otherwise) |
+| Voice relay | `relay_main.py` | WebSocket: Twilio media streams, `/sfu/*` legs, `/ctl` control socket; plain HTTP gets 200 for health | not Quart; a phone call's ticket is minted by `/voice/auth`, a web call's by `/api/voice/web-call`; `/voice/session-config` only redeems them |
 
-## Notes
+## Traps
 
-- Fact writes: invalidation is the only direct API write; facts are created and corrected through consolidation
-  and `$memory save`, never over HTTP.
+- **`/worker` is not reachable unauthenticated.** A plain `curl` against a live service returns 401; manual triggers are
+  in `CLAUDE.md` (Manual Triggers). Locally, with no OIDC identity and `K_SERVICE` unset, the gate is open; on Cloud
+  Run an empty identity set refuses every call.
+- **The main Quart app has no static folder.** `/static/*` returns 404; an asset gets an explicit route (the call pages
+  and the landing do this).
+- **`/health` is registered twice** (the Cabinet's and `main_service_routes`); the Cabinet's shadows the other
+  (`tests/unit/main_boots_offline_url_map.txt`, first comment line).
+- **Logout revokes nothing.** `POST /auth/logout` only clears the two cookies and needs no credential; an issued token
+  stays valid until it expires (`src/web/oauth_app.py::create_oauth_blueprint`).
+- **The landing page is one self-contained file** (`src/web/static/landing.html`): no external requests, numbers
+  maintained by hand,.
+- **A hub-path trap in the dispatcher:** drive MCP paths are matched before the facts MCP's prefix match
+  (`src/web/mcp_dispatcher.py::mcp_owner`); with the drive connector not built, `/drive-mcp` falls through to the Quart
+  app and answers 404.
+- **Facts are written over HTTP only from the Cabinet:** invalidation and `POST /api/user/facts/review-answers` (`src/services/fact_answer_service.py`); everything else is created and corrected through
+  consolidation and `$memory save` (`docs/05_building_blocks/memory/README.md`).
