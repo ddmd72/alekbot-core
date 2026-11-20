@@ -30,7 +30,6 @@ current) is in [`../README.md`](../README.md#living-docs).
 - Security Validation: [security_validation/README.md](./security_validation/README.md)
 - Multi-Agent System: [multi_agent_system/README.md](./multi_agent_system/README.md)
 - Agent Registry (ACP v2): [agent_registry/README.md](./agent_registry/README.md)
-- Agent Logging: [agent_logging/README.md](./agent_logging/README.md)
 - Hybrid Router: [hybrid_router/README.md](./hybrid_router/README.md)
 - Quick Agent Delegation: [quick_agent_delegation/README.md](./quick_agent_delegation/README.md)
 
