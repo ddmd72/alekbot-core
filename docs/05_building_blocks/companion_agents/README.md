@@ -159,13 +159,12 @@ code that queries it ships.
   overflow router sends the batch elsewhere, not because of that flag.
 - **A re-bind overwrites.** `bind` is create-or-overwrite; there is no refusal of a second binding and no check of who
   binds. Unbinding leaves the companion records, cache and queue in place.
-- **Extraction retries are unbounded, and each retry is paid.** `process_session_batches` calls
-  `reset_recoverable_batches` first on every run, and the adapter resets every FAILED batch of the session to
-  RETRY_PENDING with `attempts` back to 0, with no revival counter (the port docstring says "bounded"; it flags the gap
-  as P15-D5). A batch that always fails costs three LLM extractions at each hourly sweep, which lists every session with
-  a batch in any status, and again whenever another overflow task runs for that session. Alek's consolidation queue
-  caps this with `MAX_FAILED_REVIVALS` (`src/domain/consolidation.py`); the companion queue has no such cap. A poisoned
-  batch never leaves until someone deletes it.
+- **Extraction retries are bounded, and each retry is paid.** `process_session_batches` calls
+  `reset_recoverable_batches` first on every run (the hourly sweep's fan-out and every overflow task alike, not only the
+  sweep), and the adapter revives a FAILED batch of the session at most `MAX_FAILED_REVIVALS`
+  (`src/domain/consolidation.py`) times, counted in the batch's `revivals`, never reset. A batch that always fails costs
+  at most (1 + 3) x 3 = 12 paid extractions; past the cap it stays FAILED with its messages and the failing round logs
+  `EXTRACTION_GAVE_UP`. It never leaves the queue until someone deletes it.
 - **The summary cache holds only the last batch.** Do not read it as the whole session.
 - **Records ids are deterministic**, so a retry overwrites instead of duplicating.
 - **Cycle guard.** A companion that delegates can be called back by what it called; `AgentCoordinator` refuses

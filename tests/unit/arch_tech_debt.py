@@ -75,7 +75,7 @@ MODEL_NAME_WHITELIST_FILES: set[str] = {
     # Pricing lookup table — model names are data, not logic.
     os.path.normpath("src/domain/billing.py"),
     # Intentionally Claude-specific agent (extended thinking, Claude-only capability).
-    # _THINKING_MODELS set is adapter-internal knowledge embedded by design.
+    # _NO_SAMPLING_MODELS (the 96K budget set) is embedded by design; the thinking gate is injected from ClaudeAdapter.
     os.path.normpath("src/agents/claude_deep_research_runner_agent.py"),
 }
 

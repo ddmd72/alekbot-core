@@ -12,6 +12,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.adapters.claude_adapter import ClaudeAdapter
 from src.agents.claude_deep_research_runner_agent import ClaudeDeepResearchRunnerAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.infrastructure.agent_manifest import Intent
@@ -58,6 +59,7 @@ def _make_agent(client=None) -> ClaudeDeepResearchRunnerAgent:
     return ClaudeDeepResearchRunnerAgent(
         config=_make_config(),
         anthropic_client=client or MagicMock(),
+        adaptive_thinking=ClaudeAdapter.takes_adaptive_thinking,
     )
 
 
@@ -910,3 +912,37 @@ class TestRefusal:
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
         with pytest.raises(RuntimeError, match="declined"):
             await agent._research_loop("query", "", "claude-fable-5-1")
+
+
+class TestThinkingGateInjection:
+
+    async def test_the_ultra_fable_model_takes_the_adaptive_thinking_path(self):
+        msg = _api_message("end_turn", [_text_block("Done")])
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], msg)
+        agent = ClaudeDeepResearchRunnerAgent(
+            config=_make_config(), anthropic_client=client,
+            adaptive_thinking=ClaudeAdapter.takes_adaptive_thinking,
+        )
+
+        await agent._research_loop("query", "", "claude-fable-5-1")
+
+        call_kwargs = client.messages.stream.call_args.kwargs
+        assert call_kwargs["thinking"] == {"type": "adaptive"}
+        assert call_kwargs["output_config"] == {"effort": "high"}
+        assert call_kwargs["max_tokens"] == 96_000
+        assert "temperature" not in call_kwargs
+
+    async def test_the_injected_gate_decides_the_thinking_path(self):
+        msg = _api_message("end_turn", [_text_block("Done")])
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], msg)
+        agent = ClaudeDeepResearchRunnerAgent(
+            config=_make_config(), anthropic_client=client, adaptive_thinking=lambda m: False,
+        )
+
+        await agent._research_loop("query", "", "claude-sonnet-5-5")
+
+        call_kwargs = client.messages.stream.call_args.kwargs
+        assert call_kwargs["thinking"] == {"type": "enabled", "budget_tokens": 24_000}
+        assert call_kwargs["max_tokens"] == 32_000

@@ -50,6 +50,11 @@ Bundle two changes into one PR:
 - New tests in DR runner test file for the unified substring gate behaviour on 4-7 and 4-8.
 - Doc sweep: `docs/05_building_blocks/hybrid_router/README.md`.
 
+## Later (2026-11-20)
+
+The runner's gate diverged again, for Fable (`claude-fable` was missing from its tuple, so ULTRA took the fixed-budget
+branch). The runner no longer holds a copy: it takes `ClaudeAdapter.takes_adaptive_thinking` by injection.
+
 ## Related
 
 - `openai_ultra_tier_to_gpt_5_5_pro.md` — yesterday's equivalent for OpenAI ULTRA (same shape: free upgrade + same price + decision record).

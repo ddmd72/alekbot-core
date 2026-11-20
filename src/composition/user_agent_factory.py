@@ -21,6 +21,7 @@ from .agent_services import AgentServices
 from .sandbox_client_setup import docx_runner_factory, pdf_runner_factory
 from .deploy_topology import DeployTopology
 from .voice_mcp_setup import voice_mcp_servers
+from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 from .consolidation_model_setup import consolidation_context as build_consolidation_context
@@ -933,6 +934,7 @@ class UserAgentFactory(AgentFactoryPort):
                 capabilities=["execute_deep_research_claude"],
             ),
             anthropic_client=self.anthropic_client,
+            adaptive_thinking=ClaudeAdapter.takes_adaptive_thinking,
         )
 
     def _build_web_search_light(self, user_id: str, ctx: _UserContext) -> WebSearchLightAgent:

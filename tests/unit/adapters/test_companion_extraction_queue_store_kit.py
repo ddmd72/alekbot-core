@@ -2,8 +2,8 @@
 `FirestoreCompanionExtractionQueue` on the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on
 the raw stored documents and on what readers return.
 
-No test asserts the unbounded FAILED revival as correct: it is P15-D5, pinned as a strict xfail in
-`tests/unit/handlers/test_worker_redelivery_chains.py`. Legacy batches missing a field are not pinned (data audit), except a batch without `session_id`: the stuck-session
+The FAILED revival cap (`revivals`, `MAX_FAILED_REVIVALS`) is pinned in
+`test_companion_extraction_queue_failed_bounded.py`. Legacy batches missing a field are not pinned (data audit), except a batch without `session_id`: the stuck-session
 read leaves it out, so the hourly sweep never gets a None id.
 """
 import time

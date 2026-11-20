@@ -80,8 +80,8 @@ registered only when the Anthropic key and the project are configured, otherwise
 1. Read the two overrides, build the Anthropic client (its read timeout is deliberate, see the comment in `_run_job`),
    the task queue and the media store. The job builds only what it needs, not the app graph.
 2. `ClaudeDeepResearchRunnerAgent` runs `_research_loop`: one streamed Claude session with the server-side `web_search`
-   and `web_fetch` tools. Thinking is adaptive with high effort only for models matching `_THINKING_MODELS` (see
-   traps). The API runs the tools; the agent only resumes on
+   and `web_fetch` tools. Thinking is adaptive with high effort only for models `ClaudeAdapter.takes_adaptive_thinking`
+   accepts (injected into the runner, see traps). The API runs the tools; the agent only resumes on
    `pause_turn` (re-sending the partial assistant content and the container id captured from the stream), retries
    `overloaded_error` with backoff, returns partial text on `max_tokens`, and raises on a `refusal` stop.
 3. Optional second pass (`_build_critic_query`): a fresh session that gets the first report as **unverified leads** and
@@ -125,14 +125,12 @@ it suppresses the agent's own transient retry for the same reason.
   `execute_deep_research_claude` (links, then the page), and `UserAgentFactory._build_claude_runner` still builds the
   runner, but nothing enqueues that task any more: the adapter starts the Job. Only the Job path is live; the handler
   branch is the one that would send round links.
-- **The runner's thinking gate has diverged from `ClaudeAdapter` for Fable.** `_THINKING_MODELS` in the runner lacks
-  `claude-fable`, which `ClaudeAdapter._THINKING_MODELS` includes. The ULTRA model (`MODEL_TIERS`) is a Fable, so
-  today it takes the fixed-budget `enabled` thinking branch with the smaller output budget, not adaptive/high. Any
-  model outside the runner's `_THINKING_MODELS` takes that branch; the larger output budget exists only inside the
-  adaptive branch (`_NO_SAMPLING_MODELS` only picks it; no sampling parameter is sent either way). The runner keeps
-  its own sets because an agent may not import an adapter and domain may not hold model names (the runner is
-  whitelisted in `tests/unit/arch_tech_debt.py`); its comments citing `ClaudeAdapter` are stale. Keep the two gates
-  in step: the unification decision (linked below) fixed the same divergence once.
+- **The thinking gate is injected, not copied.** The runner takes `adaptive_thinking` (composition and `job_main.py`
+  pass `ClaudeAdapter.takes_adaptive_thinking`), so a model the adapter accepts for adaptive thinking (Fable included)
+  gets adaptive/high; any other model takes the fixed-budget `enabled` branch with the smaller output budget.
+  `_NO_SAMPLING_MODELS` only picks the 96K output budget inside the adaptive branch (no sampling parameter is sent
+  either way); the runner stays whitelisted in `tests/unit/arch_tech_debt.py` for that set. A new construction site
+  must pass the gate: the argument is required.
 - **Billing prices input and output separately** (`_record_billing`); collapsing them bills a report-sized output at the
   input rate.
 - **A failed prompt build stops the run.** `DeepResearchAgent.execute` returns a failure and submits no job, per the

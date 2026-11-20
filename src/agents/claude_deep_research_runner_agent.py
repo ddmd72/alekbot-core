@@ -41,7 +41,7 @@ Turn protocol (single loop):
   max_tokens → output budget exhausted; return whatever text was produced.
 """
 import asyncio
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..infrastructure.agent_config import DEEP_RESEARCH_SECOND_PASS
@@ -82,23 +82,16 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # Disable via DEEP_RESEARCH_SECOND_PASS=false env var (defaults to True).
     _SECOND_PASS_ENABLED = False  # default off; per-user override via UserBotConfig.deep_research_second_pass
 
-    # Models that support adaptive thinking + output_config effort.
-    # Substring tuple — same shape as ClaudeAdapter._THINKING_MODELS (claude_adapter.py:87).
-    # Auto-includes future Sonnet/Opus versions (4.7, 4.8, …) without per-release updates.
-    # Unified 2026-05-30 to fix divergence where opus-4-7/4-8 ULTRA fell to Haiku-style
-    # fallback. See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
-    _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")
-
     # New-generation Claude models (the Sonnet 5 / Opus 4.7+ / Fable 5 line). This single set
     # captures two properties that arrived together in that generation:
     #   1. They reject a non-default temperature/top_p/top_k with a 400 (we send none).
     #   2. They use the new tokenizer (~+30% tokens for the same text) → the same report exhausts
     #      a fixed output budget ~30% sooner, so we raise max_tokens (96K vs 64K) to avoid
     #      truncating long research reports.
-    # Exact mirror of ClaudeAdapter._NO_SAMPLING_MODELS (claude_adapter.py:87). There is no shared
-    # home: REQ-ARCH-12 bars these Claude model-name strings from domain/ (and config/), and an
-    # agent may not import an adapter — so this set is duplicated across the two provider-bound
-    # Claude files BY DESIGN (this file is whitelisted in arch_tech_debt.py). Keep the two in sync.
+    # Inside the adaptive-thinking branch this set only picks the 96K output budget. The thinking gate
+    # itself is injected from ClaudeAdapter (`adaptive_thinking`), never copied here; ClaudeAdapter has no
+    # such set (it never sends sampling params). REQ-ARCH-12 bars Claude model-name strings from domain/
+    # (and config/), so this set lives in the agent (whitelisted in arch_tech_debt.py).
     _NO_SAMPLING_MODELS = (
         "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable",
         "claude-haiku-5",
@@ -115,15 +108,21 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
         self,
         config: AgentConfig,
         anthropic_client: Any,
+        *,
+        adaptive_thinking: Callable[[str], bool],
     ) -> None:
         """
         Args:
-            config:           Standard agent config.
-            anthropic_client: AsyncAnthropic client instance — injected from composition layer.
-                              The agent does not create or import the Anthropic SDK.
+            config:            Standard agent config.
+            anthropic_client:  AsyncAnthropic client instance — injected from composition layer.
+                               The agent does not create or import the Anthropic SDK.
+            adaptive_thinking: Gate deciding whether a model takes adaptive thinking + effort
+                               (composition passes `ClaudeAdapter.takes_adaptive_thinking`; required,
+                               no default, so there is no second copy of the model list).
         """
         super().__init__(config)
         self._client = anthropic_client
+        self._adaptive_thinking = adaptive_thinking
 
     # ------------------------------------------------------------------
     # BaseAgent interface
@@ -377,7 +376,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
         is_new_gen = any(m in model for m in self._NO_SAMPLING_MODELS)
 
-        if any(m in model for m in self._THINKING_MODELS):
+        if self._adaptive_thinking(model):
             # New-gen models use the ~+30%-token tokenizer → give them more output headroom
             # (96K) so long reports don't truncate; older thinking models keep 64K. Both are
             # under the 128K extended-output beta ceiling and only bill actual output tokens.

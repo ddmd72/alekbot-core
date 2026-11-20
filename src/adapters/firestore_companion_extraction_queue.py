@@ -13,7 +13,7 @@ from google.cloud.firestore import FieldFilter
 
 from src.ports.companion_extraction_queue import CompanionExtractionQueue
 from src.domain.companion_extraction import CompanionExtractionBatch
-from src.domain.consolidation import BatchStatus
+from src.domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus
 from src.config.environment import EnvironmentConfig
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,8 @@ class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
     overflow, `cbatch_<12 hex>` by default), body `CompanionExtractionBatch.model_dump()` written with `create` (an
     existing id raises AlreadyExists, taken as success). `get_pending_batches` needs the composite index
     (session_id, status, created_at); `get_stuck_session_ids` is a `select(["session_id"])` projection;
-    `increment_attempts` is a get then an update; `reset_recoverable_batches` one update per batch, no precondition."""
+    `increment_attempts` is a get then an update; `reset_recoverable_batches` one update per batch, no precondition; a FAILED batch is revived at most
+    `MAX_FAILED_REVIVALS` times (the `revivals` field, never reset)."""
 
     def __init__(self, db_client: firestore.AsyncClient, env_config: EnvironmentConfig):
         self.db = db_client
@@ -104,20 +105,33 @@ class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
         docs = await query.get()
         now = time.time()
         reset = 0
+        exhausted = 0
         for doc in docs:
             data = doc.to_dict() or {}
             prev = data.get("status")
-            if prev == BatchStatus.PROCESSING.value:
-                started = data.get("processing_started_at")
-                if started is not None and (now - started) < _ZOMBIE_THRESHOLD_SECONDS:
-                    continue
-            await doc.reference.update({
+            update: Dict[str, Any] = {
                 "status": BatchStatus.RETRY_PENDING.value,
                 "attempts": 0,
                 "last_error": None,
                 "processing_started_at": None,
-            })
+            }
+            if prev == BatchStatus.PROCESSING.value:
+                started = data.get("processing_started_at")
+                if started is not None and (now - started) < _ZOMBIE_THRESHOLD_SECONDS:
+                    continue
+            else:
+                revivals = data.get("revivals", 0)
+                if revivals >= MAX_FAILED_REVIVALS:
+                    exhausted += 1
+                    continue
+                update["revivals"] = revivals + 1
+            await doc.reference.update(update)
             reset += 1
+        if exhausted:
+            logger.debug(
+                f"⏹️ Left {exhausted} FAILED batches (revivals >= {MAX_FAILED_REVIVALS}) "
+                f"for session {session_id[:12]}"
+            )
         return reset
 
     async def get_stuck_session_ids(self) -> List[str]:

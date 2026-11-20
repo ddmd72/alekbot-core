@@ -842,7 +842,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 - **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker). Each has a precondition that holds before and after the
   fix and a passing control in the same file:
   - P15-D3 (`test_worker_retry_after_effect.py`): a lost `execute_reminder` enqueue leaves the fire claimed and it is never enqueued again.
-  - P15-D5 (two tests, `test_worker_redelivery_chains.py`): a companion batch is extracted by two concurrent deliveries; a batch that always fails is revived and extracted without bound.
+  - P15-D5 (`test_worker_redelivery_chains.py`): a companion batch is extracted by two concurrent deliveries. Its other half (a batch that always
+    fails revived and extracted without bound) is fixed by the `MAX_FAILED_REVIVALS` cap on companion batches, and its test passes without xfail.
   - P15-D6 (`test_worker_redelivery_scheduler.py`): two concurrent auto-index ticks both pass the running-job guard and start two jobs.
   - P15-D11 (`test_worker_retry_after_effect.py`): a review question whose post succeeded but whose message-ref write failed is posted again the next day, with a false "not delivered" note.
   - P15-D12 (`test_worker_redelivery_chains.py`): a concurrent double click on a review question applies the answer twice (a second owner-trail entry on the fact, doubled answer counters);

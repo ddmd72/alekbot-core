@@ -69,9 +69,9 @@ class CompanionExtractionQueue(ABC):
     async def reset_recoverable_batches(self, session_id: str) -> int:
         """Reset this session's zombies to RETRY_PENDING (attempts 0, last_error and processing_started_at cleared):
         PROCESSING batches older than the task deadline (1800 s) or without processing_started_at; a younger
-        PROCESSING batch is a live run and is left alone. A FAILED batch is revived a bounded number of times.
-        (P15-D5: today every FAILED batch is reset on every call with no counter, and the per-task path calls this,
-        so a batch that always fails is extracted without bound.)
+        PROCESSING batch is a live run and is left alone. A FAILED batch is revived (reset the same way, `revivals` + 1) at most
+        MAX_FAILED_REVIVALS times in its life; `revivals` is never reset, and past it the batch stays FAILED with its
+        messages (not counted in the result).
         Returns the number of batches reset."""
 
     @abstractmethod
