@@ -133,6 +133,7 @@ tests/unit/composition/test_application_graph_platform_workers.py :: marker :: s
 tests/unit/composition/test_application_graph_telegram.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_application_graph_values.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_application_graph_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
+tests/unit/composition/test_claude_runner_thinking_gate_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_consolidation_owner_timezone_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_consolidation_typed_port_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_credential_store_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
