@@ -44,7 +44,7 @@ over-age refresh token is refused (`decisions/cabinet_session_24h_cap.md`).
 | `/cabinet/call*` pages, `/api/voice/web-call*`, `/api/voice/ui-language`, `/api/voice/call-text/file` | `src/web/voice_web_call_app.py` | call pages and their manifests and icons are public static HTML; every `/api/voice/*` route is JWT |
 | `/voice/auth`, `/voice/inbound-status`, `/voice/answer`, `/voice/status` | `src/web/voice_webhook_app.py` | Twilio signature (403) |
 | `/voice/session-config`, `/voice/submit-transcript`, `/voice/delegate`, `/voice/delegate/abandon`, `/voice/relay-warmup` | `src/web/voice_control_plane_app.py` | OIDC: the voice relay's control plane |
-| `/slack/events`, `/slack/interactivity` | `src/adapters/slack/http_adapter.py` | Slack signature, checked on the raw capped body before it is parsed |
+| `/slack/events`, `/slack/interactivity`, `/slack/commands` (slash commands, queued, empty 200) | `src/adapters/slack/http_adapter.py` | Slack signature, checked on the raw capped body before it is parsed |
 | `/telegram/webhook` | `src/adapters/telegram/webhook_adapter.py` | secret-token header |
 | `/webhook/microsoft-tasks/<user_id>` | `src/web/microsoft_tasks_webhook.py` | `clientState` plus a subscription stored for that user |
 | `/f/<token>`, `/f/<token>/raw` | `src/web/file_access_app.py` | capability token; a gated token also needs the Cabinet cookie of the file's owner |

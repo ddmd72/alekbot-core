@@ -13,6 +13,7 @@ from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
 from .base import SlackAdapter
+from .command_route import SlackCommandRoute
 from .interactivity_route import SlackInteractivityRoute
 from .request_body import BodyTooLarge, read_capped_body
 from .response_channel import SlackResponseChannel
@@ -120,6 +121,8 @@ class HTTPModeAdapter(SlackAdapter):
         self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
         # Button presses are queued as `/worker` tasks on the main task queue (not the Slack events queue).
         self._interactivity = SlackInteractivityRoute(self.slack_signing_secret, worker_queue)
+        # Slash commands are queued on the Slack events queue, like events.
+        self._commands = SlackCommandRoute(self.slack_signing_secret, task_service)
 
         # ✅ Create Blueprint instead of Quart app
         self.blueprint = Blueprint('slack', __name__)
@@ -171,6 +174,16 @@ class HTTPModeAdapter(SlackAdapter):
                 return jsonify({"error": "Payload too large"}), 413
             result, status = await self._interactivity.handle(body, dict(request.headers))
             return jsonify(result), status
+
+        @self.blueprint.route("/commands", methods=["POST"])
+        async def slack_commands():
+            try:
+                body = await read_capped_body(request)  # raw body: the signature is checked on these bytes
+            except BodyTooLarge as exc:
+                logger.warning(f"⚠️ Slack command body refused: {exc}")
+                return jsonify({"error": "Payload too large"}), 413
+            text, status = await self._commands.handle(body, dict(request.headers))
+            return text, status  # an empty body: Slack would show a JSON body as a message
 
     def get_blueprint(self):
         """Return blueprint for registration in main app."""
@@ -331,6 +344,9 @@ class HTTPModeAdapter(SlackAdapter):
                     elif event_type == "app_mention":
                         await self._process_mention_event(event, session_id, turn_id=turn_id,
                                                            release_lock=release_lock)
+                    elif event_type == "slash_command":
+                        await self._process_slash_command(event, session_id, turn_id=turn_id,
+                                                          release_lock=release_lock)
                     else:
                         logger.info(f"⏭️ Skipping unsupported event type: {event_type}")
 
@@ -393,6 +409,8 @@ class HTTPModeAdapter(SlackAdapter):
         # Mirrors _process_message_event: only plain and file_share messages are handled.
         if event.get("bot_id") or not event.get("user"):
             return True
+        if event.get("type") == "slash_command":
+            return False
         if event.get("type") not in ("message", "app_mention"):
             return True
         return event.get("type") == "message" and event.get("subtype") not in (None, "file_share")
@@ -592,6 +610,43 @@ class HTTPModeAdapter(SlackAdapter):
 
         except Exception as e:
             logger.error(f"❌ Error processing message: {e}", exc_info=True)
+
+    async def _process_slash_command(
+        self,
+        event: Dict[str, Any],
+        session_id: str,
+        turn_id: Optional[str] = None,
+        release_lock: Optional[Callable[[], None]] = None,
+    ):
+        """`/geo look here` runs as `$geo look here`. The answer always goes to the bot's own DM with the user, never to
+        the invoking channel: a slash command can be typed in a DM between two humans (its id also starts with `D`, the
+        bot is not in it), and `$geo`'s DM-only check would pass for it."""
+        try:
+            slack_user_id = event.get("user", "unknown")
+            command = str(event.get("command") or "")
+            text = f"${command.lstrip('/')} {event.get('text') or ''}".strip()
+
+            decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
+            try:
+                opened = await self.app.client.conversations_open(users=slack_user_id)
+                dm_channel = opened["channel"]["id"]
+            except Exception as e:
+                logger.error(f"❌ Cannot open the DM for slash command {command}: {e}", exc_info=True)
+                return
+
+            if decision.action == "reject":
+                logger.warning(f"⛔ Unauthorized Slack user: {slack_user_id}")
+                if decision.message:
+                    await SlackResponseChannel(self.app.client, dm_channel, self.slack_bot_token).send_message(
+                        decision.message)
+                return
+
+            await self._run_authorized_turn(
+                decision.user, decision.action, slack_user_id=slack_user_id, channel=dm_channel, text=text,
+                event_metadata={"channel_type": "im"}, turn_id=turn_id, release_lock=release_lock,
+            )
+        except Exception as e:
+            logger.error(f"❌ Error processing slash command: {e}", exc_info=True)
 
     async def _dispatch_command(
         self,

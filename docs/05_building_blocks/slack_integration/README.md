@@ -78,6 +78,22 @@ one codec for poster and route). A press arrives at `/slack/interactivity`
 answer 200. `WorkerHandler._handle_interactive_choice` applies it and `show_choice` re-renders the message with
 `chat.update`. The Slack app needs Interactivity enabled with this route as Request URL. Its only poster is the memory review, profile questions included (`memory/README.md` §5.6).
 
+### Slash command
+
+`/geo look here` behaves as `$geo look here` typed in the owner's direct message with the bot. Slack posts the command
+(form body: `command`, `text`, `user_id`, `channel_id`) to `/slack/commands`
+(`command_route.py::SlackCommandRoute.handle`): signature on the raw capped body, then the form is parsed; a missing
+`/command` or `user_id` is 400; otherwise a `slash_command` event is enqueued on the Slack intake queue (session id =
+the Slack user id, no task name: Slack never retries a slash command) and the route answers 200 with an EMPTY body (a JSON
+body would be shown as a message). The worker (`HTTPModeAdapter._process_slash_command`) runs IAM like a message, opens
+the bot's DM with the user (`conversations_open`) and runs `_run_authorized_turn` with the text `$<command> <text>` there.
+`conversations_open` failing is logged and drops the command.
+
+Invariant: **a slash command always answers in the bot's DM, never in the invoking channel.** It can be typed in a DM
+between two humans (its id also starts with `D`; the bot is not in it), where `$geo`'s DM-only check would wrongly pass.
+Adding a command is Slack app config only: Slash Commands, Request URL `<service>/slack/commands`, scope `commands`,
+reinstall the app. No code change; an unknown name is answered by the `$` command handler like a typed one.
+
 ### Literal text
 
 Text the bot did not write goes out through `ResponseChannel.send_literal` (`src/domain/messaging.py`);
