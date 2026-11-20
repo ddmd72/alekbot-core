@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from src.domain.billing import BillingAccount
-from src.domain.user import UserBotConfig, UserProfile
+from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
 from src.infrastructure.agent_config import (
     CLAUDE_DEEP_RESEARCH_RUNNER, COMPUTE, CONSOLIDATION, DEEP_RESEARCH, DOC_GENERATOR, DOC_PLANNER, DOMAIN_RESEARCHER,
     EMAIL_SEARCH, HTML_PAGE_GENERATOR, IMAGE_GENERATION, MAPS_SEARCH, MEMORY_SEARCH, NOTES, PDF_GENERATOR, TASKS,
@@ -140,3 +140,10 @@ async def test_the_telephony_adapter_holds_the_configured_twilio_credentials(use
 
     assert telephony._client.username == user_graph.offline.env["TWILIO_ACCOUNT_SID"]
     assert telephony._client.password == user_graph.offline.env["TWILIO_AUTH_TOKEN"]
+
+
+async def test_the_consolidation_agent_runs_the_pinned_claude_model(user_graph):
+    cached = user_graph.app.agent_factory._cache[USER_ID]
+
+    assert cached["consolidation_agent"].model_name == CONSOLIDATION.claude_model
+    assert cached["consolidation_agent"].execution_context.tier is PerformanceTier.PERFORMANCE

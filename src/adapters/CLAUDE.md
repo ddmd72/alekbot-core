@@ -42,9 +42,10 @@ mocks cannot detect translation regressions) + contract validators in
   which rejects `output_config.effort` (HTTP 400). `ClaudeAdapter.MODEL_TIERS` since 2026-10-15:
   ECO and TIER1–3 → `claude-haiku-5-5` (accepts effort; `CLAUDE_SMALL_MODEL` env repoints those, **not**
   BALANCED any more), BALANCED → `claude-sonnet-5-5`, PERFORMANCE → **`claude-opus-5-5`**, ULTRA →
-  `claude-fable-5-2` (Fable 5.1 until 2026-11-13: cheaper successor, $8/$40 vs $10/$50; Smart is its only production user). ConsolidationAgent's default `PERFORMANCE` therefore resolves to Opus 5.5 unless
+  `claude-fable-5-2` (Fable 5.1 until 2026-11-13: cheaper successor, $8/$40 vs $10/$50; Smart is its only production user). PERFORMANCE resolves to Opus 5.5 unless
   `CLAUDE_PERFORMANCE_MODEL` pins it (instant rollback lever — `make claude-rollback` → Sonnet 5;
-  `cloudbuild-dev.yaml` carries no pin since 2026-10-15, so a deploy returns to the Opus default). See
+  `cloudbuild-dev.yaml` carries no pin since 2026-10-15). Consolidation does not follow it: composition pins it to
+  `ConsolidationAgentConfig.claude_model`. See
   `docs/05_building_blocks/provider_resolution/README.md` (Invariants and traps) and the gates below.
 - **Claude sampling / thinking / tool-choice gates — substring traps.** Model ids nest
   (`claude-sonnet-5` is a prefix of `claude-sonnet-5-5`), so every gate is either a deliberate

@@ -205,6 +205,10 @@ class ConsolidationAgentConfig:
     # 15 min: covers consolidate_full (Stage 1 ~4 min + Stage 2 ~3 min + Stage 3 ~4 min).
     # Cloud Tasks consolidation tasks should have matching or higher deadline.
     timeout_ms: int = 900_000
+    # The model consolidation runs on whenever its provider is Claude (owner ruling 2026-11-20;
+    # decisions/sonnet55_adaptive_thinking_stall.md). A pin, so neither the PERFORMANCE tier's model nor
+    # CLAUDE_PERFORMANCE_MODEL decides it; a user's model_overrides["consolidation"] still wins.
+    claude_model: str = "claude-sonnet-5-5"
 
 
 # ---------------------------------------------------------------------------

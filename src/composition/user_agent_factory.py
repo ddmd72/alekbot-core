@@ -23,7 +23,7 @@ from .deploy_topology import DeployTopology
 from .voice_mcp_setup import voice_mcp_servers
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
-
+from .consolidation_model_setup import consolidation_context as build_consolidation_context
 from ..domain.agent import AgentConfig
 from ..domain.exceptions import UnsupportedProviderError
 from ..domain.user import UserProfile
@@ -365,7 +365,7 @@ class UserAgentFactory(AgentFactoryPort):
         router_context = self.context_builder.build("router", user_profile.config)
         quick_context = self.context_builder.build("quick", user_profile.config)
         smart_context = self.context_builder.build("smart", user_profile.config)
-        consolidation_context = self.context_builder.build("consolidation", user_profile.config)
+        consolidation_context = build_consolidation_context(self.context_builder, user_profile.config)
         self._validate_anthropic_key(quick_context, user_profile.user_id)
         self._validate_anthropic_key(smart_context, user_profile.user_id)
         postprocessing_context = self.context_builder.build("postprocessing", user_profile.config)
