@@ -3,8 +3,9 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from scripts.quality import friction
 from scripts.quality.friction import report_weeks, to_markdown, weekly_friction
-from scripts.quality.git_units import BranchCommit, FileChange, Unit
+from scripts.quality.git_units import BranchCommit, FileChange, GitParseError, Unit
 
 MON = datetime(2026, 1, 5, tzinfo=timezone.utc)  # a Monday
 UNTIL = date(2026, 1, 12)  # the next Monday: exactly one complete week, labelled 2026-01-05
@@ -143,3 +144,26 @@ def test_markdown_is_a_header_and_one_line_per_week():
     assert [r["week"] for r in rows] == ["2025-12-29", "2026-01-05"]
     assert rows[0]["drag"] == "-" and rows[0]["units"] == "0"
     assert rows[1]["drag"] == "0.33" and rows[1]["radius_median"] == "1" and rows[1]["new_file_share"] == "0.00"
+
+
+def test_mechanical_lines_count_only_test_files_the_unit_modifies():
+    mechanical = BranchCommit("m" * 40, "test(mechanical): follow a rename", (
+        f(TEST_A, added=2, deleted=2),  # existing in the unit: counts
+        f(TEST_B, "A", added=10),  # created by the pull request: does not count
+        f("tests/unit/test_c.py", added=5),  # absent from the unit's net diff: does not count
+        f("tests/unit/test_gone.py", deleted=3),  # deleted by the pull request: does not count
+    ))
+    row = one_week(unit(1, f(SRC, added=100), f(TEST_A, added=2, deleted=2), f(TEST_B, "A", added=10),
+                        f("tests/unit/test_gone.py", "D", deleted=3), branch=(mechanical,)))
+    assert row["mechanical_test_lines_changed"] == 4
+    assert row["bookkeeping_per_kloc"] == pytest.approx(40.0)
+
+
+def test_unreadable_git_text_exits_2_with_one_line(monkeypatch, capsys):
+    def unreadable(*args, **kwargs):
+        raise GitParseError("raw and numstat entries do not match")
+
+    monkeypatch.setattr(friction, "read_units", unreadable)
+    assert friction.main(["--until", "2026-01-12", "--weeks", "1"]) == 2
+    out = capsys.readouterr()
+    assert out.out == "" and len(out.err.strip().splitlines()) == 1 and "numstat" in out.err

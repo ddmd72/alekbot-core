@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts.quality.git_units import (
-    BlameLine, FileChange, Hunk, Unit, parse_blame, parse_branch_commits, parse_hunks, parse_log, parse_patch_log,
+    BlameLine, FileChange, GitParseError, Hunk, Unit, parse_blame, parse_branch_commits, parse_hunks, parse_log, parse_patch_log,
     path_class, unit_title, with_test_defs,
 )
 
@@ -219,3 +219,30 @@ def test_parse_blame_one_entry_per_line_with_committer_time():
     assert parse_blame(BLAME) == [
         BlameLine(SHA_A, TS), BlameLine(SHA_A, TS), BlameLine(SHA_B, TS + 86400),
     ]
+
+
+# ------------------------------------------------------------------------------------- unreadable git text raises
+
+
+@pytest.mark.parametrize("changes", [
+    raw("M", "src/services/alpha.py") + "garbage-without-tabs\0" + numstat("1", "0", "src/services/alpha.py"),
+    raw("M", "src/services/alpha.py"),  # a raw entry without its numstat
+    numstat("1", "0", "src/services/alpha.py"),  # a numstat entry without its raw status
+    raw("M", "src/services/alpha.py") + numstat("x", "0", "src/services/alpha.py"),
+    raw("R100", "src/alpha.py"),  # a rename cut short
+])
+def test_parse_log_raises_on_text_it_cannot_read(changes):
+    with pytest.raises(GitParseError):
+        parse_log(record(SHA_A, SHA_B, TS, "feat(drive): add a field", "", changes))
+
+
+def test_parse_blame_raises_without_a_committer_time():
+    text = f"{SHA_C} 1 1 1\nauthor Test User\nfilename src/services/alpha.py\n\tline one\n"
+    with pytest.raises(GitParseError):
+        parse_blame(text)
+
+
+def test_parse_blame_ignores_the_boundary_flag():
+    with_flag = f"{SHA_C} 1 1 1\ncommitter-time {TS}\nboundary\nfilename src/alpha.py\n\tline one\n"
+    without = with_flag.replace("boundary\n", "")
+    assert parse_blame(with_flag) == parse_blame(without) == [BlameLine(SHA_C, TS)]
