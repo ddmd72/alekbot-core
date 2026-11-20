@@ -197,7 +197,7 @@ The service is built in `build_application_graph`; without it the turn returns t
   `delegate_tool_contract_and_strict.md`, `typed_retry_policy.md`, `transcript_integrity_one_provider.md`,
   `long_running_turns.md` (all under `docs/04_solution_strategy/decisions/`).
 - [hybrid_router](../hybrid_router/README.md),
-  [agent_logging](../agent_logging/README.md), [document_generation](../document_generation/README.md).
+  [observability_strategy](../observability_strategy/README.md), [document_generation](../document_generation/README.md).
 - Adding an agent: [`NEW_AGENT_PLAYBOOK.md`](../../how_to/NEW_AGENT_PLAYBOOK.md); the roster and per-agent traps:
   `src/agents/CLAUDE.md`.
 

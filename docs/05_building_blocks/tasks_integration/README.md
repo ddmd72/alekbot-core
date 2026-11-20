@@ -181,7 +181,7 @@ the Graph subscriptions (best effort), the stored credentials, every index entry
   [`TASKS_AGENT_RFC.md`](../../10_rfcs/TASKS_AGENT_RFC.md)
 - Decisions: [`local_first_thin_search_index.md`](../../04_solution_strategy/decisions/local_first_thin_search_index.md),
   [`reconnect_notice_r1.md`](../../04_solution_strategy/decisions/reconnect_notice_r1.md)
-- Neighbours: [OAuth web API](../oauth_web_api/README.md), [multi-agent system](../multi_agent_system/README.md),
+- Neighbours: [OAuth web API](../oauth_web_api/README.md), [agent registry](../agent_registry/README.md),
   [multi-vector RRF search](../../08_concepts/multi_vector_rrf_search.md)
 
 ## Where to start reading

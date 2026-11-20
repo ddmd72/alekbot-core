@@ -189,7 +189,7 @@ that does (`src/infrastructure/agent_manifest.py::LELIK`).
 - Decisions (`docs/04_solution_strategy/decisions/`): `per_call_execution_context.md`, `two_layer_provider_override.md`,
   `cross_provider_execution_retry.md`, `quick_agent_deferred_deletion.md`, `terminal_tool_co_emitted_calls.md`.
 - Neighbours: [agent_registry](../agent_registry/README.md),
-  [provider_resolution](../provider_resolution/README.md), [search_enrichment](../search_enrichment/README.md),
+  [provider_resolution](../provider_resolution/README.md), [memory](../memory/README.md),
   [prompt_design_system_v3](../prompt_design_system_v3/README.md).
 
 ## Where to start reading

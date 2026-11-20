@@ -156,7 +156,7 @@ A `Title [N]` pair is first rewritten to `[Title][N]` so the name is not printed
 - [`NOTIFICATION_DELIVERY_REFACTOR_RFC.md`](../../10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md) (obsolete, reasoning
   only), [`SYSTEM_TURN_FINGERPRINT_RFC.md`](../../10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md) (the framing rule),
   [`VOICE_COMPANION_RFC.md`](../../10_rfcs/VOICE_COMPANION_RFC.md) (call summary and answer copy).
-- [Multi-agent system](../multi_agent_system/README.md).
+- [Agent registry](../agent_registry/README.md).
 
 ## Where to start reading
 
