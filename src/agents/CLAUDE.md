@@ -49,8 +49,8 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 
 | Agent | Documentation |
 |---|---|
-| Router, Smart | `docs/05_building_blocks/smart_agent_execution/README.md`, `decisions/two_layer_provider_override.md` |
-| Quick | `docs/05_building_blocks/quick_agent_delegation/README.md`, `decisions/quick_agent_deferred_deletion.md` |
+| Router, Smart | `docs/05_building_blocks/hybrid_router/README.md`, `decisions/two_layer_provider_override.md` |
+| Quick | `docs/05_building_blocks/hybrid_router/README.md`, `decisions/quick_agent_deferred_deletion.md` |
 | WebSearch | `decisions/websearch_per_intent_tier.md` |
 | Memory, Consolidation, review pass | `docs/05_building_blocks/memory/README.md` (§5.6 review, §2.7 expiry), `decisions/standing_directives.md`, `decisions/directive_applicability_gate.md`, `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`, `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` |
 | FactProfiler (internal, never delegated; `agents/fact_profiler_agent.py`, pinned Claude, no fallback) | `docs/10_rfcs/FACT_PROFILE_RFC.md` §4 |

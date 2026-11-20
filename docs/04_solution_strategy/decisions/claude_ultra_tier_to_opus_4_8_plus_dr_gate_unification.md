@@ -48,7 +48,7 @@ Bundle two changes into one PR:
 - `src/domain/billing.py::_TOKEN_COSTS` — add `claude-opus-4-8` entry ($5 / $25 / $0.10 / $1.25).
 - Update existing test `test_claude_adapter.py::test_claude_model_for_tier_ultra` (per-test permission granted 2026-05-30).
 - New tests in DR runner test file for the unified substring gate behaviour on 4-7 and 4-8.
-- Doc sweep: `docs/05_building_blocks/smart_agent_execution/COMPLEXITY_EXECUTION_SETTINGS.md`.
+- Doc sweep: `docs/05_building_blocks/hybrid_router/README.md`.
 
 ## Related
 
