@@ -10,11 +10,11 @@ The HTTP surface of the services, by route family: which module serves it, who m
 is a public API: callers are the Cabinet, the chat platforms, Google Cloud (Cloud Tasks, Scheduler), Twilio, Microsoft
 Graph and the claude.ai connectors. There is no version prefix; a breaking change ships with the deploy.
 
-**Where the exact list lives.** The route list of the main service is the sorted file
-`tests/unit/main_boots_offline_url_map.txt`. `tests/unit/web/test_every_route_refuses_anonymous.py` builds every
+**Where the exact list lives.** The route list of the main service's Quart app is the sorted file
+`tests/unit/main_boots_offline_url_map.txt`; the MCP ASGI paths served before Quart are pinned in `MCP_DISPATCHED` of the probe below. `tests/unit/web/test_every_route_refuses_anonymous.py` builds every
 blueprint with its real gate, sends each route without credentials and asserts a refusal and that nothing behind the
 gate was touched; a route that is anonymous by design is listed in its `PUBLIC` set. A new route is pinned in both
-(`src/web/CLAUDE.md`). This page does not repeat paths, bodies or status codes: the route module holds them.
+(`src/web/CLAUDE.md`). This page groups routes by family and module; the route module holds exact paths, bodies and status codes.
 
 ## Auth kinds
 
@@ -25,9 +25,9 @@ gate was touched; a route that is anonymous by design is listed in its `PUBLIC` 
 | docs owner | The one user id configured as `DOCS_OWNER_USER_ID` (`src/web/user_cabinet_app.py`, `owner_only`) | 404 on every failure, so the page looks absent |
 | OIDC | Google-signed ID token of an allowed service account (`src/web/worker_oidc_verifier.py::build_oidc_gate`; `decisions/worker_oidc_and_docx_sandbox.md`) | 401 |
 | signature | Slack (`src/adapters/slack/signature.py`), Telegram secret-token header, Twilio (`src/web/twilio_signature_verifier.py`) | 401 / 403 |
-| capability | The id or token in the URL is the credential | one indistinguishable 404 / 401 |
+| capability | The id or token in the URL is the credential | a refusal that reveals nothing more where the module says so (`/d`, `GET /geo`); `/f` and `/s` answer with different bodies, and `/f` also 403 for a gated link opened by another user |
 
-A login gives 24 h tokens and `/auth/refresh` mints a full-TTL access token, so a session slides; an expired or
+A login gives short-lived tokens (the TTL defaults of `src/services/session_service.py`) and `/auth/refresh` mints a full-TTL access token, so a session slides; an expired or
 over-age refresh token is refused (`decisions/cabinet_session_24h_cap.md`).
 
 ## Main service (`main.py`)
@@ -49,12 +49,12 @@ over-age refresh token is refused (`decisions/cabinet_session_24h_cap.md`).
 | `/d/<link_id>` | `src/web/drive_link_app.py` | capability; one-time drive download link |
 | `/geo/<link_id>` | `src/web/geo_mark_app.py` | one-time link id (`GEO_MARKS_RFC`) |
 | `/mcp/consent` | `src/web/mcp_consent_app.py` | Cabinet cookie; anonymous is sent to `/auth/login` |
-| `/mcp`, `/drive-mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-*` | `src/web/mcp_dispatcher.py` to the `mcp` SDK apps | bearer token; see `docs/05_building_blocks/remote_mcp_server/README.md` |
+| `/mcp`, `/drive-mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-*` | `src/web/mcp_dispatcher.py` to the `mcp` SDK apps | `/mcp` and `/drive-mcp` take a bearer token; `/authorize`, `/token`, `/register`, `/revoke` are the OAuth protocol endpoints; `/.well-known/oauth-*` is public by design (`MCP_PUBLIC` in the probe); see `docs/05_building_blocks/remote_mcp_server/README.md` |
 
 Sign-in (`src/web/oauth_app.py`): `/auth/login` and `/auth/callback` are public (the callback is protected by its OAuth
 state cookie and applies the whitelist gate, `decisions/cabinet_oauth_whitelist_gate.md`); `/auth/refresh` reads the
 `refresh_token` cookie and re-checks the user and the whitelist; `/auth/me` and `/auth/link-oauth` need the JWT;
-`/auth/connect/<kind>` starts an integration connect (Gmail, Microsoft To Do, OneDrive; unknown kind 404, a kind with no
+`/auth/connect/<kind>` starts an integration connect (the kinds are the offered entries of `src/composition/connector_registry.py`; an unknown or not offered kind 404, a kind with no
 OAuth client on this deployment 501) and `/auth/connect/callback` is the one callback of every integration, its flow
 stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).
 
@@ -62,9 +62,9 @@ stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).
 
 | Service | Entry | Routes | Auth |
 |---|---|---|---|
-| Drive indexer | `indexer_main.py`, `src/web/indexer_worker_app.py` | `POST /worker` (`drive_sync` only, a payload without `connection_id` is refused), `GET /health` | OIDC with its own audiences (`indexer_audiences`) |
+| Drive indexer | `indexer_main.py`, `src/web/indexer_worker_app.py` | `POST /worker` (`drive_sync` only, a payload without `connection_id` is refused), `GET /health` | OIDC with its own audiences (`indexer_audiences`); the service also runs with `--ingress=internal` (comment in `src/web/indexer_worker_app.py`) |
 | Sandbox render service | `sandbox_main.py`, `src/web/sandbox_app.py` | `POST /v1/<op>`, `GET /health` | OIDC; `src/web/sandbox_caller_gate.py::SandboxCallerGate` lets each caller email use only the op prefixes it is configured for (403 otherwise) |
-| Voice relay | `relay_main.py` | WebSocket: Twilio media streams, `/sfu/*` legs, `/ctl` control socket; plain HTTP gets 200 for health | not Quart; the main service's `/voice/*` routes hand the call its tickets |
+| Voice relay | `relay_main.py` | WebSocket: Twilio media streams, `/sfu/*` legs, `/ctl` control socket; plain HTTP gets 200 for health | not Quart; a phone call's ticket is minted by `/voice/auth`, a web call's by `/api/voice/web-call`; `/voice/session-config` only redeems them |
 
 ## Traps
 
@@ -78,9 +78,9 @@ stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).
 - **Logout revokes nothing.** `POST /auth/logout` only clears the two cookies and needs no credential; an issued token
   stays valid until it expires (`src/web/oauth_app.py::create_oauth_blueprint`).
 - **The landing page is one self-contained file** (`src/web/static/landing.html`): no external requests, numbers
-  maintained by hand, and it is the GitHub repo's homepage.
+  maintained by hand,.
 - **A hub-path trap in the dispatcher:** drive MCP paths are matched before the facts MCP's prefix match
   (`src/web/mcp_dispatcher.py::mcp_owner`); with the drive connector not built, `/drive-mcp` falls through to the Quart
   app and answers 404.
-- **Facts are never written over HTTP.** Invalidation is the only direct write; facts are created and corrected through
+- **Facts are written over HTTP only from the Cabinet:** invalidation and `POST /api/user/facts/review-answers` (`src/services/fact_answer_service.py`); everything else is created and corrected through
   consolidation and `$memory save` (`docs/05_building_blocks/memory/README.md`).
