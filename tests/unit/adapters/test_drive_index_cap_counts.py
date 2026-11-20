@@ -18,7 +18,6 @@ from tests.unit.adapters.firestore_drive_eval_fakes import RECS, STATES, EvalDb,
 
 _ROOT = Path(__file__).resolve().parents[3]
 T = datetime(2026, 10, 1, tzinfo=timezone.utc)
-CAP_FLAGS = ("card_cap_alerted", "chunk_cap_alerted")
 A = ConnectionScope(user_id="user-a", connection_id="user-a")
 B = ConnectionScope(user_id="user-b", connection_id="user-b")
 NOBODY = ConnectionScope(user_id="nobody", connection_id="nobody")

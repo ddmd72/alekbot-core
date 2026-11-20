@@ -34,7 +34,6 @@ class TestCodec:
         assert doc["inaccessible_reobserved"] is True
 
 
-
 @pytest.fixture
 def db():
     return Db()
