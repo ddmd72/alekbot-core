@@ -578,7 +578,7 @@ class WorkerHandler:
         """
         Fire all reminders with due <= now.
         Delegates to RemindersService which owns the AgentNotePort interaction.
-        Called by Cloud Scheduler every 15 minutes.
+        Called by Cloud Scheduler every 5 minutes.
         """
         if not self._reminders_service:
             logger.warning("[Worker] fire_due_reminders: reminders_service not configured")
