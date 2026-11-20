@@ -57,7 +57,7 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 | EmailCard (internal, never delegated; `agents/email_card_agent.py`, pinned Gemini Flash-Lite, no fallback, no prompt_content) | alek-ops RFC draft; public doc: `docs/05_building_blocks/gmail_email_indexing/README.md` § Flows, Cards |
 | EmailSearch, EmailClassification | `docs/05_building_blocks/gmail_email_indexing/README.md` |
 | Drive model agents (reader, triage, profiler, passages), DriveTranscriber | `docs/05_building_blocks/user_drive/README.md` §4.16, §4.17, §4.23; `decisions/drive_model_extractor_agents.md`, `decisions/drive_model_outage_defers_model_work.md` |
-| Drive (`DriveAgent`), FileManagement | `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`, `docs/05_building_blocks/user_drive/README.md` §6.7, `docs/05_building_blocks/file_storage/README.md` §3.4, `decisions/drive_content_write_gate.md`, `decisions/drive_open_bound.md`, `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` |
+| Drive (`DriveAgent`), FileManagement | `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`, `docs/05_building_blocks/user_drive/README.md` §6.7, `docs/05_building_blocks/file_storage/README.md` § Flows (open_file, delete_file, send_file_to_user), `decisions/drive_content_write_gate.md`, `decisions/drive_open_bound.md`, `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` |
 | DocPlanner, DocGenerator, PdfGenerator, HtmlPageGenerator | `docs/05_building_blocks/document_generation/README.md`, `decisions/html_page_grok_default.md` |
 | Notes / Self-Reminders | `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`, `decisions/reminder_rrule_schedules.md`, `docs/10_rfcs/AGENT_WORKSPACE_RFC.md` §8.3 |
 | Tasks | `docs/05_building_blocks/tasks_integration/README.md` |

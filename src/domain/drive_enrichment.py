@@ -36,10 +36,10 @@ from .drive_index_params import (
 class JobState(str, Enum):
     """The state of one enrichment job of a record (§25.4.5): the profile job and the passage-hint job each have one.
     An agent-type model backoff is NOT a job state (§25.4.6 reading, review MINOR 2): the job stays `ready` and the
-    backoff gates the enrichment queue read; `deferred` is the refresh cooldown only."""
+    backoff gates the enrichment queue read; `deferred` is the refresh cooldown or a pending content run."""
     CURRENT = "current"       # nothing to do
     READY = "ready"           # work is due
-    DEFERRED = "deferred"     # the refresh cooldown is not over: `*_defer_until`
+    DEFERRED = "deferred"     # the refresh cooldown is not over, or a content run is due: `*_defer_until`
     PARKED = "parked"         # the month's cap and the initial build are spent, for the current version
     HELD = "held"             # a hold recorded for the current version and fingerprint (passages: generation)
     NONE = "none"             # the policy gives the kind no such job, or there is nothing readable

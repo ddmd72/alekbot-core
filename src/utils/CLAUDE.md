@@ -1,7 +1,7 @@
 # Utils — traps
 
 - **Temp-file names are bounded in bytes, not characters** (`safe_temp_suffix()` in `file_conversion.py`): NAME_MAX is
-  255 bytes and a Cyrillic character costs 2 (`docs/05_building_blocks/file_storage/README.md` §2.1.1).
+  255 bytes and a Cyrillic character costs 2 (`docs/05_building_blocks/file_storage/README.md` § Invariants and traps).
 - **Logfire's scrubbing never reaches `gen_ai.*.messages`**, so file bytes in an LLM call would be exported. With
   `LOGFIRE_CAPTURE_CONTENT=true` Logfire's own exporter is off (`send_to_logfire=False`) and `_init_logfire` sends spans
   through `RedactingExporter` (`logfire_redacting_exporter.py`), which replaces file parts with `file_omitted`; it wraps

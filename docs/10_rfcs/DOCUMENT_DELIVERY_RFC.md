@@ -341,7 +341,7 @@ The RFC designed a `PdfPlannerAgent` → `PdfGeneratorAgent` two-phase pipeline 
 **Actual implementation:** single-pass `PdfGeneratorAgent` only. No `PdfPlannerAgent` in production.
 Reasons: HTML+CSS generation in one call is sufficient; the planner abstraction added latency and
 complexity without value for this format. `GENERATE_PDF_CODE` intent never shipped.
-See: `docs/05_building_blocks/document_generation/README.md` §10 for current architecture.
+See: `docs/05_building_blocks/document_generation/README.md` (PDF flow) for current architecture.
 
 ### 7.2 HTML Page pipeline — added 2026-03-15
 
@@ -358,4 +358,4 @@ User Request
 Key differences from PDF: no Node.js subprocess, no Puppeteer, one delivery item (HTML only).
 `DocumentDeliveryService` is shared. `AgentWorkerHandler._deliver_document_result()` handles both
 `CREATE_PDF` and `CREATE_HTML_PAGE` intents identically.
-See: `docs/05_building_blocks/document_generation/README.md` §11.
+See: `docs/05_building_blocks/document_generation/README.md` (HTML page flow).
