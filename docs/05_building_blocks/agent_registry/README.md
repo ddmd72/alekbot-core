@@ -42,20 +42,18 @@ Nothing is stored. State is in memory, per process:
 - **Registry**: `AgentRegistry._agents` (agent id to descriptor) and `_intent_to_agent`. Filled once at startup from
   `src/infrastructure/agent_manifest.py::ALL_DESCRIPTORS` by `src/composition/application_graph.py::_build_coordinator`.
 - **Coordinator**: `AgentCoordinator.agents`, the live per-user instances, keyed `{base_agent_id}_{user_id}`.
-- **Factory cache**: per user, a profile plus the built agents, one hour TTL swept every five minutes, plus a per-user
+- **Factory cache**: per user, a profile plus the built agents, a TTL swept periodically (`UserAgentFactory._cache_ttl`, `_evict_expired_cache`), plus a per-user
   generation counter that eviction bumps (`UserAgentFactory._evict_user`).
 - **Circuit breaker**: failure counts per agent id (`src/agents/base_agent.py::CircuitBreaker`), one instance per agent.
 
-`AgentDescriptor` (`src/infrastructure/agent_registry.py`) has two halves. Part A is what an agent offers:
-`capabilities` (intent to `ExecutionMode`), per-intent descriptions, `context_schemas` (typed fields that become
-`context.properties` of the tool schema), `internal`, `eager`, `dispatch_deadline_s` (Cloud Tasks deadline of an ASYNC
-intent), `prefetch_file_ref`. Part B is what an orchestrator may call: `allowed_intents`, `intent_remap`,
-`intent_fanout` (`FanoutSpec`: secondary intents dispatched in parallel with the primary). The two orchestrator
+`AgentDescriptor` (`src/infrastructure/agent_registry.py`) has two halves. Part A is what an agent offers (its
+intents and their execution modes, descriptions, typed `context_schemas`, `internal`, `eager`, the ASYNC dispatch
+deadline, the file prefetch opt-out). Part B is what an orchestrator may call (`allowed_intents`, `intent_remap`,
+`intent_fanout`: secondary intents dispatched in parallel with the primary). The two orchestrator
 descriptors (`QUICK_RESPONSE`, `SMART_RESPONSE`) are class attributes of their agents and are not in `ALL_DESCRIPTORS`.
 
-The wire contract is in `src/domain/agent.py`: `AgentMessage` (`QUERY`, `DELEGATE`, `INFORM`, `REQUEST_FEEDBACK`),
-`AgentResponse` (statuses `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, `CANNOT_HANDLE`; `delivery_items`; `history_context`)
-and `AgentConfig` (timeout, breaker threshold and recovery).
+The wire contract is in `src/domain/agent.py`: `AgentMessage` (its `AgentIntent`), `AgentResponse` (its
+`AgentStatus`, `delivery_items`, `history_context`) and `AgentConfig` (timeout, breaker threshold and recovery).
 
 ## Flows
 
@@ -77,7 +75,7 @@ and `AgentConfig` (timeout, breaker threshold and recovery).
    or a chain deeper than `MAX_DELEGATION_DEPTH`, logs ERROR and posts to the alert sink
    (`decisions/delegation_cycle_guard.md`).
 4. A non-eager agent is built first (flow 4).
-5. The query gets a `[Fri 13 Nov 2026, 09:05 UTC]`-shaped prefix so specialists resolve relative dates against the right
+5. The query gets a UTC timestamp prefix (weekday, date, year, time) so specialists resolve relative dates against the right
    year. `src/domain/delegation_timestamp.py::strip_delegation_timestamp` removes it where the raw text is needed.
 6. `_execute_sync` prefetches a `file_ref` into `file_content` or `file_note` (`prefetch_file_ref`, unless the descriptor
    opts out), then routes an `AgentMessage(QUERY)` with payload `{query, intent, **params}` to
@@ -103,11 +101,12 @@ The execution mode is the manifest's. The caller cannot choose it (`decisions/de
 1. `eager=False` descriptors are registered at startup (their intents are visible at once) but built on first use. The
    coordinator calls `AgentFactoryPort.create_agent_on_demand(agent_type, user_id)` from `handle_delegation`, and from
    `route_message` through `_try_lazy_load` for a recipient that is not registered (a Cloud Task callback).
-2. `UserAgentFactory.create_agent_on_demand` looks up `_LAZY_BUILDERS[agent_type]` under the per-user lock, binds the
+2. `UserAgentFactory.create_agent_on_demand` looks up `_LAZY_BUILDERS[agent_type]`, then under the per-user lock builds, binds the
    runtime (`BaseAgent.bind_runtime` with `AgentRuntime`) before registering the agent, and records its id in
    `_lazy_agent_ids` for eviction.
-3. Eviction (`$admin_cache_reset`, the TTL sweep) takes no lock, so it bumps the user's generation. A build that an
-   eviction overtook is discarded and redone, at most `_MAX_BUILD_ATTEMPTS` times (`_build_unless_overtaken`).
+3. Eviction (`$admin_cache_reset`, the TTL sweep) takes no lock, so it bumps the user's generation. The eager build
+   (`_build_unless_overtaken`) is redone when an eviction overtook it, at most `_MAX_BUILD_ATTEMPTS` times, keeping the last.
+   The lazy build re-reads the cache entry under the lock instead and returns `False` after `_MAX_BUILD_ATTEMPTS` evictions.
 4. A turn that was delegating during an eviction finds its eager agents unregistered. `_try_lazy_load` sees an eager
    descriptor and calls `restore_agents_for_user`, which rebuilds the set, instead of answering "Unknown recipient".
 
@@ -122,7 +121,9 @@ The execution mode is the manifest's. The caller cannot choose it (`decisions/de
    `LLMRateLimitError` and `LLMUnavailableError` are retried, with `RetryPolicy` (`src/domain/retry_policy.py`) through
    `src/utils/retry.py::retry_async`. A timeout is never retried (`TIMEOUT` response), nor is any other exception.
    `CancelledError` propagates and does not count as a failure.
-4. Outcome: success resets the breaker; every other outcome records a failure.
+4. Outcome: any `AgentResponse` that `execute()` returns, `FAILED` included, resets the breaker; only an exception or
+   timeout raised out of `execute()` records a failure. An agent that turns its own errors into `AgentResponse.failure`
+   never opens its breaker.
 
 Retry is switched off for an execution under an outer retry (`context["suppress_transient_retry"]`, set by Cloud Task
 callers that return 5xx) and for the orchestrator of a clocked long turn (`BaseAgent._effective_retry_policy`).
@@ -132,8 +133,8 @@ deep-research runner). Decision: `decisions/typed_retry_policy.md`.
 ### 6. Failure of the main agent
 
 `ConversationHandler._route_with_fallback` calls `AgentFallbackService.try_quick_fallback` after the router answer
-(only before the turn's 90 s mark, `decisions/long_running_turns.md`). Any non-`SUCCESS` status goes to Quick directly
-(bypassing the router) with `context["fallback_note"]`; an ops alert is posted when a sink is wired. If Quick also fails or raises, the service
+(only before the turn's long-turn mark, `decisions/long_running_turns.md`). Any non-`SUCCESS` status goes to Quick directly
+(bypassing the router) with `context["fallback_note"]`, which `QuickResponseAgent` appends in memory only, wrapped with `wrap_system` and the turn's key, so it is never persisted and speaks as a keyed system note (`src/agents/core/quick_response_agent.py::QuickResponseAgent`); an ops alert is posted when a sink is wired. If Quick also fails or raises, the service
 returns a synthetic `SUCCESS` carrying `AgentFallbackService._APOLOGY_TEXT`, so the user never sees an error status.
 The service is built in `build_application_graph`; without it the turn returns the raw failure.
 
@@ -149,12 +150,13 @@ The service is built in `build_application_graph`; without it the turn returns t
   The synchronous consumer is `ConversationHandler._deliver_item` (one branch per `type`); ASYNC results are delivered by
   `AgentWorkerHandler`. A new type is one branch in the consumer that will see it.
 - **History summary**: Smart returns `metadata["response_summary_task"]`; `_prepare_history_texts` awaits it under
-  `asyncio.shield` with a 10 s timeout after the reply is sent, and falls back to the full text.
+  `asyncio.shield` with a short timeout after the reply is sent, and falls back to the full text.
 
 ## Invariants and traps
 
-- **Orchestrators never change for a new specialist.** Both read intents from the registry. Enforced by the descriptor
-  tests in `tests/unit/infrastructure/test_agent_manifest.py` and `test_registry_internal_allowlist.py`.
+- **Orchestrators never change for a new specialist.** Both read intents from the registry; the descriptor tests
+  (`tests/unit/infrastructure/test_agent_manifest.py`, `test_registry_internal_allowlist.py`) check the descriptor fields
+  and allowlist filtering, not the orchestrators.
 - **`ALL_DESCRIPTORS` is the whole registry.** An agent built by the factory but missing from it has no intent, so no
   delegation reaches it. The consolidation agent and the deep-research runner are such agents: they are addressed by
   agent id (`/worker` payload, `route_message`), not by intent.
@@ -169,8 +171,9 @@ The service is built in `build_application_graph`; without it the turn returns t
   keeps serving the old config.
 - **`bind_runtime` before `register_agent`.** An agent routable without its coordinator, content store and quota service
   runs unbilled and uncaptured (`tests/unit/composition/test_agent_registration_window.py`).
-- **An ASYNC intent that must reach the user needs a branch in `AgentWorkerHandler.handle_task`.** Without one the task
-  succeeds and nothing is delivered. Generators return `DeliveryItem`s; the worker, not the agent, sends them.
+- **An ASYNC agent that returns `DeliveryItem`s needs a branch in `AgentWorkerHandler.handle_task`.** Without one the
+  task succeeds and nothing is delivered; the worker, not the agent, sends them. An agent that posts to the chat itself
+  (`send_to_chat`, through `AlekGatewayAgent`) needs only the failure notice.
 - **The native-format declaration travels only to file-opening intents.** `_specialist_context` strips
   `NATIVE_FORMATS_KEY` for every intent outside `NATIVE_OPENING_INTENTS`, in message and in task body
   (`tests/unit/infrastructure/test_coordinator_native_formats.py`).
@@ -182,9 +185,10 @@ The service is built in `build_application_graph`; without it the turn returns t
 - **`BaseAgentConfig.history_full_turns` is dead.** Nothing reads it; the live value is the literal
   `BaseAgent.HISTORY_FULL_TURNS`, and the two disagree. Editing `src/infrastructure/agent_config.py` does not change
   history tiering.
-- **Bot-written text never becomes memory through history.** The consolidation serializer reads user-role text and the
-  legacy `MessagePart.consolidation_text` (`src/domain/consolidation_serialization.py`); facts from a document go through
-  the owner-confirmed path (`decisions/memory_facts_owner_confirmed.md`).
+- **Bot-written text is never the owner's words.** Only user-role text, including the legacy
+  `MessagePart.consolidation_text`, counts as the owner's; the serializer
+  (`src/domain/consolidation_serialization.py`) reads model text (the summary, or `full_text` with the `*_context` blocks
+  in full mode) as the bot's. Facts from a document go through the owner-confirmed path (`decisions/memory_facts_owner_confirmed.md`).
 
 ## Links
 
