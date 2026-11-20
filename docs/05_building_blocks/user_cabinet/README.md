@@ -15,7 +15,7 @@ sections: Memory, Integrations, Team, Settings) served at `/cabinet`, and one Qu
 JWT session that the OAuth sign-in set.
 
 What it is not: it is not a second way to write memory (a correction is a message the user sends in chat, see Flows),
-it holds no business rules of its own (each route calls a service or a repository through a port), and it does not own
+its routes call services and repositories through ports, and the rules that live in the route closure are listed under Invariants and traps; it it does not own
 the voice call page (`/cabinet/call` is `src/web/voice_web_call_app.py`, which reuses only the session gate).
 
 ## Owned data
@@ -49,12 +49,12 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
 
 1. `GET /api/user/facts/browse` (`browse_facts`) returns one page of the account's facts, newest first, with an opaque
    cursor. `state` is `current` (default) or `stale`, parsed by `src/domain/fact_review_overview.py::listable_state`;
-   `domain` is one key of `src/domain/fact_domains.py` (any other value is `400`); `limit` is capped at 500.
+   `domain` is one key of `src/domain/fact_domains.py` (any other value is `400`); `limit` is capped by the route.
    Query: `FirestoreFactRepository.get_paginated_facts` in `src/adapters/firestore_repo.py`.
 2. `GET /api/user/fact-domains` gives the filter chips and badge labels in the page's UI language. A fact that has no
    profile yet has `primary_domain: null` and is in no domain filter.
 3. `POST /api/user/facts/search` embeds the query (`EmbeddingService`, inside `billed_scope`, so the cost is billed to the
-   account) and runs `FactRepository.search_facts` with a limit of 50, scoped by the JWT's `account_id` and `user_id`.
+   account) and runs `FactRepository.search_facts` with a fixed result limit, for the JWT's account (`account_id` is the filter).
 4. `GET /api/user/facts/recently-closed` lists facts archived or invalidated within `SET_ASIDE_WINDOW`
    (`fact_review_overview.py`), each with the actor of its last lifecycle entry.
 
@@ -93,10 +93,9 @@ per question; one failure shows as `"error"` for that question and does not stop
 3. Disconnect (`DELETE /api/gmail/disconnect`) first marks "disconnected by user" through `IntegrationReconnectService`,
    then removes the credentials; indexed mail stays. `DELETE /api/gmail/data` deletes the indexed mail.
    Reconnect notices: `decisions/reconnect_notice_r1.md`.
-4. Microsoft To Do: `/api/tasks/microsoft/{status,reindex,lists,disconnect}` call `TaskSetupService` and the To Do
+4. Microsoft To Do: the `/api/tasks/microsoft/...` routes call `TaskSetupService` and the To Do
    provider. Google Tasks has `/api/tasks/status` and `/api/tasks/disconnect`.
-5. Drive card: `/api/drive/connections...` (list, rename, scope and its preview, write folder, connector access,
-   searched-by-default, indexing, primary, folder picker, disconnect). Each route resolves the connection through the
+5. Drive card: the `/api/drive/...` routes. Each route resolves the connection through the
    caller's own user id first, so another user's id answers `404`. Scope and indexing changes enqueue a `drive_sync` task
    so the indexer acts at once; with no drive queue the change is saved, a warning is logged and `queued` is false.
    A disconnect that leaves no primary drive turns the deep-research drive copy off.
@@ -127,10 +126,21 @@ per question; one failure shows as `"error"` for that question and does not stop
 - **No route skips the gate.** `tests/unit/web/test_every_route_refuses_anonymous.py` probes every route; only `/health`
   and the `/cabinet` shell are listed public. A new route is also pinned in `tests/unit/main_boots_offline_url_map.txt`
   (`src/web/CLAUDE.md`).
-- **Tenancy comes from the token, never from the request.** Fact, job, reminder and drive routes filter by the JWT's
-  `account_id` / `user_id`; `tests/unit/web/test_cabinet_owner_and_tenant_refusals.py` shows each refusal on stored data.
-- **Every collaborator is optional in the factory,** so a deployment that lacks one answers `501` (or `503` for fact
-  delete) instead of failing to boot. A new feature route must do the same, and `main.py` must pass the new argument.
+- **Tenancy comes from the token, never from the request.** Fact routes filter by the JWT's `account_id`; reminders,
+  Gmail jobs, platforms, invite lists and drive connections by its `user_id` (`_own_connection` for drives).
+  `tests/unit/web/test_cabinet_owner_and_tenant_refusals.py` shows the refusals for docs, Gmail jobs, reminders and
+  facts on stored data; drives have no such case there.
+- **Most optional collaborators answer `501` when absent** (`503` for fact delete); status reads answer
+  `{"connected": false}`, `/api/connectors` answers an empty list, and `POST /api/user/language` without its service
+  writes nothing and still answers `200`. Only the invite, session, user, fact and embedding dependencies are required
+  by `create_user_cabinet_blueprint`. A new feature route must pick its behaviour on purpose, and `main.py` must pass
+  the new argument.
+- **Rules that live in the route closure** (not in a service): only role `owner` creates an invite
+  (`create_invite`); a drive disconnect that leaves no primary turns the deep-research drive copy off
+  (`drive_connection_disconnect`); a recurring reminder's due time is moved to its first occurrence on create
+  (`create_reminder`); a Gmail job is persisted before it is enqueued, with a sync fallback when no queue is wired
+  (`gmail_index`); cancel writes the job status directly (`gmail_cancel_job`); a scope preview counts only folders the
+  saved scope does not already cover (`_new_scope_roots`, nested in the blueprint factory).
 - **Drive settings are changed only here.** The writers (`rename`, `set_scope`, `set_indexing`, `disconnect`, ...) are
   called only from `user_cabinet_app.py` and `drive_disconnect_service.py`, so the bot cannot change them in chat
   (`tests/unit/test_req_arch_34_drive_settings_cabinet_only.py`). Files the index could not read are likewise shown in
@@ -143,7 +153,7 @@ per question; one failure shows as `"error"` for that question and does not stop
   `domain_keys` in `config/firestore.indexes.json`; a missing one fails at query time.
 - **Cancelling a Gmail job writes its status directly** (`gmail_cancel_job`); the worker stops chaining on the next task,
   so a running page can finish one more step.
-- **The page escapes everything it renders** (`escapeHtml`); fact and drive text is untrusted.
+- **Fact and drive text is untrusted:** the page puts it through `escapeHtml` before rendering.
 
 ## Links
 
