@@ -49,15 +49,15 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 
 | Agent | Documentation |
 |---|---|
-| Router, Smart | `docs/05_building_blocks/smart_agent_execution/README.md`, `decisions/two_layer_provider_override.md` |
-| Quick | `docs/05_building_blocks/quick_agent_delegation/README.md`, `decisions/quick_agent_deferred_deletion.md` |
+| Router, Smart | `docs/05_building_blocks/hybrid_router/README.md`, `decisions/two_layer_provider_override.md` |
+| Quick | `docs/05_building_blocks/hybrid_router/README.md`, `decisions/quick_agent_deferred_deletion.md` |
 | WebSearch | `decisions/websearch_per_intent_tier.md` |
 | Memory, Consolidation, review pass | `docs/05_building_blocks/memory/README.md` (§5.6 review, §2.7 expiry), `decisions/standing_directives.md`, `decisions/directive_applicability_gate.md`, `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`, `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` |
 | FactProfiler (internal, never delegated; `agents/fact_profiler_agent.py`, pinned Claude, no fallback) | `docs/10_rfcs/FACT_PROFILE_RFC.md` §4 |
 | EmailCard (internal, never delegated; `agents/email_card_agent.py`, pinned Gemini Flash-Lite, no fallback, no prompt_content) | alek-ops RFC draft; public doc: `docs/05_building_blocks/gmail_email_indexing/README.md` § Flows, Cards |
 | EmailSearch, EmailClassification | `docs/05_building_blocks/gmail_email_indexing/README.md` |
 | Drive model agents (reader, triage, profiler, passages), DriveTranscriber | `docs/05_building_blocks/user_drive/README.md` §4.16, §4.17, §4.23; `decisions/drive_model_extractor_agents.md`, `decisions/drive_model_outage_defers_model_work.md` |
-| Drive (`DriveAgent`), FileManagement | `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`, `docs/05_building_blocks/user_drive/README.md` §6.7, `docs/05_building_blocks/file_storage/README.md` §3.4, `decisions/drive_content_write_gate.md`, `decisions/drive_open_bound.md`, `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` |
+| Drive (`DriveAgent`), FileManagement | `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`, `docs/05_building_blocks/user_drive/README.md` §6.7, `docs/05_building_blocks/file_storage/README.md` § Flows (open_file, delete_file, send_file_to_user), `decisions/drive_content_write_gate.md`, `decisions/drive_open_bound.md`, `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` |
 | DocPlanner, DocGenerator, PdfGenerator, HtmlPageGenerator | `docs/05_building_blocks/document_generation/README.md`, `decisions/html_page_grok_default.md` |
 | Notes / Self-Reminders | `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`, `decisions/reminder_rrule_schedules.md`, `docs/10_rfcs/AGENT_WORKSPACE_RFC.md` §8.3 |
 | Tasks | `docs/05_building_blocks/tasks_integration/README.md` |
@@ -169,7 +169,7 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 - **DelegationEngine** (`src/infrastructure/delegation_engine.py`) owns the multi-turn loop, tool dispatch via
   AgentCoordinator, memory-first parallel execution and history via `build_tool_turn()`. It does not own LLM parameters
   (the agent builds `LLMRequest`) or response parsing. `dispatch()` is public for a caller with no loop of its own
-  (Lelik). Fan-out: `FanoutSpec` on the descriptor. Details: `docs/05_building_blocks/multi_agent_system/README.md`.
+  (Lelik). Fan-out: `FanoutSpec` on the descriptor. Details: `docs/05_building_blocks/agent_registry/README.md`.
 - **Pass `context=message.context` whole** to `engine.execute` and to any downstream message. Rebuilding the context
   loses `origin_channel_id`, `session_id` and `_call_chain`, and an agent that does so silently resets the cycle guard
   (that was `notes_agent`'s bug). `AgentCoordinator._refuse_if_looping` refuses re-entering an agent in `_call_chain`;
@@ -212,5 +212,5 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 - **Time:** `include_datetime=False` by default; time reaches the model via `_inject_timestamps()` in user messages and a UTC
   prefix on delegation queries. A date in the system prompt changes the cached static prefix.
 - **Large static payloads** (a triage batch, a corpus) go through `extra_static_blocks` on `build_for_agent()`, never into the
-  user message (pollutes history, bypasses caching; `docs/08_concepts/prompt_assembly_guide.md`).
+  user message (pollutes history, bypasses caching; `docs/05_building_blocks/prompt_design_system_v3/README.md`).
 - **Drive notes:** Smart has no note tool; a note's words go in the `work_with_drive_files` query, never in `file_contents`.

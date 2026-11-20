@@ -31,7 +31,7 @@ Migrate only **ULTRA** tier: `gpt-5.4-pro` → `gpt-5.5-pro`. Keep ECO, BALANCED
 - `src/adapters/openai_adapter.py::MODEL_TIERS[ULTRA]` — string swap.
 - `src/domain/billing.py::_TOKEN_COSTS` — add `gpt-5.5-pro` entry ($30 / $180 / no cache).
 - New unit test `test_openai_model_for_tier_ultra` (pre-existing test covered ECO/BALANCED/PERFORMANCE only).
-- Doc sweep: `docs/05_building_blocks/openai_integration/README.md`, `docs/05_building_blocks/smart_agent_execution/COMPLEXITY_EXECUTION_SETTINGS.md`.
+- Doc sweep: `docs/05_building_blocks/openai_integration/README.md`, `docs/05_building_blocks/hybrid_router/README.md`.
 
 ## Related
 

@@ -44,6 +44,6 @@ malformed (missing `anchor`).
 
 ## See also
 
-- Building block: `docs/05_building_blocks/rich_content_protocol/README.md` § 9.4.
+- Building block: `docs/05_building_blocks/rich_content_protocol/README.md` § Invariants and traps.
 - Implementation: `src/handlers/conversation_handler.py` (`_append_unanchored_sources`),
   `src/domain/ui_messages.py` (`UIMessage.SOURCES_HEADING`), `src/locales/{uk,en,fr,es}.py`.

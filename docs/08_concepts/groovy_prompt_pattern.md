@@ -1,321 +1,92 @@
-# Groovy-Style Prompt Engineering Pattern
-
-## 1. The Core Philosophy
-
-Modern LLMs are heavily trained on code. They understand **syntax, inheritance, strict typing, and logical flow** better than they understand loose natural language instructions.
-
-The **Groovy-Style Pattern** exploits this by treating the System Prompt not as a "story" but as a **Class Definition**.
-
-### Why Groovy?
-
-Groovy (and Java) syntax provides specific constructs that map perfectly to Agent behavior:
-
-- **`class Agent extends Base`**: Instantly establishes hierarchy and capability inheritance.
-- **`methods`**: Defines repeatable, deterministic protocols (Tools/Agents).
-- **`properties`**: Defines static knowledge (Context, Anchors).
-- **`{ ... }` Blocks**: Clearly delimits scope, preventing instruction bleeding.
-
----
-
-## 2. The Architecture: Token-Based v3 System
-
-All prompt content is stored in Firestore as **tokens** — validated, immutable fragments of Groovy DSL. The `universal_agent_v1` blueprint defines the structural template with `{{CLASS_NAME}}` slot placeholders. At assembly time, `PromptAssemblyService` resolves which token goes into each slot using a 4-level priority chain (USER > ACCOUNT > AGENT > SYSTEM) and substitutes the placeholders.
-
-**Result:** The assembled static template is a complete Groovy DSL class definition — identical in structure to the hand-written prompts of the v2 era, but assembled from composable, permission-controlled pieces.
-
-**Resolution order (who can change what):**
-
-- **USER**: Personality tokens — humor preset, archetype, voice, vibe. Users customize their Alek.
-- **ACCOUNT**: Account-wide defaults (e.g., family-friendly humor for all users of an account).
-- **AGENT**: Agent-specific behavior — cognitive process, output format. E.g., router gets `COGNITIVE_PROCESS_ROUTER`.
-- **SYSTEM**: Immutable base — policies, protocols, directives. Cannot be overridden by any user.
-
-See: [Prompt Design System v3](../05_building_blocks/prompt_design_system_v3/README.md)
-
----
-
-## 3. Syntax Guide & Examples
-
-### A. Defining the Agent
-
-Instead of: *"You are a helpful assistant named Alek..."*
-Use:
-
-```groovy
-class Alek extends Agent {
-  // Inherits and extends the base Agent contract
-
-  archetype {
-    role: "Intellectual Sniper"
-    baseline: "Precision over volume. One sharp observation > five blunt ones."
-  }
-}
-```
-
-### B. Injecting Knowledge
-
-Instead of: *"Here is some context about the user..."*
-Use:
-
-```groovy
-  knowledge_base {
-    biographical_context: '''
-      **Biographical**
-      - Born in Springfield (Jan 01, 1980)
-      - Software engineer (Feb 10, 2025)
-    '''
-  }
-```
-
-**Note:** The `knowledge_base` block is appended by code at runtime — it is not part of the static blueprint template. It appears only when content is non-empty.
-
-### C. Defining Protocols (Agent Behaviors)
-
-Instead of: *"When you search memory, you must first..."*
-Use:
-
-```groovy
-  protocols {
-    memory_search {
-      trigger: "questions about facts, events, preferences related to user"
-      steps: [
-        "1. IDENTIFY: What specific information is needed?",
-        "2. INVOKE: search_memory(query=..., limit=5)",
-        "3. VERIFY: Does the result answer the question?",
-        "4. DELIVER: Integrate findings into response"
-      ]
-    }
-  }
-```
-
----
-
-## 4. The "Cognitive Process" Block
-
-This is the most critical component for reasoning. By defining a `cognitive_process` block, we force the LLM to:
-
-1. **Plan** before acting.
-2. **Follow** a strict sequence.
-3. **Self-Correct** (via Verify/Analyze steps).
-
-**Example:**
-
-```groovy
-    cognitive_process {
-      steps: [
-        "1. ANALYZE: Extract Object and Criteria.",
-        "2. EXECUTE: Perform search or delegation.",
-        "3. VERIFY: Do results match Criteria?",
-        "4. DELIVER: Format output with context."
-      ]
-    }
-```
-
-**Why This Works:**
-
-- LLMs trained on code recognize step-by-step procedures
-- Numbered lists enforce sequential execution
-- Verbs (ANALYZE, EXECUTE, VERIFY) trigger specific reasoning modes
-
----
-
-## 5. Assembled Prompt Structure
-
-The final system instruction sent to the LLM has two parts separated by the cache boundary marker:
-
-**Static prefix** (cached by Anthropic for ~5 min):
-```groovy
-class Alek extends Agent {
-
-  personality {
-    archetype { ... }     // ← token ARCHETYPE_INTELLECTUAL_SNIPER
-    vibe { ... }          // ← token VIBE_BATTLE_WEARY
-    voice { ... }         // ← token VOICE_APHORISTIC
-    humor_engine { ... }  // ← token HUMOR_PRESET_RANEVSKAYA (or user override)
-  }
-
-  knowledge_base {
-    {{FEW_SHOT_EXAMPLES_DEFAULT}}  // ← resolved at assembly time
-  }
-
-  policies { ... }        // ← policy tokens
-  protocols { ... }       // ← protocol tokens
-  cognitive_process { ... }
-  output_format { ... }
-
-}
-
-knowledge_base {
-  biographical_context: '''
-    **Biographical**
-    - ...
-  '''
-
-  conversation_history: '''   // ← consolidation agent only
-    ...
-  '''
-}
-
-available_skills { ... }      // ← Smart only, when the user has skills
-standing_directives { ... }   // ← the user's binding rules, last static block
-```
-
-**Dynamic suffix** (sent fresh every request):
-```groovy
-<!-- CACHE_BOUNDARY -->
-active_reminders { ... }      // ← the orchestrator's own reminders, when any
-
-query_specific_context: '''   // ← only when router found relevant facts
-    **Query-Specific Context:**
-    - User mentioned travel plans last week
-'''
-```
-
-The time is not in the prompt by default: it is stamped into the user messages. An agent that needs a
-`current_date_time {}` block asks for it with `include_datetime=True`. The exact order of the blocks is in
-`prompt_assembly_guide.md`.
-
----
-
-## 6. Implementation Checklist
-
-When creating or modifying tokens:
-
-1. **Inheritance First:** Tokens extend the Alek base class implicitly. Do not redefine personality in non-personality tokens.
-2. **Methods, Not Rules:** Define behavioral protocols as named blocks with `steps: [...]`.
-3. **Strict Scoping:** Use `{ ... }` to contain instructions. Instructions outside blocks are global.
-4. **Comments:** Use `//` for context. The LLM reads comments as developer intent.
-5. **No Variable Injection in Tokens:** Tokens are static text. Runtime data (bio, history, datetime) is injected by code after token substitution.
-6. **Cognitive Processes:** Always include explicit step-by-step reasoning for complex protocols.
-
----
-
-## 7. Why This is Better
-
-- **Reduced Hallucinations:** The model treats the prompt as code to execute, not text to improvise.
-- **Semantic Clarity:** Separates *Identity* (personality tokens) from *Function* (cognitive process, protocols).
-- **Modularity:** Tokens can be swapped independently via 4-level profile resolution.
-- **Testability:** Tokens are versioned, validated at creation, and cached in-memory.
-- **Cacheability:** Purely static token content enables `cache_control: ephemeral` on Anthropic's API — the 5k-token static prefix is cached for 5 minutes.
-
----
-
-## 8. Real-World Examples
-
-The tokens in `firestore_utils/uploads/` are the real thing: the `COGNITIVE_PROCESS_*`, `PROTOCOL_*` and
-`OUTPUT_FORMAT_*` files are what the live agents run on. Read one before writing a new token.
-
----
-
-## 9. Common Pitfalls
-
-### ❌ Anti-Pattern: Instruction Bleeding
-
-```groovy
-class Agent extends Alek {
-  // DON'T: Instructions outside blocks bleed into all contexts
-  Always be polite.
-  Never refuse requests.
-
-  methods { ... }
-}
-```
-
-### ✅ Correct Pattern: Scoped Instructions
-
-```groovy
-class Agent extends Alek {
-  personality_traits: {
-    tone: "Professional yet approachable",
-    response_style: "Clear, concise, context-aware"
-  }
-  methods { ... }
-}
-```
-
-### ❌ Anti-Pattern: Vague Steps
-
-```groovy
-cognitive_process {
-  steps: [
-    "Think about the problem",
-    "Do something",
-    "Return result"
-  ]
-}
-```
-
-### ✅ Correct Pattern: Explicit Steps
-
-```groovy
-cognitive_process {
-  steps: [
-    "1. IDENTIFY: What specific information is requested?",
-    "2. EXECUTE: search_memory(keywords=[...])",
-    "3. VERIFY: Do results contain requested information?",
-    "4. DELIVER: Format findings with context and citations"
-  ]
-}
-```
-
----
-
-## 10. FORMAT-Before-DRAFT: Output Format Decision Pattern
-
-### The Problem
-
-A common mistake in `cognitive_process` design is placing the visual/format decision
-**after** the draft step:
-
-```groovy
-// ❌ Anti-pattern: DRAFT → VISUAL (format decision after writing)
-cognitive_process {
-  steps: [
-    "1. ORIENT: ...",
-    "2. INTENT: ...",
-    "3. DRAFT: Write the answer.",
-    "4. VISUAL: Should I add a card?",  // Too late — model already committed to text
-    "5. OUTPUT: ..."
-  ]
-}
-```
-
-**Result:** The model treats the card as an optional afterthought. It has already
-framed the response as text and rarely switches formats retroactively. For structured
-data types (weather, prices, comparisons), the card becomes the exception instead of
-the norm.
-
-### The Solution: FORMAT Locks In Before DRAFT
-
-```groovy
-// ✅ Correct: FORMAT → DRAFT (format decision before writing)
-cognitive_process {
-  steps: [
-    "1. ORIENT: ...",
-    "2. INTENT: ...",
-    "3. FORMAT: Before writing anything — decide the delivery format.
-       Defaults: weather → widget. Prices/rates → widget.
-       Multi-day or multi-item data → widget.
-       Conversational reply, opinion, advice, single fact → plain text.
-       If the user explicitly asked for text — respect that.
-       This decision locks in before drafting.",
-    "4. DRAFT: Write full_response AND HTML simultaneously (if FORMAT decided widget).",
-    "5. OUTPUT: ..."
-  ]
-}
-```
-
-**Why this works:**
-- The model decides format as a first-class step with concrete defaults
-- Defaults are written as domain rules (`weather → widget`), not as qualities
-  (`would a card help?`) — which the model tends to answer "no" for simple cases
-- Writing both `full_response` and `html` in one DRAFT step treats them as co-primary,
-  not primary + optional
-
-### When to Use Pattern Defaults vs. Pattern Questions
-
-| Approach | Use when |
-|---|---|
-| `weather → widget` (domain rule) | You want consistent behavior for a specific data type |
-| `"Would a card make this better?"` (quality question) | You want the model to exercise judgment on novel cases |
-| Mixed: defaults + override | Most real cognitive processes — rules for known types, judgment for edge cases |
+<!-- living-doc
+covers: none
+-->
+
+# Groovy-Style Prompt Pattern
+
+Why every system prompt in this repo is a Groovy-looking class definition, and which rules keep that form working.
+The assembly mechanics (slots, profiles, caching, the full block order) are in
+[Prompt Design System v3](../05_building_blocks/prompt_design_system_v3/README.md); this page holds the reasoning.
+
+## 1. Why a class definition and not prose
+
+Models are trained heavily on code. They follow syntax, scoping, inheritance and ordered steps more reliably than loose
+natural-language instructions. The prompt is therefore written as `class <Agent> { ... }` with named blocks, not as a
+story. What this buys:
+
+- **Scope.** A `{ ... }` block delimits where an instruction applies. Text outside any block applies "everywhere" and
+  bleeds into every context, so tokens never contain loose instructions.
+- **Separation of identity and function.** Personality blocks (`archetype`, `voice`, `humor_engine`) are kept apart from
+  functional blocks (`policies`, `protocols`, `cognitive_process`, `output_format`). That separation is what lets a user
+  swap a personality token without touching behaviour.
+- **Procedures as steps.** The recommended shape for a procedure is a numbered `steps: [...]` list with a verb per
+  step, so the model plans, executes, verifies and only then answers. Many live tokens use named sub-blocks instead;
+  `steps` is the shape to prefer for a sequence, not a rule every token follows.
+- **Modularity.** Each block is a separately stored token, so one block is changed without rewriting the prompt.
+
+The form is a convention the model reads, not code anything executes. Nothing parses the Groovy.
+
+## 2. How the form is produced
+
+A prompt is assembled, not hand-written: tokens (stored fragments of bare block content) are placed under the section
+classes of a blueprint, in the blueprint's class order, wrapped in the blueprint's outer class
+(`PromptAssemblyService` in `src/services/prompt_v3/prompt_assembly_service.py`; the section render loop sits in the
+static-template step). Runtime data is added afterwards by code, never inside a token.
+
+Override resolution, from weakest to strongest: the agent profile, then the account, then the user. Overrides replace
+only a token the agent already activates, matched by class and category; they cannot add a section the agent does not
+have, and a token marked `non_overridable` in the agent profile is never replaced
+(`PromptAssemblyService._apply_overrides`). The only levels are agent, account and user: there is no separate system
+level (`src/domain/prompt_v3/slot.py::OwnerType`).
+
+## 3. Invariants
+
+1. **Tokens are static text.** A token holds bare block content, without the outer section wrapper
+   (`src/domain/prompt_v3/token.py::Token`). Biography, conversation history, date and reminders are injected by code
+   after assembly (`PromptAssemblyService._inject_runtime_context`). A variable inside a token would either be
+   dead text or break caching.
+2. **`Token.create` calls `SecurityPort` on every token build.** The repository rebuilds tokens through it on every
+   read (`src/adapters/prompt_v3/firestore_token_repository.py`), but in the TRUSTED zone, so the regex adapter skips
+   the scan and token content is in practice not pattern-checked. Direct construction skips the port call
+   altogether and is wrong; the token upload script writes raw content without calling it
+   (`firestore_utils/upload.py`).
+3. **Static before the boundary, dynamic after.** `src/domain/llm.py::PROMPT_CACHE_BOUNDARY` splits the system
+   instruction. Everything before it is identical across requests of one agent and user, so the Claude adapter marks
+   it for the provider's prompt cache (`src/adapters/claude_adapter.py`, the split on the boundary). That cache has the
+   provider's own lifetime (`cache_control: ephemeral`, no TTL set by us) and is separate from the in-process template
+   cache in section 4: a prefix idle past it is rewritten on the next request. Reminders, the optional
+   `current_date_time`, query-specific context and the turn key come after it. Anything that varies per request placed
+   before the boundary silently destroys the cache hit.
+4. **Runtime blocks exist only when they have content.** `knowledge_base`, `available_skills` and `standing_directives`
+   are appended by code and never render as empty wrappers. `standing_directives` is the last static block on purpose:
+   binding rules get the strongest recency, and they change only on consolidation, so caching survives.
+5. **Block position carries meaning.** Agents that reason over the knowledge base ask for `kb_preamble=True`, which
+   puts `knowledge_base` before the template so that `cognitive_process` is the last thing read (recency). The default
+   places it after the template.
+6. **The time is not in the prompt by default.** It is stamped into user messages; an agent that needs a
+   `current_date_time {}` block passes `include_datetime=True`.
+7. **No fallback prompt.** If assembly fails the agent returns a failure; it never degrades to inline text
+   (rule in the root `CLAUDE.md`).
+
+## 4. Writing a token (traps)
+
+- **Scope everything.** A sentence outside a block is global and leaks into every agent that includes the token.
+- **Do not redefine personality** in a non-personality token. Tokens extend the agent class implicitly.
+- **Steps must be concrete.** "Think", "do something", "return result" give the model nothing to follow. Name the
+  action and the check: what to identify, which tool to call, what to verify, what to deliver.
+- **Use `//` comments for intent.** The model reads them as the developer's reason. Per the root `CLAUDE.md`, a prompt
+  text first explains what its output is for and which gap it bridges, then states the rules; it contains no examples
+  (models copy them) and what must hold is enforced in code.
+- **Choose between rules and judgment per case.** A domain default ("this data type goes in this format") gives
+  consistent behaviour for known types; a quality question ("would this help?") leaves novel cases to the model but
+  tends to be answered "no" for simple ones. Mixed — defaults plus an override — is the usual choice.
+- **A token is not live until uploaded.** Tokens ship by token upload, not by code deploy, and the assembled static
+  template is cached per instance (`PromptAssemblyService._assembled_cache`, TTL in `cache_ttl`), so an upload reaches
+  a warm instance after the TTL, a restart or `invalidate_cache()`.
+
+## 5. Where to start reading
+
+- A real token to copy the shape from: `firestore_utils/uploads/` (`COGNITIVE_PROCESS_*`, `PROTOCOL_*`,
+  `OUTPUT_FORMAT_*`).
+- Assembly and block order: `src/services/prompt_v3/prompt_assembly_service.py` and the building-block README above.
+- Prompt text rules: the "Code Conventions" section of the root `CLAUDE.md`.

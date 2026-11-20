@@ -21,6 +21,7 @@ from scripts.ci.living_docs import (
     effective_covers,
     living_docs,
     parse_header,
+    required_living_docs,
     tracked_files,
     valid_iso_date,
 )
@@ -357,3 +358,41 @@ def test_claude_md_glob_matching_nothing_is_reported_and_matching_one_is_fine(tm
 def test_claude_md_ignores_untracked_prefixes(tmp_path):
     root = _repo(tmp_path)
     assert check_claude_md("CLAUDE.md", "`scripts/memory/x.json` `docs/superpowers/y.md`", root, tracked_files(root)) == []
+
+
+def _without_header(root: Path) -> list[str]:
+    return [
+        p.relative_to(root).as_posix()
+        for p in required_living_docs(root)
+        if not p.read_text(encoding="utf-8").startswith("<!-- living-doc")
+    ]
+
+
+def test_every_living_doc_starts_with_the_header():
+    missing = _without_header(ROOT)
+    assert not missing, f"living docs without the `<!-- living-doc` header: {missing}"
+
+
+def test_required_living_docs_are_chosen_by_location_and_a_missing_header_is_named(tmp_path):
+    header = "<!-- living-doc\ncovers: none\n-->\n"
+    files = {
+        "docs/README.md": header,
+        "docs/05_building_blocks/memory/README.md": "# no header\n",
+        "docs/06_runtime/API_REFERENCE.md": header,
+        "docs/08_concepts/README.md": header,
+        "docs/08_concepts/other_concept.md": "# not required\n",
+        "docs/04_solution_strategy/decisions/a_record.md": "# a decision record\n",
+        "docs/10_rfcs/SOME_RFC.md": "# an RFC\n",
+    }
+    for rel, text in files.items():
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+    required = [p.relative_to(tmp_path).as_posix() for p in required_living_docs(tmp_path)]
+    assert required == [
+        "docs/05_building_blocks/memory/README.md",
+        "docs/06_runtime/API_REFERENCE.md",
+        "docs/08_concepts/README.md",
+        "docs/README.md",
+    ]
+    assert _without_header(tmp_path) == ["docs/05_building_blocks/memory/README.md"]

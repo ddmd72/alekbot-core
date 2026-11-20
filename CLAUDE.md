@@ -87,7 +87,7 @@ make check-pricing     # audit src/domain/billing.py against two price catalogs
 - `@pytest.mark.slow` (over 0.5 s with coverage on) is skipped unless `RUN_SLOW_TESTS=1`, so a bare `pytest <file>` skips it
   silently. `@pytest.mark.timing` (any wall-clock/CPU threshold) is skipped unless `RUN_TIMING_TESTS=1`; a new time
   threshold gets the marker, and a suite is never re-run because a timing test failed.
-- **CI** (`.github/workflows/ci.yml`) runs `make ci` on every push/PR and posts ✅/❌ to Slack. A docs-only change skips it
+- **CI** (`.github/workflows/ci.yml`) runs `make ci` on every pull request and every push to `main` and posts ✅/❌ to Slack. A docs-only change skips it
   but still runs the doc-reading tests; "docs" is defined in `scripts/ci/docs_only.py`. More: `docs/11_quality/README.md`.
 
 ## Code Navigation (CodeGraph)
@@ -146,7 +146,7 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
 | Secrets at rest, credential store, reconnect notices | `decisions/secrets_at_rest_cipher_and_digest.md`, `decisions/credential_store_cutover.md`, `decisions/reconnect_notice_r1.md` |
 | Access control (one whitelist, chat + Cabinet gates) | `decisions/cabinet_oauth_whitelist_gate.md` |
 | Billing: ledger, per-model pricing, cache legs, budget alert | `decisions/billing_execution_scoped_ledger.md`, `billing_per_model_pricing.md`, `billing_cache_write_and_voice_seconds.md` |
-| Prompt builder (tokens, blueprints, cache boundary, static blocks) | `docs/08_concepts/prompt_assembly_guide.md`, `docs/05_building_blocks/prompt_design_system_v3/README.md` |
+| Prompt builder (tokens, blueprints, cache boundary, static blocks) | `docs/05_building_blocks/prompt_design_system_v3/README.md` |
 | Agent skills / agent workspace | `docs/10_rfcs/AGENT_SKILLS_RFC.md` / `docs/10_rfcs/AGENT_WORKSPACE_RFC.md` (+ `decisions/agent_skills.md`, `agent_workspace_storage.md`) |
 | File storage pipeline, voice messages | `docs/05_building_blocks/file_storage/README.md`, `decisions/voice_message_transcription.md` |
 | Notifications and rich content | `decisions/rich_content_one_delivery_path.md`, `docs/05_building_blocks/rich_content_protocol/README.md` |

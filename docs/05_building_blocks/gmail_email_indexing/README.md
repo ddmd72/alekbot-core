@@ -23,6 +23,12 @@ covers:
   src/domain/email.py
   src/domain/email_*.py
   src/domain/auto_index_slot.py
+  src/composition/email_card_runner.py
+  src/ports/email_*.py
+  src/ports/indexed_email_repository.py
+  src/ports/reader_page_budget.py
+  src/adapters/in_memory_email_card_index.py
+  src/adapters/job_reader_page_budget.py
   src/domain/reconnect_policy.py
   src/composition/email_classifier_runner.py
   src/composition/email_card_setup.py

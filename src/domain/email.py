@@ -204,7 +204,7 @@ class IndexingJob(BaseModel):
 class EmailExclusion(BaseModel):
     """
     Sender/domain/subject pattern to skip before LLM classification.
-    Auto-populated when classifier detects recurring low-value senders.
+    Read by the indexing job's pre-filter; nothing in the code writes it yet.
     Stored in {env}_email_exclusions. Doc ID = exclusion_id.
     """
     exclusion_id: str = ""  # Populated by adapter from Firestore doc.id; set before save

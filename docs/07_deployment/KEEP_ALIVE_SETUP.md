@@ -1,250 +1,59 @@
-# Production Keep-Alive Setup
+<!-- living-doc
+covers:
+  scripts/infrastructure/setup-keep-alive.sh
+-->
 
-**Problem:** Cloud Run scales to zero when idle → in-memory cache is lost → 2s cold start penalty
+# Keep-Alive
 
-**Solution:** Cloud Scheduler pings `/health` every 10 minutes → instance stays warm
+## Why
 
----
+The main service deploys with `--min-instances=0` (`cloudbuild-dev.yaml`, step `deploy-main`), so an idle instance is
+shut down and the next request pays a cold start and rebuilds in-memory state. Scale-to-zero costs nothing; a
+Cloud Scheduler job that sends `GET /health` on a short schedule keeps one instance alive for cents a month.
+`min-instances=1` does the same for a real monthly cost. The owner's choice is the ping.
 
-## Quick Setup
+Keep-alive prevents instance shutdown only. It does not cure CPU throttling: Cloud Run throttles CPU once a response
+is sent, so work started with `asyncio.create_task` in a route stalls even on a warm instance. Background work goes
+through Cloud Tasks, a separate request with full CPU (`CLAUDE.md` § Traps, `docs/07_deployment/SCHEDULERS.md`).
 
-### 1. Get Your Cloud Run URL
+## How it is set up
 
-```bash
-gcloud run services describe alek-bot-prod \
-  --region=europe-west1 \
-  --format='value(status.url)'
-```
+- **Live job: build-managed.** `scripts/infrastructure/cloudbuild_scheduler_jobs.sh` (step `scheduler-jobs` of
+  `cloudbuild-dev.yaml`) updates or creates the job `alek-bot-dev-keep-alive` on every deploy; it is not set up by
+  hand. Its schedule and attempt deadline are set in that script; the job list is in [SCHEDULERS.md](SCHEDULERS.md).
+- **Target:** `GET /health`, unauthenticated, answers 200 with a healthy status body
+  (`src/web/main_service_routes.py::create_main_service_blueprint`).
+- **The voice relay has its own keep-alive** (a different job, through the main service); see SCHEDULERS.md.
 
-Example output: `https://alek-bot-prod-abc123-ew.a.run.app`
+## Manual setup (a standalone service)
 
-### 2. Run Setup Script
-
-```bash
-export GCP_PROJECT_ID="your-project-id"
-export SCHEDULER_LOCATION="europe-west1"
-export CLOUD_RUN_URL="https://alek-bot-prod-abc123-ew.a.run.app"
-
-./scripts/infrastructure/setup-keep-alive.sh
-```
-
-### 3. Verify
-
-```bash
-# Check job status
-gcloud scheduler jobs describe alek-bot-keep-alive \
-  --location=europe-west1
-
-# Check logs
-gcloud logging read 'resource.type=cloud_scheduler_job' \
-  --limit=10 \
-  --format=json
-```
-
----
-
-## What It Does
-
-- **Creates Cloud Scheduler Job:** Runs every 10 minutes
-- **Pings `/health` endpoint:** Returns `{"status": "healthy"}`
-- **Keeps instance warm:** Prevents scale-to-zero
-- **Preserves cache:** In-memory prompt cache stays alive
-
-> **Note: Cold start vs. CPU throttling are two separate Cloud Run behaviors.**
->
-> This setup prevents **scale-to-zero cold starts** (instance termination after ~15 min of inactivity).
->
-> A separate issue is **CPU throttling**: Cloud Run reduces CPU to ~5% even on a warm instance when
-> no HTTP request is actively being processed. `asyncio.create_task()` calls that immediately return
-> 200 trigger this throttling mid-execution. The fix for CPU throttling is architectural — background
-> jobs must be dispatched via Cloud Tasks (separate HTTP request = full CPU), not via `create_task`.
-> See `ConsolidationService` (`src/services/consolidation_service.py`) and the `/worker` `consolidation` task for the applied pattern.
-
----
-
-## Cost Analysis
-
-### Cloud Scheduler
-
-| Item            | Cost               |
-| --------------- | ------------------ |
-| First 3 jobs    | **FREE**           |
-| Additional jobs | $0.10/job/month    |
-| **This setup**  | **$0.00/month** ✅ |
-
-### Cloud Run
-
-| Scenario                           | Cost (approx)    |
-| ---------------------------------- | ---------------- |
-| With keep-alive (6 pings/hour)     | $0.50-1.00/month |
-| Without keep-alive (scale to zero) | $0.00/month      |
-
-**Trade-off:** Pay ~$0.50/mo to avoid 2s cold starts
-
----
-
-## Performance Impact
-
-### Without Keep-Alive
-
-```
-User request → Cold start (2s) → Cache assembly (2s) → Response
-Total: ~4-6 seconds first request
-```
-
-### With Keep-Alive
-
-```
-User request → Warm instance → Cache HIT (3ms) → Response
-Total: ~2-3 seconds all requests
-```
-
-**Improvement:** 50-75% faster for first request after idle period
-
----
-
-## Configuration
-
-### Schedule Frequency
-
-Edit `SCHEDULE` in script:
+`scripts/infrastructure/setup-keep-alive.sh` creates or updates a job named `alek-bot-keep-alive` against any
+service URL. It reads `GCP_PROJECT_ID`, `SCHEDULER_LOCATION` and `CLOUD_RUN_URL` from the environment (its defaults are
+placeholders, so always export all three), then runs the job once and prints its description.
 
 ```bash
-# Every 5 minutes (more aggressive, higher cost)
-SCHEDULE="*/5 * * * *"
-
-# Every 10 minutes (recommended)
-SCHEDULE="*/10 * * * *"
-
-# Every 15 minutes (economy mode)
-SCHEDULE="*/15 * * * *"
+SERVICE_URL=$(gcloud run services describe <service> --region=<region> --format='value(status.url)')
+GCP_PROJECT_ID=<project-id> SCHEDULER_LOCATION=<region> CLOUD_RUN_URL="$SERVICE_URL" \
+  ./scripts/infrastructure/setup-keep-alive.sh
 ```
 
-### Timeout
+Trap: its job name differs from the build-managed one. Running it against the live service adds a second pinger
+next to `alek-bot-dev-keep-alive`; use it only for a service the build does not manage.
 
-```bash
---attempt-deadline=30s  # Timeout for health check
-```
+## Checking and fixing
 
----
-
-## Monitoring
-
-### Check Job Status
-
-```bash
-gcloud scheduler jobs describe alek-bot-keep-alive \
-  --location=europe-west1
-```
-
-### View Execution History
-
-```bash
-gcloud logging read \
-  'resource.type=cloud_scheduler_job
-   AND resource.labels.job_id=alek-bot-keep-alive' \
-  --limit=50 \
-  --format='table(timestamp,severity,jsonPayload.status)'
-```
-
-### Cloud Run Metrics
-
-Dashboard: https://console.cloud.google.com/run
-
-Check:
-
-- **Instance count:** Should stay at 1 (not 0)
-- **Request latency:** Should be consistent (~2-3s)
-- **Cold starts:** Should be 0 or very low
-
----
-
-## Troubleshooting
-
-### Job Not Running
-
-**Symptoms:** Job exists but not executing
-
-**Fix:**
-
-```bash
-# Manually trigger
-gcloud scheduler jobs run alek-bot-keep-alive --location=europe-west1
-
-# Check logs
-gcloud logging read 'resource.type=cloud_scheduler_job' --limit=10
-```
-
-### Health Check Failing
-
-**Symptoms:** Scheduler logs show 4xx/5xx errors
-
-**Fix:**
-
-```bash
-# Test endpoint manually
-curl https://your-cloud-run-url.run.app/health
-
-# Should return: {"status": "healthy", "mode": "http"}
-```
-
-### Instance Still Scales to Zero
-
-**Symptoms:** Cold starts still happen
-
-**Possible causes:**
-
-1. Schedule too infrequent (try every 5 minutes)
-2. Health check timing out (increase deadline)
-3. Cloud Run min-instances=0 (expected, keep-alive should prevent this)
-
----
+- Job exists and ran: `gcloud scheduler jobs describe <job> --location=<region>`; force a run with
+  `gcloud scheduler jobs run <job> --location=<region>`.
+- Execution results: Cloud Logging, `resource.type=cloud_scheduler_job` and `resource.labels.job_id=<job>`.
+- 4xx/5xx in those logs: call `<service-url>/health` by hand; a healthy service answers 200.
+- Instance count on the Cloud Run metrics page should stay at 1 between requests.
 
 ## Alternative: min-instances
 
-If Cloud Scheduler doesn't work, use min-instances:
+`make start` sets `--min-instances 1` on the service and `make stop` sets it back to 0 (`Makefile`). Use it when the
+ping is not enough; it is billed for the instance while idle.
 
-```bash
-gcloud run services update alek-bot-prod \
-  --min-instances=1 \
-  --region=europe-west1
-```
+## Removal
 
-**Cost:** ~$15-30/month (vs $0.10 for scheduler)
-
----
-
-## Cleanup
-
-To remove keep-alive:
-
-```bash
-gcloud scheduler jobs delete alek-bot-keep-alive \
-  --location=europe-west1 \
-  --quiet
-```
-
----
-
-## References
-
-- **Cloud Scheduler Pricing:** https://cloud.google.com/scheduler/pricing
-- **Cloud Run Scaling:** https://cloud.google.com/run/docs/about-instance-autoscaling
-- **Script Location:** `scripts/infrastructure/setup-keep-alive.sh`
-
----
-
-## Changelog
-
-### 2026-02-12 - Initial Setup
-
-- Created setup script with 10-minute schedule
-- Cost: $0.10/month (Cloud Scheduler)
-- Prevents cache loss from scale-to-zero
-- Production deployment recommended
-
----
-
-**Status:** ✅ Production Ready  
-**Cost:** $0.10/month  
-**Effect:** Eliminates cold starts, preserves in-memory cache
+`gcloud scheduler jobs delete <job> --location=<region>`. For the build-managed job also remove its block from
+`scripts/infrastructure/cloudbuild_scheduler_jobs.sh`, or the next deploy recreates it.

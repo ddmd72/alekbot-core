@@ -1000,7 +1000,7 @@ After all implementation phases are complete, update the following arc42 docs.
 | `CLAUDE.md` | `TasksAgent` in Key Mechanisms; `MicrosoftToDoAdapter` + `TaskSearchIndex` in Architecture; `reindex_task_list` in WorkerHandler task types |
 | `docs/08_concepts/DATABASE_SCHEMA.md` | Two new collections in §1.1 table + full schema sections: `{env}_task_search_index` (doc ID: `{user_id}_{task_id}`; fields + embed schemes) and `{env}_task_config` (doc ID: `user_id`; `primary_list_id`, `subscriptions`) |
 | the former structure overview (deleted) | New files: `src/ports/task_search_index.py`, `src/adapters/microsoft/todo_adapter.py`, `src/adapters/firestore_task_search_index.py`; updated `src/domain/task.py` |
-| `docs/05_building_blocks/multi_agent_system/README.md` | Add `TasksAgent` to specialist agents table: intent `manage_tasks`, tools, dependencies |
+| `docs/05_building_blocks/agent_registry/README.md` | Add `TasksAgent` to specialist agents table: intent `manage_tasks`, tools, dependencies |
 | `docs/05_building_blocks/oauth_multi_tenant/README.md` | Add Microsoft To Do as new OAuth provider: tenant `consumers`, scopes, refresh endpoint, provider key `"microsoft_todo"` |
 | `docs/05_building_blocks/user_cabinet/README.md` | New Tasks Management section with `/api/tasks/status`, `/api/tasks/reindex`, `/api/tasks/lists`, `/api/tasks/disconnect` |
 | `docs/06_runtime/API_REFERENCE.md` | OAuth routes (`/auth/connect-microsoft-todo/*`), webhook (`POST /webhook/microsoft-tasks/{user_id}`), Cabinet tasks API |

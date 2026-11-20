@@ -1,78 +1,113 @@
+<!-- living-doc
+covers:
+  Makefile
+  Dockerfile*
+  .dockerignore
+  .env.example
+  cloudbuild*.yaml
+  requirements*.txt
+  scripts/infra/
+  scripts/infrastructure/artifact_registry_retention.py
+  scripts/infrastructure/check_env_drift.py
+  scripts/infrastructure/cloudbuild_sandbox_light.sh
+  scripts/infrastructure/cloudbuild_sandbox_render.sh
+  scripts/infrastructure/deploy_firestore_indexes.py
+  scripts/generate_ttl_runbook.py
+  src/composition/deploy_topology.py
+  .github/workflows/pii_gate.yml
+  scripts/pii_gate/
+  .githooks/
+  scripts/git-hooks/
+  scripts/install-git-hooks.sh
+-->
+
 # Deployment
 
 How to deploy Alek-Core the standard way from a fresh checkout, and keep deploying it.
 
 - **Start with [`../../BOOTSTRAP.md`](../../BOOTSTRAP.md):** prerequisites, local setup, `.env`, tests, the first
   `make deploy` and the health check. This file does not repeat them.
-- **This file:** every deploy unit, the one-time project setup the deploy needs, the two-pass first deploys, the rules
-  that hold on every deploy, and the standing levers.
+- **This file:** every deploy unit, the deploy-only `.env` keys, the one-time project setup the deploy needs, the
+  two-pass first deploys, the rules that hold on every deploy, the standing levers and the per-service knobs.
 - One-off rollout steps of a single feature (migration orders, rollbacks of a release, first-run checks) are not kept
   here; they live in the rollout notes (ops).
 
+`.dockerignore` keeps `.env` and key files out of the image; `.env.example` lists the keys a checkout needs;
+`src/composition/deploy_topology.py::DeployTopology` is the one place that derives the service URL, queue suffix and regions.
+
 Placeholders only (`<PROJECT_ID>`, `<SERVICE_URL>`, service accounts): the real values live in `.env`, Secret Manager or
-memory, never in this file.
+memory, never in this file. Resource values (memory, timeouts, scaling, secret lists) live in `cloudbuild-dev.yaml`,
+`scripts/infrastructure/cloudbuild_sandbox_light.sh`, `scripts/infrastructure/cloudbuild_sandbox_render.sh` and the
+`Makefile`; this file says what they mean.
 
 ---
 
 ## Deploy units
 
-The first four units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) and one build config
-(`cloudbuild-dev.yaml`); one `make deploy` builds and deploys them all, and a unit differs only by `--command`/`--args`.
-The sandbox render and light (parse) services have their own image file (`Dockerfile.sandbox`, one target each) and are built by the same `make deploy`.
+Six units. The first four share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`, `Dockerfile`) and one build config
+(`cloudbuild-dev.yaml`); a unit differs by its own service account, `--command`/`--args` (not the main service), env, secrets and resource limits. The two sandbox services
+have their own image file (`Dockerfile.sandbox`, one target each) and are built by the same `make deploy`.
+
+| Unit | Kind | Entry point | Why it is its own unit |
+|---|---|---|---|
+| `alek-bot-dev` | Cloud Run service | `main.py` | the bot: chat, web, `/worker`, voice control plane |
+| `alek-research-job-dev` | Cloud Run Job | `job_main.py` | deep research runs to completion, hours long |
+| `alek-voice-relay-dev` | Cloud Run service | `relay_main.py` | one open WebSocket is one long billed request; needs its own request timeout |
+| `alek-bot-indexer-dev` | Cloud Run service, ingress internal | `indexer_main.py` | `drive_sync` ticks need their own memory and one-tick-per-instance concurrency; the main service never indexes |
+| `alek-bot-sandbox-render-dev` | Cloud Run service, no public invoker | `sandbox_main.py` (`Dockerfile.sandbox` target `render`) | runs model-written DOCX and HTML code with no secret and no egress |
+| `alek-bot-sandbox-light-dev` | Cloud Run service, no public invoker | `sandbox_main.py` (target `light`) | parses untrusted uploaded and drive files, decodes recordings, with no secret and no egress |
+
+Log targets: `make logs`, `logs-relay`, `logs-indexer`, `logs-job` and their `fetch-logs*` variants (the Makefile's `##` help lines).
+Each unit's secrets are exactly its `--set-secrets` line in `cloudbuild-dev.yaml` (the sandbox services mount none:
+`--clear-secrets`). The main service runs `--execution-environment=gen2` and parses no file itself: documents go through
+the sandbox light service (`SANDBOX_PARSE_URL`, from `_SANDBOX_LIGHT_URL`).
 
 The shared image installs `requirements.txt` only: what the four entry points import, no file-parsing library (those run
-in the sandbox images, `requirements-sandbox*.txt`). Tests, CI and local scripts install `requirements-dev.txt`
-(`-r requirements.txt` plus the parsing libraries and the test tools). `tests/unit/test_main_image_requirements_closure.py`
-fails when code reachable from an entry point imports a distribution `requirements.txt` does not provide.
+in the sandbox images, `requirements-sandbox*.txt`). Tests, CI and local scripts install `requirements-dev.txt`.
+`tests/unit/test_main_image_requirements_closure.py` fails when code reachable from an entry point imports a distribution
+`requirements.txt` does not provide.
 
-| Unit | Type | Region | Timeout | Scaling | Secrets it reads | `make` targets |
-|------|------|--------|---------|---------|-------------------|-----------------|
-| `alek-bot-dev` | Cloud Run service (gen2: the parser child's limits were measured there) | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
-| `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL` (the budget alert; the job's identity holds secretAccessor on that one secret) | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
-| `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL`, `GOOGLE_SEARCH_API_KEY` (optional: the address lookup of the call page's `geo` button) | `logs-relay`, `fetch-logs-relay` |
-| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | `logs-indexer`, `fetch-logs-indexer` |
-| `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
-| `alek-bot-sandbox-light-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 900s | min=0, max=5 | **none** (zero-role identity, no secret) | (see Sandbox light (parse) service) |
+**Step graph (`cloudbuild-dev.yaml`, ids and `waitFor`).** The main service deploys first (pull, build, push, deploy,
+public-invoker binding) and depends on nothing drive- or relay-related. Only after `main-public-iam` do the independent
+branches run in parallel: the drive queue then the indexer and its binding, the research job, the relay and its binding,
+and the scheduler script (after the queue it feeds). The sandbox light and render families each run serially and wait for
+all four branches (the two families do not wait for each other). A failing drive, relay or sandbox step therefore never
+blocks a fix of the bot.
 
-The main service's execution environment is pinned to gen2 in `cloudbuild-dev.yaml` (`--execution-environment=gen2`); the main service runs no parser child: the document service parses through the sandbox light service (`SANDBOX_PARSE_URL`, from `_SANDBOX_LIGHT_URL`).
+**Deploy order and the sandbox light service.** The main service deploys before the sandbox light service, so a revision
+that uses a new `parse.*` op reaches the main service before the sandbox serves it. For `parse.container_facts` (the macro
+check on email sends) that is a brief window in which every ZIP-family attachment send is refused as "could not be
+checked" (fail closed, no unchecked send); it ends when the light deploy finishes.
 
-`cloudbuild-dev.yaml` deploys the main service first (pull, build, push, deploy, public-invoker binding; it depends on
-nothing drive- or relay-related). Only after that do the independent rest run in parallel (`id` + `waitFor`): the drive
-queue then the indexer and its binding, the research job, the relay and its binding, and the scheduler script (after the
-queue it feeds). The sandbox steps stay serial and wait for all of them. A failing drive, relay or sandbox step therefore
-never blocks a fix of the bot, and the parallel tail costs the longest branch (the indexer deploy), not the sum.
-
-**Deploy order and the sandbox light service.** The main service deploys first and the sandbox light service last, so a revision that uses a new `parse.*` op reaches the main service before the sandbox serves it. For `parse.container_facts` (the D13 macro check on email sends) that is a brief window in which every ZIP-family email attachment send is refused as "could not be checked" (fail closed, no unchecked send); it ends when the light deploy finishes.
-
-**Voice relay** (`relay_main.py`, a plain `websockets` server; [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md)
-§4.14). Its own service because an open WebSocket is one long billed request and needs the 3600 s timeout, which must not
-apply to the main service.
+**Voice relay** ([`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md) §4.14).
 - **`--allow-unauthenticated` is required:** Twilio's Media Streams WebSocket cannot present a Google OIDC token. The
   relay's own calls into the main service's `/voice/session-config` and `/voice/submit-transcript` stay OIDC-protected.
-- **Identity.** The relay runs as its own service account (`--service-account` in `cloudbuild-dev.yaml`) and mints an
-  OIDC token from it. `main.py` accepts
+- **Identity.** The relay runs as its own service account and mints an OIDC token from it. `main.py` accepts
   `{SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL} ∪ OIDC_TRANSITION_SA_EMAILS` on `/voice/*` (`parse_sa_emails` /
-  `build_oidc_gate`, `src/web/worker_oidc_verifier.py`). A separate relay service account works once
-  `VOICE_RELAY_SA_EMAIL` (a Secret Manager secret holding its email) is mounted on the main service; without it every
-  such call is 401. All three keys are optional: absent, the gate accepts exactly `SERVICE_ACCOUNT_EMAIL`.
+  `build_oidc_gate`, `src/web/worker_oidc_verifier.py`). A separate relay service account works once `VOICE_RELAY_SA_EMAIL`
+  (a Secret Manager secret holding its email) is mounted on the main service; without it every such call is 401. All
+  three keys are optional: absent, the gate accepts exactly `SERVICE_ACCOUNT_EMAIL`.
 - **No `TWILIO_*` secrets on the relay:** they belong to the main service's webhook and telephony adapter.
-- **The realtime provider is per user, not an env setting** (`VOICE_MULTI_PROVIDER_RFC.md`): the relay holds both
-  provider keys and builds each call's adapter from the call's session config. Switch a user with `voice_provider` in
-  their `UserBotConfig` (`"xai"` / `"openai"`); the default is `DEFAULT_VOICE_PROVIDER` in
-  `src/domain/voice_provider_profile.py`.
+- **The realtime provider is per user, not an env setting** (`VOICE_MULTI_PROVIDER_RFC.md`): the relay holds both provider
+  keys and builds each call's adapter from the call's session config. Switch a user with `voice_provider` in their
+  `UserBotConfig`; the default is `src/domain/voice_provider_profile.py::DEFAULT_VOICE_PROVIDER`.
+- **`--max-instances=1` is a pairing constraint** (both SFU legs of one ticket must land on one process,
+  `VOICE_WEB_TRANSPORT_RFC.md` §5.4): scale calls with relay shards, never by raising it.
 
-**Drive indexer** (`indexer_main.py`; [`../10_rfcs/USER_DRIVE_INDEXING_RFC.md`](../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9,
-§12.5; [decision](../04_solution_strategy/decisions/drive_indexer_lease_queue_service.md)). A `/worker` that serves
-`drive_sync` only (plus `/health`); the main service (2 GiB) never indexes.
+**Drive indexer** ([`../10_rfcs/USER_DRIVE_INDEXING_RFC.md`](../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9, §12.5;
+[decision](../04_solution_strategy/decisions/drive_indexer_lease_queue_service.md)). A `/worker` that serves `drive_sync`
+only, plus `/health`.
 - **Ingress is internal and the in-app OIDC check stays:** a request from outside Google's network gets 404 before the
   app, and on Cloud Run the check fails closed when no accepted identity is configured (`DRIVE_INVOKER_SA_EMAIL`, else
-  `SERVICE_ACCOUNT_EMAIL`, plus the optional `OIDC_TRANSITION_SA_EMAILS`; RFC Δ21).
-- **The token audience is pinned** to the indexer's own URL (`{url}` or `{url}/worker`): a manual task sent to another
-  run.app URL form than the one in `INDEXER_URL_DEV` gets 401.
-- **Feed.** The scheduler job `alek-bot-dev-start-drive-sync` sends the main service `start_drive_sync` every 10 minutes
-  (minutes 3, 13, …), which fans out one `drive_sync` per drive connection (payload `{user_id, connection_id}`; a manual task needs the connection id too); bot writes and the Cabinet toggle also enqueue one. All go
-  through the queue `drive-sync-dev` (`max-concurrent-dispatches=1`, 1800 s dispatch deadline). Queue, job and the build
-  identity's queue permission: [SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync.
+  `SERVICE_ACCOUNT_EMAIL`, plus the optional `OIDC_TRANSITION_SA_EMAILS`; `src/web/indexer_worker_app.py::worker_oidc_gate`).
+- **The token audience is pinned** to the indexer's own URL (`indexer_audiences`: `{url}` or `{url}/worker`): a manual task
+  sent to another run.app URL form than the one in `INDEXER_URL_DEV` gets 401.
+- **Feed.** The scheduler job `alek-bot-dev-start-drive-sync` sends the main service `start_drive_sync`, which fans out one
+  `drive_sync` per drive connection (payload `{user_id, connection_id}`; a manual task needs the connection id too); bot
+  writes and the Cabinet toggle also enqueue one. All go through the queue `drive-sync-dev`, provisioned by the
+  `drive-queue` step with `max-concurrent-dispatches=1` (a CPU/memory knob; the per-user Firestore lease is the
+  correctness mechanism). Schedule, queue and the build identity's queue permission: [SCHEDULERS.md](SCHEDULERS.md)
+  § Start Drive Sync.
 - **Model keys.** The reader and triage agents mount `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` through `--set-secrets`
   (the same secret names the main service mounts), never as Cloud Build substitutions.
 - **Logs** are Cloud Logging only (no Logfire): `make fetch-logs-indexer K=300` → `alek_debug_indexer.log`, or
@@ -80,7 +115,8 @@ apply to the main service.
   service; each index run logs one `[DriveIndex] run …` line. "Why was file X not indexed" is answered from the record and
   these lines (building block [`../05_building_blocks/user_drive/README.md`](../05_building_blocks/user_drive/README.md) §7.1).
 
-**Sandbox render service:** see [Sandbox render service](#sandbox-render-service) below.
+**Sandbox services:** see [Sandbox network](#sandbox-network-no-egress), [Sandbox render service](#sandbox-render-service)
+and [Sandbox light (parse) service](#sandbox-light-parse-service).
 
 ---
 
@@ -88,13 +124,16 @@ apply to the main service.
 
 `make deploy` reads `.env` through `include .env` (only when the file exists) and passes some keys as Cloud Build
 substitutions. A key used that way bakes its value into the deployed revision, so a value that differs between local and
-deploy gets a deploy-only key of its own, never a reuse of a local key (CLAUDE.md, "Deploy-substitution trap").
+deploy gets a deploy-only `*_DEV` key of its own, never a reuse of a local key (CLAUDE.md, "Deploy-substitution trap").
+The Makefile maps each `*_DEV` key to a `_SUBSTITUTION`, and `cloudbuild-dev.yaml` maps it to the runtime variable.
 
 **Deploy only from a checkout that has the real `.env`.** Without it the build ships empty values into the live
 environment and breaks OAuth and voice. A second working copy has no `.env` of its own: link the main checkout's file
 first (`ln -s ../alekbot-core/.env .env`). Before every deploy, check what will be sent:
-`make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be non-empty, except `_INDEXER_URL` on the
-indexer's first pass and the sandbox keys before the sandbox exists.
+`make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be non-empty, except the optional ones (`_DRIVE_TRANSCRIBE_USD_CAP`,
+`_VOICE_DEBUG_TRANSCRIPT_USERS`), `_VOICE_RELAY_URL` / `_INDEXER_URL` on their first passes and the sandbox render keys and
+`_SANDBOX_LIGHT_SA` / callers before the sandbox exists (the light URL and both VPC keys are never empty: `make deploy`
+refuses).
 
 | `.env` key | Substitution → variable | Notes |
 |---|---|---|
@@ -102,10 +141,11 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `VOICE_RELAY_URL_DEV` | `_VOICE_RELAY_URL` → `VOICE_RELAY_STREAM_URL` (main) | `https://` form; the Makefile turns it into `wss://`. Two-pass, below |
 | `INDEXER_URL_DEV` | `_INDEXER_URL` → `DRIVE_INDEXER_URL` (both services) | no trailing slash; `make deploy` refuses when empty unless `DRIVE_FIRST_PASS=1`. Two-pass, below |
 | `DRIVE_TRANSCRIBE_ENABLED_DEV` | `_DRIVE_TRANSCRIBE_ENABLED` → `DRIVE_TRANSCRIBE_ENABLED` | **required**, exactly `on` or `off` (below) |
-| `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
+| `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the monthly cap (below) |
 | `DRIVE_UPGRADE_PASS_DEV` | `_DRIVE_UPGRADE_PASS` → `DRIVE_UPGRADE_PASS` (indexer) | optional; empty = `on`; `off` holds every version upgrade pass (Standing levers) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
-| `VOICE_DEBUG_TRANSCRIPT_USERS_DEV` | `_VOICE_DEBUG_TRANSCRIPT_USERS` → `VOICE_DEBUG_TRANSCRIPT_USERS` (relay) | optional, debug only; empty = off; `;`-separated user ids whose calls log speech text (relay knob 8 under Cloudflare Realtime SFU) |
+| `EMAIL_CARD_ONLINE_DEV` | `_EMAIL_CARD_ONLINE` → `EMAIL_CARD_ONLINE` (main) | optional; empty = `1`; `0` turns the email card step off across deploys (Standing levers) |
+| `VOICE_DEBUG_TRANSCRIPT_USERS_DEV` | `_VOICE_DEBUG_TRANSCRIPT_USERS` → `VOICE_DEBUG_TRANSCRIPT_USERS` (relay) | optional, debug only; empty = off; `;`-separated user ids (relay knob 8) |
 | `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
 | `SANDBOX_VPC_NETWORK_DEV`, `SANDBOX_VPC_SUBNET_DEV` | `_SANDBOX_VPC_NETWORK`, `_SANDBOX_VPC_SUBNET` | **required**: the custom VPC and its subnet both sandbox services deploy onto with no egress; `make deploy` refuses when either is empty, and the sandbox deploy scripts exit 4 (see Sandbox network) |
 | `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | `SANDBOX_LIGHT_URL_DEV` is required by the deploy target (it becomes `SANDBOX_PARSE_URL` on the main service and the indexer); see Sandbox light (parse) service |
@@ -115,13 +155,15 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 ### Transcripts switch and cap
 
 - `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` turns the indexer's transcription kill switch on, `off` turns it off; no other
-  value is accepted. **Live value: `on`** (T1 is live for the owner since 2026-10-21; the Makefile default is `off`). `make deploy` refuses unless it is exactly `on` or `off`, and echoes the effective switch and cap
-  before it submits. It also reaches the main service, where the Cabinet shows the disclosure only if it is on. It is a
-  substitution, not a by-hand variable, because `--set-env-vars` replaces every variable on each deploy. A manual
-  `gcloud builds submit` without the Makefile deploys `off`.
-- `DRIVE_TRANSCRIBE_USD_CAP_DEV` — optional number of dollars. It can only **lower** the $20 monthly cap (a larger or
-  unparsable value is the default; empty = $20). Set on the indexer and on the main service (the Cabinet shows the
-  effective cap). Without the key a lowered live cap silently rises to $20.
+  value is accepted. The Makefile default is `off`. `make deploy` refuses unless it is exactly `on` or
+  `off`, and echoes the effective switch and cap before it submits. It also reaches the main service, where the Cabinet
+  shows the disclosure only if it is on. It is a substitution, not a by-hand variable, because `--set-env-vars` replaces
+  every variable on each deploy. A manual `gcloud builds submit` without the Makefile deploys `off`
+  (`cloudbuild-dev.yaml` `substitutions`).
+- `DRIVE_TRANSCRIBE_USD_CAP_DEV` — optional number of dollars. It can only **lower** the monthly cap
+  (`src/domain/drive_index_params.py::TRANSCRIBE_USD_PER_MONTH`; a larger or unparsable value, or empty, is the default).
+  Set on the indexer and on the main service (the Cabinet shows the effective cap). Without the key a lowered live cap
+  silently rises to the default.
 - Never use the local names `DRIVE_TRANSCRIBE_ENABLED` / `DRIVE_TRANSCRIBE_USD_CAP` for the deploy.
 - A deploy with the switch `off` **freezes in-flight batches**: they stay at the provider with their reservations, and
   their cost is booked when transcription is switched back on.
@@ -136,7 +178,7 @@ Do these once per project or database, before the first deploy that needs them.
 
 `cloudbuild-dev.yaml`'s `--set-secrets` names every secret each unit mounts; **`gcloud run deploy` fails until each one
 exists and the runtime service account can read it.** Create secrets with `printf '%s'`, never `echo`: a trailing newline
-breaks the value (it broke an `Authorization` header and eight secrets before). Three need setup beyond the secret:
+breaks the value (it broke an `Authorization` header). Several need setup beyond the secret:
 
 **Cloudflare Realtime SFU (web calls).** Web calls from the Cabinet (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) reuse the
 relay; only the main service needs credentials, to mint SFU sessions.
@@ -152,36 +194,34 @@ relay; only the main service needs credentials, to mint SFU sessions.
    done
    ```
 3. A deployed revision always gets both keys (or the deploy fails); the "warn and skip the `/cabinet/call` blueprint"
-   path in `main.py` applies only to local runs without them.
-4. Two optional relay knobs, read with `os.environ.get`, both defaulting to the phone path's values:
-   `VOICE_WEB_REASONING_EFFORT` (default `medium`) and `VOICE_WEB_CALLER_OPENING` (`on`/`off`, default `on`).
-5. One optional main-service knob, read with `os.getenv` per request: `VOICE_CONTROL_CHANNEL` (`on`/`off`, default
-   `off` in code), the kill switch of the call control channel (`docs/10_rfcs/VOICE_CALL_CONTROL_CHANNEL_RFC.md` §9). The
-   deploy sets it `on` (`cloudbuild-dev.yaml` `--set-env-vars`); the rollback is
+   path in `main.py` applies only to a run without them or without `VOICE_RELAY_STREAM_URL`.
+4. Optional relay knobs, read with `os.getenv` at the relay's entry point (`relay_main.py`), never in `load_settings()`:
+   `VOICE_WEB_REASONING_EFFORT` (unset = each call's own spec; set, it overrides every web call whatever the provider, so
+   it must be a value that provider accepts); `VOICE_WEB_CALLER_OPENING` (`off` drops the owner's-first-turn opening on web
+   calls only); `VOICE_DEAD_PEER_TIMEOUT_S` (`relay_main._dead_peer_timeout_s`, default
+   `src/handlers/sfu_stream_handler.py::DEAD_PEER_TIMEOUT_S`: a web call with no inbound audio packet for that long ends
+   itself, `VOICE_CALL_CONTROL_CHANNEL_RFC.md` §7.4; a value that is not a positive number keeps the default; lowering it
+   far risks ending backgrounded calls, because iOS pauses the web app's audio in the background); `LIVE_TEXT_LAG_MS`
+   (`relay_main._live_text_lag_ms`: delays the release of Lelik's text on interpreter and tutor calls by that much audio,
+   `docs/10_rfcs/VOICE_CALL_LIVE_TEXT_RFC.md` §4.3; an invalid value gives 0 with a warning).
+5. One optional main-service knob, read with `os.getenv` per request: `VOICE_CONTROL_CHANNEL` (`on`/`off`; **`off` in
+   code**), the kill switch of the call control channel (`docs/10_rfcs/VOICE_CALL_CONTROL_CHANNEL_RFC.md` §9). The deploy
+   sets it `on` (`cloudbuild-dev.yaml` `--set-env-vars`); the rollback is
    `gcloud run services update <main service> --update-env-vars=VOICE_CONTROL_CHANNEL=off` until the next deploy. Off,
    `/connect` hands out no `control` and the page opens no socket; the relay needs no knob.
-5a. One optional relay secret for the call page's `geo` button (`docs/10_rfcs/GEO_MARKS_RFC.md` §4.7):
+6. One optional relay secret for the call page's `geo` button (`docs/10_rfcs/GEO_MARKS_RFC.md` §4.7):
    `GOOGLE_SEARCH_API_KEY`, the same Secret Manager secret the main service mounts, bound to the relay in
-   `cloudbuild-dev.yaml` (`--set-secrets`) and read with `os.getenv` at boot (`relay_main._reverse_geocoder`). The relay's
-   service account needs `roles/secretmanager.secretAccessor` on it before the relay deploys, or the revision fails to
-   start. Unset or empty, the call still takes the shared position and its note names no address. Deploy the relay
-   before the main service when the control channel is first switched on for `geo`.
-6. One optional relay knob for the dead-peer watchdog, read with `os.getenv` when the SFU handler is built:
-   `VOICE_DEAD_PEER_TIMEOUT_S` (seconds, default `600`). A web call with no inbound audio packet for that long ends
-   itself through the normal end path (`VOICE_CALL_CONTROL_CHANNEL_RFC.md` §7.4); a value that is not a positive number
-   keeps the default. Lowering it far risks ending backgrounded calls: iOS pauses the web app's audio in the background.
-7. One optional relay knob for the live call text, read with `os.getenv` at boot (`relay_main._live_text_lag_ms`):
-   `LIVE_TEXT_LAG_MS` (ms, default `0`). It delays the release of Lelik's text on interpreter and tutor calls by that
-   much audio, for the ear's lag behind the SFU; set it from probe P2 (`docs/10_rfcs/VOICE_CALL_LIVE_TEXT_RFC.md` §4.3).
-   A value that is not an integer >= 0 gives `0` with a warning.
-8. One optional relay knob, **debug only and off by default**, read with `os.getenv` at boot
-   (`relay_main._voice_debug_transcript_users`): `VOICE_DEBUG_TRANSCRIPT_USERS`, user ids separated by `;` (a comma
-   breaks `--set-env-vars` and the substitution). A listed user's calls, in every mode, log `voice debug <fingerprint>:`
-   INFO lines: turn events, notes by kind, tool calls with their arguments and outputs, session updates, the Ask latch,
-   the language pair, and **the text of both sides' speech**. That carries third parties' speech (the other person on
-   an interpreter call) into Cloud Logging, kept 30 days: list a user only while debugging, then empty the key and
-   redeploy. The ids are never logged (the boot line gives only the count). The deploy sets it from the deploy-only key
-   `VOICE_DEBUG_TRANSCRIPT_USERS_DEV` (`_VOICE_DEBUG_TRANSCRIPT_USERS`, default empty).
+   `cloudbuild-dev.yaml` and read with `os.getenv` at boot (`relay_main._reverse_geocoder`). The relay's service account
+   needs `roles/secretmanager.secretAccessor` on it before the relay deploys, or the revision fails to start. Unset or
+   empty, the call still takes the shared position and its note names no address. Deploy the relay before the main service
+   when the control channel is first switched on for `geo`.
+7. **Relay knob 8: `VOICE_DEBUG_TRANSCRIPT_USERS`** (debug only, off by default; `relay_main._voice_debug_transcript_users`):
+   user ids separated by `;` (a comma breaks `--set-env-vars` and the substitution). A listed user's calls, in every mode,
+   log `voice debug <fingerprint>:` INFO lines: turn events, notes by kind, tool calls with their arguments and outputs,
+   session updates, the Ask latch, the language pair, and **the text of both sides' speech**. That carries third parties'
+   speech (the other person on an interpreter call) into Cloud Logging: list a user only while debugging, then empty the key
+   and redeploy. The ids are never logged (the boot line gives only the count). The deploy sets it from the deploy-only key
+   `VOICE_DEBUG_TRANSCRIPT_USERS_DEV`.
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
 (`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.
@@ -189,11 +229,10 @@ relay; only the main service needs credentials, to mint SFU sessions.
 2. The redirect is the shared `OAUTH_CONNECT_REDIRECT_URI` (below); there is no OneDrive-specific key.
 3. After the deploy, connect the drive from the Cabinet (Integrations, "Connect drive").
 
-**Google Drive (user drive, stage 3)** (`docs/10_rfcs/GOOGLE_DRIVE_RFC.md` §8). The Google OAuth client is the one the
-main service already mounts (`GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`); the indexer mounts the same two secrets to refresh
-Google Drive tokens. Both services build the Google adapter only when both values are present; without them the kind is
-simply not registered and every other kind runs. The consent screen carries the Drive scope and the client the shared
-redirect (below).
+**Google Drive (user drive)** (`docs/10_rfcs/GOOGLE_DRIVE_RFC.md` §8). The Google OAuth client is the one the main service
+already mounts (`GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`); the indexer mounts the same two secrets to refresh Google Drive
+tokens. Both services build the Google adapter only when both values are present; without them the kind is simply not
+registered and every other kind runs. The consent screen carries the Drive scope and the client the shared redirect (below).
 1. The indexer runs as its own service account, so it needs a per-secret read grant (the deploy fails until it can read
    both secrets):
    ```bash
@@ -204,16 +243,12 @@ redirect (below).
    ```
 
 **Integration connect redirect (`OAUTH_CONNECT_REDIRECT_URI`).** One callback serves every integration connect, Google and
-Microsoft alike: `<SERVICE_URL>/auth/connect/callback` (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2, E4). Deployed, the key
-comes from the secret `OAUTH_CONNECT_REDIRECT_URI_DEV` mounted as `OAUTH_CONNECT_REDIRECT_URI` (`cloudbuild-dev.yaml`
-`--set-secrets`); the secret is created and granted to the runtime SA like the other `_DEV` secrets. Register the same
-URI as an authorized redirect URI on the Google OAuth client and as a redirect URI (platform "Web") on the `Alek-bot`
-registration.
-
-Local runs read `OAUTH_CONNECT_REDIRECT_URI` from `.env` (default `http://localhost:8080/auth/connect/callback`; the
-deployed value comes from the `_DEV` secret, so a localhost value never reaches a deployed revision). The four earlier
-per-integration keys (`GMAIL_OAUTH_REDIRECT_URI`, `GOOGLE_TASKS_OAUTH_REDIRECT_URI`, `MICROSOFT_TODO_REDIRECT_URI`,
-`ONEDRIVE_REDIRECT_URI`) are gone. A connect for a kind whose realm has no OAuth client configured answers 501.
+Microsoft alike: `<SERVICE_URL>/auth/connect/callback` (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2). Deployed, the key comes
+from the secret `OAUTH_CONNECT_REDIRECT_URI_DEV` mounted as `OAUTH_CONNECT_REDIRECT_URI` (`cloudbuild-dev.yaml`
+`--set-secrets`); the secret is created and granted to the runtime SA like the other `_DEV` secrets. Register the same URI
+as an authorized redirect URI on the Google OAuth client and as a redirect URI (platform "Web") on the `Alek-bot`
+registration. Local runs read the key from `.env` (a localhost value never reaches a deployed revision: the deployed value
+comes from the `_DEV` secret). A connect for a kind whose realm has no OAuth client configured answers 501.
 
 **Agent workspace bucket** (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md` §14). The main service mounts `GCS_WORKSPACE_BUCKET`.
 1. Bucket in the main service's region: uniform access, public access prevention, soft delete off (versioning is the
@@ -240,9 +275,38 @@ per-integration keys (`GMAIL_OAUTH_REDIRECT_URI`, `GOOGLE_TASKS_OAUTH_REDIRECT_U
 3. The secret: `printf '%s' <WORKSPACE_BUCKET> | gcloud secrets create GCS_WORKSPACE_BUCKET --data-file=- --project=<PROJECT_ID>`,
    with `roles/secretmanager.secretAccessor` for the runtime SA if the project does not grant it broadly.
 
-Local dev shares the live bucket (D9): with `GOOGLE_CLOUD_PROJECT` set, `load_settings()` fetches an empty
+Local dev shares the live bucket: with `GOOGLE_CLOUD_PROJECT` set, `load_settings()` fetches an empty
 `GCS_WORKSPACE_BUCKET` from Secret Manager, and the developer's own account needs object access. Another bucket name in
 `.env` points elsewhere; with the key empty and no project, no workspace is built.
+
+**Stored-secrets encryption (`docs/10_rfcs/SECRETS_AT_REST_RFC.md`).** The main service mounts two more secrets and refuses
+to start without either (locally too); the indexer mounts `KMS_CRYPTO_KEY` and refuses to start without it (it refreshes
+OneDrive tokens through the credential store, `decisions/credential_store_cutover.md`).
+1. A Cloud KMS key ring and one software key with purpose `ENCRYPT_DECRYPT`, automatic rotation, data-access audit logs on
+   for Cloud KMS. Its full resource name is the secret `KMS_CRYPTO_KEY`
+   (`projects/<PROJECT_ID>/locations/<LOCATION>/keyRings/<KEY_RING>/cryptoKeys/<KEY>`).
+2. `SECRET_DIGEST_KEY`: at least 32 random bytes as hex (`openssl rand -hex 32`, stored with `printf '%s'`), the key of the
+   verify-only digests. Changing it invalidates every digested value still in flight (MCP codes live minutes).
+3. Grant `roles/cloudkms.cryptoKeyEncrypterDecrypter` **on the key** (not the project) to the **main service's** and the
+   **indexer's** service accounts (each service runs under its own identity), and to the developer's own identity: local
+   runs use the real key, with no fallback cipher. The relay, sandbox and deep-research job get no key grant.
+   `KMS_CRYPTO_KEY` needs `secretmanager.secretAccessor` for both accounts, `SECRET_DIGEST_KEY` for the main service's.
+Keep the digest key's value out of tracked files and chat; it is not derivable from the KMS key.
+
+**Voice MCP token kind (`docs/10_rfcs/LELIK_VOICE_MCP_RFC.md` §5).** The main service mounts `VOICE_MCP_SIGNING_KEY`, the
+HS256 key of Lelik's per-call MCP tokens and nothing else. **Create it before the first deploy that mounts it** (the deploy
+fails otherwise): at least `SIGNING_KEY_MIN_CHARS` characters (`src/services/voice_mcp_token_service.py`; `openssl rand
+-hex 32` is enough, stored with `printf '%s'`), never the OAuth session secret in effect nor the public dev placeholder
+(`src/composition/voice_mcp_setup.py::signing_key` refuses the start for either), `secretmanager.secretAccessor` for the
+main service's account only. Rotating it ends every live voice token at once (calls in flight lose their memory and drive
+tools). The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only; **off in code**; the deploy sets it `on` through
+`cloudbuild-dev.yaml` `--set-env-vars`; rollback is `--update-env-vars=VOICE_MCP_TOOLS=off` until the next deploy) wires
+the tools: the plain companion call on xAI gets the memory and drive MCP servers as session tools (their URLs come from
+`MCP_RESOURCE_URI`), loses its `search_memory` delegation, and `/voice/session-config` mints the call's tokens; with it on
+and the key missing the main service refuses to start. The relay needs no knob: it offers a server only when the session
+config carries both its descriptor and its token. **Upload `VOICE_TOOL_DATA_LELIK` and the `lelik_xai` profile before the
+deploy that turns the knob on** (`prompts_snapshot/`, token upload). With the knob off nothing is minted, no call carries
+the servers and `search_memory` stays; tokens made elsewhere with the key still verify until their call record is deleted.
 
 ### Twilio number (Lelik's number)
 
@@ -262,10 +326,11 @@ appear in it (a test enforces the prefix).
   make target passes `FIRESTORE_DATABASE` from `.env`, and a missing database is refused: no live default). An existing
   index answers "already exists": read the output, not only the exit code. Vector entries are skipped.
 - Vector indexes (every `create_*vector_index*.sh` refuses to run without `FIRESTORE_DATABASE`; `.env` has it, source it
-  or pass it): `PROJECT_ID=<PROJECT_ID> FIRESTORE_DATABASE=<DATABASE> scripts/infrastructure/create_drive_vector_indexes.sh` (drive;
-  `COLLECTION_PREFIX` defaults to `development_`) and `scripts/infrastructure/create_task_search_vector_indexes.sh`
-  (task search). A vector index carries only the dimension (768) and `flat`; the distance measure is chosen per query.
-- Both need the project id passed explicitly: `.env` has `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`.
+  or pass it): `PROJECT_ID=<PROJECT_ID> FIRESTORE_DATABASE=<DATABASE> scripts/infrastructure/create_drive_vector_indexes.sh`
+  (drive; `COLLECTION_PREFIX` defaults to `development_`) and `scripts/infrastructure/create_task_search_vector_indexes.sh`
+  (task search). A vector index carries only the dimension and `flat`; the distance measure is chosen per query.
+- The direct python call and the vector scripts need the project id passed explicitly (`.env` has `GOOGLE_CLOUD_PROJECT`,
+  not `PROJECT_ID`); `make deploy-indexes` derives it itself.
 - **Wait for `READY`.** This prints the ones still building:
   ```bash
   gcloud firestore indexes composite list --database=us-production --project=<PROJECT_ID> \
@@ -320,8 +385,8 @@ gcloud firestore fields ttls update purge_after --collection-group=<collection-g
 
 <!-- ttl-runbook:end -->
 
-Without these policies nothing breaks, but the janitor posts a 🚨 alert on each run while a closed record is 3 days past
-its `purge_after`.
+Without these policies nothing breaks, but the janitor posts an alert on each run while a closed record is
+`src/domain/fact_lifecycle_sweep.py::PURGE_OVERDUE_AFTER` past its `purge_after`.
 
 <!-- ttl-unverified:begin (generated by scripts/generate_ttl_runbook.py from config/ttl_registry.json; do not edit) -->
 
@@ -370,17 +435,17 @@ bq --project_id=<PROJECT_ID> show --format=prettyjson alek_memory_dev > ds.json
 bq --project_id=<PROJECT_ID> update --source ds.json alek_memory_dev
 ```
 
-BigQuery creates the table (`run_googleapis_com_stdout`) on the first matching record and widens its
-schema as new fields appear. Analysis examples (SQL over `jsonPayload`) live in
-`docs/05_building_blocks/memory_telemetry/README.md`. Knobs: `MEMORY_TELEMETRY=off` disables the sampler;
-`MEMORY_SAMPLE_INTERVAL_S` (default 15, minimum 1) sets the idle interval — under pressure (≥ 75% of the
-limit) it samples every second.
+BigQuery creates the table (`run_googleapis_com_stdout`) on the first matching record and widens its schema as new fields
+appear. Analysis examples (SQL over `jsonPayload`) live in `docs/05_building_blocks/memory_telemetry/README.md`. Knobs, read
+with `os.getenv` in `src/composition/memory_telemetry_setup.py`: `MEMORY_TELEMETRY=off` disables the sampler;
+`MEMORY_SAMPLE_INTERVAL_S` sets the idle interval (base and pressure values: `src/domain/memory_telemetry.py`).
 
 ### Cloud Tasks queues
 
-- Slack events go to `alek-bot-tasks-{env}`; Telegram updates (`telegram_update`), `send_to_chat` errands and other agent
-  tasks go to `agent-tasks-{env}` (us-central1) and share its 5 concurrent dispatch slots. `dispatch_deadline` is set per
-  task, not on the queue.
+- Slack events go to `alek-bot-tasks-{env}` (`src/composition/slack_adapter_factory.py`); Telegram updates, `send_to_chat`
+  errands and other agent tasks go to `agent-tasks-{env}` (`src/composition/operations_setup.py`) and share its dispatch
+  slots (`src/adapters/gcp_task_queue.py` creates a missing queue with 5). `dispatch_deadline` is set per task, not on the
+  queue.
 - Attempt logging on the agent queue, so a redelivery can be told from a retry:
   ```bash
   gcloud tasks queues update agent-tasks-dev --location=us-central1 \
@@ -403,46 +468,18 @@ CI prints counts only (the repository is public, so is the Actions log). To see 
 
 The semantic model check is local-only and never runs in CI: put `PII_PROFILE` and `ANTHROPIC_API_KEY` in the local
 environment and run `python3 -m scripts.pii_gate.semantic_check --range origin/main...HEAD`. Its findings are leads for
-a stronger-model review, not verdicts.
+a stronger-model review, not verdicts. The commit hooks (`.githooks/`, installed by `scripts/install-git-hooks.sh`) run
+the same gate locally.
 
 A false positive is overridden with the PR label `pii-ok` (create it once). PRs from forks get no secrets and fail.
-
-**Stored-secrets encryption (`docs/10_rfcs/SECRETS_AT_REST_RFC.md`).** The main service mounts two more secrets and refuses to
-start without either (locally too); the indexer mounts `KMS_CRYPTO_KEY` and refuses to start without it (it refreshes OneDrive
-tokens through the credential store, `decisions/credential_store_cutover.md`).
-1. A Cloud KMS key ring and one software key with purpose `ENCRYPT_DECRYPT`, automatic rotation every 90 days, data-access
-   audit logs on for Cloud KMS. Its full resource name is the secret `KMS_CRYPTO_KEY`
-   (`projects/<PROJECT_ID>/locations/<LOCATION>/keyRings/<KEY_RING>/cryptoKeys/<KEY>`).
-2. `SECRET_DIGEST_KEY`: at least 32 random bytes as hex (`openssl rand -hex 32`, stored with `printf '%s'`), the key of the
-   verify-only digests. Changing it invalidates every digested value still in flight (MCP codes live ~10 minutes).
-3. Grant `roles/cloudkms.cryptoKeyEncrypterDecrypter` **on the key** (not the project) to the **main service's** and the **indexer's**
-   service accounts (each service runs under its own identity), and to the developer's own identity: local runs use the real key,
-   with no fallback cipher. The relay, sandbox and deep-research job get no key grant. `KMS_CRYPTO_KEY` needs
-   `secretmanager.secretAccessor` for both accounts, `SECRET_DIGEST_KEY` for the main service's.
-Keep the digest key's value out of tracked files and chat; it is not derivable from the KMS key.
-
-**Voice MCP token kind (`docs/10_rfcs/LELIK_VOICE_MCP_RFC.md` §5).** The main service mounts `VOICE_MCP_SIGNING_KEY`, the
-HS256 key of Lelik's per-call MCP tokens and nothing else. **Create it before the first deploy that mounts it** (the deploy
-fails otherwise): at least 48 characters (`openssl rand -hex 32` gives 64, stored with `printf '%s'`), never the OAuth
-session secret in effect nor the public dev placeholder (the start is refused for either), `secretmanager.secretAccessor` for the main service's
-account only. Rotating it ends every live voice token at once (calls in flight lose their memory and drive tools).
-The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only, default off in code; `on` turns it on; the deploy sets it
-`on` through `cloudbuild-dev.yaml` `--set-env-vars`, and the rollback is `--update-env-vars=VOICE_MCP_TOOLS=off` until the
-next deploy) wires the tools: the plain
-companion call on xAI gets the memory and drive MCP servers as session tools (their URLs come from `MCP_RESOURCE_URI`,
-no new key), loses its `search_memory` delegation, and `/voice/session-config` mints the call's tokens; with it on and
-the key missing the main service refuses to start. The relay needs no knob: it offers a server only when the session
-config carries both its descriptor and its token. **Upload `VOICE_TOOL_DATA_LELIK` and the `lelik_xai` profile before
-the deploy that turns the knob on** (`prompts_snapshot/`, token upload). With the knob off nothing is minted, no call
-carries the servers, `search_memory` stays, and tokens made elsewhere with the key (a probe) still verify until their
-call record is deleted.
 
 ---
 
 ## First deploy: the two-pass URLs
 
-Three units publish a URL that another unit needs, and the URL exists only after the unit's first deploy. Each is deployed
-twice once; after that the URL is stable and `.env` keeps it.
+Four units publish a URL that another unit needs, and the URL exists only after the unit's first deploy. Each is deployed
+twice once; after that the URL is stable and `.env` keeps it. The relay and indexer are below; the render and light
+sandbox services follow the same pass-one / read-URL / pass-two shape in their own sections.
 
 ### Voice Relay Stream URL — two-pass first deploy
 
@@ -462,13 +499,16 @@ The main service hands Twilio the relay's WebSocket URL (`<Connect><Stream url="
 Both services read the indexer's URL from `DRIVE_INDEXER_URL` (an optional knob, never in `load_settings()`): the main
 service targets the drive queue at it, and the indexer enqueues its continuations there and pins its token audience to
 it. **While it is empty, no drive task queue is built and indexing never runs:**
-- the main service logs `Drive sync queue: disabled` at INFO on startup and answers `start_drive_sync` with
-  `200 {"status": "disabled"}`; the nudges are skipped; the Cabinet toggle saves the flag, enqueues nothing and logs a WARNING;
-- the indexer logs `DRIVE_INDEXER_URL is not set` at WARNING, and its `/worker` answers 503 to a `drive_sync` (ERROR).
+- the main service logs `Drive sync queue: disabled` at INFO on startup (`src/composition/drive_indexing_setup.py`) and
+  answers `start_drive_sync` with `200 {"status": "disabled"}`; the nudges are skipped; the Cabinet toggle saves the flag,
+  enqueues nothing and logs a WARNING;
+- the indexer logs `DRIVE_INDEXER_URL is not set` at WARNING (`indexer_main.py`), and its `/worker` answers 503 to a
+  `drive_sync` (ERROR).
 
 0. **Once:** the identity Cloud Build runs as needs `roles/cloudtasks.queueAdmin` on the drive queue
-   ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync). **Indexes first**: create the drive composites and the
-   `card_vector` vector indexes (§ Firestore indexes above), wait until all are `READY` (the tick's own `due_records`
+   ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync); without it the `drive-queue` step fails the build after the main
+   service is deployed, and the indexer and scheduler steps do not run. **Indexes first**: create the drive composites and
+   the `card_vector` vector indexes (§ Firestore indexes above), wait until all are `READY` (the tick's own `due_records`
    query needs them, not only search), then run the smoke check.
 1. `DRIVE_FIRST_PASS=1 make deploy` creates the queue, `alek-bot-indexer-dev` and the scheduler job, with an empty
    `DRIVE_INDEXER_URL` on both services.
@@ -476,8 +516,8 @@ it. **While it is empty, no drive task queue is built and indexing never runs:**
    ```bash
    gcloud run services describe alek-bot-indexer-dev --region=us-central1 --format='value(status.url)'
    ```
-3. Put it in `.env` as `INDEXER_URL_DEV=<that https:// URL>` (no trailing slash; its own key, RFC Δ21). Manual tasks must
-   use this same URL (the pinned audience).
+3. Put it in `.env` as `INDEXER_URL_DEV=<that https:// URL>` (no trailing slash). Manual tasks must use this same URL
+   (the pinned audience).
 4. `make deploy` again, then check:
    ```bash
    gcloud run services describe alek-bot-indexer-dev --region=us-central1 --format=yaml | grep -A1 DRIVE_INDEXER_URL
@@ -488,16 +528,17 @@ it. **While it is empty, no drive task queue is built and indexing never runs:**
      --format='value(schedule,state)'                                 # 3-59/10 * * * *  ENABLED
    curl -s -o /dev/null -w '%{http_code}\n' -X POST "<indexer URL>/worker" -d '{}'   # 404 (ingress), never 2xx/5xx
    ```
-   On this second pass a task may meet the indexer's 503 for a minute or two; the queue retries it.
+   On this second pass the main service gets `DRIVE_INDEXER_URL` a minute or two before the indexer does, so a task may
+   meet the indexer's 503; the queue retries it, and the "/worker 5xx" alert may fire once.
 
 ### Sandbox network (no egress)
 
 Both sandbox services deploy with Direct VPC egress `all-traffic` into a custom VPC that has no route to the internet
-([RFC](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4.5, S6): `--network`, `--subnet` and `--vpc-egress=all-traffic` come from
-`SANDBOX_VPC_NETWORK_DEV` and `SANDBOX_VPC_SUBNET_DEV` (`_SANDBOX_VPC_*`), and `cloudbuild_sandbox_{light,render}.sh deploy`
-exits 4 when either is empty, so a deploy never silently keeps open egress. Neither service needs the network: parse and render
-input travels in the request, media ranges come back over the caller's tunnel, and Chromium aborts every non-data URL. The metadata
-server and Google APIs (logging, image pull) keep working through Private Google Access.
+([RFC](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4.5): `--network`, `--subnet` and `--vpc-egress=all-traffic` come from
+`SANDBOX_VPC_NETWORK_DEV` and `SANDBOX_VPC_SUBNET_DEV` (`_SANDBOX_VPC_*`), and the two sandbox deploy scripts
+exit 4 when either is empty, so a deploy never silently keeps open egress. Neither service needs the network: parse and
+render input travels in the request, media ranges come back over the caller's tunnel, and Chromium aborts every non-data
+URL. The metadata server and Google APIs (logging, image pull) keep working through Private Google Access.
 
 **One-time owner setup** (placeholder names; nothing here is run by an agent):
 1. A custom-mode VPC `<sandbox-vpc>` with one subnet `<sandbox-subnet>` (a /26 in us-central1) with Private Google Access on.
@@ -509,21 +550,17 @@ server and Google APIs (logging, image pull) keep working through Private Google
 
 ### Sandbox render service
 
-`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) and, from slice S2, `render.pdf` and
-`render.png` (model-written HTML) for the main service
-([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 S1-S2, §8;
-[decision](../04_solution_strategy/decisions/sandbox_render_service.md)). It is `sandbox_main.py` in its own image
-(`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU,
-concurrency 1, max 3, timeout 300 s, `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (size
-fixed in `scripts/infrastructure/cloudbuild_sandbox_render.sh`; changed by editing that script, not through `.env`). One
-request per instance (`SANDBOX_RECYCLE=always`, unchanged).
-
-**Image contents (`render` target):** Python, Node, the `docx` package, Puppeteer (locked by `pdf_generator/package-lock.json`) with
-**chrome-headless-shell only**, installed at build time into a root-owned `PUPPETEER_CACHE_DIR` (`/opt/puppeteer`) that the engine user
-cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwright, no full Chrome. The image grows by the browser, its
-libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
-serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
-limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout, RFC §S0-f). `render.pdf` is live since 2026-11-04; `render.png` is not wired (O16). **No render knob** (a `SANDBOX_RENDER` value is ignored): the main service sends DOCX and PDF to this service whenever `SANDBOX_RENDER_URL` is set, and degrades them (ERROR logged, no start failure, locally too) when it is empty. Widget PNGs render in the main process (owner decision O16), with Playwright Chromium. The main image no longer carries Node, npm, puppeteer's Chromium, ffmpeg or the parser user.
+`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) and `render.pdf` (model-written
+HTML) for the main service ([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4,
+§8; [decision](../04_solution_strategy/decisions/sandbox_render_service.md)). It is `sandbox_main.py` in its own image
+(`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file), one request per instance
+(`SANDBOX_RECYCLE=always`), `--no-allow-unauthenticated`, an in-memory volume at `/work` (size fixed in
+`scripts/infrastructure/cloudbuild_sandbox_render.sh`, changed by editing that script, not through `.env`). The image
+carries Python, Node, the `docx` package and Puppeteer's chrome-headless-shell in a root-owned `PUPPETEER_CACHE_DIR` the
+engine user cannot write. **No render knob** (a `SANDBOX_RENDER` value is ignored): the main service sends DOCX and PDF to
+this service whenever `SANDBOX_RENDER_URL` is set, and degrades them (ERROR logged, no start failure, locally too) when it
+is empty (`src/composition/sandbox_client_setup.py`). Widget PNGs render in the main process, with Playwright Chromium; the
+main image carries no Node, npm, puppeteer or ffmpeg.
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
@@ -539,8 +576,8 @@ limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout
 2. **Let the deployer act as it:** `roles/iam.serviceAccountUser` on `<sandbox-render-sa>` (that account only) for the
    build's deployer identity, so `gcloud run deploy --service-account=<sandbox-render-sa>` is allowed.
 3. **Put the keys in `.env`:** `SANDBOX_RENDER_SA_DEV=<sandbox-render-sa>` and `SANDBOX_RENDER_CALLERS_DEV=<main-runtime-sa>`.
-   Leave `SANDBOX_RENDER_URL_DEV` empty. The callers must be set **before the first
-   deploy**: an empty caller set on Cloud Run refuses the revision.
+   Leave `SANDBOX_RENDER_URL_DEV` empty. The callers must be set **before the first deploy**: an empty caller set on Cloud
+   Run refuses the revision.
 4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` empty, serves **only `/health`**, and answers every
    op with `503 unconfigured`.
 5. **Read the URL back** and put it in `.env` as `SANDBOX_RENDER_URL_DEV=<https:// URL>`:
@@ -549,35 +586,34 @@ limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout
    ```
 6. **Grant invoker to the main runtime only:** `roles/run.invoker` on the render service to `<main-runtime-sa>`; never
    `allUsers` or `allAuthenticatedUsers`. Audit once and after each deploy that neither the project nor the service policy
-   contains them (RFC §8 step 2).
-7. **Pass two: `make deploy`.** The render service now knows its audience; the main service has the URL. DOCX and PDF
-   now render through the service. With an empty URL the main service still starts (ERROR logged) and DOCX and PDF report the
+   contains them.
+7. **Pass two: `make deploy`.** The render service now knows its audience; the main service has the URL. DOCX and PDF now
+   render through the service. With an empty URL the main service still starts (ERROR logged) and DOCX and PDF report the
    sandbox unavailable, on Cloud Run and locally.
 
-While `SANDBOX_RENDER_SA_DEV` is empty, `cloudbuild_sandbox_render.sh` exits 0 in every mode, so `make deploy` works
-before step 1.
-
----
+While `SANDBOX_RENDER_SA_DEV` is empty, `cloudbuild_sandbox_render.sh` exits 0 in every mode, so `make deploy` works before
+step 1.
 
 ### Sandbox light (parse) service
 
 `alek-bot-sandbox-light-dev` parses uploaded and drive files for the main service and the indexer
 ([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §11 light row). It is
 `sandbox_main.py` in the same image file as the render service (`Dockerfile.sandbox`, target `light`; an explicit COPY
-allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU, concurrency 1, min 0, max 5 (a cost guard), timeout 900 s,
-`--cpu-throttling` (request-based billing: idle warm instances cost nothing), `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (320Mi by default: request body up to 101 MiB +
-response windows up to 101 MiB + one child file up to 64 MiB; fixed in `scripts/infrastructure/cloudbuild_sandbox_light.sh`,
-changed by editing that script). The instance stays warm after a normal request and is recycled only after an abnormal one (`SANDBOX_RECYCLE=abnormal`, light only; RFC §4.6), `SANDBOX_SERVICE=light`. Both runtimes parse only through it:
-the deploy target refuses an empty `SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without
-`SANDBOX_PARSE_URL` (set from `_SANDBOX_LIGHT_URL`), locally too. Deploy the service (steps below) before the first
-deploy that switches the callers.
+allowlist, no `.env`, no key file), `--no-allow-unauthenticated`, `--cpu-throttling` (request-based billing: idle warm
+instances cost nothing), an in-memory volume at `/work` (sized in `scripts/infrastructure/cloudbuild_sandbox_light.sh`
+for the largest request body, response windows and child file; changed by editing that script). The instance stays warm
+after a normal request and is recycled only after an abnormal one (`SANDBOX_RECYCLE=abnormal`, light only), and its
+supervisor closes `/tmp` and `/dev/shm` to the engine uid at start-up, refusing to start when that does not hold
+(`decisions/sandbox_render_service.md`). Both runtimes parse only through it: the deploy target refuses an empty
+`SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without `SANDBOX_PARSE_URL` (set from
+`_SANDBOX_LIGHT_URL`; `src/composition/sandbox_parse_setup.py::build_sandbox_parser`), locally too. Deploy the service
+(steps below) before the first deploy that switches the callers.
 
-The `light` image also carries `ffmpeg` (apt, no recommends; the `render` target does not) for the `media.*` ops (RFC §7 S5, live, accepted 2026-11-05). Those ops
-are tunnel ops on the route `POST /v1/media.<op>` (a raw ASGI app in front of Quart; the indexer opens a full-duplex HTTP/2 stream and serves byte ranges
-of the recording, so the service needs no egress and receives no URL or credential). The caller map gives both the **indexer** and the main service the prefixes
-`parse` and `media` (the main service probes edit-video sources from memory, S5b). The deploy script is unchanged: the 900 s timeout covers the 240 s media ceiling, the 320 Mi volume holds the window files.
-The indexer needs no new env key: it already has `SANDBOX_PARSE_URL`, and the media adapter targets the same service (no `SANDBOX_MEDIA` knob).
-Like the render service, on Cloud Run its supervisor closes `/tmp` and `/dev/shm` to the engine uid at start-up (gen2 mounts both world-writable) and refuses start when that does not hold (`decisions/sandbox_render_service.md`).
+The `light` image also carries `ffmpeg` (the `render` target does not) for the `media.*` ops. Those are tunnel ops on
+`POST /v1/media.<op>` (the indexer opens a full-duplex HTTP/2 stream and serves byte ranges of the recording, so the
+service needs no egress and receives no URL or credential). The caller map gives both the **indexer** and the main service
+the prefixes `parse` and `media`. The indexer needs no extra env key: the media adapter targets the same
+`SANDBOX_PARSE_URL` (no `SANDBOX_MEDIA` knob).
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
@@ -598,16 +634,16 @@ Like the render service, on Cloud Run its supervisor closes `/tmp` and `/dev/shm
    empty caller set on Cloud Run refuses the revision. `SANDBOX_LIGHT_URL_DEV` is required by the deploy target itself:
    for pass one set it to the service's expected `https://` URL (Cloud Run derives it from the service name and project
    number).
-4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` empty, serves **only `/health`**, and answers every
-   op with `503 unconfigured`.
-5. **Read the URL back** and put it in `.env` as `SANDBOX_LIGHT_URL_DEV=<service URL>`:
+4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` set to the expected URL from step 3, so it is
+   configured at once; the callers' invoker grant (step 6) is still missing, so their calls are refused until then.
+5. **Read the URL back** and check it equals `SANDBOX_LIGHT_URL_DEV`; if it differs, correct the key:
    ```bash
    gcloud run services describe alek-bot-sandbox-light-dev --region=us-central1 --format='value(status.url)'
    ```
 6. **Grant invoker to the two callers only:** `roles/run.invoker` on the light service to `<main-runtime-sa>` and
    `<indexer-runtime-sa>`; never `allUsers` or `allAuthenticatedUsers`. Audit once and after each deploy that neither the
    project nor the service policy contains them.
-7. **Pass two: `make deploy`.** The light service now knows its audience.
+7. **Pass two (only if the URL had to be corrected): `make deploy`.** The service and its callers now agree on the audience.
 
 While `SANDBOX_LIGHT_SA_DEV` is empty, `cloudbuild_sandbox_light.sh` exits 0 in every mode.
 
@@ -618,23 +654,16 @@ on the main service and on the indexer), then revert the change. Traffic pinned 
 
 ## The drive specialist (`work_with_drive_files`)
 
-Smart reaches the drive through one LLM specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md` §10, §13;
-`decisions/drive_specialist.md`). It adds no service, secret or Cloud Build substitution: the specialist runs in the main
-service on the Claude and OpenAI keys it already has, so the ordinary `make deploy` is the whole code change.
-
-Its prompt lives in Firestore like every other agent's (tokens `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`,
-`OUTPUT_FORMAT_DRIVE`, blueprint `drive_agent_v1`, profile `drive`). There is no fallback prompt: a missing `drive`
-profile fails every commission with "PromptBuilder failed" (`preload_cache("drive")` only warns at startup). The owner
-uploads the prompt layer before the release whose code needs it ("Every deploy" below), and `PROTOCOL_AGENT_SELECTION`,
-which names `work_with_drive_files`, goes up right before that release, not earlier.
-
-**Several drives (`docs/10_rfcs/MULTI_DRIVE_RFC.md`, slice 2b).** The code adds no service, secret or Firestore index: a
-connection read filters on `user_id` alone, a drive note is found by the existing `match_keys` index, and the new
-connection fields (`searched_by_default`, `write_folder_id`, the scope) and the sync state's `applied_scope` are plain
-document fields. Four tokens change with it and ship by upload, not by deploy: `COGNITIVE_PROCESS_DRIVE`,
-`PROTOCOL_DRIVE_SEARCH`, `PROTOCOL_DRIVE_NOTES` and `PROTOCOL_AGENT_SELECTION`. A connection stored before 2b has no
-`write_folder_id` and reads as the drive's root, so the migrated primary keeps writing where it wrote; a connection
-created from 2b on starts read-only until the owner picks a write folder in the Cabinet.
+(`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md` §10, §13; `decisions/drive_specialist.md`; several drives:
+`docs/10_rfcs/MULTI_DRIVE_RFC.md`.) It adds no service, secret, Firestore index or Cloud Build substitution: it runs in the
+main service on keys it already has, so the ordinary `make deploy` is the whole code change. Its prompt lives in Firestore
+like every other agent's (tokens `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `PROTOCOL_DRIVE_NOTES`,
+`OUTPUT_FORMAT_DRIVE`, blueprint `drive_agent_v1`, profile `drive`) and ships by upload, not by deploy. There is no fallback
+prompt: a missing `drive` profile fails every commission with "PromptBuilder failed" (`preload_cache("drive")` only warns
+at startup). The owner uploads the prompt layer before the release whose code needs it ("Every deploy" below), and
+`PROTOCOL_AGENT_SELECTION`, which names `work_with_drive_files`, goes up right before that release, not earlier. A drive
+connection without `write_folder_id` reads as the drive's root; a connection created now starts read-only until the owner
+picks a write folder in the Cabinet.
 
 ---
 
@@ -649,7 +678,7 @@ created from 2b on starts read-only until the owner picks a write folder in the 
 - **Prompts are not deployed.** Tokens, blueprints and profiles live in Firestore; the owner uploads them with
   `firestore_utils/snapshot_upload.py` ([`../../prompts_snapshot/README.md`](../../prompts_snapshot/README.md); back up the
   prompt layer first, never from an agent session). Upload before the deploy whose code needs them: the prompt assembly
-  caches a template for 24 h per instance, so fresh instances must find the new token.
+  caches a template per instance, so fresh instances must find the new token.
 - **`--set-env-vars` replaces every variable.** A variable set by hand with `gcloud run services update` is gone at the
   next deploy; a lasting setting goes into `cloudbuild-dev.yaml` or a deploy-only `.env` key.
 - **Env drift check.** `make deploy` ends with `scripts/infrastructure/check_env_drift.py`: for each service the build
@@ -678,71 +707,54 @@ release, never earlier: a protocol restored first runs the new code with the old
 release's own values are in its rollout notes (ops).
 
 **Image registry retention.** `python scripts/infrastructure/artifact_registry_retention.py` (dry run; `--apply` sets the
-cleanup policy and cleans the backlog) keeps the 5 newest image versions per package and deletes versions older than
-14 days; it refuses when an image a revision or job needs would go (`decisions/artifact_registry_retention.md`).
+cleanup policy and cleans the backlog) deletes versions older than the policy's age that are not among the newest kept per package; it refuses when
+an image a revision or job needs would go (`decisions/artifact_registry_retention.md`).
 
 **The `:latest` trap.** After a failed deploy or a traffic rollback, `:latest` still points at the new image. Every
-`gcloud run services update`, and every Makefile target that wraps it (warm/cold, `claude-`/`openai-`/`dr-rollback` and
-`-forward`), creates a new revision from that image; with traffic pinned to the old revision it gets 0 %, so a kill-switch
-silently does nothing, and a later `--to-latest` serves the bad image. Run no `services update` and no Makefile switch until
-the fix is deployed forward; if one is unavoidable, follow it with an explicit `update-traffic`.
+`gcloud run services update`, and every Makefile target that wraps it (`start`/`stop`, the `claude-`/`openai-`/`dr-`
+rollback and forward switches), creates a new revision from that image; with traffic pinned to the old revision it gets
+0 %, so a kill-switch silently does nothing, and a later `--to-latest` serves the bad image. Run no `services update` and
+no Makefile switch until the fix is deployed forward; if one is unavoidable, follow it with an explicit `update-traffic`.
 
-**Fact profiler model.** `FACT_PROFILER_MODEL` (optional; empty = `claude-sonnet-5-5`) pins the model the fact profiler runs on
-for every account (`composition/fact_profiler_runner.py: profiler_model`). Claude ids only: the strategy's only provider
-is Claude and it has no fallback. Read with `os.getenv` where the container is built, never in `load_settings()`.
-
-**Email card online step.** `EMAIL_CARD_ONLINE` (optional; empty or unset = off, `1` = on) makes the indexer also card each
-new kept mail (email index v2 slice 6): extra fields on the same facts document, v1 indexing unchanged. `EMAIL_CARD_MODEL`
-(optional; empty = the card agent's default) pins the card writer's model. Both are read with `os.getenv` in
-`composition/email_card_setup.py`, never in `load_settings()`. The code default is off; `make deploy` sets it on the main
-service from the substitution `_EMAIL_CARD_ONLINE` (default `1`), fed by the deploy-only key `EMAIL_CARD_ONLINE_DEV`
-(`0` in `.env` turns it off across deploys). The card prompt tokens (`COGNITIVE_PROCESS_EMAIL_CARD`,
-`OUTPUT_FORMAT_EMAIL_CARD`, blueprint `email_card_agent_v1`, profile `email_card`) must be uploaded first: the card agent
-has no fallback prompt. The v2 Firestore indexes (`make deploy-indexes`) must be
-`READY` before switching it on together with a deploy that queries them (slice 8); the write path needs none.
-
-**Email scan reader.** `EMAIL_READER_PAGES_PER_DAY` (optional; unset = 40, `0` = the online scan reader off, a non-number
-= 40 plus one WARNING) caps the pages per user and UTC day that the email card step may hand to the paid reader for
-scanned PDFs of 10 pages or fewer (email index v2 slice 5). Read with `os.getenv` in `composition/email_card_setup.py`,
-never in `load_settings()`; it needs no deploy key (the code default applies) and no index.
-
-**Email card search.** The email agent's `search_emails` answers from the cards (email index v2 slice 8): one slots call
-reads the request, then the card search runs; the live headers, the per-key Gmail lists, `get_email_details` and
-`open_email_attachment` are unchanged. There is no switch and no v1 search since slice 10 (a card-search error fails the
-search); `EMAIL_SEARCH_V2` and the deploy-only key `EMAIL_SEARCH_V2_DEV` are gone, so a leftover `EMAIL_SEARCH_V2_DEV` in
-`.env` is dead and can be removed. Before the deploy: the slots prompt (`OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, blueprint `email_query_slots_v1`, profile
-`email_query_slots`) must be uploaded (without it every search runs without slots, one `[EmailQuerySlots]
-outcome=degraded` line each), and the card vector index must be `READY`: `make deploy-indexes` skips vector indexes,
-so it is created by `scripts/infrastructure/create_email_card_vector_index.sh` (without it the meaning list is skipped
-with one WARNING per search and only the key lists answer).
-
-**Email card memory feed.** Stage 3 of consolidation always reads mail with its card (email index v2 slices 9 and 9b;
-`docs/05_building_blocks/memory/README.md` Step 8): there is no switch since slice 9b, so `EMAIL_CARD_MEMORY` and the
-deploy-only key `EMAIL_CARD_MEMORY_DEV` are gone and a leftover `EMAIL_CARD_MEMORY_DEV` in `.env` is dead. Its prompt is
-`CONSOLIDATION_EMAIL_CANDIDATES` with profile `consolidation_email` and blueprint `consolidation_email_v1`
-(`firestore_utils/snapshot_upload.py --apply`); without them every Stage 3 run fails (logged as `Stage 3 (email) failed`,
-the mail stays unconsolidated, nothing is lost). The composite (user_id, consolidated_at, card_state, indexed_at) must be
-`READY` (`make deploy-indexes`). With `EMAIL_CARD_ONLINE` off, kept mail gets no card and memory sees its headers only.
-
-**Memory-search slots model.** `FACT_QUERY_SLOTS_MODEL` (optional; empty = `claude-haiku-5-5`) pins the model of the slots call on the memory-search path (`composition/fact_query_slots_setup.py: search_slots_model`), which runs with thinking `low` on the Claude-only `fact_query_slots` provider entry whatever the user's provider preference. The router's slots call is not affected: it keeps the router's own model and no thinking. Claude ids only. Read with `os.getenv` where `UserAgentFactory` builds the agent, never in `load_settings()`.
-
-**Fact profile step cap.** `FACT_PROFILER_MAX_PER_RUN` (optional; empty = `20`) is the most model calls one profile step makes in a
-leased run (`composition/fact_profile_setup.py: max_per_run`); `0` turns the step into re-derivation only (no model call, so no spend),
-an unparsable or negative value is `20` with one WARNING. Read with `os.getenv` in `application_graph.py`, never in `load_settings()`.
+**Per-service knobs** (optional; each read with `os.getenv` at its call site, never in `load_settings()`, so none has a
+deploy key unless stated; set one by hand only for a test, a lasting value goes into `cloudbuild-dev.yaml`).
+- **Model pins (Claude ids only; empty = the agent's default).** `FACT_PROFILER_MODEL`
+  (`src/composition/fact_profiler_runner.py::profiler_model`, every account), `FACT_QUERY_SLOTS_MODEL` (the memory-search
+  slots call; `src/composition/fact_query_slots_setup.py::search_slots_model`; the router's slots call is not affected)
+  and `EMAIL_CARD_MODEL` (`src/composition/email_card_setup.py`). Their strategies have no other provider and no fallback.
+- **Fact profile step cap.** `FACT_PROFILER_MAX_PER_RUN` (`src/composition/fact_profile_setup.py::max_per_run`): the most
+  model calls one profile step makes in a leased run; `0` = re-derivation only, no spend; an unparsable or negative value
+  is the default with one WARNING.
+- **Email card online step.** `EMAIL_CARD_ONLINE` (code default off; `1` = on) makes the main service's email indexing also card
+  each new kept mail. `make deploy` sets it on the main service from `_EMAIL_CARD_ONLINE` (default `1`), fed by the deploy-only key
+  `EMAIL_CARD_ONLINE_DEV` (`0` turns it off across deploys). With it off, kept mail gets no card and memory sees its
+  headers only. `EMAIL_READER_PAGES_PER_DAY` (`src/domain/email_attachment_policy.py::EMAIL_READER_PAGES_PER_DAY_DEFAULT`;
+  `0` = the online scan reader off) caps the daily pages the card step may hand to the paid reader; it has no deploy key.
+- **Email card search and memory feed have no switch:** `search_emails` always answers from the cards and consolidation's
+  email stage always reads mail with its card (`docs/05_building_blocks/memory/README.md` Step 8). Upload before the
+  deploy (`firestore_utils/snapshot_upload.py --apply`; none of these agents has a fallback prompt): the card prompts
+  (`COGNITIVE_PROCESS_EMAIL_CARD`, `OUTPUT_FORMAT_EMAIL_CARD`, blueprint `email_card_agent_v1`, profile `email_card`), the
+  slots prompt (`OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, `email_query_slots_v1`, `email_query_slots`; without it every search runs
+  without slots, one `[EmailQuerySlots] outcome=degraded` line each) and `CONSOLIDATION_EMAIL_CANDIDATES`
+  (`consolidation_email`, `consolidation_email_v1`; without it every Stage 3 run fails with `Stage 3 (email) failed`, the
+  mail stays unconsolidated, nothing is lost). Indexes: `make deploy-indexes` skips vector indexes, so the card vector
+  index is created by `scripts/infrastructure/create_email_card_vector_index.sh` (without it the meaning list is skipped
+  with one WARNING per search and only the key lists answer); the consolidation composite comes with `make deploy-indexes`.
+- **Memory telemetry.** `MEMORY_TELEMETRY=off` and `MEMORY_SAMPLE_INTERVAL_S` (§ Memory telemetry sink above).
 
 **Drive indexing.**
 - Pause / resume the drive work: `gcloud tasks queues pause|resume drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`
   and `gcloud scheduler jobs pause|resume alek-bot-dev-start-drive-sync --location=us-central1 --project=<PROJECT_ID>`. A
-  running tick keeps going for up to 30 minutes after a pause.
+  running tick keeps going until its deadline after a pause.
 - Stop every upgrade pass: `gcloud run services update alek-bot-indexer-dev --update-env-vars DRIVE_UPGRADE_PASS=off
   --region=us-central1 --project=<PROJECT_ID>`. **It does not survive a deploy** (`--set-env-vars`): set it again after each
   deploy while it is needed. The durable form is `DRIVE_UPGRADE_PASS_DEV=off` in `.env` and a deploy. Rollout rule for a
-  parser version bump (U5): `.env` off before the deploy, the deploy (clients before the sandbox), the owner runs the
-  read-only probe and OKs its number, then `DRIVE_UPGRADE_PASS_DEV=on` and a deploy.
+  parser version bump: `.env` off before the deploy, the deploy (clients before the sandbox), the owner runs the read-only
+  probe and OKs its number, then `DRIVE_UPGRADE_PASS_DEV=on` and a deploy.
 - Stop model spend only: remove `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the indexer's secrets; every model call is then
   a model outage (never charged to a file), and parsing, cards and search go on. The Gemini fallback does not take over
   (`GEMINI_API_KEY` stays for embeddings); to turn the fallback off, set `"fallback": None` in the drive entries of
-  `AgentProviderStrategy.STRATEGIES`.
+  `AgentProviderStrategy.STRATEGIES` (`src/services/agent_context_builder.py`).
 - Stop all content work: empty `ADMITTED_KINDS` and `TRIAGED_KINDS` in `src/domain/drive_index_policy.py` and bump
   `POLICY_VERSION` (`src/domain/drive_index.py`); the upgrade pass collects every readable chunk.
 - One user: turn their indexing off in the Cabinet; the purge removes hints, chunks, records and sync state.
@@ -767,19 +779,19 @@ indexer does no notes work. Reads go on (the open header, the deleted-files sear
 the local name `DRIVE_NOTES_ENABLED` for the deploy, and never set it by hand with `services update` (`--set-env-vars`
 replaces it at the next deploy).
 
-**Sandbox render.** There is no in-process path to go back to: roll the main service back to a previous Cloud Run revision and revert the removal commit; the render service can
-stay up unused. **Hard stop:** remove the caller's `roles/run.invoker` binding on the render service. Never empty
-`SANDBOX_RENDER_CALLERS_DEV` to stop it: an empty caller list refuses the new revision, so the old one keeps serving.
+**Sandbox render.** There is no in-process path to go back to: roll the main service back to a previous Cloud Run revision
+and revert the removal commit; the render service can stay up unused. **Hard stop:** remove the caller's `roles/run.invoker`
+binding on the render service. Never empty `SANDBOX_RENDER_CALLERS_DEV` to stop it: an empty caller list refuses the new
+revision, so the old one keeps serving.
 
-**Agent workspace erasure** (no user-facing path; owner command, removes every generation — soft delete is off, so nothing
+**Agent workspace erasure** (no user-facing path; owner command, removes every generation: soft delete is off, so nothing
 remains): `gcloud storage rm --all-versions "gs://<WORKSPACE_BUCKET>/<USER_ID>/**"`.
 
 **Fact janitor.** Stop it at once: `gcloud scheduler jobs pause alek-bot-dev-fact-lifecycle-sweep --location=us-central1
---project=<PROJECT_ID>`. It writes since the deploy of 2026-10-27 (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0` in the main
-service's `--set-env-vars`); the rollback lever is removing that variable (a deploy: `--set-env-vars` replaces every variable), which makes it log-only again ([memory map](../05_building_blocks/memory/README.md) §5.5; [SCHEDULERS.md](SCHEDULERS.md) § Fact Lifecycle Sweep).
-
-**Memory telemetry.** `MEMORY_TELEMETRY=off` disables the sampler; `MEMORY_SAMPLE_INTERVAL_S` sets the idle interval
-(§ Memory telemetry sink above).
+--project=<PROJECT_ID>`. It writes because the main service's `--set-env-vars` carries `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`
+(`src/composition/memory_setup.py`); the rollback lever is removing that variable from `cloudbuild-dev.yaml` and deploying,
+which makes it log-only again ([memory map](../05_building_blocks/memory/README.md) §5.5; [SCHEDULERS.md](SCHEDULERS.md)
+§ Fact Lifecycle Sweep).
 
 ---
 
@@ -793,30 +805,15 @@ External limits, not our constants (the constants live in code):
 
 ## Operations
 
-**Status and logs.**
-```bash
-gcloud run services describe alek-bot-dev --region=us-central1   # the main service
-gcloud scheduler jobs list --location=us-central1                # scheduler jobs
-make logs                     # recent main-service logs; make fetch-logs K=300 → alek_debug.log
-make logs-relay | make logs-indexer | make logs-job              # the other units (fetch-logs-* variants write a file)
-```
-Log queries and the Logfire cascade: [LOGGING.md](LOGGING.md). Alert policies: [ALERTING.md](ALERTING.md).
+**Status and logs.** `gcloud run services describe <service> --region=us-central1`, `gcloud scheduler jobs list --location=us-central1`,
+and the `make logs*` / `fetch-logs*` targets. Log queries and the Logfire cascade: [LOGGING.md](LOGGING.md). Alert policies:
+[ALERTING.md](ALERTING.md).
 
-**Keep-alive.** Scale-to-zero costs nothing but cold starts (2–4 s); a keep-alive ping costs cents a month;
-`min-instances=1` keeps it warm at a real monthly cost. Setup: [KEEP_ALIVE_SETUP.md](KEEP_ALIVE_SETUP.md)
-(`./scripts/infrastructure/setup-keep-alive.sh` with `GCP_PROJECT_ID` and `CLOUD_RUN_URL` exported).
-
-**Image cleanup.** Every deploy moves `:latest` and leaves the previous digest untagged, so the `gcr.io` repository grows
-without bound. `set-cleanup-policies` does not work reliably in the current gcloud CLI, so clean up by hand, monthly or
-after a busy week:
-```bash
-python3 scripts/infra/cleanup_gcr_images.py --dry-run   # what would be deleted
-python3 scripts/infra/cleanup_gcr_images.py             # delete untagged images older than 7 days
-```
-[`scripts/infra/gcr-io-cleanup-policy.json`](../../scripts/infra/gcr-io-cleanup-policy.json) is a placeholder for a future
-`set-cleanup-policies`; the script is the working implementation.
-
-**Node.js in the image.** The main image carries no Node, npm, puppeteer or ffmpeg: DOCX and PDF render in the render sandbox. Only the render sandbox image (`Dockerfile.sandbox`) installs `docx_generator/` and `pdf_generator/` dependencies; the main image keeps pip and Playwright Chromium (widgets).
+**Keep-alive and image cleanup.** Scale-to-zero costs cold starts; a keep-alive ping costs cents a month; `min-instances=1`
+costs a real monthly amount. The keep-alive scheduler job is created by the deploy build itself (`scheduler-jobs` step);
+no setup script is needed: [KEEP_ALIVE_SETUP.md](KEEP_ALIVE_SETUP.md). Every deploy moves `:latest` and leaves the
+previous digest untagged; the standing cleanup is the retention policy under Standing levers. `scripts/infra/` holds the
+older manual cleaner for the `gcr.io` repository (`cleanup_gcr_images.py`, `gcr-io-cleanup-policy.json`), superseded by it.
 
 ---
 

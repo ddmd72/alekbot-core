@@ -13,7 +13,7 @@ Two steps, two sides:
   key); a duplicate or a mismatched one is dropped and named by label.
 
 The URLs are the canonical MCP resource URIs (`MCP_RESOURCE_URI` and the drive URI derived from it, building block
-§10.1): the same values the voice token's audience is bound to. Pure: stdlib + domain.
+Owned data): the same values the voice token's audience is bound to. Pure: stdlib + domain.
 """
 import base64
 import json

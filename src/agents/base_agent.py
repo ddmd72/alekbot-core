@@ -903,7 +903,7 @@ class BaseAgent(ABC):
         llm_override: Optional["LLMPort"] = None,
         fallback_ctx_override: Optional["AgentExecutionContext"] = None,
     ) -> "LLMResponse":
-        """Invoke the agent LLM and auto-log the full response to the debug bucket.
+        """Invoke the agent LLM and record the call: an `llm.call` span and, when a content store is wired, a BigQuery row.
 
         All agents MUST call this instead of self.llm / self._llm directly.
         Changing debug logging = edit this method only.

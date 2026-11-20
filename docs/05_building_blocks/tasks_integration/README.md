@@ -1,628 +1,194 @@
-# Microsoft To Do Integration (Building Block)
-
-## HowTo: Using This Document
-
-### Purpose
-
-Describes the Microsoft To Do integration: OAuth authorization, local-first architecture,
-task CRUD via Graph API, semantic search via Firestore vector index, webhook-driven freshness,
-and subscription lifecycle management.
-
-### When to Read
-
-- **For AI Agents:** Before modifying `TasksAgent`, `TaskIndexingService`, or `TaskSetupService`.
-- **For Developers:** When troubleshooting OAuth flows, webhook delivery, subscription expiry,
-  or search quality issues.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The short_id algorithm or TaskSearchEntry schema changes.
-- [ ] New recurrence patterns are added or removed.
-- [ ] `TasksAgent` intents, tools, or max turns change.
-- [ ] The OAuth flow or Azure tenant configuration changes.
-- [ ] Subscription renewal thresholds or expiry limits change.
-- [ ] Cabinet API endpoints for MS To Do change.
-
-### Cross-References
-
-- **RFC:** [../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md](../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md)
-- **Decision record:** [../../04_solution_strategy/decisions/local_first_thin_search_index.md](../../04_solution_strategy/decisions/local_first_thin_search_index.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **OAuth Web API:** [../oauth_web_api/README.md](../oauth_web_api/README.md)
-
----
-
-## 1. Overview
-
-The **Microsoft To Do integration** adds personal task management to Alek-Core. Users interact
-via natural language in Slack or Telegram; `TasksAgent` translates intent into Graph API calls.
-
-**Architecture principle: local-first.** Microsoft To Do is the source of truth. Firestore
-stores only a thin search index — embedding vectors and task ID pointers. No full task data
-is mirrored in Firestore. When the agent needs task details, it fetches them from Graph API
-on demand. This avoids double bookkeeping and keeps the two systems from diverging.
-
-**Semantic search without full sync.** Firestore holds vector embeddings of task content
-and context. When the user asks "find my Prague tasks", the agent queries the Firestore index
-to retrieve matching task IDs, then fetches full task objects from Graph API. The index stays
-fresh via Graph API webhooks (change notifications) that trigger re-indexing on create/update
-and de-indexing on delete.
-
----
-
-## 2. Architecture
-
-### 2.1 Hexagonal Position
-
-```
-Driving side (user initiates):
-  Cabinet UI → GET /auth/connect/microsoft_todo → OAuth consent (Azure consumers tenant)
-             → GET /auth/connect/callback → OAuthCredential (encrypted credential store)
-             → enqueue setup_microsoft_todo Cloud Task
-
-  Cabinet UI → POST /api/tasks/microsoft/reindex → TaskSetupService.reindex_all()
-                                                  → enqueue reindex_task_list per list
-
-  Slack/Telegram → User message → RouterAgent → TasksAgent (intent: manage_user_tasks)
-
-Driven side (background processing):
-  Cloud Tasks POST /worker (task_type=setup_microsoft_todo)
-    → WorkerHandler → TaskSetupService.setup(user_id)
-        → TaskLifecyclePort.ensure_primary_list()
-        → TaskConfigPort.set_primary_list_id_if_absent()
-        → TaskSetupService.ensure_subscriptions()
-            → TaskLifecyclePort.register_subscription() (per list)
-            → enqueue reindex_task_list per new subscription
-
-  Cloud Tasks POST /worker (task_type=reindex_task_list)
-    → WorkerHandler → TaskIndexingService.reindex_list(user_id, list_id)
-        → TasksProviderPort.list_tasks() (including completed)
-        → EmbeddingService (2 vectors per task, concurrency=5)
-        → TaskSearchIndex.upsert()
-
-  Cloud Tasks POST /worker (task_type=renew_task_subscriptions)
-    → WorkerHandler → TaskSetupService.renew_expiring_subscriptions(user_id)
-
-  Cloud Tasks POST /worker (task_type=renew_all_task_subscriptions)
-    → WorkerHandler → fan-out: enqueue renew_task_subscriptions for all MS To Do users
-
-Webhook side (MS Graph push):
-  POST /webhook/microsoft-tasks/{user_id}
-    → validate clientState
-    → the subscription must be the URL user's, on the notified list (owns_subscription)
-    → created/updated → TaskIndexingService.index_task_by_ref(user_id, list_id, task_id)
-    → deleted         → TaskIndexingService.deindex_task(user_id, task_id)
-    → self-healing    → TaskSetupService.handle_subscription_renewal(user_id, sub_id)
-    → return 202 Accepted
-```
-
-### 2.2 Ports Introduced
-
-| Port | Adapter | Purpose |
-|---|---|---|
-| `TasksProviderPort` | `MicrosoftToDoAdapter` | Task CRUD via Graph API |
-| `TaskLifecyclePort` | `MicrosoftToDoAdapter` | Subscription management + primary list setup |
-| `TaskSearchIndex` | `FirestoreTaskSearchIndex` | Vector search index in Firestore |
-| `TaskConfigPort` | `FirestoreTaskConfigRepository` | Per-user config (primary list ID, subscriptions) |
-| `OAuthCredentialsPort` | `FirestoreOAuthCredentialsAdapter` | Token storage and refresh |
-
-`MicrosoftToDoAdapter` implements both `TasksProviderPort` and `TaskLifecyclePort`. This is
-intentional — both concern the same Graph API client, and splitting them into two adapters
-would duplicate auth/HTTP infrastructure without adding value.
-
----
-
-## 3. Data Model
-
-### 3.1 Task (MS To Do — not stored in Firestore)
-
-`Task` in `src/domain/task.py` is the full MS To Do task object returned by `TasksProviderPort`
-methods. It is never persisted in Firestore — it lives in MS To Do.
-
-Key fields:
-
-| Field | Type | Notes |
-|---|---|---|
-| `task_id` | `str` | MS-assigned ID (~180 chars). Never shown to the LLM directly. |
-| `list_id` | `str` | MS-assigned list ID. |
-| `title` | `str` | Task title. |
-| `body` | `Optional[str]` | Rich text notes (plain text extracted). |
-| `due_datetime` | `Optional[datetime]` | UTC. |
-| `importance` | `TaskImportance` | low / normal / high |
-| `status` | `TaskStatus` | notStarted / inProgress / waitingOnOthers / deferred / completed |
-| `tags` | `List[str]` | MS To Do categories — primary classification mechanism. |
-| `recurrence` | `Optional[TaskRecurrence]` | Pattern + range. |
-| `checklist_items` | `List[ChecklistItem]` | Sub-tasks. |
-| `attachments` | `List[TaskAttachment]` | Attachment metadata (see Known Limitations). |
-| `linked_resources` | `List[LinkedResource]` | External links. |
-
-### 3.2 TaskSearchEntry (Firestore search index)
-
-Stored in `{env}_task_search_index`. Document ID: `{user_id}_{task_id}`.
-
-| Field | Notes |
-|---|---|
-| `task_id` | Full MS task ID — used to fetch full task from Graph API after search. |
-| `list_id` | Full MS list ID — required by `batch_get_tasks`. |
-| `short_id` | `md5(task_id)[:8]` — stable 8-char reference shown to the LLM instead of full 180-char IDs. |
-| `title` | Task title — stored for display in search results without a Graph round-trip. |
-| `status` | Current status — used for `show_completed` filter in Firestore query. |
-| `tags` | MS To Do categories. |
-| `importance` | Stored for display. |
-| `content_vector` | Embedding of `title + body + checklist items`. |
-| `context_vector` | Embedding of `list_name + tags + importance`. |
-| `indexed_at` | Timestamp of last indexing. |
-
-### 3.3 TaskUserConfig (Firestore — infrastructure config)
-
-Stored in `{env}_task_config/{user_id}`.
-
-| Field | Notes |
-|---|---|
-| `primary_list_id` | ID of the "Alek Bot Tasks" list. Set once; persisted atomically by `set_primary_list_id_if_absent`. |
-| `subscriptions` | `List[TaskSubscriptionConfig]` — active Graph webhooks (sub_id, list_id, expires_at). |
-
-### 3.4 short_id System
-
-MS To Do task IDs are opaque strings of ~180 characters. Passing them to the LLM wastes
-tokens and causes formatting issues. The integration uses a stable 8-char `short_id`:
-
-```
-short_id = md5(task_id).hexdigest()[:8]
-```
-
-`TasksAgent` returns `short_id` as the `ref` field in all tool responses. The LLM uses
-`task_ref` (short_id) in `update_task` and `delete_task` calls. `TaskIndexingService.resolve_short_id()`
-translates `short_id` back to `(list_id, task_id)` before calling Graph API.
-
----
-
-## 4. Ports
-
-### 4.1 TasksProviderPort (`src/ports/tasks_provider_port.py`)
-
-CRUD interface for task management. All methods receive `user_id`; adapters resolve OAuth
-credentials internally via `OAuthCredentialsPort`.
-
-| Method | Description |
-|---|---|
-| `list_task_lists(user_id)` | Return all task lists. |
-| `list_tasks(user_id, list_id, show_completed)` | List tasks. `list_id=None` uses primary list. |
-| `get_task(user_id, list_id, task_id)` | Fetch a single task. |
-| `batch_get_tasks(user_id, task_refs)` | Fetch multiple tasks as `(list_id, task_id)` tuples. Used after search index lookup. |
-| `create_task(user_id, task)` | Create a task. Returns the created `Task` with MS-assigned ID. |
-| `update_task(user_id, list_id, task_id, updates)` | PATCH semantics — only set fields sent. |
-| `delete_task(user_id, list_id, task_id)` | Permanently delete a task. |
-
-Design note: `search_tasks` was intentionally removed from this port. Semantic search is
-handled by `TaskSearchIndex` (Firestore vector queries), not by the provider. This keeps
-the port focused on CRUD and avoids coupling the port interface to MS To Do's client-side
-filtering capabilities.
-
-### 4.2 TaskSearchIndex (`src/ports/task_search_index.py`)
-
-Vector search interface backed by Firestore.
-
-| Method | Description |
-|---|---|
-| `upsert(entry)` | Insert or replace index entry. |
-| `delete(user_id, task_id)` | Remove from index. |
-| `delete_by_list(user_id, list_id)` | Remove all tasks in a list (used on list deletion). |
-| `find_nearest(user_id, vectors, limit, show_completed)` | Multi-vector RRF search. Returns `TaskSearchEntry` list. |
-| `get_by_short_id(user_id, short_id)` | Look up a single entry by stable short_id. Returns `None` if not found. |
-| `delete_all_for_user(user_id)` | Remove all entries for a user (called on disconnect). |
-
-### 4.3 TaskConfigPort (`src/ports/task_config_port.py`)
-
-Per-user integration config (primary list ID, active subscriptions).
-
-| Method | Description |
-|---|---|
-| `get_config(user_id)` | Load config. Returns empty `TaskUserConfig` if not found. |
-| `save_config(user_id, config)` | Overwrite config. |
-| `set_primary_list_id_if_absent(user_id, list_id)` | Atomic create-if-not-exists via Firestore transaction. Returns existing value if already set, or writes and returns the new value. Safe under concurrent calls. |
-
-### 4.4 TaskLifecyclePort (`src/ports/task_lifecycle_port.py`)
-
-Graph API lifecycle operations for subscription management and initial setup. Separated from
-`TasksProviderPort` to keep task CRUD distinct from subscription concerns. Config persistence
-is the caller's responsibility — these methods only interact with Graph API.
-
-| Method | Description |
-|---|---|
-| `ensure_primary_list(user_id)` | Find or create "Alek Bot Tasks" list. Returns `list_id`. Does not persist. |
-| `register_subscription(user_id, list_id, notification_url_base)` | POST /subscriptions. Returns `TaskSubscriptionConfig`. Does not persist. |
-| `renew_subscription(user_id, sub_id)` | PATCH subscription with new expiry. Returns updated config. Does not persist. |
-| `delete_subscription(user_id, sub_id)` | DELETE /subscriptions/{sub_id}. |
-
----
-
-## 5. Adapters
-
-### 5.1 MicrosoftToDoAdapter (`src/adapters/microsoft/todo_adapter.py`)
-
-Implements `TasksProviderPort` and `TaskLifecyclePort` via MS Graph API.
-
-**Auth:** OAuth tokens fetched per request via `OAuthCredentialsPort`. Token refresh
-happens transparently when the access token expires within 5 minutes. Refresh token
-endpoint: `https://login.microsoftonline.com/consumers/oauth2/v2.0/token`.
-
-**Primary list caching:** An in-process `{user_id: list_id}` dict avoids repeated
-list-lookup calls. Populated from `TaskConfigPort` on first call, then cached for the
-instance lifetime.
-
-**batch_get_tasks:** Individual `GET /tasks/{id}` per ref. Bounded concurrency: semaphore=5
-(Graph rate limit for personal accounts). 429 responses trigger exponential backoff with
-up to 3 retries per task. Failed individual tasks are dropped (not fatal).
-
-**list_tasks across lists:** Graph API has no cross-list endpoint. When `list_id=None`,
-the adapter resolves the primary list and fetches its tasks. Multi-list listing follows
-the same per-list pattern. The list's name (for `Task.list_name`) is read concurrently with
-the first page of tasks, so a listing of up to one Graph page costs one round trip.
-
-**Checklist diff on update:** Full array replace destroys `checked_at` timestamps.
-Instead: diff desired vs. existing by `item_id`, then PATCH changed items, DELETE removed
-items, POST new items.
-
-**Subscription expiry:** Graph API allows at most 4320 minutes (3 days) for personal
-account subscriptions. The adapter uses 4319 minutes to stay within the limit.
-
-### 5.2 FirestoreTaskSearchIndex (`src/adapters/firestore_task_search_index.py`)
-
-Implements `TaskSearchIndex` using Firestore vector queries.
-
-**Collection:** `{env}_task_search_index`. Document ID: `{user_id}_{task_id}`.
-
-**Search algorithm:** Multi-vector Reciprocal Rank Fusion (RRF). For each active vector
-field, an independent `find_nearest` Firestore query runs concurrently (semaphore=10).
-Results are merged using RRF with K=60. Cosine distance threshold: 0.4 (documents more
-distant are excluded). The top `limit` entries by RRF score are returned.
-
-**Vector fields:** `content_vector` and `context_vector`. Both are queried with the same
-embedding of the user's search query.
-
-### 5.3 FirestoreTaskConfigRepository (`src/adapters/firestore_task_config_repository.py`)
-
-Implements `TaskConfigPort`. Collection: `{env}_task_config`. Document ID: `{user_id}`.
-
-`set_primary_list_id_if_absent` uses a Firestore transaction to atomically set
-`primary_list_id` only when the field is absent. Concurrent setup calls are safe.
-
----
-
-## 6. TaskIndexingService (`src/services/task_indexing_service.py`)
-
-Encapsulates the embed-to-index pipeline. No port needed — single implementation.
-Used by `TasksAgent` (CRUD hooks), the webhook handler, and `WorkerHandler` (reindex jobs).
-
-### 6.1 index_task(task)
-
-Embeds two text representations in parallel:
-
-- **content_vector:** `title + body + checklist item titles` — captures what the task is about.
-- **context_vector:** `list_name + tags + importance` — captures classification and grouping.
-
-Computes `short_id = md5(task_id)[:8]`. Upserts `TaskSearchEntry` into Firestore.
-
-### 6.2 deindex_task(user_id, task_id)
-
-Removes the entry from the search index. Called on task deletion and webhook `deleted` events.
-
-### 6.3 index_task_by_ref(user_id, list_id, task_id)
-
-Fetches the full task from Graph API via `TasksProviderPort.get_task()`, then calls
-`index_task()`. Used by the webhook handler on `created` and `updated` notifications.
-
-### 6.4 reindex_list(user_id, list_id)
-
-Fetches all tasks in a list (including completed) and re-indexes them. Bounded concurrency=5.
-Used by `WorkerHandler` for the `reindex_task_list` Cloud Task.
-
-### 6.5 search(user_id, query, show_completed, limit)
-
-Embeds the query string and calls `TaskSearchIndex.find_nearest()` with the same query
-vector for both `content_vector` and `context_vector`. Returns `List[TaskSearchEntry]`.
-Used by `TasksAgent` to implement the `search_tasks` tool.
-
-### 6.6 resolve_short_id(user_id, short_id)
-
-Calls `TaskSearchIndex.get_by_short_id()` and returns `(list_id, task_id)`. Raises
-`ValueError` if not found. Used by `TasksAgent` before `update_task` and `delete_task`
-to translate LLM-facing `task_ref` values back to Graph API IDs.
-
----
-
-## 7. TaskSetupService (`src/services/task_setup_service.py`)
-
-Orchestrates the MS To Do integration lifecycle. No port needed — single implementation.
-Called by `WorkerHandler`, the webhook handler, and the Cabinet API.
-
-### 7.1 setup(user_id)
-
-Full onboarding sequence, triggered once after OAuth connection:
-
-1. `TaskLifecyclePort.ensure_primary_list(user_id)` — find or create "Alek Bot Tasks".
-2. `TaskConfigPort.set_primary_list_id_if_absent(user_id, list_id)` — persist atomically.
-3. `ensure_subscriptions(user_id)` — register webhooks for all lists.
-
-Idempotent — safe to call multiple times.
-
-### 7.2 ensure_subscriptions(user_id)
-
-For each task list, checks whether an active (non-expired) subscription already exists.
-Registers a new subscription for any list without one. Enqueues `reindex_task_list` for
-each newly subscribed list. Saves the updated config. Idempotent.
-
-### 7.3 handle_subscription_renewal(user_id, sub_id)
-
-Called on every webhook receipt (self-healing layer). Renews the subscription only if
-it expires within 48 hours. Persists the updated config.
-
-### 7.4 renew_expiring_subscriptions(user_id)
-
-Sweeps all subscriptions expiring within 24 hours and renews them. Called by Cloud Scheduler
-(daily) via `WorkerHandler` (`task_type=renew_task_subscriptions`). On renewal failure,
-the old config is kept and retried next day.
-
-### 7.5 disconnect(user_id)
-
-Full teardown:
-
-1. Delete all Graph API webhook subscriptions (best-effort — errors are logged, not fatal).
-2. Delete the stored credential via `OAuthCredentialsPort.delete()`.
-3. Delete all vector search index entries via `TaskSearchIndex.delete_all_for_user()`.
-4. Clear persisted config (`TaskUserConfig()` empty object).
-
-### 7.6 reindex_all(user_id)
-
-Calls `ensure_subscriptions(user_id)` to heal any missing subscriptions, then enqueues
-`reindex_task_list` for every subscribed list. Used from Cabinet UI and manual admin tasks.
-
----
-
-## 8. TasksAgent (`src/agents/tasks_agent.py`)
-
-Specialist agent for task management. Intent: `manage_user_tasks`.
-
-### 8.1 Agent Loop
-
-Tool-calling loop, up to `_MAX_TURNS = 6`, inside the agent's time budget:
-
-1. Build system prompt with biographical context via `PromptBuilderPort` (`agent_type="tasks"`).
-   On prompt build failure: log warning, proceed without biographical context (non-fatal).
-2. Call LLM with 5 tool declarations.
-3. Execute each tool call and append results to message history.
-4. Repeat until LLM produces a final text response (no tool calls).
-
-**Time budget.** The run's budget is its timeout (`TASKS.timeout_ms`, 30 s). No tool turn runs past the
-budget minus `_ANSWER_RESERVE_S` (8 s): the turn is bounded by `asyncio.wait_for`, and no new one starts once
-the reserve is reached. When the turn cap or the budget stops the loop, one tool-less turn answers
-(`_FORCE_ANSWER`, bounded to `_FINAL_MARGIN_S` before the timeout); when that turn cannot run, runs out of
-time or returns no text, the answer is the tool results themselves (a `Tool note:` for the orchestrator).
-A run with tool results never ends as a timeout. A run whose first turn did not finish has no facts and
-fails as before.
-
-A lookup over one page of tasks is two model turns (the `list_tasks` call, then the answer) and one Graph
-round trip (§5.1: the list name and the first page of tasks are read concurrently).
-
-### 8.2 Tools
-
-| Tool | Description |
-|---|---|
-| `list_tasks` | The lookup tool: one page (`_PAGE_SIZE = 20`) of the primary list's tasks, tasks with a due date first (soonest first), then undated tasks (newest first). Optional `page` (from 1), `due_from` / `due_to` (ISO-8601; a date alone is the whole day; undated tasks are left out when either is set; an unreadable date is a tool error), `show_completed` (completed tasks too). The result adds `total`, `page`, `pages` and a `note` that says whether these are all the tasks or which page comes next. Graph's To Do list call documents no `$orderby`/`$top`/date `$filter`, so filter, order and paging run in the agent over the adapter's full fetch. |
-| `search_tasks` | Semantic search via `TaskIndexingService.search()` + `batch_get_tasks()`, for long lists only (more than one page). Returns matching tasks with their `ref` (short_id); a miss returns a `note` saying another wording will not find more. |
-| `create_task` | Create via Graph API, then index. Supports title, body, due_datetime, importance, tags, recurrence. A due, start or reminder time of day without an offset is the user's wall time in their zone, sent as its UTC instant (`wall_time_instant`; a time the clocks skip is the tool's error); a date alone stays that day; `update_task` reads them the same way. |
-| `update_task` | PATCH via Graph API, then re-index. Requires `task_ref` from prior `list_tasks` or `search_tasks` result. |
-| `delete_task` | DELETE via Graph API, then deindex. Requires `task_ref`. |
-
-### 8.3 list-before-mutate
-
-`update_task` and `delete_task` require `task_ref` (short_id). The LLM calls `list_tasks`
-(or, on a long list, `search_tasks`) first to obtain `ref` values, then uses them in mutation
-calls. The agent never accepts a raw MS task ID from the user.
-
-`resolve_short_id` translates the `task_ref` back to `(list_id, task_id)` before Graph API
-calls. Raises `ValueError` if the ref is not found in the index.
-
-### 8.4 Tool Result Format
-
-`_format_task_list()` serializes tasks to a compact JSON structure. The `ref` field is
-`md5(task_id)[:8]` — identical to `TaskSearchEntry.short_id`. Only non-null fields are
-included to minimize token usage.
-
-### 8.5 Auto-Tagging
-
-The `create_task` tool description instructs the LLM to infer classification tags from
-context (e.g. "remind me about Prague hotel" → `['prague', 'trip']`). Tags map to MS To Do
-categories and are indexed in `context_vector` for semantic filtering.
-
-### 8.6 Biographical Context
-
-`PromptBuilderPort.build_for_agent(agent_type="tasks", include_biographical=True)` injects
-user biographical facts into the system prompt. This allows the agent to apply personal
-context (e.g. known preferences, ongoing projects) when creating or interpreting tasks.
-
----
-
-## 9. OAuth Flow
-
-```
-User clicks "Connect Microsoft To Do" in Cabinet
-  → GET /auth/connect/microsoft_todo (requires the Cabinet session)
-       → Validate session → extract user_id
-       → OAuthConnectService.start() stores the flow server-side (state digest, PKCE); no cookie is set
-       → 302 → Microsoft consent page
-              Tenant: consumers (personal accounts)
-              Scopes: Tasks.ReadWrite offline_access
-              Response mode: query
-
-User approves → GET /auth/connect/callback (the one callback of every integration)
-  → Validate the stored flow (state digest, one use) against the Cabinet session
-  → MicrosoftOAuthProvider.exchange(code): POST https://login.microsoftonline.com/consumers/oauth2/v2.0/token
-       → access_token + refresh_token; Graph /me id is the account identity
-  → Persist OAuthCredential (kind="microsoft_todo") to the credential store
-  → Activation enqueues setup_microsoft_todo Cloud Task (user_id)
-  → 302 → /cabinet?connected=microsoft_todo
-```
-
-Token storage fields: `access_token`, `refresh_token`, `token_expiry`, `provider="microsoft_todo"`,
-`scopes=["Tasks.ReadWrite", "offline_access"]`.
-
-Token refresh is handled transparently by `MicrosoftToDoAdapter._get_headers()` on every
-Graph API request. The refresh token endpoint is
-`https://login.microsoftonline.com/consumers/oauth2/v2.0/token`.
-
----
-
-## 10. Webhook
-
-**Endpoint:** `POST /webhook/microsoft-tasks/{user_id}`
-
-The `user_id` is embedded in the webhook URL path at subscription registration time,
-enabling O(1) routing to the correct user without any database lookup.
-
-### 10.1 Graph Validation Challenge
-
-On subscription registration, Graph API sends a one-time validation request:
-
-```
-POST /webhook/microsoft-tasks/{user_id}?validationToken=XYZ
-```
-
-The handler responds with `200 text/plain` containing the raw `validationToken` value.
-No other processing occurs for validation requests.
-
-### 10.2 Change Notification Processing
-
-For real change notifications:
-
-1. Parse JSON body. Return `400` on invalid JSON.
-2. For each notification in `value[]`:
-   a. Verify `clientState == MICROSOFT_TASKS_WEBHOOK_SECRET`. On mismatch: log warning, skip notification. If no secret configured: skip verification (dev mode).
-   b. Extract `list_id` and `task_id` from the `resource` path using regex `r"/me/todo/lists/([^/]+)/tasks/([^/]+)"`.
-      The notification's `subscriptionId` must be a subscription stored for the URL's `user_id` on that `list_id`
-      (`TaskSetupService.owns_subscription`); otherwise, or when that read fails, skip the notification.
-   c. `changeType == "deleted"` → `TaskIndexingService.deindex_task(user_id, task_id)`
-   d. `changeType == "created"` or `"updated"` → `TaskIndexingService.index_task_by_ref(user_id, list_id, task_id)`
-   e. Trigger self-healing subscription renewal: `TaskSetupService.handle_subscription_renewal(user_id, sub_id)`.
-3. Return `202 Accepted`. Graph requires 202, not 200, for change notifications.
-
-### 10.3 Security
-
-`clientState` in each notification is compared against the `MICROSOFT_TASKS_WEBHOOK_SECRET`
-environment variable. This provides CSRF-equivalent protection: only Graph API (which knows
-the secret set at subscription time) can trigger index updates. The secret is one for every
-subscription, so it does not say whose notification it is: the subscription id and list are
-checked against the URL user's stored subscriptions, and a notification for another user's
-subscription touches nothing.
-
----
-
-## 11. Subscription Lifecycle
-
-Graph API webhook subscriptions for personal accounts expire after a maximum of 3 days
-(4320 minutes). The integration uses three overlapping renewal mechanisms:
-
-**Layer 1 — Self-healing on webhook receipt:**
-Every notification triggers `TaskSetupService.handle_subscription_renewal()`. The subscription
-is renewed if it expires within 48 hours. This is the primary renewal path for active users
-who receive task changes regularly.
-
-**Layer 2 — idempotent ensure_subscriptions:**
-Called during `setup()` and `reindex_all()`. Registers a new subscription for any list that
-has no active subscription. Acts as recovery for lists that lose their subscription due to
-Graph API errors or missed renewals.
-
-**Layer 3 — Cloud Scheduler daily sweep:**
-`task_type=renew_all_task_subscriptions` → fan-out: one `renew_task_subscriptions` task
-per MS To Do user. Each task calls `TaskSetupService.renew_expiring_subscriptions()`, which
-renews any subscription expiring within 24 hours. This catches inactive users whose webhooks
-have not triggered self-healing recently.
-
----
-
-## 12. Worker Tasks
-
-| `task_type` | Handler | Description |
-|---|---|---|
-| `setup_microsoft_todo` | `TaskSetupService.setup(user_id)` | Onboarding: ensure primary list + subscriptions + enqueue reindex. Enqueued after OAuth callback. |
-| `reindex_task_list` | `TaskIndexingService.reindex_list(user_id, list_id)` | Fetch all tasks in a list, embed, upsert index. Enqueued by `ensure_subscriptions` for new lists. |
-| `renew_task_subscriptions` | `TaskSetupService.renew_expiring_subscriptions(user_id)` | Renew subscriptions expiring within 24h for one user. |
-| `renew_all_task_subscriptions` | Fan-out via `OAuthCredentialsPort.list_user_ids("microsoft_todo")` | Daily scheduler task: enqueues `renew_task_subscriptions` for every connected user. |
-
----
-
-## 13. Cabinet API
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/tasks/microsoft/status` | `GET` | Connection state and active subscription list (list_id + expires_at per sub). |
-| `/api/tasks/microsoft/reindex` | `POST` | Trigger full re-index: `ensure_subscriptions` + enqueue `reindex_task_list` per list. |
-| `/api/tasks/microsoft/lists` | `GET` | Return all MS To Do task lists for the user (live Graph API call). |
-| `/api/tasks/microsoft/disconnect` | `DELETE` | Full teardown: delete subscriptions, revoke token, clear search index, clear config. |
-
----
-
-## 14. Recurrence Support
-
-Five recurrence patterns are supported, matching the MS Graph API `recurrencePattern.type`
-values that work reliably for personal accounts:
-
-| Pattern | Behavior | Smart defaults from due_datetime |
-|---|---|---|
-| `daily` | Every N days. Interval configurable. | None needed. |
-| `weekdays` | Every Monday through Friday. Convenience alias — translated to `weekly` with `days_of_week=["monday","tuesday","wednesday","thursday","friday"]`. | — |
-| `weekly` | On specific days of the week. | If `days_of_week` omitted: derived from weekday of `due_datetime`. |
-| `absoluteMonthly` | On a specific day of the month. | If `day_of_month` omitted: derived from day of `due_datetime`. |
-| `absoluteYearly` | On a specific day of a specific month. | If `day_of_month` or `month` omitted: derived from `due_datetime`. |
-
-`RecurrenceRange` is always `noEnd` — tasks recur indefinitely. Start date is set to the
-current UTC date at creation time.
-
-**Excluded patterns:** `relativeMonthly` and `relativeYearly` (e.g. "third Wednesday of the
-month") are not exposed in the agent tools. These patterns are affected by a known Graph API
-bug for personal accounts where they are silently converted to `daily`. Excluding them
-prevents silent misbehavior.
-
----
-
-## 15. Known Limitations
-
-**Attachments not fetched inline.** The `Task` domain model has an `attachments: List[TaskAttachment]`
-field, but `MicrosoftToDoAdapter._task_from_ms()` does not populate it. Fetching attachment
-metadata requires a separate `GET /me/todo/lists/{list_id}/tasks/{task_id}/attachments` call
-which is not implemented. `Task.attachments` always returns an empty list.
-
-This is intentional tech debt: attachment content retrieval requires a further download step,
-and the use case has not been prioritized. The field structure is in place for future
-implementation.
-
----
-
-## 16. Code References
-
-- `src/domain/task.py` — All task domain models (Task, TaskCreate, TaskUpdate, TaskSearchEntry, TaskUserConfig, recurrence types).
-- `src/ports/tasks_provider_port.py` — CRUD port interface.
-- `src/ports/task_search_index.py` — Vector search port interface.
-- `src/ports/task_config_port.py` — Per-user config port.
-- `src/ports/task_lifecycle_port.py` — Subscription management port.
-- `src/adapters/microsoft/todo_adapter.py` — Graph API client (TasksProviderPort + TaskLifecyclePort).
-- `src/adapters/firestore_task_search_index.py` — Firestore vector search adapter.
-- `src/adapters/firestore_task_config_repository.py` — Firestore config adapter.
-- `src/services/task_indexing_service.py` — Embed-to-index pipeline.
-- `src/services/task_setup_service.py` — Integration lifecycle orchestration.
-- `src/agents/tasks_agent.py` — Specialist agent (intent: manage_user_tasks).
-- `src/handlers/worker_handler.py` — Cloud Tasks dispatcher (MS To Do task types).
-- `src/web/oauth_app.py` — `/auth/connect/<kind>` and `/auth/connect/callback`.
-- `src/web/user_cabinet_app.py` — `/api/tasks/microsoft/*` endpoints.
-- `src/web/microsoft_tasks_webhook.py` — Graph change notification handler.
-
----
-
-## 17. Status
-
-**Status:** Production Ready
-
-**Last Updated:** 2026-03-19
+<!-- living-doc
+covers:
+  src/adapters/microsoft/todo_adapter.py
+  src/adapters/google_tasks_adapter.py
+  src/adapters/firestore_task_config_repository.py
+  src/adapters/firestore_task_search_index.py
+  src/ports/task_config_port.py
+  src/ports/task_lifecycle_port.py
+  src/ports/task_search_index.py
+  src/ports/tasks_provider_port.py
+  src/services/task_indexing_service.py
+  src/services/task_setup_service.py
+  src/agents/tasks_agent.py
+  src/domain/task.py
+  src/web/microsoft_tasks_webhook.py
+  scripts/infrastructure/create_task_search_vector_indexes.sh
+  scripts/debug_task_index.py
+-->
+# Microsoft To Do Integration
+
+## Purpose
+
+This block lets the user manage personal tasks in chat. A specialist agent (`TasksAgent`, intent `manage_user_tasks`)
+turns a natural-language delegation into Microsoft Graph calls against the user's To Do account, and finds tasks by
+meaning on long lists.
+
+**Local-first.** Microsoft To Do is the only source of truth for a task. Firestore keeps a thin search index (a few
+display fields, two vectors, a short reference) and the per-user integration config. A task's full content is always
+read from Graph on demand, so the two systems cannot diverge on content; the index is kept fresh by Graph change
+notifications and by full re-reads of the list.
+
+What it is not: it does not write memory facts, it does not mirror tasks, and it works on one list only, the primary
+list the bot creates for itself (`src/adapters/microsoft/todo_adapter.py::_PRIMARY_LIST_NAME`). Google Tasks is frozen:
+`GoogleTasksAdapter` still implements `TasksProviderPort` but is not wired (`src/composition/service_container.py`
+keeps it commented out), and its consent runs no setup.
+
+## Owned data
+
+Firestore, `us-production` database, environment prefix on collection names.
+
+**Search index** — `EnvironmentConfig.task_search_index_collection`, document id `{user_id}_{task_id}`
+(`src/adapters/firestore_task_search_index.py::FirestoreTaskSearchIndex`). Written by `TaskIndexingService.index_task`,
+read by `TaskIndexingService.search` and `resolve_short_id`. One `TaskSearchEntry` (`src/domain/task.py`) holds:
+- identity and display: `task_id`, `list_id`, `list_name`, `title`, `status`, `tags`, `importance`, `indexed_at`;
+- `short_id`: a short hash of `task_id` (`TaskIndexingService.index_task`), the only task reference the model sees (a Graph id is ~180 characters);
+- `content_vector`: embedding of title, body and checklist item titles (`TaskIndexingService._content_text`);
+- `context_vector`: embedding of list name, tags and importance (`TaskIndexingService._context_text`).
+
+The body is not stored. Vector indexes must exist before search works: `config/firestore.indexes.json` and
+`scripts/infrastructure/create_task_search_vector_indexes.sh`; `scripts/debug_task_index.py` inspects the index.
+
+**Config** — `EnvironmentConfig.task_config_collection`, document id `{user_id}`
+(`src/adapters/firestore_task_config_repository.py::FirestoreTaskConfigRepository`, `TaskUserConfig`):
+`primary_list_id` (set once), `subscriptions` (Graph webhook subscriptions: `sub_id`, `list_id`, `expires_at`), and
+`reconnect_notified` (the one reconnect notice of a lost grant was sent). A deliberate disconnect resets the whole
+document.
+
+**Credential** — the user's grant is a record of kind `microsoft_todo` in the shared credential store
+(`src/composition/connector_registry.py::MICROSOFT_TODO`, its `required_scopes`). Microsoft grants are never revoked at
+the provider (`src/adapters/microsoft/microsoft_oauth_provider.py::MicrosoftOAuthProvider.revoke` does nothing);
+disconnect only deletes the stored record.
+
+## Flows
+
+### Connect
+
+1. The Cabinet sends the user to `/auth/connect/<kind>` (`src/web/oauth_app.py::create_oauth_blueprint`); the shared
+   callback stores the credential and runs the integration's activation.
+2. `src/composition/oauth_connect_setup.py::build_connect_activations` (its `tasks` activation) clears the reconnect
+   state and enqueues the Cloud Task `setup_microsoft_todo`. Google Tasks consents do nothing here.
+3. `WorkerHandler._handle_setup_microsoft_todo` calls `TaskSetupService.setup`: find or create the primary list
+   (`TaskLifecyclePort.ensure_primary_list`), persist it with `set_primary_list_id_if_absent`, then re-subscribe.
+
+### Setup is a re-subscribe, not a no-op
+
+A consent is a new grant; per the `setup` docstring, Graph may have dropped subscriptions a stored config still calls
+active. `setup` therefore
+deletes every stored subscription (best effort), registers one for the primary list, saves the config and enqueues
+`reindex_task_list` once (`TaskSetupService._resubscribe`). The reindex is an upsert that deletes nothing, so changes
+made while the grant was gone are read back. `ensure_subscriptions`, by contrast, keeps an active subscription and
+re-reads nothing; it runs from `reindex_all` and heals a missing one.
+
+### Task lookup and change (chat turn)
+
+1. The router delegates to `src/agents/tasks_agent.py::TasksAgent.execute`: a tool loop of at most `_MAX_TURNS`
+   turns over the tools in `_TOOL_DECLARATIONS`: a lookup (`list_tasks`), a search for long lists, and create, update and
+   delete. If the prompt build fails, the run goes on with an empty system prompt (not only without the biographical
+   facts), and the failure is only logged.
+2. `list_tasks` fetches the primary list from Graph and filters, orders and pages in the agent
+   (`TasksAgent._list_page`, `_PAGE_SIZE`): Graph's To Do list call is read as a full fetch, with only a status
+   filter sent. Dated tasks come first (soonest first), then undated (newest first). The result carries `total`,
+   `page`, `pages` and a `note` that says whether the model has seen every task.
+3. `search_tasks` is for lists longer than one page: `TaskIndexingService.search` embeds the query and sends the same
+   vector for both fields to `FirestoreTaskSearchIndex.find_nearest`; the agent then loads the hits with
+   `TasksProviderPort.batch_get_tasks`. A miss returns a `note` that another wording will not find more.
+4. `create_task` / `update_task` write to Graph, then re-index the returned task; `delete_task` deletes at Graph, then
+   `deindex_task`. A new due date on a task that had none, or on a new task with no explicit reminder, gets an
+   automatic reminder in the evening before the due date, in the user's zone (`TasksAgent._derive_reminder`).
+5. Times: a time of day without an offset is the user's wall time and is converted with `wall_time_instant`; a date
+   alone stays that day (`TasksAgent._parse_user_time`).
+6. Recurrence: the tool enum exposes the daily, weekly and absolute monthly/yearly patterns, plus a `weekdays` alias
+   sent as weekly Monday to Friday, always with no end date (`TasksAgent._parse_recurrence`). The relative
+   monthly/yearly patterns are left out on purpose: the recorded reason is that Graph turns them into daily for
+   personal accounts, so they would silently misbehave.
+
+**Time budget.** A run's budget is its timeout. No tool turn starts past the budget minus `_ANSWER_RESERVE_S`, and the model call
+of each turn is bounded by `asyncio.wait_for` (the tool executions of a turn are not, so a slow tool can run past the
+budget). When the turn cap or the budget stops the loop, one tool-less turn answers
+(`_FORCE_ANSWER`, ending `_FINAL_MARGIN_S` before the timeout); if that cannot run or returns no text, the answer is the
+tool results themselves (`TasksAgent._facts_answer`). A run that has tool results never ends as a timeout, because the
+orchestrator could repeat a write. A run with no tool results whose first turn times out, or whose text is cut at the
+output limit, fails (`AgentResponse.failure`).
+
+### Index freshness (webhook)
+
+1. Subscription: `MicrosoftToDoAdapter.register_subscription` sets the notification URL to
+   `/webhook/microsoft-tasks/{user_id}` (the user id in the path routes without a lookup) and passes the shared
+   `clientState` secret.
+2. Graph first sends `?validationToken=`; the handler echoes it as `text/plain`
+   (`src/web/microsoft_tasks_webhook.py::create_microsoft_tasks_webhook_blueprint`).
+3. For each notification: check `clientState`; parse the list id (and, if present, the task id) from `resource`;
+   require `TaskSetupService.owns_subscription(user_id, sub_id, list_id)`; then update the index.
+   - With a task id: `deleted` calls `deindex_task`; `created` and `updated` call `index_task_by_ref`.
+   - Without one (per the code comments, what consumer accounts send: a list-level resource): enqueue `reindex_task_list` for the list
+     (`TaskSetupService.enqueue_reindex_list`).
+   - Then `TaskSetupService.handle_subscription_renewal` (self-healing). Once the body parses, the reply is `202`; a body that is not JSON gets `400`.
+
+### Subscription lifetime
+
+Graph subscriptions are short-lived (`_SUB_EXPIRY_MINUTES` in the adapter). Three layers keep them alive:
+1. every notification renews a subscription that expires within `_SUB_RENEWAL_THRESHOLD_H`;
+2. `ensure_subscriptions` (from `reindex_all`) registers one for a primary list that has no unexpired subscription;
+3. a daily Cloud Scheduler task `renew_all_task_subscriptions` fans out `renew_task_subscriptions` per To Do user
+   (`WorkerHandler._handle_renew_all_task_subscriptions`), which renews those expiring within
+   `_SUB_EXPIRING_THRESHOLD_H` (`TaskSetupService.renew_expiring_subscriptions`). A failed renewal keeps the old entry
+   for the next day.
+
+A renewal that finds the subscription gone at Graph (`SubscriptionNotFoundError`) registers a replacement and enqueues a
+reindex (`_replace_orphan`); if that fails the entry is dropped and `setup` or `ensure_subscriptions` recreates it.
+
+### Cabinet and disconnect
+
+The Cabinet endpoints under `/api/tasks/microsoft/` (`src/web/user_cabinet_app.py`) mostly call `TaskSetupService` (status, reindex via `reindex_all`, disconnect); the lists endpoint calls
+`TasksProviderPort.list_task_lists` directly (a live Graph call). `TaskSetupService.disconnect` deletes
+the Graph subscriptions (best effort), the stored credentials, every index entry of the user, and resets the config.
+
+## Invariants and traps
+
+- **The model never sees a Graph id.** `update_task` and `delete_task` take a `task_ref` (`short_id`) taken from an
+  earlier `list_tasks` or `search_tasks` result and resolve it with `TaskIndexingService.resolve_short_id`, which raises
+  `ValueError` for an unknown ref. `short_id` is not unique by construction: on a clash the index returns one of the
+  matches, unspecified (`TaskSearchIndex.get_by_short_id`).
+- **`clientState` is one secret for every subscription.** It proves the sender is Graph, not whose notification it is.
+  Binding to the URL's user is `owns_subscription`; a notification for another user's subscription, or one whose check
+  fails, touches nothing. With no secret configured the check is skipped locally, but a deployed service (`K_SERVICE`
+  set) rejects every notification.
+- **The webhook never blocks Graph.** Every per-notification error is logged and the reply stays `202` for a parsed body; a failed index
+  update is repaired by the next notification or reindex.
+- **Config writes are read-modify-write.** `save_config` replaces the whole document. `ensure_subscriptions` carries a
+  freshly stored `primary_list_id` into the config it saves, or the save would erase it. Only
+  `set_primary_list_id_if_absent` (a Firestore transaction) and `set_reconnect_notified` (a field update) are safe
+  against a concurrent writer.
+- **A 204 renewal has no body**, so the adapter returns an empty `list_id`; `TaskSetupService._preserve_list_id` keeps
+  the stored one.
+- **The list name and the first page of tasks are read concurrently** (`MicrosoftToDoAdapter._fetch_tasks_for_list`), so
+  a lookup over one Graph page is one round trip (further pages add more) and two model turns; a task lookup must answer within seconds.
+- **Checklists are diffed, never replaced** (`MicrosoftToDoAdapter._sync_checklist`): a full replace destroys the
+  items' checked timestamps.
+- **Graph throttling.** `batch_get_tasks` runs at most `_BATCH_SEMAPHORE` fetches at once, makes a bounded number of
+  attempts (a 429 is retried with backoff) and drops a task that still fails instead of failing the search.
+- **Search is two-vector RRF.** `find_nearest` runs one cosine query per vector field, drops entries beyond
+  `_MAX_COSINE_DISTANCE`, fuses with `_RRF_K`, and filters `status != completed` unless completed tasks are requested.
+  A missing vector index fails at query time, not at deploy.
+- **Attachments are not read.** `Task.attachments` is always empty: `_task_from_ms` does not fetch them.
+- **Reconnect notice.** A To Do user whose config has a `primary_list_id` but no credential gets one notice
+  (`src/services/integration_reconnect_service.py::IntegrationReconnectService`); a new consent clears the flag.
+
+## Links
+
+- RFCs: [`TASKS_LOCAL_FIRST_RFC.md`](../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md),
+  [`TASKS_AGENT_RFC.md`](../../10_rfcs/TASKS_AGENT_RFC.md)
+- Decisions: [`local_first_thin_search_index.md`](../../04_solution_strategy/decisions/local_first_thin_search_index.md),
+  [`reconnect_notice_r1.md`](../../04_solution_strategy/decisions/reconnect_notice_r1.md)
+- Neighbours: [OAuth web API](../oauth_web_api/README.md), [agent registry](../agent_registry/README.md),
+  [multi-vector RRF search](../../08_concepts/multi_vector_rrf_search.md)
+
+## Where to start reading
+
+- `src/agents/tasks_agent.py::TasksAgent.execute` — the tool loop and time budget.
+- `src/services/task_setup_service.py::TaskSetupService` — setup, subscriptions, disconnect.
+- `src/services/task_indexing_service.py::TaskIndexingService` — embed, index, search, `resolve_short_id`.
+- `src/web/microsoft_tasks_webhook.py::create_microsoft_tasks_webhook_blueprint` — notification handling.
+- `src/adapters/microsoft/todo_adapter.py::MicrosoftToDoAdapter` — Graph calls and subscriptions.
+- `src/adapters/firestore_task_search_index.py::FirestoreTaskSearchIndex` — vector search.

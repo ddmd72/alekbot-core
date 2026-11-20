@@ -1,7 +1,7 @@
 # RFC: Agent Communication Protocol v2 - Simplified (Registry Pattern)
 
 **Status:** Implemented (2026-02-21)  
-**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/multi_agent_system/README.md)
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/agent_registry/README.md)
 **Date:** 2026-02-12  
 **Milestone:** Phase 2 - Multi-Agent Evolution  
 **Supersedes:** ACP v1 (src/domain/agent.py) and the complex ACP v2 variant (since removed)
@@ -1053,7 +1053,7 @@ IntentDef(
 
 **Building Blocks:**
 
-- [Multi-Agent System](../05_building_blocks/multi_agent_system/README.md)
+- [Agent Registry](../05_building_blocks/agent_registry/README.md)
 - [Hybrid Router](../05_building_blocks/hybrid_router/README.md)
 
 **Industry References:**

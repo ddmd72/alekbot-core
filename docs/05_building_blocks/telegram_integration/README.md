@@ -1,217 +1,123 @@
-# Telegram Integration (Building Block)
-
-## 1. Overview
-
-The Telegram Integration provides a production-ready adapter for the Telegram Bot API, following Hexagonal Architecture principles. It allows users to interact with Alek-Core via Telegram while maintaining strict isolation from the core business logic.
-
-**Core Principle:** Telegram is just another `ResponseChannel`. The core engine remains platform-agnostic.
-
-### 1.1 Key Features
-
-- **Webhook-based:** Optimized for serverless deployment (Cloud Run).
-- **HMAC Security:** Validates every request using Telegram's secret token.
-- **MarkdownV2 Support:** Automatic conversion and escaping for Telegram's specific markdown flavor.
-- **Async File Handling:** Parallel translation of Telegram file IDs to public URLs.
-- **IAM Integration:** Centralized authorization for all incoming messages.
-- **Rich Content Delivery:** `widget` → Playwright PNG → `bot.send_photo`. File attachments → `bot.send_document`. Via `TelegramMediaAdapter` + `RichContentService`.
-
----
-
-## 2. Architecture
-
-### 2.1 Component Diagram
-
-```mermaid
-graph LR
-    Telegram[Telegram API] --> Webhook[TelegramWebhookAdapter]
-    Webhook --> IAM[IAMService]
-    Webhook --> Handler[ConversationHandler]
-    Handler --> Agents[Multi-Agent System]
-    Handler --> Channel[TelegramResponseChannel]
-    Handler --> RCS[RichContentService]
-    RCS --> Renderer[PlaywrightHtmlRenderer]
-    RCS --> Media[TelegramMediaAdapter]
-    Channel --> Telegram
-    Media --> Telegram
-```
-
-### 2.2 Class Structure
-
-- **`TelegramWebhookAdapter`**: The "Driving" adapter. Handles HTTPS POST requests from Telegram, verifies signatures, and routes to `ConversationHandler`.
-- **`TelegramResponseChannel`**: The "Driven" adapter. Implements the `ResponseChannel` protocol to send messages and status updates back to Telegram.
-- **`TelegramMediaAdapter`**: Implements `PlatformMediaPort`. Delivers binary media — `upload_image` → `bot.send_photo(BytesIO)`, `upload_file` → `bot.send_document(BytesIO)`.
-- **`TelegramAdapterFactory`**: Composition root (`composition/telegram_adapter_factory.py`). Wires `TelegramMediaAdapter` → `RichContentService` → `ConversationHandler` → `TelegramWebhookAdapter`. Mirrors `SlackAdapterFactory` pattern. Receives the shared `html_renderer` singleton from `build_application_graph`.
-
----
-
-## 3. Security Model
-
-### 3.1 Webhook Verification
-
-Telegram webhooks are secured using the `X-Telegram-Bot-Api-Secret-Token` header.
-
-- **Secret:** A 32+ character string configured in GCP Secret Manager (`TELEGRAM_WEBHOOK_SECRET`).
-- **Verification:** Every request is checked using `hmac.compare_digest` to prevent timing attacks.
-- **Action:** Requests with missing or invalid tokens are rejected with `403 Forbidden`.
-
-### 3.2 IAM Authorization
-
-Every incoming message triggers an IAM check:
-
-1. Extract `telegram_user_id`.
-2. Call `iam_service.authorize("telegram", platform_user_id)`.
-3. If rejected: Send a centralized onboarding message with a link to the Web UI.
-4. If allowed: Resolve `user_id` and `account_id` for the session.
-
-### 3.3 Deduplication
-
-To prevent double-processing (e.g., on Telegram retries), the adapter uses a `FirestoreDedupStore`:
-
-- **Key Format:** `telegram::{update_id}`
-- **TTL:** 5 minutes.
-- **Atomic:** Uses Firestore transactions to ensure "exactly-once" processing.
-
----
-
-## 4. Implementation Details
-
-### 4.1 MarkdownV2 Formatting
-
-Telegram uses a non-standard `MarkdownV2` format that requires aggressive escaping of special characters.
-
-**Formatting Pipeline:**
-
-1. **Protect Syntax:** Temporarily replace `**` and `__` with placeholders.
-2. **Escape:** Backslash-escape all special characters (`_`, `[`, `]`, `(`, `)`, `~`, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`).
-3. **Restore:** Convert placeholders to Telegram-specific syntax (`*` for bold, `_` for italic).
-
-### 4.2 Message Truncation & Safety
-
-Telegram has a strict 4096-character limit per message.
-
-- **Safety Margin:** Text is truncated at **70%** of the limit (2867 chars) _before_ formatting.
-- **Rationale:** Escaping special characters can increase message length by up to 30%.
-- **Send rate:** Telegram allows about 30 messages per second across a bot (one chat: about one per second), so no throttling is needed.
-- **Final Net:** A second check is performed after formatting to ensure the final payload is < 4096 chars.
-
-### 4.3 Markdown Fallback (Production Hardening)
-
-To handle edge cases where truncation breaks MarkdownV2 syntax, the adapter implements a **3-layer fallback strategy**:
-
-**Layer 1: Validation & Sanitization**
-
-- `_validate_markdown_pairs()`: Checks if `*` and `_` tags are properly paired
-- `_sanitize_unpaired_tags()`: Removes unpaired tags when detected
-- Prevents "can't parse entities" errors at source
-
-**Layer 2: Try-Catch with Plain Text Fallback**
-
-- If Telegram API rejects MarkdownV2 (despite sanitization), retry with `parse_mode=None`
-- Graceful degradation: plain text is better than failed message delivery
-- Logs warning with original error for debugging
-
-**Layer 3: Final Safety (Message Updates)**
-
-- If both markdown and plain text updates fail (message >48h old), send new message
-- Ensures message always reaches the user
-
-**Root Cause Addressed:**
-
-- Truncation at position 2867 can split `**bold**` → `**bo` (unpaired tag)
-- MarkdownV2 escaping adds ~30% overhead, making exact byte offset unpredictable
-- Gemini occasionally generates bold tags near truncation boundary
-
-**Production Impact:**
-
-- Zero message delivery failures since implementation
-- ~0.1% fallback to plain text (logged for prompt tuning)
-- Maintains formatting in 99.9% of cases
-
-### 4.4 File Translation
-
-Telegram provides `file_id` instead of URLs.
-
-- **Process:** The adapter calls `bot.get_file(file_id)` to retrieve the `file_path`.
-- **Parallelism:** Multiple attachments are translated in parallel using `asyncio.gather`.
-- **MIME Detection:** Guessed from file extension if not provided by Telegram.
-
-### 4.5 Rich Content Delivery
-
-Rich content (`widget`, `file`) is delivered via `TelegramMediaAdapter`, which implements `PlatformMediaPort`:
-
-```
-Agent JSON output
-  rich_content: { type: "widget", data: { html, alt_text }, fallback }
-
-ConversationHandler._deliver_rich_content()
-  └── RichContentService.process(content, channel_id)
-        ├── widget → PlaywrightHtmlRenderer.render(html) → PNG bytes
-        │     → TelegramMediaAdapter.upload_image(png_bytes, alt_text, chat_id)
-        │           → bot.send_photo(chat_id, BytesIO(png_bytes), caption=alt_text)
-        │
-        └── file (.md/.html/.txt/.xlsx/.docx)
-              → encode / convert bytes
-              → TelegramMediaAdapter.upload_file(file_bytes, filename, title, chat_id)
-                    → bot.send_document(chat_id, BytesIO(file_bytes), filename=filename)
-```
-
-`table` type falls through to `send_rich_content()` → `fallback_text` (plain text, no Block Kit on Telegram).
-
-`channel_id` on Telegram is the numeric `chat_id` passed through from `TelegramResponseChannel`.
-
----
-
-## 5. Code References
-
-### Adapters
-
-- `src/adapters/telegram/webhook_adapter.py`: Webhook handling and IAM.
-- `src/adapters/telegram/response_channel.py`: Formatting and sending.
-- `src/adapters/telegram/media_adapter.py`: `TelegramMediaAdapter` — `send_photo` / `send_document`.
-
-### Composition
-
-- `src/composition/telegram_adapter_factory.py`: `TelegramAdapterFactory` — wires all Telegram components.
-
-### Configuration
-
-- `src/config/environment.py`: `validate_telegram_config()` helper.
-- `src/composition/application_graph.py`: Initialization via `TelegramAdapterFactory.create_adapter()`; `main.py` registers the returned blueprint.
-
-### Tests
-
-- `tests/unit/adapters/test_telegram/test_webhook_adapter.py`
-- `tests/unit/adapters/test_telegram/test_response_channel.py`
-
----
-
-## 6. Status & Limitations
-
-**Status:** ✅ Production Ready (Deployed to PROD)
-
-### Known Limitations
-
-- **Rich Content — table type:** Sent as fallback plain text (no Block Kit equivalent on Telegram). `widget` and `file` types are fully supported.
-- **Inline Keyboards:** Not yet implemented for interactive responses.
-- **Voice/Audio:** Not supported in the current version.
-- **Rate Limiting:** Uses a simple 5-second throttle for status updates (dots animation).
-- **GCS-based content:** `map_image` / `weather_image` (GCS URL types) are deferred — see Rich Content Protocol.
-
-### Production Reliability
-
-**Markdown Error Rate:** 0.00% (after fallback implementation)
-
-- Pre-fix: ~0.5% of long messages failed with "can't parse entities"
-- Post-fix: 100% delivery rate, ~0.1% fallback to plain text
-
-**Test Coverage:**
-
-- 14 unit tests covering validation, sanitization, fallback logic
-- Edge cases: truncation at bold tags, unpaired tags, emoji handling
-- Error scenarios: parsing failures, message edit failures, network errors
-
----
-
-**Last Updated:** 2026-02-26
-**Status:** ✅ Complete (Rich Content: TelegramMediaAdapter + TelegramAdapterFactory)
-**Phase:** Rich Content Delivery
+<!-- living-doc
+covers:
+  src/adapters/telegram/
+  src/composition/telegram_adapter_factory.py
+  scripts/admin/add_telegram_secrets.sh
+-->
+# Telegram Integration
+
+## Purpose
+
+This block is the Telegram door into the exocortex. Telegram is only another chat platform: the adapter turns a Bot API
+update into a platform-neutral `MessageContext`, hands it to the shared `ConversationHandler`, and implements the
+`ResponseChannel` and `PlatformMediaPort` contracts so replies, status bubbles, files and rendered widgets go back to
+the same chat. Nothing about agents, memory or routing is Telegram-specific.
+
+What it is not: it does no message intelligence of its own (commands, geo marks and turns are the handler's), it has no
+channel binding and no history source (the Bot API has none), and it is not a second authorization system (IAM decides
+who may talk).
+
+## Owned data
+
+The block owns no collection. It reads and writes two things owned elsewhere:
+
+- The dedup marks of the **inline** path only, in `EnvironmentConfig.event_dedup_collection`, key `telegram::{update_id}`,
+  through `FirestoreDedupStore` (default TTL is `FirestoreDedupStore.__init__`'s `ttl_seconds`; `_build_telegram` passes none).
+- Configuration: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` (with a minimum length), checked by
+  `src/config/environment.py::validate_telegram_config`. The bot token must match the `<bot_id>:<secret>` shape.
+  `scripts/admin/add_telegram_secrets.sh` stores both in Secret Manager for the dev environment.
+
+The session of a Telegram turn is `session_id_for(user_id, chat_id)`: one history per chat.
+
+## Flows
+
+**Startup.** `src/composition/application_graph.py::_build_telegram` runs only when `TELEGRAM_BOT_TOKEN` is set. It builds
+a `Bot` for the `TelegramMediaAdapter`, then a `RichContentService` over it, then
+`src/composition/telegram_adapter_factory.py::TelegramAdapterFactory.create_adapter`, which builds the
+`ConversationHandler` over the shared chat services. Only after all of these exist does
+`src/composition/platform_kit.py::register_late_platform` bind the platform to the notification service, the channel
+factory and the worker. `main.py` mounts the adapter's blueprint at `/telegram`, so the webhook is `/telegram/webhook`.
+
+**Intake.** `TelegramWebhookAdapter._handle_telegram_update`:
+1. `_verify_webhook_signature` compares `X-Telegram-Bot-Api-Secret-Token` with the configured secret
+   (constant-time `hmac.compare_digest`; no HMAC is computed); a missing or wrong header is `403`.
+2. Only `update.message` is handled; any other update kind (edits, callbacks) is acknowledged with `200` and ignored.
+3. With a task queue: the update is enqueued as `telegram_update` (a fixed task deadline, name keyed by `telegram::{update_id}`)
+   and the webhook answers `200` at once. Without one (local dev) the intake mark in the dedup store is the only
+   duplicate guard and the turn runs inline.
+
+**Queued path.** `WorkerHandler._handle_telegram_update` calls the entry bound by `WorkerHandler.register_telegram_worker`
+(`503` until bound), which is `TelegramWebhookAdapter.handle_queued_update`; it re-parses the update and runs
+`_process_message`. It always answers `200`, even on error: a retry would re-run a turn already written.
+
+**One message.** `TelegramWebhookAdapter._process_message`:
+1. `iam_service.authorize("telegram", ...)`. A rejection sends the decision's message (onboarding link) and stops.
+2. Resolve the session and the UI and preferred language, and build a `TelegramResponseChannel`.
+3. A plain location pin goes to `ConversationHandler.handle_geo_mark` through `_handle_location`; a venue or a live
+   location gets a one-line notice and is not taken; a forwarded point is not a mark.
+4. Text starting with `$` (after `unwrapped`) goes to `ConversationHandler.handle_command`, unless the message is
+   forwarded.
+5. Otherwise attachments are translated (`_translate_platform_files`) and the turn goes to `ConversationHandler.handle_message`.
+
+**Files.** Telegram sends a `file_id`, not a URL. `_translate_platform_files` calls `bot.get_file` for each file in
+parallel (`asyncio.gather`); the largest photo size is used; a voice message is marked `is_voice_message` and named
+`voice.ogg` by default, because the transcription API infers the container from the extension; an `audio` track is a
+plain file. The MIME type is the file's own, else guessed from the path, else `application/octet-stream`. A file that
+fails is dropped and the others go on. `TelegramResponseChannel.download_file` fetches the URL.
+
+**Replies.** `TelegramResponseChannel.send_message` / `update_message` format and send text (next section).
+`send_chunked_message` and `send_flat_response` replace the status bubble with the first chunk and send the rest as new
+messages. A follow-up chunk carries the caller's forum-topic id when there is one; the status message id is never used as a thread id (a private chat has no threads). `send_late_answer` posts a long turn's answer as a
+reply to the originating message, since Telegram has no message links. `send_literal`, `send_reply` and
+`send_message_ref` send with no parse mode, for text that must not meet MarkdownV2 escaping.
+
+**Rich content.** `ConversationHandler._deliver_rich_content` calls `RichContentService.deliver`, which routes media types to `RichContentService.process`. A `widget` is
+rendered to PNG and sent by `TelegramMediaAdapter.upload_image` (`send_photo`); a `file` goes by `upload_file`
+(`send_document`). A type outside the media types (a `table`) reaches `TelegramResponseChannel.send_rich_content`, which sends only
+the fallback text; the GCS-URL media types are dropped with a warning. Inline keyboards are not implemented.
+
+## Invariants and traps
+
+- **Fail closed on the signature.** No update is parsed before `_verify_webhook_signature` passes
+  (`test_dispatcher_skips_processing_on_bad_signature`, `test_invalid_signature_rejected`).
+- **Telegram is all or nothing** (owner ruling): if building the adapter fails, the bot runs without Telegram and a
+  `telegram_update` task answers `503` (nothing bound). But `validate_telegram_config` runs before that guard, so a malformed token or a
+  short secret fails startup instead.
+- **Duplicate guard differs by path.** On the queue path the Cloud Task name is the guard (`ALREADY_EXISTS` is success)
+  and no intake mark is written (`decisions/worker_task_dedup.md`); only the inline path uses `FirestoreDedupStore`
+  (`test_duplicate_update_skipped`).
+- **Length limits.** A message is at most `TELEGRAM_MAX_MESSAGE_LENGTH`. Raw text is cut at 70% of it before formatting,
+  because MarkdownV2 escaping inflates text, and the formatted text is cut again at the hard limit. Chunks are
+  `TELEGRAM_CHUNK_SIZE`, kept under the 70% line so a chunk is never re-truncated (`test_send_message_truncation` covers the truncation; the chunk relation rests on the comment at `TELEGRAM_CHUNK_SIZE`).
+  Telegram allows about 30 messages per second across a bot (one chat: about one per second).
+- **MarkdownV2 is three layers of defence**, because cutting at a fixed offset can split `**bold**` and models write
+  bold near the boundary: `_format_for_platform` escapes special characters around placeholders for `**` and `__`;
+  `_validate_markdown_pairs` and `_sanitize_unpaired_tags` strip unpaired `*`/`_` before sending; if Telegram still
+  answers "can't parse entities", `send_message` and `update_message` retry as plain text (`parse_mode=None`). When an
+  edit fails altogether (for example a message too old to edit), `update_message` sends a new message.
+- **Text we write is not Markdown.** Anything model-translated or code-written that must show `*`, `_` or backticks as
+  they are goes through `send_literal` / `send_reply` / `send_message_ref`.
+- **The file URL embeds the bot token.** `bot.get_file` returns a URL with the token in it: it is never logged
+  (the `_translate_platform_files` comment) and travels only inside `FileAttachment.url`.
+- **A forwarded message is someone else's text:** never a `$` command and never a geo mark.
+- **A turn can outlive the webhook.** An inline webhook loses CPU once Telegram drops the connection, which is why the
+  queue path exists (`LONG_RUNNING_TURNS_RFC.md` section 5.8); the turn then runs in a worker, not in the request.
+- **Unsupported:** inline keyboards, and rich content of the GCS-URL kinds, which are dropped with a warning (see the rich content protocol).
+
+## Links
+
+- [`LONG_RUNNING_TURNS_RFC.md`](../../10_rfcs/LONG_RUNNING_TURNS_RFC.md) (queue hand-off, late answer),
+  [`long_running_turns.md`](../../04_solution_strategy/decisions/long_running_turns.md),
+  [`worker_task_dedup.md`](../../04_solution_strategy/decisions/worker_task_dedup.md)
+- [`GEO_MARKS_RFC.md`](../../10_rfcs/GEO_MARKS_RFC.md) section 4.6 (location pins)
+- [Slack integration](../slack_integration/README.md) (the twin adapter),
+  [rich content protocol](../rich_content_protocol/README.md)
+
+## Where to start reading
+
+- `src/adapters/telegram/webhook_adapter.py::TelegramWebhookAdapter._process_message`
+- `src/adapters/telegram/webhook_adapter.py::TelegramWebhookAdapter._handle_telegram_update`
+- `src/adapters/telegram/response_channel.py::TelegramResponseChannel.send_message`
+- `src/adapters/telegram/media_adapter.py::TelegramMediaAdapter`
+- `src/composition/application_graph.py::_build_telegram`
+- `src/composition/telegram_adapter_factory.py::TelegramAdapterFactory.create_adapter`

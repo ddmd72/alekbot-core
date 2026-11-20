@@ -2,7 +2,7 @@
 EmailIndexingService — orchestrates the full email indexing pipeline.
 See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §6, §2.2 Flow 1.
 
-Pipeline per chunk (100 emails/page):
+Pipeline per chunk (one Gmail page; size is `page_size` of `run_indexing_job`):
   list_emails → skip stored → exclusion pre-filter → gate (keep/drop) → fetch full content of kept
   → save → card → advance cursor → update job
 Email index v2 (docs/10_rfcs/EMAIL_INDEX_V2_RFC.md §4): the gate leans to keep; the card is the mail's content.
@@ -413,7 +413,7 @@ class EmailIndexingService:
                 if credentials.token_expiry <= datetime.now(timezone.utc):
                     credentials = await self._gmail.refresh_token(credentials)
 
-                # 1. Fetch page of email metadata (100 emails)
+                # 1. Fetch page of email metadata (`page_size` emails)
                 emails_page, next_page_token = await self._gmail.list_emails(
                     credentials=credentials,
                     date_from=date_from,

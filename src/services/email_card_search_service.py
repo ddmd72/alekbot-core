@@ -1,7 +1,7 @@
 """
 EmailCardSearchService — email search v2 over the card index (email index v2 §5; search slice 4). Streams in, domain
 out: every ranking decision is a pure function (`email_search_*`), this service only reads the streams and hands them
-over. Not wired into the application yet (composition, the Firestore read adapter and the query-slots agent are slice 8).
+over. Wired in `composition/email_search_setup.py` over `FirestoreEmailCardIndex`; the search agent reaches it through the agent services.
 
 Two modes. **List**: the request's text names a period and nothing else (no topic word, no exact key, no person, no
 type or area slot): every carded mail of the period, newest sent first, folded, with a count line; no embedding call (a

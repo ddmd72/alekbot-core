@@ -1,133 +1,92 @@
-# Embedding System (Building Block)
+<!-- living-doc
+covers:
+  src/adapters/gemini_embedding_adapter.py
+  src/ports/embedding_service.py
+  src/domain/vector_math.py
+-->
+# Embedding System
 
-## 1. Overview
+## Purpose
 
-The **Embedding System** transforms raw text into high-dimensional numerical vectors (embeddings) that capture semantic meaning. These vectors enable Alek-Core to perform "fuzzy" searches, identify duplicates, and retrieve relevant context without relying on exact keyword matches.
+This block turns text into vectors so that memory facts, drive cards and notes, email cards, tasks and other records can be searched by meaning
+and so that near-duplicate facts can be detected. Every vector the system stores or compares comes from one port,
+`src/ports/embedding_service.py::EmbeddingService`, so callers never name a provider. The only implementation is
+`src/adapters/gemini_embedding_adapter.py::GeminiEmbeddingAdapter`. The pure similarity math lives next to it in
+`src/domain/vector_math.py::cosine_similarity`.
 
-**Core Principle:** Consistent vector representation across all knowledge storage and retrieval paths.
+What it is not: it stores nothing. The vectors live in the owners' collections (see [memory](../memory/README.md), [user_drive](../user_drive/README.md)) and the Firestore KNN indexes over them are
+declared in `config/firestore.indexes.json`.
 
----
+## Owned data
 
-## 2. Architecture
+None. The block owns one value that other blocks persist: `GeminiEmbeddingAdapter.EMBEDDING_SPACE`
+(`"{model}/{dimension}"`). Composition injects it into the drive index, which stamps it on each card and re-embeds cards
+whose stamp differs (`src/composition/service_container.py`, `src/composition/drive_note_setup.py`;
+`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`).
 
-### 2.1 EmbeddingService (Port)
+## Flows
 
-A domain-level interface that defines the contract for vector generation.
+1. **Single text.** `GeminiEmbeddingAdapter.get_embedding` prefixes the text for its task type
+   (`_apply_task_prefix`), then calls `_embed_with_throttle`, which returns the first embedding of the response.
+2. **Batch.** `GeminiEmbeddingAdapter.get_embeddings_batch` validates every task type first (an unknown one fails before
+   any API call), then runs one `get_embedding` per text under `asyncio.gather`. Order is preserved. The port docstring
+   says "a single API call"; the adapter makes N calls, because `gemini-embedding-2` treats a list of strings as parts of
+   one document and returns one vector.
+3. **Throttled call.** `_embed_with_throttle` takes the process-local semaphore (`GEMINI_EMBED_CONCURRENCY`, default
+   `_DEFAULT_CONCURRENCY`), then runs `retry_async` under `DEFAULT_RETRY_POLICY` around one SDK call in
+   `asyncio.to_thread`. Backoff sleeps happen while the slot is held.
+4. **Error mapping.** 429 and 503 (and SDK timeouts, as 503) are typed transient errors and retried; any other 4xx
+   is `LLMClientError` with `http_status`, any other 5xx `LLMServerError`, neither retried. A 400 refuses that one
+   input, so the drive indexer backs off only that card.
+5. **Metering.** After a successful response `_record_embedding_usage` adds `usage_metadata.prompt_token_count` to the
+   ledger in scope (an agent execution, or `src/utils/billed_scope.py::billed_scope`). With none in scope the tokens go
+   to `UNBILLED_EMBEDDING_TOKENS` and a rate-limited log line. Retried attempts are not metered, only the response
+   that came back (`decisions/billing_embeddings.md`).
 
-- **Method:** `get_embedding(text, task_type)`
-- **Independence:** The core logic doesn't know which LLM provider is generating the vectors.
+Task-type rule: the stored side embeds with `RETRIEVAL_DOCUMENT` (also the default when no task is passed); the query
+side embeds with `RETRIEVAL_QUERY`. `SEMANTIC_SIMILARITY` has no caller outside the adapter: fact dedup compares stored
+vectors with `cosine_similarity` (`src/adapters/firestore_repo.py::FirestoreFactRepository.add_fact_if_unique`;
+read side `src/services/search_enrichment_service.py::SearchEnrichmentService._deduplicate_semantic`). Entry points:
+`src/services/fact_write_service.py::FactWriteService._generate_multi_vectors` (stored, three vectors per fact from
+`src/domain/fact_embedding.py::fact_embedding_texts`) and `src/services/drive_search_service.py` (query).
 
-### 2.2 GeminiEmbeddingAdapter (Adapter)
+## Invariants and traps
 
-The production implementation using Google's Gemini API (`generativelanguage.googleapis.com`,
-AI Studio API key).
+- **One vector space.** Stored and query vectors must come from the same model and dimension. The dimension
+  (`_OUTPUT_DIM`, Matryoshka truncation of the native output) must match the Firestore KNN indexes. A change of
+  `_MODEL`, `_OUTPUT_DIM` or `_TASK_PREFIXES` changes every vector. Bumping `EMBEDDING_SPACE` protects only the drive
+  cards and notes (the drive index compares the stamp and re-embeds); facts, email cards, tasks and other vector
+  owners carry no stamp, so they need an explicit re-embed or old and new vectors are compared silently
+  (`tests/unit/services/test_drive_search_embedding_space.py`; `decisions/embedding_model_migration_v1_to_v2.md`).
+- **The task is an inline prefix, not a parameter.** v2 has no `task_type` config; `_TASK_PREFIXES` rewrites the text.
+  Stored text and query text use different prefixes by design. An unknown task type raises `ValueError`
+  (`tests/unit/adapters/test_gemini_embedding_adapter.py`).
+- **Batch is fan-out.** Do not swap in `contents=[...]`: it returns one embedding, not N
+  (`tests/unit/adapters/test_gemini_embedding_adapter.py::test_get_embeddings_batch_calls_embed_content_per_text`).
+- **Retry is per text**, inside the semaphore, so one text's 503 does not re-run the batch.
+- **The semaphore is per process.** The cap is not shared across Cloud Run instances. It exists to stay under the
+  provider's per-second burst limiter; its default is a fraction of the per-minute quota
+  (`_DEFAULT_CONCURRENCY`). Raise `GEMINI_EMBED_CONCURRENCY` only after the tier
+  or provider changes.
+- **No HTTP timeout by default in the SDK.** `_HTTP_TIMEOUT_MS` is set on the client; without it a hung connection holds
+  its worker thread forever. API version stays `GENAI_API_VERSION` on purpose; moving to `v1` is a separate decision.
+- **Unbilled tokens are visible, not lost.** A call outside any billing scope lands on `UNBILLED_EMBEDDING_TOKENS`;
+  a response without usage metadata logs a warning and is unbilled.
 
-- **Model:** `gemini-embedding-2` (GA April 2026; replaces `gemini-embedding-001`
-  which shuts down 2026-07-14 — see
-  [decisions/embedding_model_migration_v1_to_v2.md](../../04_solution_strategy/decisions/embedding_model_migration_v1_to_v2.md)).
-- **Dimensionality:** Fixed at **768** (via Matryoshka truncation from the
-  native 3072) to match Firestore's KNN vector indexes.
-- **Concurrency:** `asyncio.to_thread` bridges the sync SDK into the async runtime.
-- **Task type → inline prefix:** v2 removed the `task_type` config parameter;
-  the adapter translates each legacy value into an instruction prefix on the
-  input text (`RETRIEVAL_DOCUMENT` → `"title: | text: …"`, `RETRIEVAL_QUERY` →
-  `"task: search result | query: …"`, `SEMANTIC_SIMILARITY` → passthrough).
-  Unknown values raise `ValueError`.
-- **Batch API:** v2's `embed_content(contents=List[str])` returns a single
-  embedding (multimodal-parts semantics), not N embeddings. To preserve the
-  `get_embeddings_batch(texts) → list[vec]` contract, the adapter fans out
-  via `asyncio.gather` over N parallel single-content calls under the existing
-  semaphore. At our typical batch sizes (3–4 texts) the wall-clock cost is
-  comparable to the v1 batch path.
+## Links
 
-### 2.3 Throttling and 429 retry
+- `decisions/embedding_model_migration_v1_to_v2.md` — model, dimension and prefix choice.
+- `decisions/billing_embeddings.md` — usage metering.
+- `decisions/typed_retry_policy.md` — the retry policy the adapter shares with the LLM path.
+- `docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` — the embedding-space stamp.
+- Adapter rules: `src/adapters/CLAUDE.md`.
 
-The adapter caps **in-flight requests** with a process-local
-`asyncio.Semaphore` and retries **`RESOURCE_EXHAUSTED` (429)** with exponential
-backoff. Both the read path (`SearchEnrichmentService.enrich_context`) and the
-write path (`FactWriteService` building 3 vectors per fact) go through this
-adapter, so consolidation runs that fan out parallel `search_existing_facts`
-+ `create_fact` tool calls can momentarily burst above Google's per-second
-limiter even when the per-minute quota has plenty of headroom.
+`decisions/` = `docs/04_solution_strategy/decisions/`.
 
-Defaults — sized for AI Studio Tier 2 (5000 RPM sustained, ~83 RPS):
+## Where to start reading
 
-| Knob                         | Default | Override env var              |
-| ---------------------------- | ------- | ----------------------------- |
-| Concurrency cap (semaphore)  | **20**  | `GEMINI_EMBED_CONCURRENCY`    |
-| Retries on 429               | 3       | (not configurable)            |
-| Initial backoff              | 2s      | (doubles each attempt: 2/4/8) |
-
-Math behind the default: with avg latency ~0.7s, `N=20` → ~28 RPS = ~1700 RPM
-≈ 34 % of the Tier 2 ceiling. Leaves ~3300 RPM of headroom for cross-instance
-Cloud Run bursts and parallel write-path embedding calls. Bump
-`GEMINI_EMBED_CONCURRENCY` if you upgrade to Tier 3 or migrate to Vertex AI.
-
-The retry path matches `genai_errors.ClientError` with `code=429` or the
-literal string `RESOURCE_EXHAUSTED` (and a 503). Other failure modes propagate
-immediately, typed where the SDK gives a status: any other 4xx as
-`LLMClientError` with `http_status` (a 400 is a refusal of that one input, so
-the drive indexer backs off only that card), other 5xx as `LLMServerError`.
-
----
-
-## 3. Task Types
-
-The system uses specialized task types to optimize embedding quality for different use cases:
-
-| Task Type             | Use Case       | Description                                                 |
-| --------------------- | -------------- | ----------------------------------------------------------- |
-| `RETRIEVAL_DOCUMENT`  | Fact Writing   | Optimized for storing long-term knowledge in the database.  |
-| `RETRIEVAL_QUERY`     | Search Queries | Optimized for short user queries or search phrases.         |
-| `SEMANTIC_SIMILARITY` | Deduplication  | Optimized for comparing two pieces of text for equivalence. |
-
----
-
-## 4. Integration Points
-
-### 4.1 Knowledge Ingestion (Write Path)
-
-The `FactWriteService` generates three vectors per fact (text, tags, metadata) using the `RETRIEVAL_DOCUMENT` and `SEMANTIC_SIMILARITY` tasks.
-
-### 4.2 Context Retrieval (Read Path)
-
-The `SearchEnrichmentService` generates query embeddings using the `RETRIEVAL_QUERY` task to find matching documents in Firestore.
-
-### 4.3 Smart Deduplication
-
-The `SmartDeduplicationService` uses embeddings to calculate cosine similarity between facts, ensuring knowledge remains unique and concise.
-
----
-
-## 5. Code References
-
-- `src/ports/embedding_service.py`: Port interface definition.
-- `src/adapters/gemini_embedding_adapter.py`: Gemini-specific implementation.
-- `src/domain/vector_math.py`: Cosine similarity and vector utilities.
-
----
-
-## 6. Status & Roadmap
-
-**Status:** ✅ Production Ready
-
-### Planned Enhancements
-
-- **Local Embeddings:** Support for small local models (e.g., Sentence-Transformers) for faster deduplication and lower costs.
-- **Dimensionality Reduction:** Explore PCA or other techniques to reduce index size while maintaining recall.
-- **Multi-Modal Embeddings:** Support for image and audio embeddings to enable cross-modal search.
-
----
-
-**Last Updated:** 2026-04-25  
-**Status:** ✅ Complete  
-**Phase:** Documentation Audit Phase 3.11
-
-### Changelog
-
-- **2026-11:** Embedding calls are billed: the adapter adds each successful response's `usage_metadata.prompt_token_count` to
-  the ledger in scope (`billed_scope` outside an agent). See `decisions/billing_embeddings.md`.
-- **2026-04-25:** Added §2.3 Throttling and 429 retry. Production hit AI Studio
-  per-second burst limiter on parallel consolidation flows even though Tier 2
-  per-minute quota was barely used; adapter now caps concurrency at 20 and
-  retries 429 with exponential backoff.
+- `src/ports/embedding_service.py::EmbeddingService`
+- `src/adapters/gemini_embedding_adapter.py::GeminiEmbeddingAdapter._embed_with_throttle`
+- `src/adapters/gemini_embedding_adapter.py::_apply_task_prefix`
+- `src/adapters/gemini_embedding_adapter.py::_record_embedding_usage`
+- `src/domain/vector_math.py::cosine_similarity`
