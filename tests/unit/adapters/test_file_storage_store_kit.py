@@ -166,3 +166,34 @@ async def test_delete_outage_is_not_file_not_found(fake, store):
     with pytest.raises(ServiceUnavailable):
         await store.delete("FA-0137.pdf", "u1")
     assert fake.names(BUCKET) == ["u1/files/FA-0137.pdf"]
+
+
+@pytest.mark.parametrize("given, stored", [
+    ("file\nname.txt", "file_name.txt"),
+    ("file\tname.txt", "file_name.txt"),
+    ("file\rname.txt", "file_name.txt"),
+    ("звіт.docx", "звіт.docx"),
+    ("report-2026.docx", "report-2026.docx"),
+])
+async def test_upload_replaces_control_characters_and_keeps_clean_names(fake, store, given, stored):
+    assert await store.upload(b"x", given, "u1", "text/plain") == stored
+    assert fake.names(BUCKET) == [f"u1/files/{stored}"]
+
+
+async def test_upload_stamps_a_fresh_upload_id(fake, store):
+    first = await store.upload(b"x", "image.png", "u1", "image/png")
+    second = await store.upload(b"y", "image.png", "u1", "image/png")
+    ids = [fake.live(BUCKET, f"u1/files/{name}").metadata for name in (first, second)]
+    assert all(set(m) == {"upload_id"} and len(m["upload_id"]) == 32 for m in ids)
+    assert ids[0]["upload_id"] != ids[1]["upload_id"]
+
+
+async def test_download_missing_names_the_file(store):
+    with pytest.raises(FileNotFoundError) as err:
+        await store.download("gone.csv", "u1")
+    assert str(err.value) == "gone.csv"
+
+
+async def test_get_url_is_the_bucket_url_of_the_users_file(store):
+    url = await store.get_url("report (1).docx", "u1")
+    assert url == f"https://storage.googleapis.com/{BUCKET}/u1/files/report (1).docx"
