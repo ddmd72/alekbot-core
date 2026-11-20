@@ -212,5 +212,5 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 - **Time:** `include_datetime=False` by default; time reaches the model via `_inject_timestamps()` in user messages and a UTC
   prefix on delegation queries. A date in the system prompt changes the cached static prefix.
 - **Large static payloads** (a triage batch, a corpus) go through `extra_static_blocks` on `build_for_agent()`, never into the
-  user message (pollutes history, bypasses caching; `docs/08_concepts/prompt_assembly_guide.md`).
+  user message (pollutes history, bypasses caching; `docs/05_building_blocks/prompt_design_system_v3/README.md`).
 - **Drive notes:** Smart has no note tool; a note's words go in the `work_with_drive_files` query, never in `file_contents`.
