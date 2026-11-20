@@ -23,8 +23,10 @@ A user has two language settings that look like one in the Cabinet and work thro
 | Chosen by | `preferred_language`, else the account default, else the deployment default | `agent_mirror`: mirror the user's input (default), or a fixed language |
 
 Nothing in the chat path sets the model's output language in code: the response language is a prompt-level fact, changed
-only by swapping a token in the user's prompt override. The UI language never reaches the prompt. The two are written
-together by one call (`set_preference`) from one Cabinet form, and nothing else keeps them in step.
+only by swapping a token in the user's prompt override. On the chat path the UI language never reaches the prompt. The
+exception is the call-file profiles: `src/composition/companion_extractor_runner.py` puts `resolve_ui_language` into the
+payload as `owner_language`, and `src/agents/lelik_summarizer_agent.py` renders it as a prompt block, so those outputs
+follow the UI chain, not a `LANG_*` token. The two settings are written together by one call (`set_preference`) from one Cabinet form, and nothing else keeps them in step.
 
 What it is not: it does not translate model output, does not detect the user's language, and the voice transcription
 languages (`normalize_voice_languages`) are a separate, open-ended list that is deliberately not validated against
@@ -32,8 +34,7 @@ languages (`normalize_voice_languages`) are a separate, open-ended list that is 
 
 ## Owned data
 
-- **`UserBotConfig.preferred_language`** (`Optional[LanguageCode]`, default `None`) and **`agent_mirror`** (`bool`, default
-  `True`), `src/domain/user.py::UserBotConfig`. Written only by `LanguagePreferenceService.set_preference`, as field-level
+- **`UserBotConfig.preferred_language`** (`Optional[LanguageCode]`) and **`agent_mirror`** (`bool`; mirror unless set), `src/domain/user.py::UserBotConfig`. Written only by `LanguagePreferenceService.set_preference`, as field-level
   updates (`config.preferred_language`, `config.agent_mirror`) so a concurrent change of another config field survives.
   Read through `LanguageResolver`.
 - **`BillingAccount.default_language`** (`src/domain/billing.py`): the account-level default between the user's
@@ -42,12 +43,13 @@ languages (`normalize_voice_languages`) are a separate, open-ended list that is 
   token (`FirestoreAgentProfileRepository.set_override_tokens`). Written only by `set_preference`. Its absence, or the
   absence of a `LANG_*` entry in it, means mirror mode.
 - **The `LANG_*` tokens** (`LANG_MIRROR`, `LANG_FIXED_UK/EN/FR/ES`): class `policies`, category `output_language`,
-  Groovy rule text. Source of truth is `prompts_snapshot/tokens/system/LANG_*.groovy`; they ship by token upload, not by
-  deploy. The default `LANG_MIRROR` slot sits in the agent profiles under `prompts_snapshot/profiles/` (Quick, Smart and the
-  Lelik profiles).
-- **Locale modules** `src/locales/{uk,en,fr,es}.py`: pure data plus `get_message(StatusType)`, `ENTERTAINMENT_INTROS`,
-  `FILE_FALLBACK_*` and `UI_STRINGS` (keyed by `UIMessage.value`, `src/domain/ui_messages.py`). They ship by code deploy.
-- **`SYSTEM_DEFAULT_LANGUAGE`** (env, default `en`): the last link of the UI chain and the language of a fixed-mode user
+  Groovy rule text. Firestore is the source of truth; `prompts_snapshot/` (`tokens/system/LANG_*.groovy`, `profiles/`) is
+  a git-tracked read-only mirror (`prompts_snapshot/README.md`). They ship by token upload, not by deploy. The default
+  `LANG_MIRROR` slot is in the agent profiles (Quick, Smart and the Lelik profiles) and must stay `non_overridable: false`
+  (see traps).
+- **Locale modules** `src/locales/{uk,en,fr,es}.py`: pure data, all with the members of `en.py` (the template), among them
+  `UI_STRINGS` keyed by `UIMessage.value` (`src/domain/ui_messages.py`). They ship by code deploy.
+- **`SYSTEM_DEFAULT_LANGUAGE`** (env, read in `build_languages`): the last link of the UI chain and the language of a fixed-mode user
   with no explicit choice.
 
 ## Flows
@@ -60,9 +62,9 @@ languages (`normalize_voice_languages`) are a separate, open-ended list that is 
    `LanguageResolver.resolve_ui_language` and `get_preference`.
 2. `resolve_ui_language` walks user `preferred_language`, then the user's account `default_language`, then
    `LanguageResolver.system_default`.
-3. The adapter builds the `ResponseChannel` with `language=ui_lang` and `localization=` the port
-   (`src/adapters/slack/response_channel.py::SlackResponseChannel`), which asks the port for status phrases, entertainment
-   intros and fixed strings. A random variant of a phrase list is picked per use.
+3. The adapter builds the `ResponseChannel` with `language=ui_lang` and `localization=` the
+   `LocalizationService` wrapper (`src/adapters/slack/response_channel.py::SlackResponseChannel`), which asks it for status
+   phrases, entertainment intros and fixed strings. A random variant of a phrase list is picked per use.
 4. The same two values also travel in the message metadata as `preferred_language` and `agent_mirror` (see traps).
 
 Other consumers of the resolver (notification service, drive operations and indexing, call text files, voice web routes,
@@ -79,9 +81,9 @@ Entry: `POST /api/user/language` in `src/web/user_cabinet_app.py` calls
 `src/services/language_preference_service.py::LanguagePreferenceService.set_preference`. It:
 
 1. Writes the two fields to the user (field-level).
-2. Swaps the token in the USER override: for fixed mode `LANG_FIXED_<code>` at order 70, clearing every other `LANG_*` id
-   (`_ALL_LANG_TOKEN_IDS`) in the same document write; the language is the preference, else the system default.
-3. Calls `PromptBuilderPort.invalidate_cache()`; the next `build_for_agent()` rebuilds the static prompt.
+2. Swaps the token in the USER override: for fixed mode `LANG_FIXED_<code>` at an order set inline in `set_preference`, clearing every other
+   `LANG_*` id (`_ALL_LANG_TOKEN_IDS`) in the same document write (a read then a set, not a transaction); the language is the preference, else the system default.
+3. Calls `invalidate_cache()` on its `prompt_builder`, which `src/composition/agents_setup.py` wires to the assembly service; the next `build_for_agent()` rebuilds the static prompt.
 4. If a notification service is configured: refreshes the user's agents (`ensure_agents`), then sends an interactive
    `system_alert` whose text is the chosen policy's Groovy rule (`_LANG_ALERTS`). The alert and the agent's reply land in
    the active channel's session history, so the model has the policy in context even when earlier turns were in another
@@ -117,14 +119,20 @@ still stored and still drives the UI language.
   the message metadata, and `BaseAgent.forwards_language_preference` documents an orchestrator opt-in, but no agent sets
   that flag and nothing under `src/services/prompt_v3/` reads either value. The response language comes only from the
   USER override document. Changing the metadata without changing the override has no effect on model output.
-- **The "fixed" rule has two copies of one decision.** `set_preference` builds `LANG_FIXED_<CODE>` inline; the same
-  rule is `src/domain/language.py::resolve_lang_token_id`, which no production code calls (tests only). Change both, or
+- **The "fixed" rule has several copies of one decision.** `set_preference` builds `LANG_FIXED_<CODE>` inline; the same
+  rule (with a third copy for the alert key) is `src/domain/language.py::resolve_lang_token_id`, which no production code calls (tests only). Change both, or
   call the function from the service.
-- **Adding a language touches five places:** a `LanguageCode` value, `src/locales/<code>.py` (copy `en.py`, including
+- **The override works only against an overridable `LANG_MIRROR` slot.** In `PromptAssemblyService` a matching active token
+  that is `non_overridable` makes the override skip silently, and an agent whose profile has no `output_language` token
+  ignores it with a debug line only. Every agent profile that should honour the setting keeps `LANG_MIRROR` with
+  `non_overridable: false`.
+- **Adding a language touches six places:** a `LanguageCode` value, `src/locales/<code>.py` (copy `en.py`, including
   `UI_STRINGS`, which `get_ui_string_variants` iterates for every registered module), an entry in
   `FileLocalizationAdapter._REGISTRY`, a `LANG_FIXED_<CODE>` token upload, and an id in `_ALL_LANG_TOKEN_IDS` plus a
-  `_LANG_ALERTS` entry in the preference service. Missing the last two leaves a user stuck: the old token is never
-  cleared, or no alert is sent.
+  `_LANG_ALERTS` entry in the preference service, and the hand-written language `<select>` in
+  `src/web/static/cabinet.html` (without it the code cannot be chosen). Missing the id or the alert leaves a user stuck:
+  the old token is never cleared, or no alert is sent. The "zero other changes" docstrings in `language.py` and the
+  adapter are stale.
 - **Unknown codes fall back, they do not fail.** The adapter falls back to English (`FileLocalizationAdapter._DEFAULT`);
   a `ResponseChannel` built with no `localization` falls back to the Ukrainian module, and an adapter with no language
   service uses Ukrainian as the UI language (not the system default).
@@ -133,8 +141,8 @@ still stored and still drives the UI language.
   `src/domain/llm.py` states that the configured language is a default, not a lock (`tests/unit/domain/test_persona_anchor.py`).
   Text chats keep the strict rule.
 - **A cache must be invalidated or the change is invisible.** The assembled static prompt is cached
-  (`PromptAssemblyService.__init__` `cache_ttl`, 24 hours by default); `set_preference` calls `invalidate_cache()` itself, but it
-  clears only the process that served the request.
+  (`PromptAssemblyService.__init__` `cache_ttl`); `set_preference` calls `invalidate_cache()` itself, but it
+  clears only the process that served the request (the cache is in memory).
 
 ## Links
 
