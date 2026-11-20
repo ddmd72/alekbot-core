@@ -64,4 +64,3 @@ current) is in [`../README.md`](../README.md#living-docs).
 - Prompt Cache Strategy: [prompt_cache_strategy/README.md](./prompt_cache_strategy/README.md)
 - Observability Strategy: [observability_strategy/README.md](./observability_strategy/README.md)
 - Localization System: [localization_system/README.md](./localization_system/README.md)
-- User Management System: [user_management_system/README.md](./user_management_system/README.md)
