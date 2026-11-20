@@ -173,7 +173,7 @@ query_specific_context: '''   // ← only when router found relevant facts
 
 The time is not in the prompt by default: it is stamped into the user messages. An agent that needs a
 `current_date_time {}` block asks for it with `include_datetime=True`. The exact order of the blocks is in
-`prompt_assembly_guide.md`.
+`docs/05_building_blocks/prompt_design_system_v3/README.md`.
 
 ---
 

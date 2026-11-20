@@ -100,7 +100,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 | `{p}domain_prompt_profiles_v3` | agent profiles: the blueprint and the tokens of one agent | `agent_id` | `src/domain/prompt_v3/agent_profile.py` |
 | `{p}domain_prompt_overrides_v3` | account and user token overrides | `{OWNER_TYPE}_{owner_id}` | `src/adapters/prompt_v3/firestore_agent_profile_repository.py` |
 
-How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
+How the v3 collections combine into a prompt: `docs/05_building_blocks/prompt_design_system_v3/README.md`.
 
 ### 3.5 Email, tasks, reminders and skills
 

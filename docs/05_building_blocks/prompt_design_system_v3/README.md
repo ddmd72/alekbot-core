@@ -1,657 +1,200 @@
-# Prompt Design System — Class-Collection Assembly Model
-
-## How To Use This Document
-
-**For AI Agents:** Read before modifying prompt assembly logic, token library, agent profiles,
-or blueprint structure.
-
-**For Developers:** Read when adding tokens, changing agent behavior, debugging wrong prompts,
-or understanding the assembly pipeline.
-
-**Update this document when:**
-- Token schema or collection structure changes
-- Blueprint fields or semantics change
-- Profile/override document ID scheme changes
-- Assembly algorithm changes (step order, override rules, section rendering)
-- New Firestore collections or renaming
-- Cache logic or TTL changes
-- New agent types added to blueprint mapping
-
-**Cross-references:**
-- Assembly mechanics: [../../08_concepts/prompt_assembly_guide.md](../../08_concepts/prompt_assembly_guide.md)
-- Implementation RFC: [../../10_rfcs/PROMPT_BUILDER_V4_RFC.md](../../10_rfcs/PROMPT_BUILDER_V4_RFC.md)
-- Groovy DSL conventions: [../../08_concepts/groovy_prompt_pattern.md](../../08_concepts/groovy_prompt_pattern.md)
-- Security validation: [../security_validation/README.md](../security_validation/README.md)
-- Language policy tokens (LANG_*): [../localization_system/README.md](../localization_system/README.md)
-
----
-
-## 1. Overview
-
-The **Prompt Design System** assembles LLM system instructions from pre-approved, validated
-fragments (tokens) rather than free-form text. Prompts are never hardcoded — they are built
-at runtime by combining tokens according to a blueprint, with optional per-account and
-per-user customizations.
-
-**Core principle:** Users never inject raw text into system instructions. They select from a
-whitelisted token library. Tokens are validated at creation time. Blueprint structure is
-controlled by engineering. Agents never construct their own prompts — they call
-`PromptBuilderPort.build_for_agent()`.
-
-### Assembly Model (v4 — Class-Collection)
-
-The assembly model is called **class-collection**: each token belongs to a Groovy **class**
-(a named section), and the blueprint declares the ordered list of classes. Assembly groups
-tokens by class, sorts within each class, renders sections, and wraps them in an outer Groovy
-class declaration.
-
-This replaced the v3 placeholder-substitution model (described in
-[PROMPT_BUILDER_V4_RFC.md Section 1](../../10_rfcs/PROMPT_BUILDER_V4_RFC.md)).
-The Firestore collections retain the `_v3` suffix — the "v4" refers to the assembly
-algorithm version, not the collection schema generation.
-
----
-
-## 2. Data Model
-
-Three types of Firestore documents define a prompt:
-
-```
-Blueprint ──────────────────────────────────── defines structure
-    outer_class: "Alek extends Agent"
-    class_order: [properties, cognitive_process, ...]
-
-Token ───────────────────────────────────────── defines content fragment
-    token_id: "HUMOR_PRESET_RANEVSKAYA"
-    class:    "properties"          ← which Groovy section it renders into
-    category: "humor_engine"        ← semantic group (dedup key for overrides)
-    content:  "humor_engine { ... }" ← bare Groovy block(s), no outer section wrapper
-
-AgentProfile ────────────────────────────────── defines which tokens an agent uses
-    blueprint_id: "universal_agent_v1"  ← which blueprint to assemble against
-    agent_id:     "quick"
-    tokens: {
-      "HUMOR_PRESET_RANEVSKAYA": {order: 60},
-      "COGNITIVE_PROCESS_QUICK": {order: 10, non_overridable: true},
-      ...
-    }
-```
-
-### 2.1 Blueprint (`development_domain_prompt_blueprints_v3`)
-
-Document ID: `{blueprint_id}` (e.g., `universal_agent_v1`)
-
-```json
-{
-  "blueprint_id": "universal_agent_v1",
-  "outer_class": "Alek extends Agent",
-  "class_order": [
-    "provenance",
-    "properties",
-    "cognitive_process",
-    "policies",
-    "protocols",
-    "few_shot_examples",
-    "output_format",
-    "final_directives"
-  ]
-}
-```
-
-**Fields:**
-- `outer_class` — Groovy class declaration: `class {outer_class} { ... }`
-- `class_order` — ordered list of Groovy section names. Sections are rendered in this order.
-  Sections with no assigned tokens are silently skipped.
-- `provenance` (first in `universal_agent_v1`) holds the system-turn provenance rule (token `POLICY_SYSTEM_PROVENANCE`,
-  `prompts_snapshot/tokens/system/`). Only Smart and Quick assign it (`non_overridable: true`, in `profiles/smart.yaml` and
-  `profiles/quick.yaml`); every other agent leaves the class empty, so it is skipped. Assembly renders it before the
-  `knowledge_base` preamble. This describes the snapshot. The live store does not hold the token, the class or the
-  assignments (not uploaded, owner decision), so the live prompt has no provenance section. See
-  `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md` §7.
-
-**No template string. No classes dict. No default tokens.** All of that has moved to the
-token and profile.
-
-### 2.2 Token (`development_domain_prompt_tokens_v3_system` / `_user`)
-
-Document ID: `{token_id}` (e.g., `HUMOR_PRESET_RANEVSKAYA`)
-
-```json
-{
-  "token_id": "HUMOR_PRESET_RANEVSKAYA",
-  "class": "properties",
-  "category": "humor_engine",
-  "content": "humor_engine {\n    persona: \"Faina Ranevskaya\"\n    ...\n}",
-  "metadata": {
-    "version": "2.0",
-    "description": "Ranevskaya persona with dark wit and aphoristic style"
-  }
-}
-```
-
-**Fields:**
-- `class` — Groovy section name this token renders into (`properties`, `cognitive_process`,
-  `policies`, `protocols`, `few_shot_examples`, `output_format`, `final_directives`).
-  The assembly service uses this to group tokens into sections.
-- `category` — semantic group used as the **deduplication key** for overrides.
-  When an account or user provides a token with the same `class + category` as an agent
-  token, the override replaces the agent token. Examples: `humor_engine`, `voice`,
-  `cognitive_process`, `archetype`, `vibe`, `policy`, `protocol`, `output_format`.
-- `content` — bare Groovy block(s). **No outer section wrapper.** The section wrapper
-  (`properties { ... }`) is generated by the assembly service. The token only provides
-  what goes *inside* the section.
-
-**Two token collections:**
-- `_system` — system-controlled tokens (cognitive_process, policies, protocols, directives,
-  output_format, few_shot_examples, behavior_guide). Only engineering can modify these.
-- `_user` — user-customizable tokens (humor_preset, archetype, voice, vibe, response_style,
-  motto). Account/user overrides point to tokens from this collection.
-
-Both collections are queried via `FirestoreTokenRepository` which tries `_system` first,
-then `_user`. Code: `src/adapters/prompt_v3/firestore_token_repository.py`.
-
-### 2.3 Agent Profile (`development_domain_prompt_profiles_v3`)
-
-Document ID: `{agent_id}` (e.g., `quick`, `router`, `consolidation`)
-
-```json
-{
-  "blueprint_id": "universal_agent_v1",
-  "agent_id": "quick",
-  "tokens": {
-    "COGNITIVE_PROCESS_QUICK":        {"order": 10, "non_overridable": true},
-    "ARCHETYPE_INTELLECTUAL_SNIPER":  {"order": 20, "non_overridable": true},
-    "VIBE_BATTLE_WEARY":              {"order": 30, "non_overridable": true},
-    "VOICE_APHORISTIC":               {"order": 40},
-    "BEHAVIOR_GUIDE_RANEVSKAYA_MODE": {"order": 50},
-    "HUMOR_PRESET_RANEVSKAYA":        {"order": 60},
-    "RESPONSE_CONCISE":               {"order": 70},
-    "MOTTO_DEFAULT":                  {"order": 80},
-    "FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY": {"order": 90, "non_overridable": true},
-    "OUTPUT_FORMAT_JSON":             {"order": 100},
-    "PROTOCOL_SEARCH_MEMORY":         {"order": 200},
-    "PROTOCOL_QUICK_AGENT_SELECTION": {"order": 210, "non_overridable": true},
-    "POLICY_OUTPUT_LANGUAGE":         {"order": 300, "non_overridable": true},
-    "POLICY_PRIVACY":                 {"order": 310},
-    "POLICY_NO_OPEN_LOOPS":           {"order": 320},
-    "POLICY_ANTI_GUARDIAN":           {"order": 330},
-    "POLICY_WITTY_ACCENTUATION":      {"order": 340},
-    "POLICY_ALIGN_WITH_ANCHORS":      {"order": 350},
-    "DIRECTIVE_SLACK_FORMATTING":     {"order": 400},
-    "DIRECTIVE_BREVITY":              {"order": 410}
-  }
-}
-```
-
-**Key design decisions:**
-- Document ID = `agent_id` only. The `blueprint_id` field **inside** the document is the
-  source of truth for which blueprint to use. The assembly service reads it from the profile —
-  no hardcoded mapping in application code.
-- `tokens` map (not an array). Key = `token_id`, value = `{order, non_overridable}`.
-  Map constraint prevents duplicate assignments.
-- `order` — integer, step 10 by convention. Controls rendering order within the section.
-  Lower order = rendered earlier.
-- `non_overridable: true` — account and user overrides cannot replace this token.
-  Used for core cognitive process, key protocols, and structural tokens.
-
-### 2.4 Override Profiles (Account/User)
-
-Document ID: `{OWNER_TYPE}_{owner_id}` (e.g., `ACCOUNT_acc_123`, `USER_user_456`)
-
-```json
-{
-  "owner_type": "ACCOUNT",
-  "owner_id": "acc_123",
-  "tokens": {
-    "VOICE_FORMAL": {"order": 40}
-  }
-}
-```
-
-Override tokens are matched to agent tokens by `class + category`. If the agent profile has
-a token with the same `class` + `category` and `non_overridable != true`, the override token
-replaces it. Overrides **cannot add new classes** — they can only replace existing ones.
-
-**Domain type:** `AgentProfile` in `src/domain/prompt_v3/agent_profile.py` holds the resolved
-profile returned by `get_agent_profile()`. Override tokens are returned as
-`Dict[str, ProfileToken]` from `get_override_tokens()`.
-
----
-
-## 3. Agent-to-Blueprint Mapping
-
-Each agent type maps to exactly one blueprint. The mapping lives in Firestore (in the agent
-profile document), not in application code.
-
-| Agent type | Blueprint ID | Outer class | Notes |
-|------------|-------------|-------------|-------|
-| `quick` | `universal_agent_v1` | `Alek extends Agent` | User-facing; account/user overrides allowed |
-| `smart` | `universal_agent_v1` | `Alek extends Agent` | User-facing; account/user overrides allowed |
-| `router` | `router_agent_v1` | `RouterAgent extends Agent` | Internal; all tokens non_overridable |
-| `websearch` | `websearch_agent_v1` | `WebSearchAgent extends Agent` | Internal |
-| `websearch_light` | `websearch_light_agent_v1` | `WebSearchLightAgent extends Agent` | Internal |
-| `consolidation` | `consolidation_agent_v1` | `ConsolidationAgent extends Agent` | Internal |
-| `memorysearch` | `memorysearch_agent_v1` | `MemorySearchAgent extends Agent` | Internal |
-
-**quick and smart** share `universal_agent_v1` — same outer class, same section order, different
-token assignments (e.g., `COGNITIVE_PROCESS_QUICK` vs `COGNITIVE_PROCESS_SMART`). Account/user
-overrides are meaningful here.
-
-**Internal agents** (router, websearch, websearch_light, consolidation, memorysearch) each have
-their own blueprint with domain-specific section names (e.g., `taxonomy`, `execution`,
-`anti_patterns`). All their tokens are `non_overridable: true`. User overrides are irrelevant.
-
----
-
-## 4. Assembly Algorithm
-
-Implemented in `src/services/prompt_v3/prompt_assembly_service.py`,
-method `_assemble_static_template()`.
-
-```
-Input: agent_type, account_id?, user_id?
-
-STEP 1 — Agent Profile fetch (sequential, needed to get blueprint_id)
-  profile = get_agent_profile(agent_type)
-  blueprint_id = profile.blueprint_id
-  agent_tokens = profile.tokens           # Dict[str, ProfileToken]
-
-STEP 2 — Blueprint + overrides in parallel (asyncio.gather)
-  blueprint = blueprint_repo.get(blueprint_id)
-  account_overrides = get_override_tokens(ACCOUNT, account_id)   # if account_id
-  user_overrides    = get_override_tokens(USER,    user_id)       # if user_id
-
-STEP 3 — Apply account overrides
-  For each token in account_overrides:
-    Find agent token with matching (class + category)
-    If found AND agent token.non_overridable == False:
-      Replace agent token with override token in working set
-
-STEP 4 — Apply user overrides
-  Same logic as step 3, applied on top of the result from step 3.
-  User overrides take priority over account overrides.
-
-STEP 5 — Fetch all active token documents in parallel
-  Collect all token_ids from working set → asyncio.gather(token_repo.get(id) for each)
-
-STEP 6 — Group by class
-  tokens_by_class: Dict[str, List[Tuple[ProfileToken, Token]]]
-  Group each fetched token by its Token.class_ field.
-
-STEP 7 — Render each section (iterating blueprint.class_order)
-  For each class_name in blueprint.class_order:
-    If no tokens for this class → skip (section omitted entirely)
-    Sort tokens by ProfileToken.order (ascending)
-    Join token content with "\n\n"
-    Render: "    {class_name} {\n\n{indented_content}\n\n    }"
-
-STEP 8 — Wrap in outer class
-  "class {outer_class} {\n\n{all_sections}\n\n}"
-
-Output: static_template (str, ~3-8k tokens depending on agent)
-```
-
-### Override example
-
-Agent quick has: `HUMOR_PRESET_RANEVSKAYA` (class=`properties`, category=`humor_engine`)
-
-Account override provides: `HUMOR_PRESET_FAMILY_FRIENDLY` (class=`properties`, category=`humor_engine`)
-
-Result: `HUMOR_PRESET_RANEVSKAYA` is replaced by `HUMOR_PRESET_FAMILY_FRIENDLY` in the
-`properties` section. The `order` value from the override's `ProfileToken` is used for
-positioning.
-
-If `HUMOR_PRESET_RANEVSKAYA` were marked `non_overridable: true`, the override would be
-silently ignored.
-
----
-
-## 5. Two-Phase Assembly
-
-The assembly service splits prompt construction into two phases with different caching
-characteristics.
-
-### Phase 1 — Static Template (Cached 24h)
-
-Steps 1-8 above. Result is stored in an in-memory dict with 24h TTL.
-
-- **Cache key:** `prompt:{agent_type}:acc:{account_id}:usr:{user_id}`
-- **Cold start:** ~110ms (Firestore reads + asyncio.gather)
-- **Cache hit:** ~5ms
-- **Invalidation:** `$admin_cache_reset` via Slack, or `assembly_service.invalidate_cache()`
-
-Phase 1 is bypassed for each unique `(agent_type, account_id, user_id)` triple.
-For internal agents (router, consolidation, memorysearch) with no user/account context,
-the cache key resolves to a constant — effectively a permanent warm cache.
-
-### Phase 2 — Runtime Injection (Every Request)
-
-Appends dynamic context to the cached static template. Never cached.
-
-1. Split `biographical_facts` by `semantic_lens` tag → static bio (before boundary) vs
-   query-specific facts (after boundary)
-2. Format + validate static bio via `SecurityPort` (UNTRUSTED zone)
-3. Append `knowledge_base {}` block (bio + optionally conversation_history) — only if non-empty
-4. Append `<!-- CACHE_BOUNDARY -->`
-5. Append `active_reminders {}` (only if active reminders present) — user's self-reminders fetched by RouterAgent via `AgentNotePort.list_active_notes()` at turn start; TRUSTED zone, no `SecurityPort` validation
-6. Append `current_date_time {}` (always)
-7. Append `query_specific_context` (only if Q-S facts present)
-
-The `ClaudeAdapter` splits at `<!-- CACHE_BOUNDARY -->` and applies
-`cache_control: ephemeral` to the static prefix — Anthropic caches it server-side for ~5 min.
-
-See [prompt_assembly_guide.md Section 7](../../08_concepts/prompt_assembly_guide.md#7-cache-boundary-and-anthropic-prompt-caching)
-for full cache boundary mechanics.
-
----
-
-## 6. Assembled Prompt Structure
-
-```
-[STATIC PREFIX — cached 24h in-memory + ~5 min by Anthropic]
-
-class Alek extends Agent {
-
-    properties {
-
-        archetype { ... }         ← ARCHETYPE token (order 20)
-        vibe { ... }              ← VIBE token (order 30)
-        voice { ... }             ← VOICE token (order 40)
-        behavior_guide { ... }    ← BEHAVIOR_GUIDE token (order 50)
-        humor_engine { ... }      ← HUMOR_PRESET token (order 60, user-overridable)
-        response { ... }          ← RESPONSE token (order 70)
-        motto { ... }             ← MOTTO token (order 80)
-    }
-
-    cognitive_process {           ← COGNITIVE_PROCESS token (order 10)
-
-        ...
-    }
-
-    policies {
-
-        policy_output_language { ... }   ← 6 POLICY tokens (orders 300-350)
-        policy_privacy { ... }
-        ...
-    }
-
-    protocols {
-
-        protocol_search_memory { ... }   ← PROTOCOL tokens (orders 200-210)
-        protocol_quick_agent_selection { ... }
-    }
-
-    few_shot_examples {                  ← FEW_SHOT_EXAMPLES token (order 90)
-
-        ...
-    }
-
-    output_format {                      ← OUTPUT_FORMAT token (order 100)
-
-        ...
-    }
-
-    final_directives {
-
-        directive_slack_formatting { ... }   ← DIRECTIVE tokens (orders 400-410)
-        directive_brevity { ... }
-    }
-}
-
-knowledge_base {                         ← Phase 2: static bio facts (before boundary)
-  biographical_context: '''
-    **Biographical**
-    - Born in Springfield
-    **Work**
-    - Software engineer at ...
-  '''
-}
-
-[DYNAMIC SUFFIX — sent fresh every request, NOT cached by Anthropic]
-
-<!-- CACHE_BOUNDARY -->
-
-active_reminders {          ← only when active reminders exist
-    // Reminders you scheduled for yourself. Not visible to the user. Snapshot from turn start — trust tool results for changes made this turn.
-    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time.
-    - "Send Springfield morning news briefing" (fires: Mar 23 08:00 UTC) [id: 1742700000000]
-    - "Weekly project check-in" (fires: Mar 28 09:00 UTC) [id: 1742800000000]
-}
-
-current_date_time {
-    2026-02-27 15:42 Thursday (CET)
-}
-
-query_specific_context: '''          ← Phase 2: only when router found semantic facts
-    **Query-Specific Context:**
-    - User mentioned travel plans last week
-'''
-```
-
-**Key rules:**
-- `knowledge_base` block only appended when content is non-empty (no empty wrappers)
-- Sections with no tokens are silently omitted
-- Token order within a section is controlled by `ProfileToken.order` (ascending)
-- Sections are ordered by `blueprint.class_order`
-
----
-
-## 7. Code References
-
-### Domain layer (`src/domain/prompt_v3/`)
-
-| File | Type | Key fields |
-|------|------|-----------|
-| `blueprint.py` | `Blueprint` | `id`, `outer_class`, `class_order: List[str]` |
-| `token.py` | `Token` | `id`, `category`, `class_: TokenClass`, `content` |
-| `profile_slot.py` | `ProfileToken` | `token_id`, `order: int`, `non_overridable: bool` |
-| `agent_profile.py` | `AgentProfile` | `blueprint_id: str`, `tokens: Dict[str, ProfileToken]` |
-| `slot.py` | `OwnerType` | Enum: `AGENT`, `ACCOUNT`, `USER` |
-
-### Ports (`src/ports/prompt_v3/`)
-
-| File | Interface | Key methods |
-|------|-----------|------------|
-| `blueprint_repository.py` | `BlueprintRepository` | `get(blueprint_id)` |
-| `token_repository.py` | `TokenRepository` | `get(token_id)`, `list_by_class()` |
-| `agent_profile_repository.py` | `AgentProfileRepository` | `get_agent_profile(agent_id) -> AgentProfile`, `get_override_tokens(owner_type, owner_id) -> Dict[str, ProfileToken]`, `set_override_tokens(owner_type, owner_id, tokens, clear_ids)` |
-
-### Adapters (`src/adapters/prompt_v3/`)
-
-| File | Implements | Notes |
-|------|-----------|-------|
-| `firestore_blueprint_repository.py` | `BlueprintRepository` | Reads `outer_class` + `class_order` |
-| `firestore_token_repository.py` | `TokenRepository` | Dual-collection lookup: system first, then user |
-| `firestore_agent_profile_repository.py` | `AgentProfileRepository` | Profile doc ID = `agent_id`; override doc ID = `{OWNER_TYPE}_{owner_id}` |
-
-### Assembly service (`src/services/prompt_v3/`)
-
-| File | Purpose |
-|------|---------|
-| `prompt_assembly_service.py` | Two-phase assembly, 24h cache, override resolution |
-| `biographical_formatter.py` | Domain-grouped Markdown formatting of biographical facts |
-| `context_formatter.py` | Conversation history formatting |
-
-### Entry point
-
-`src/services/prompt_builder.py` — `UserPromptBuilder` (merged into `prompt_builder.py` in 2026-03-08 hexagonal audit) implements `PromptBuilderPort`.
-All agents call `await prompt_builder.build_for_agent(agent_type, user_id, ...)`.
-Agents never interact with `PromptAssemblyService` directly.
-
-### Firestore collections
-
-| Collection | Contains | Document ID scheme |
-|-----------|---------|-------------------|
-| `development_domain_prompt_blueprints_v3` | Blueprint documents | `{blueprint_id}` |
-| `development_domain_prompt_tokens_v3_system` | System tokens | `{token_id}` |
-| `development_domain_prompt_tokens_v3_user` | User tokens | `{token_id}` |
-| `development_domain_prompt_profiles_v3` | Agent profiles + overrides | `{agent_id}` (profiles) / `{OWNER_TYPE}_{owner_id}` (overrides) |
-
----
-
-## 8. Security Model
-
-Three validation layers:
-
-1. **Token creation** — every token's `content` must pass `SecurityPort.validate()` at creation
-   time before being written to Firestore. Tokens with UNSAFE content are rejected.
-
-2. **Override assignment** — overrides can only replace tokens in classes the agent already has.
-   `non_overridable: true` blocks replacement entirely. Users cannot inject new Groovy sections.
-
-3. **Runtime context** — biographical facts and conversation history are treated as `UNTRUSTED`
-   zone and validated via `SecurityPort` before being appended to the prompt.
-
-These three layers together ensure no raw text ever enters the system instruction without
-either being pre-approved (tokens) or sanitized (runtime context).
-
----
-
-## 9. What Does NOT Change Per Request
-
-These components are stable once deployed and do not change without a code+Firestore update:
-
-| Component | Stability | Lives in |
-|-----------|-----------|---------|
-| Blueprint structure | Immutable (until next migration) | Firestore |
-| Token content | Immutable (tokens are versioned, not edited) | Firestore |
-| Agent profile token assignments | Changes only on explicit profile update | Firestore |
-| Assembly algorithm | Code changes require deployment | Python |
-| Override logic (class+category match) | Code changes require deployment | Python |
-
-These change per request:
-
-| Component | Changes | Source |
-|-----------|---------|--------|
-| Biographical facts (static) | Whenever consolidation runs (~every 100 messages) | Firestore (BiographicalContextService) |
-| Query-specific context | Every request (based on user query) | Router enrichment |
-| Current datetime | Every request | System clock |
-| Account/user overrides | Whenever user changes preferences | Firestore |
-
----
-
-## 10. Status
-
-**Status:** ✅ Production Ready — but **subject to architectural revision** (see § 12 below).
-
-**Assembly model:** v4 class-collection (implemented 2026-02-27)
-
-**Previous model:** v3 placeholder-substitution (archived in
-[PROMPT_BUILDER_V4_RFC.md Section 1](../../10_rfcs/PROMPT_BUILDER_V4_RFC.md))
-
-**Test coverage:**
-- `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` — unit (assembly logic, overrides, cache)
-- `tests/unit/adapters/test_prompt_token_store_kit.py`, `test_prompt_blueprint_store_kit.py`, `test_prompt_profile_store_kit.py` — adapter store kits
-- `tests/integration/test_prompt_4level_assembly.py` — integration (real Firestore)
-
-**Last Updated:** 2026-03-24
-
----
-
-## 11. Language Policy Tokens (LANG_* family)
-
-Language control for bot responses is implemented as a standard override, not as a special
-code path. Five tokens in `development_domain_prompt_tokens_v3_system` cover all language modes:
-
-| Token ID | Behavior | Groovy rule name |
-|----------|---------|-----------------|
-| `LANG_MIRROR` | Mirrors user input language (default) | `Output_Language_Mirror` |
-| `LANG_FIXED_UK` | Always Ukrainian | `Output_Language_Fixed_UK` |
-| `LANG_FIXED_EN` | Always English | `Output_Language_Fixed_EN` |
-| `LANG_FIXED_FR` | Always French | `Output_Language_Fixed_FR` |
-| `LANG_FIXED_ES` | Always Spanish | `Output_Language_Fixed_ES` |
-
-**Schema:** `class: policies`, `category: output_language`, `non_overridable: false`.
-
-`non_overridable: false` is the key design decision: it allows USER-level overrides to replace
-the default `LANG_MIRROR` with a fixed-language token via the standard override mechanism
-(class + category match). No special assembly code is needed.
-
-### Default in agent profiles
-
-Quick and Smart profiles have `LANG_MIRROR` at `order: 300`:
-
-```json
-"LANG_MIRROR": {"order": 300, "non_overridable": false}
-```
-
-This replaced `POLICY_OUTPUT_LANGUAGE` (`non_overridable: true`) — the old token was
-hardcoded and could not be user-overridden.
-
-### User override — fixed language
-
-`LanguagePreferenceService.set_preference()` calls `set_override_tokens()`:
-
-```python
-set_override_tokens(
-    OwnerType.USER, user_id,
-    tokens={LANG_FIXED_EN: ProfileToken(token_id=..., order=70)},
-    clear_ids={LANG_MIRROR, LANG_FIXED_UK, LANG_FIXED_FR, LANG_FIXED_ES},
-)
-```
-
-`set_override_tokens()` performs an atomic read-modify-write on the override document
-(`USER_{user_id}` in `domain_prompt_overrides_v3`):
-1. Read existing override tokens
-2. Remove all IDs in `clear_ids` (other LANG_* entries)
-3. Write new token(s)
-4. `doc_ref.set(...)` — awaited (AsyncClient)
-
-Result: the override doc contains exactly one LANG_* token. Assembly replaces `LANG_MIRROR`
-from the agent profile with `LANG_FIXED_EN` from the user override.
-
-### User override — mirror mode
-
-```python
-set_override_tokens(OwnerType.USER, user_id, tokens={}, clear_ids=ALL_LANG_IDS)
-```
-
-Clears all LANG_* entries from the override doc. Assembly falls back to `LANG_MIRROR` from
-the agent profile. No override doc deletion needed — an empty `tokens` map is sufficient.
-
-### Upload files
-
-```
-firestore_utils/uploads/LANG_MIRROR.json
-firestore_utils/uploads/LANG_FIXED_UK.json
-firestore_utils/uploads/LANG_FIXED_EN.json
-firestore_utils/uploads/LANG_FIXED_FR.json
-firestore_utils/uploads/LANG_FIXED_ES.json
-```
-
-Upload to `development_domain_prompt_tokens_v3_system` with `--format json`.
-
-See full language system documentation: [../localization_system/README.md](../localization_system/README.md)
-
----
-
-## 12. Pending Architectural Revision — Blueprint Approach Under Review
-
-**Status (2026-05-01):** the blueprint-as-static-template approach (§ 2.2 Blueprint, § 4 Assembly Algorithm) is **explicitly under doubt** and a strategy revision is pending. The system as documented above is in production and works; the revision is about whether the blueprint layer is the right abstraction for the long-term shape, not about a defect.
-
-**What is in doubt:**
-- Whether the **blueprint layer is needed at all.** A blueprint is a fixed `outer_class` + `class_order` over a per-agent set of token slots. A reviewer can reasonably ask: why not flatten — let the agent profile itself describe the section sequence directly, and drop the blueprint document type? The blueprint currently exists to share section structure across multiple agent profiles, but every agent in production has its own profile (`universal_agent_v1_SYSTEM_<agent>`), so the sharing benefit is theoretical.
-- Whether the **per-agent blueprints fragmentation** (six distinct blueprints, F5.1 from the inspection) is a stable end state or a transition stage to either a single canonical blueprint or no blueprints at all.
-- Whether the **legacy Groovy-mode upload path** (the upload utility's Groovy mode; the `groovy_prompt_assembler.py` adapter was deleted with the v2 component stack) survives the revision or is removed.
-
-**Why this is recorded explicitly:**
-- The core system maintainer has flagged blueprint approach for re-evaluation (paraphrased: *"the blueprint approach overall — I will think about further. It looks like we may move away from blueprints altogether."*).
-- Without an explicit decision record, follow-up agents (human or AI) reading this document and the v3 RFC will assume the v4 model is the stable end state and propose changes consistent with it — wasting work that may be discarded by the revision.
-- This is the AI-pair-programming third defensive layer (after ports + tests): a 5–15 line rationale-bearing record of architectural uncertainty, captured at decision time so future readers can see *that we knew it was uncertain*, not just *what was implemented*.
-
-**What this means for current work:**
-- **Do not invest in blueprint-layer expansion** (new blueprints, new override mechanics tied to blueprint IDs, deeper blueprint-aware caching) until the revision lands.
-- **Keep using the existing blueprints** as documented above for new agents — there is no replacement yet.
-- **Per-agent profile evolution is fine** — profiles are the stable layer; the question is what sits above them.
-
-**Items gated on the blueprint revision (in `docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md`):**
-- F5.6 — Firestore upload Groovy mode tech debt (`groovy_prompt_assembler.py` itself is deleted). Original audit acceptance: *"Remove when blueprint migration decision is made."* Removal is gated on this revision.
-- F5.10 — Token versioning absent. The right shape depends on whether tokens stay first-class or get absorbed into a flatter profile structure.
-- F5.1 — Per-agent blueprints fragmentation. Resolves naturally as part of the revision.
-
-**Triggers to do the revision:**
-- A real prompt-engineering iteration cycle that the current shape makes painful (concrete pain, not speculative).
-- A second deployment surface (besides Cabinet UI) that would reuse the prompt pipeline — would force a clean port boundary on the assembly layer.
-- The pre-release-branch doc-shape pass (Bucket I) — the revision may surface as a portfolio narrative item ("how the prompt assembly system is architected, and how that architecture itself is under review") rather than as code.
-
-**Out of scope here:** which direction the revision should go (flatten vs keep + tighten vs adopt an external prompt-template engine). That choice is made when the revision is triggered, not now. Recording the *uncertainty* now is the value; pre-deciding the *answer* would be premature.
+<!-- living-doc
+covers:
+  src/domain/prompt_v3/agent_profile.py
+  src/domain/prompt_v3/blueprint.py
+  src/domain/prompt_v3/profile_slot.py
+  src/domain/prompt_v3/section.py
+  src/domain/prompt_v3/slot.py
+  src/domain/prompt_v3/token.py
+  src/ports/prompt_v3/
+  src/adapters/prompt_v3/
+  src/services/prompt_v3/
+  src/services/prompt_builder.py
+  src/ports/prompt_builder_port.py
+  src/composition/prompt_assembly_setup.py
+  src/domain/prompt.py
+  firestore_utils/
+  prompts_snapshot/
+-->
+# Prompt Design System v3
+
+## Purpose
+
+This block turns stored fragments into the system instruction of every agent. A prompt is never written in code: it is
+assembled at request time from **tokens** (named, validated fragments of Groovy-style text), arranged by a **blueprint**
+(the outer class and the order of its sections) and selected by an **agent profile** (which tokens an agent uses and in
+what order). The owner's per-account and per-user choices (humor, voice, language) are **overrides** that swap one
+token for another of the same kind. Agents never build prompt text; they call `PromptBuilderPort.build_for_agent`.
+
+The assembly has two phases with different lifetimes: a **static template** (tokens, blueprint, overrides; cached
+in-process) and **runtime context** (biographical facts, directives, reminders, time; appended on every request). A
+cache boundary marker in the final string separates what a provider may cache from what changes per request.
+
+What it is not: it does not hold prompt wording (the text lives in tokens, see below), it does not decide which agent
+runs, and it does not write memory. Why prompts are written as a Groovy-style class and how to write a token:
+[`groovy_prompt_pattern.md`](../../08_concepts/groovy_prompt_pattern.md).
+
+The name keeps `v3` because the collections do; the assembly algorithm is the "class-collection" model (v4) that replaced
+placeholder substitution (`PROMPT_BUILDER_V4_RFC.md`).
+
+## Owned data
+
+Four Firestore collections, names from `src/config/environment.py::EnvironmentConfig` (`domain_prompt_tokens_collection`
+plus the `_system` / `_user` suffixes, `domain_prompt_blueprints_collection`, `domain_prompt_profiles_collection`,
+`domain_prompt_overrides_collection`), wired once in `src/composition/prompt_assembly_setup.py::build_prompt_assembly_service`
+(shared by the main service and the drive indexer, so both assemble from the same stores).
+
+- **Token** (`..._tokens_v3_system`, `..._tokens_v3_user`; id = `token_id`). `class` is the section the token renders into,
+  `category` is the semantic group and the **override key**, `content` is bare Groovy with no section wrapper (the
+  wrapper is generated). The system collection holds engineering-owned tokens; the user collection holds the choices an
+  owner can switch to (humor, archetype, voice, vibe, response style, motto). `FirestoreTokenRepository.get` looks in
+  system first, then user. Domain type: `src/domain/prompt_v3/token.py::Token`.
+- **Blueprint** (`..._blueprints_v3`; id = `blueprint_id`): `outer_class`, ordered `class_order`, optional
+  `tail_categories`. `Blueprint.validate` rejects an empty outer class, an empty order and duplicate section names.
+- **Agent profile** (`..._profiles_v3`; id = `agent_id`): `blueprint_id` and a `tokens` map
+  `token_id -> {order, non_overridable}`. The blueprint an agent uses is read from its profile, never mapped in code.
+  Many profiles share a blueprint (`universal_agent_v1` is used by Smart, Quick and others); a profile is per agent or
+  per mode. `order` is the position inside the token's section.
+- **Override** (`..._overrides_v3`, a separate collection from the profiles; id `{OWNER_TYPE}_{owner_id}` with the type
+  upper-cased, e.g. an account or user prefix): the same `tokens` map, written by `FirestoreAgentProfileRepository.set_override_tokens`.
+
+Who writes: engineering uploads tokens, blueprints and profiles by hand; `prompts_snapshot/` is a git mirror of those
+three (overrides are excluded, they are personal data). Firestore is the source of truth, the mirror makes drift and
+edits reviewable; the pull, the drift check and the human-only apply gate are described in
+[`prompts_snapshot/README.md`](../../../prompts_snapshot/README.md). Scripts under `firestore_utils/` write the live
+store and are run by the owner only. Who reads: `PromptAssemblyService` through the three repository ports in
+`src/ports/prompt_v3/`. The snapshot can lag or differ from the live store; nothing in the application reads it.
+
+## Flows
+
+### A prompt for one agent turn
+
+1. An agent calls `src/services/prompt_builder.py::PromptBuilder.build_for_agent` (the port is
+   `src/ports/prompt_builder_port.py::PromptBuilderPort`; `UserPromptBuilder` only binds a user id and config).
+2. The builder loads the account's cached biographical facts (skipped with `include_biographical=False`; a missing
+   `account_id` loads nothing, there is no fallback to the user id) and splits the list into three channels in one
+   place: standing directives (`fact_lifecycle.is_directive`, dropped with `include_directives=False`), query-specific
+   facts (tagged `semantic_lens` by `merge_enriched_context_with_biographical`) and the rest, the static biography.
+3. `PromptAssemblyService.assemble` looks up the static template by cache key, assembling it on a miss
+   (below), then injects runtime context (below) and returns one string.
+
+### Static template
+
+`prompt_assembly_service.py::PromptAssemblyService._assemble_static_template`:
+
+1. Read the agent profile (sequential: it names the blueprint).
+2. Read the blueprint and the ACCOUNT and USER override documents in parallel.
+3. Fetch every referenced token in parallel (`asyncio.gather` with `return_exceptions=True`).
+4. Apply account overrides, then user overrides (`_apply_overrides`): an override token replaces the active token with the
+   same `class` and `category`, unless that profile entry is `non_overridable`. The override's own `order` is used.
+5. Group the active tokens by `class`, sort by `order`, render each section in `blueprint.class_order` order (empty
+   sections are skipped), wrap in `class {outer_class} { ... }`, normalise whitespace.
+6. Two special parts are held apart from the sections. The `provenance` class (`src/domain/system_fingerprint.py::PROVENANCE_CLASS`)
+   is a top-level head before the outer class. Tokens whose category is listed in `Blueprint.tail_categories` are rendered
+   as trailing top-level blocks and stored after `_TAIL_MARKER` inside the same cached string, so a template and its
+   tail are one value; `assemble` splits them again.
+
+### Runtime context
+
+`PromptAssemblyService._inject_runtime_context`, on every request, in this order:
+
+1. Static facts, directives, the query-specific context and any conversation history are formatted
+   (`BiographicalFactsFormatter`, `ContextFormatter`) and validated through `SecurityPort` in the UNTRUSTED zone.
+2. `knowledge_base {}` (location, biography, history; only the non-empty parts, never an empty wrapper) and
+   `extra_static_blocks`. With `kb_preamble=True` they go **before** the blueprint class (Smart, Quick, Router, Tutor:
+   context first, instructions last, for recency) and the provenance head is lifted to stay before them; with the
+   default `False` they follow the class (consolidation and the batch agents, whose payload is the task).
+3. The skills catalog, then `standing_directives {}` as the last static block.
+4. `PROMPT_CACHE_BOUNDARY`.
+5. The dynamic part: `active_reminders {}` (orchestrator-supplied notes, trusted, not validated), `current_date_time {}`
+   only with `include_datetime=True` (by default the time is stamped into user messages instead, so the cached prefix
+   stays stable), `query_specific_context`, the `tail_categories` blocks, and `session_key {}` always last
+   (`SYSTEM_TURN_FINGERPRINT_RFC.md` §4.2; an invalid key raises).
+
+Conversation history for chat agents travels as `messages`, not in the prompt. Consolidation passes its batch as
+`conversation_history`, which lands in the static `knowledge_base` and is cached across the run.
+
+### Cache boundary at the provider
+
+`src/domain/llm.py::PROMPT_CACHE_BOUNDARY` is the one marker. `ClaudeAdapter` (when `cache_config.enabled`) splits the
+instruction there into a static block with `cache_control: ephemeral` and a dynamic block; with no marker it caches the
+whole instruction, and it never sends an empty block (Anthropic answers 400). `GeminiAdapter`, `GrokAdapter` and
+`OpenAIAdapter` strip the marker so the literal never reaches the model; Grok and OpenAI use the static part as their
+cache-key seed. Details: `HEXAGONAL_PROMPT_CACHING_RFC.md`.
+
+### Language
+
+Language is a standard override, not a code path. Smart and Quick assign `LANG_MIRROR` (class `policies`, category
+`output_language`, not `non_overridable`); `src/services/language_preference_service.py::LanguagePreferenceService.set_preference`
+writes a `LANG_FIXED_<code>` token into the USER override (clearing the other `LANG_*` ids), or clears them for mirror
+mode, then clears the assembly cache. User-facing language policy: [`localization_system`](../localization_system/README.md).
+
+### Cache lifetime
+
+The static template is cached in a per-process dict for 24 hours under
+`prompt:{agent_type}:acc:{account_id}:usr:{user_id}` (`_build_cache_key`; the builder substitutes the anonymous ids for
+missing ones). `preload_cache` warms the agent types the factory lists (`_preload_agent_types`) when a user's agents are created. `invalidate_cache` clears all;
+`invalidate_assembled` drops one key (`PromptBuilder.invalidate_agent_prompt`). Callers: `$admin_cache_reset`
+(`src/agents/core/router_agent.py`, `src/handlers/conversation_handler.py`), the language change, and agents that
+rewrite their own prompt inputs.
+
+## Invariants and traps
+
+- **A token that cannot be loaded is silently left out.** Step 3 captures exceptions: a missing token, or one that fails
+  `SecurityPort` validation on read (`FirestoreTokenRepository.get` runs `Token.create` on every read, rejecting HIGH and
+  CRITICAL risk), becomes a warning log and the section renders without it. A profile that lists a typo gives a prompt
+  missing a rule, with no error. Check the warning `Agent token ... not found` after an upload.
+- **A missing profile degrades, a missing blueprint raises.** `get_agent_profile` returns an empty profile with
+  `blueprint_id = {agent_id}_agent_v1` when the document is absent; `FirestoreBlueprintRepository.get` raises `KeyError`
+  if that blueprint is absent, and a profile with no tokens assembles to an empty outer class. The no-fallback-prompt
+  rule applies to agents: an agent whose `build_for_agent` fails returns a failure, it does not use inline text.
+- **An override only replaces, and only the first match.** An override token with no active token of the same
+  `class` and `category` is ignored; it never adds a section. A `non_overridable` match blocks it. The `provenance` class
+  is never overridable (`_apply_overrides`).
+- **`class + category` is the identity of a choice.** A new user-selectable token needs the category its default has, in
+  the same class, or the switch silently does nothing.
+- **Two `OwnerType` enums.** Assembly uses `src/domain/prompt_v3/slot.py::OwnerType` (`AGENT`, `ACCOUNT`, `USER`;
+  override ids upper-case the value). `src/domain/prompt.py::OwnerType` is a different four-level enum that
+  includes `SYSTEM`; importing the wrong one gives wrong override ids.
+- **`set_override_tokens` is a read then a write, not a transaction.** Two concurrent changes of one user's overrides can
+  lose one. The language path accepts this.
+- **The cache is per process and 24 hours.** An uploaded token, blueprint or profile reaches a warm instance only after
+  the TTL, a restart or an invalidation, and `$admin_cache_reset` clears only the instance that handled it. A template
+  assembled while an invalidation ran is not saved (`_cache_epoch`); this version counter, not a lock, is the guard
+  (`src/services/CLAUDE.md`).
+- **The cache key holds no runtime data.** Anything user- or request-specific belongs in runtime context; putting it in a
+  token makes it stale for 24 hours. Biography is above the boundary on purpose (changes only when consolidation refreshes
+  its cache); query-specific facts are below it because they change with every message.
+- **Never put a date or other per-request text above the boundary.** It changes the cached prefix on every call
+  (`src/agents/CLAUDE.md`). A large static payload goes through `extra_static_blocks`, not the user message.
+- **Untrusted text is validated at injection.** Biography, directives, query-specific context and history pass
+  `SecurityPort` in the UNTRUSTED zone; reminders and `extra_static_blocks` are orchestrator-built and are not.
+- **`provenance` is a snapshot fact, not a live one.** `POLICY_SYSTEM_PROVENANCE` is assigned in `prompts_snapshot/profiles/`
+  for Smart and Quick (`non_overridable`); whether the live store holds it is a separate upload
+  (`SYSTEM_TURN_FINGERPRINT_RFC.md` §7). A blueprint without the class, or a profile without the token, renders no head.
+- **Prompt wording lives in Firestore, not in this repo's code.** Tokens ship by upload, not by deploy
+  (root `CLAUDE.md`). A change to prompt text is a token edit in `prompts_snapshot/tokens/` plus an owner-run upload;
+  this document never copies prompt text.
+- **Open question: the blueprint layer.** The owner has said the blueprint approach may be dropped, since every agent
+  has its own profile and sharing a blueprint is the only benefit. Until it is decided, keep using existing blueprints
+  for new agents and do not build new mechanics tied to blueprint ids; profile changes are safe.
+- **Tests:** `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` (assembly, overrides, cache),
+  `test_prompt_assembly_tail_categories.py`, `test_prompt_assembly_fingerprint.py`,
+  `test_prompt_resolution_over_stores.py`; adapter store kits `tests/unit/adapters/test_prompt_*_store_kit.py`.
+
+## Links
+
+- `docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md` (the class-collection model), `PROMPT_TOKEN_SNAPSHOT_RFC.md` (the mirror),
+  `HEXAGONAL_PROMPT_CACHING_RFC.md` (the boundary), `SYSTEM_TURN_FINGERPRINT_RFC.md` (provenance head, session key).
+- [`groovy_prompt_pattern.md`](../../08_concepts/groovy_prompt_pattern.md), [`security_validation`](../security_validation/README.md),
+  [`localization_system`](../localization_system/README.md), [`DATABASE_SCHEMA.md`](../../08_concepts/DATABASE_SCHEMA.md).
+
+## Where to start reading
+
+- `src/services/prompt_builder.py::PromptBuilder.build_for_agent` (the fact channels and the call into assembly)
+- `src/services/prompt_v3/prompt_assembly_service.py::PromptAssemblyService._assemble_static_template`
+- `src/services/prompt_v3/prompt_assembly_service.py::PromptAssemblyService._apply_overrides`
+- `src/services/prompt_v3/prompt_assembly_service.py::PromptAssemblyService._inject_runtime_context`
+- `src/adapters/prompt_v3/firestore_agent_profile_repository.py::FirestoreAgentProfileRepository.get_override_tokens`
+- `src/composition/prompt_assembly_setup.py::build_prompt_assembly_service`
+- `src/adapters/claude_adapter.py::ClaudeAdapter` (the boundary split)
