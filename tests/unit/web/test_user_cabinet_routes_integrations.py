@@ -28,8 +28,8 @@ class _TaskSetup:
 
 class _Lists:
     async def list_task_lists(self, user_id):
-        from types import SimpleNamespace
-        return [SimpleNamespace(id=f"list-of-{user_id}", name="Groceries")]
+        from src.domain.task import TaskList
+        return [TaskList(list_id=f"list-of-{user_id}", name="Groceries")]
 
 
 async def _seed_mails(w: CabinetWorld) -> None:
