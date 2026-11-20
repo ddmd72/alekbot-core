@@ -137,7 +137,7 @@ five things:
 - **Notes, transcripts, mirror (§4.23, §4.24).** The owner's notes on files, transcripts of audio and video, and the
   `_Transcripts` folder the bot keeps on the drive.
 
-Also reachable: the drive is readable from an outside MCP client (claude.ai) through six read-only tools over the same
+Also reachable: the drive is readable from an outside MCP client (claude.ai) through read-only tools (the search, passage, open, list, note and download-link tools) over the same
 `DriveOperations`, with no model of ours in the loop (`docs/05_building_blocks/remote_mcp_server/README.md`,
 [DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md)). What it may read is each drive's Cabinet
 setting `DriveConnection.connector_access` (nothing by default). It is enforced under the connector audience
@@ -146,7 +146,7 @@ setting `DriveConnection.connector_access` (nothing by default). It is enforced 
 runs the paid model reader.
 
 What it is not: the index does not write memory facts, and the bot never edits a file the user did not ask it to edit.
-Voice and other paths reach the drive only through Smart.
+Voice reaches the drive through Smart; only with `VOICE_MCP_TOOLS` on (off by default, `src/composition/voice_mcp_setup.py`) does Lelik call the drive MCP read tools directly with a voice token.
 
 **Native caps by consumer (a trap of every open).** An open (`DriveOperations.open`, `fetch_stored`) attaches an image
 or PDF natively only when the consumer declared it: the message context carries the model's `native_formats`
@@ -185,13 +185,13 @@ A drive is a first-class **connection**, not a property of the user. The grant (
   absent and logged at ERROR.
 - **One owner.** `DriveConnectionService` writes connections and settings. `activate` runs after a drive consent: a live
   connection with the same `credential_id`, else the same `drive_identity`, is a **reconnect** (same id and tag, `ACTIVE`
-  again); otherwise a new connection with a fresh tag and the lowest free name. A new connection is **read-only** and not
+  again); otherwise a new connection with a fresh tag and the lowest free name. **Tags are never reused**: a DISCONNECTED connection keeps its tag reserved, so an old ref can never resolve to a later drive. A new connection is **read-only** and not
   primary until a write folder is chosen (`write_folder_id=None`); the first write folder set for a user with no primary
   makes it the primary, and a read-only drive cannot be the primary. A connect whose drive identity cannot be read fails
   and removes the credential it just saved.
 - **Handle and router.** Every `UserDrivePort` method takes a `DriveHandle`. `DriveProviderRouter` forwards each call to
   the adapter of `handle.kind`; a kind with no adapter raises `DriveNotConnectedError`. Adapter caches are keyed by
-  `(user_id, credential_id)`, never by user alone.
+  `(user_id, credential_id)` or the connection, never by user alone.
 - **Refs.** Every ref the model or the history sees is `drive:<tag>:<item_id>` (`src/domain/drive_ref.py`; the tag names
   the connection). An **untagged** ref (written before the connections) is never resolved: the answer is "search for the
   file again". A tag of a DISCONNECTED connection answers "no longer connected".
@@ -205,7 +205,7 @@ A drive is a first-class **connection**, not a property of the user. The grant (
   provider call `UserDriveService` reads the connection fresh and runs the pure
   `src/domain/drive_access_policy.py::decide`: reads stay inside the scope; writes need a write folder, stay inside its
   subtree and the scope, never rename, move or delete a scope folder or the write folder, and respect the item's own
-  access; a move or copy across drives is refused. A refusal is a code-built line that prints no path and never says
+  access; a move or copy across drives is refused. Ancestry (`UserDriveService.ancestry`) is walked only when a rule needs it, so the App Folder default costs no provider call. A refusal is a code-built line that prints no path and never says
   whether the item exists. `set_scope` normalises nested selections and refuses a scope that would leave the write
   folder outside it. The conversion and note services take the access check as a required dependency (fail closed).
 - **A scope change is a diff** ([DRIVE_SCOPE_WALK_RFC.md](../../10_rfcs/DRIVE_SCOPE_WALK_RFC.md)): the index stores the
@@ -238,7 +238,7 @@ The drive credential is its own grant, never folded into a Gmail grant. The adap
 - **Natives.** Docs, Sheets, Slides and Drawings have no bytes; `download` exports them
   (`google_drive_mapping.py::EXPORT_MIMES`: Markdown, xlsx, plain text, pdf); other natives are metadata only. Natives are
   read and searched, never edited. An export over Google's cap (`GOOGLE_EXPORT_MAX_BYTES`) maps to `too_large`. The
-  parser sniffs the kind from the bytes, never from the temp file's name.
+  parser sniffs the kind from the bytes, never from the temp file's name; inline `data:` images in Markdown or text are dropped to their alt text (`src/domain/text_data_uris.py`), so a base64 payload never reaches the index or a prompt.
 - **Outer folders.** Folders shared with the account and member shared drives hang under no chain from My Drive's root;
   the picker lists them (`picker_outer_folders`) so one can be a scope folder. With only such folders chosen, listing
   the mount names the chosen folders.
@@ -255,8 +255,8 @@ The drive credential is its own grant, never folded into a Gmail grant. The adap
 Cabinet toggle / Step 1 mutation (nudge) / Scheduler fan-out (main /worker start_drive_sync)
    → one drive_sync task {user_id, connection_id} per ACTIVE connection with indexing on     (Cloud Tasks queue drive-sync-*)
    → indexer service /worker (indexer_main.py, internal ingress + OIDC) → DriveIndexingService.tick(scope, nudge)
-        gate → lease → observe (nudged items, then delta pages) → content classes 0-2 → enrichment
-        → transcript stage → classes 3-4 → upgrade pass → mirror → continue
+        gate → lease → observe (nudged items, then delta pages) → transcript cheap steps → content classes 0-2 → enrichment
+        → transcript extraction → classes 3-4 → upgrade pass → mirror → continue
         UserDrivePort by DriveHandle (DriveProviderRouter) · ContentExtractorPort (sandbox parser, then reader model)
         ImageTriagePort · DocumentProfilerPort · PassageHintPort · MediaAudioPort + BatchTranscriptionPort
         GeminiEmbeddingAdapter · FirestoreDriveIndexRepository
@@ -276,7 +276,7 @@ Deploy units, queue, scheduler jobs and the two-pass first deploy: `docs/07_depl
 
 | Port | Adapter(s) | Note |
 |---|---|---|
-| `UserDrivePort` | `DriveProviderRouter` over `OneDriveAdapter` and `GoogleDriveAdapter` | CRUD plus the change feed (`get_changes`, `get_change`, `list_children_changes`), `media_source`, `capabilities`, `forget`, streamed `download_to_file`, `get_thumbnail`. Items carry adapter-built neutral `identity`, `ContentIdentity` and `DriveMediaFacts` |
+| `UserDrivePort` | `DriveProviderRouter` over `OneDriveAdapter` and `GoogleDriveAdapter` | CRUD plus the change feed (delta feed, per-item reads, media source, capabilities, streamed download, thumbnails). Items carry adapter-built neutral `identity`, `ContentIdentity` and `DriveMediaFacts` |
 | `DriveConnectionRepository` | `FirestoreDriveConnectionRepository` | §1.2 |
 | `DriveIndexRepository` | `FirestoreDriveIndexRepository`, `InMemoryDriveIndexRepository` | records, chunks, hints, sync state, lease, kNN, key queries, enrichment queue, usage. The in-memory one runs the tests and the eval |
 | `DriveMirrorRepository`, `DriveNoteRepository` | `FirestoreDriveMirrorRepository`, `FirestoreDriveNoteRepository` | §4.23, §4.24 |
@@ -295,8 +295,7 @@ reader raises `DriveModelUnavailable` (§4.10).
 **Graph specifics (OneDrive).** `OneDriveAdapter` unquotes paths and strips both `/drive/root:` and `/drives/<id>/root:`
 prefixes before anything reaches the model. Token refresh is shared with To Do (`GraphTokenProvider`; the cache is keyed
 by `(user_id, credential_id)` and short-lived, so a disconnect reaches every instance quickly). The provider's own
-search does not work inside the App Folder, which is why finding files goes through our index. Drive consents arrive at
-the generic `/auth/connect/<kind>` callback; the activation reads the drive's identity and calls
+search does not work inside the App Folder, which is why finding files goes through our index. A drive consent starts at `/auth/connect/<kind>` and returns to the one callback `/auth/connect/callback`; the activation reads the drive's identity and calls
 `DriveConnectionService.activate`.
 
 ---
@@ -336,8 +335,7 @@ All collections live in the `us-production` database with the environment prefix
   `update_sync_flags`, the fan-out's), and the notes step's watermark. The fan-out creates a minimal one for an `ACTIVE`
   connection with indexing on and none yet, so staleness covers ticks that never land.
 - **Model usage** (`{prefix}drive_model_usage`, `src/domain/drive_usage.py`): dollars per class per month and the
-  one-time initial build per provider account. Outside the sync state so a purge keeps it. The sync state's v1 page and
-  image counters are retired and unread.
+  one-time initial build per provider account. Outside the sync state so a purge keeps it. 
 - **Transcripts and mirror:** `drive_transcript_jobs` (+ windows), `drive_transcript_batches`, `drive_transcripts` (+
   parts), `drive_mirror_roots`, `drive_transcript_mirror` (§4.23). **Notes:** `drive_notes` (§4.24).
 - **Lease fence.** `save_sync_state` never writes the lease fields, `release_lease` clears them only for the owner, a tick
@@ -375,8 +373,7 @@ All collections live in the `us-production` database with the environment prefix
   profile yet: name, kind, the reader's brief; machine text: its lead text (the only content signal, no chunks); a
   photograph: name, description, scene, objects, visible text, key facets; a collapsed folder: its README's profile or
   just its kind. The capture, the scene names and the owner's note join it (§4.19, §4.21, §4.24). The score is **never**
-  in the card text. No lead text in a document's card: in v1 the card embedded the first characters, so card kNN and
-  chunk kNN voted twice on one signal. The key facets include the photo's taken date, camera, `place_name` (resolved offline from
+  in the card text. No lead text in a document's card, so card kNN and chunk kNN never vote twice on one signal. The key facets include the photo's taken date, camera, `place_name` (resolved offline from
   the geo table in `src/assets/geo/`, `PlaceIndex.place()`, which also returns the place's names in several languages as
   `place_forms`, so "Берлін", "Berlin" and "Germany" all key a photo taken there) and sizes. A card is re-embedded only
   when its hash changes.
@@ -411,13 +408,13 @@ form tables and the rules' output on a fixed fixture, so any change fails a test
 |---|---|---|
 | `w:` | native forms of a word (chunk `word_keys`, name keys) | passage words (chunk), verified (name) |
 | `x:` / `xl:` | skeleton of a Cyrillic / Latin word | translation |
-| `n:` | number terms: amounts, numeric and written-out dates in five languages, ids, digit groups | passage words / verified |
+| `n:` | number terms: amounts, numeric and written-out dates in several languages, ids, digit groups | passage words / verified |
 | `m:` / `y:` | month-year / year of every date | passage words / verified |
 | `e:` | an entity spelling the file prints (verified), a photo's `place_forms`; phrases join stems | verified |
 | `ef:` | an entity spelling the profiler wrote that the file does not print | translation |
 | `ex:` / `exl:` | skeleton phrases of entities | translation |
 | `v:` | a verified key value (order number, IBAN, amount); a verified date's ISO form | verified |
-| `k:` | the kind's names in five languages | verified |
+| `k:` | the kind's names in several languages | verified |
 | `lw:` / `tw:` / `dw:` / `lv:` | the profile's label, topic, life-area and validity words; the fixed names of `doc_type` and life areas join `lw:` / `dw:` | automatic |
 | `pw:` / `pe:` / `pn:` | a photo's description, scene and object words, visible-text numbers | automatic |
 | `sl:`, `cp:` / `cpa:` | scene labels (automatic); capture names (`cp:` detected, `cpa:` said by a model) | automatic |
@@ -475,7 +472,7 @@ are cleared with it; a verdict turning from `text` to `photo` clears the profile
 
 ### Step 2: when it runs
 
-`schedule` / `_content_due_at`: an edit sets `dirty_since`; content waits until the file has been untouched for `QUIET` or
+`schedule` / `content_due_at`: an edit sets `dirty_since`; content waits until the file has been untouched for `QUIET` or
 dirty for `MAX_DEFER` (a web editor saves every minute or two while someone types). First sight, an upgrade, a release and
 a nudge are due at once. The due loop (`_due_loop` → `_work_class`) works classes in order: 0 edits and nudges, 1 cascades
 and structure, 2 first-seen, 3 maintenance (upgrades, releases, month-held work, files charged with an outage), 4 retries;
@@ -545,8 +542,7 @@ re-observed at once instead of being read as "no content" (`_item_gone`, §4.18)
 **Images: triage.** `_triage_step` / `_triage_batch` gather due images `TRIAGE_BATCH` per call; each image's thumbnail goes
 after an "Image N" label with the camera prior as text (a hint, never a verdict). `DriveTriageRunner` returns, per image,
 `text`, or `photo` with an enriched description (description, objects with spellings, a scene, visible text, scene
-labels). The photo's place comes from its GPS facet and the geo table, never from the model. The batch was cut from 16 to 8
-to fix the caption shift (a description landing on the neighbouring image): missing indexes and byte-identical images given
+labels). The photo's place comes from its GPS facet and the geo table, never from the model. `TRIAGE_BATCH` is small to avoid the caption shift (a description landing on the neighbouring image): missing indexes and byte-identical images given
 different verdicts get one correction turn. A batch the provider refuses (400/413/422) or that stops at the output cap is
 halved down to the image; a refused image alone, or a thumbnail the providers do not take, is a photograph without a
 description (deterministic). An image left unanswered, still capped alone (a text scan must not become a permanent
@@ -644,10 +640,10 @@ on the primary (account error, key, permission, model id) is not failed over. Th
 too (or there is no `GEMINI_API_KEY`, or the user's primary is Gemini): it is sorted by the **primary's** cause, so the
 charging rules are unchanged. When both are down the model work waits and nothing else does: parsed documents, cards,
 embeddings, renames, moves and deletions go on, and search keeps working and says "N documents are not read yet". The
-backoff doubles up to an hour, so a day-long outage costs about one probe call an hour per user.
+backoff doubles up to `MODEL_BACKOFF_CAP_S`, so a day-long outage costs about one probe call an hour per user.
 **Anthropic's "credit balance too low" is an HTTP 400, and it is an outage, not a refusal of the input**: the adapter
 tells it from a content refusal by the message and raises `LLMAccountError`; `classify_model_error` makes it an uncharged
-outage, so during a credit lapse files stay `pending` instead of being demoted page by page. A file charged three times
+outage, so during a credit lapse files stay `pending` instead of being demoted page by page. A file charged `MAX_ATTEMPTS` times
 stays `failed` until it is edited, the reader's version is bumped or the index is rebuilt (no per-file retry command;
 `scripts/infrastructure/drive_content_requeue.py`, §7). The outage has no alert of its own: ERROR lines and the `deferred`
 count in the tick line.
@@ -735,7 +731,7 @@ Search v2 budgets every model class in dollars (§4.11); a search itself makes n
 
 | Path | Bound |
 |---|---|
-| Profile (one call per text file; re-profiled at most once per 24 h after an edit; templates cost nothing) | `PROFILE_USD_PER_MONTH` after the initial build |
+| Profile (one call per text file; re-profiled at most once per `PROFILE_REFRESH_COOLDOWN` after an edit; templates cost nothing) | `PROFILE_USD_PER_MONTH` after the initial build |
 | Passage hints (two chunks per call; an edit reuses unchanged chunks' hints) | `PASSAGE_USD_PER_MONTH` after the initial build |
 | Transcription (Gemini Flash on the Batch API, audio windows; opt-in per user) | `TRANSCRIBE_USD_PER_MONTH`, hard; a file's estimate is reserved before its first window |
 | Initial build | `INITIAL_BUILD_USD` once per provider account; a reconnect of the same account finds the same record |
@@ -751,7 +747,7 @@ and appears in `billing_daily_summary`; the tick line carries the dollars per cl
 ### 4.14 Security: the parser sandbox, and document text is data
 
 **The deployment is multi-user**: a file one user uploads is parsed where every user's files would otherwise be. Parsing
-and media decoding therefore run in the sandbox's light service, which gets no credential, no URL and no whole file
+and media decoding therefore run in the sandbox's light service, which gets no credential and no provider URL (a parse request carries the file's bytes; media decoding gets only byte ranges the indexer serves)
 ([UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md);
 [sandbox_media_tunnel.md](../../04_solution_strategy/decisions/sandbox_media_tunnel.md);
 [drive_parser_sandbox_resource_isolation.md](../../04_solution_strategy/decisions/drive_parser_sandbox_resource_isolation.md)).
@@ -769,8 +765,8 @@ worst corrupt its own text. The per-run log line carries ids, never the file nam
 things between a hostile document and them are the wrapper, the token line and the G3 bar (zero such calls on the injected
 case, §7). That is a model instruction checked by an eval, not an enforced guard. A document can also steer what its own
 brief, profile and description say, so it can mislead an answer about itself or rank itself into a search; it cannot reach
-another file's record. A `drive:` file passed to DocPlanner, PdfGenerator or HtmlPageGenerator reaches them without the
-wrapper until Slice 3 ([decision](../../04_solution_strategy/decisions/drive_prefetch_wrapper_slice3.md)). The one
+another file's record. A `drive:` file passed to DocPlanner, PdfGenerator or HtmlPageGenerator is prefetched through
+`FileConversionService`, whose text is marked untrusted (`present_text`; [decision](../../04_solution_strategy/decisions/drive_prefetch_wrapper_slice3.md)). The one
 enforced guard is the passages write gate (§4.25).
 
 ### 4.15 Timelines
@@ -863,7 +859,7 @@ never answers `find_expiring`. The verified `valid_until` (else `due`) goes top 
 `effective_date` (§4 step 6). Descriptive fields and word lists cannot be verified and are automatic. On an edit the stored
 profile is re-graded against the new text at once, before any call.
 
-**The passage hints** (doc2query; `DrivePassageAgent`, runner `DrivePassageRunner`). Two chunks per call under opaque
+**The passage hints** (doc2query; `DrivePassageAgent`, runner `DrivePassageRunner`). `PASSAGE_CHUNKS_PER_CALL` chunks per call under opaque
 indexes with the profile's title; per chunk keywords (subjects, names, synonyms, translations) and questions, each with an
 `evidence` quote copied from the chunk. Only the first `PASSAGE_MAX_CHUNKS_PER_FILE` chunks of a file are hinted; EPUB,
 sheets and JSON get none. **Grounding** (`src/domain/drive_hints.py::ground`): the quote must occur in the chunk on word
@@ -957,7 +953,7 @@ A photograph, a folder, a metadata-only card and a template profile without a br
 weight re-scores (a version bump, pinned by `weights_digest`) without a re-embed.
 
 **The rule is in two texts only** (the specialist's `PROTOCOL_DRIVE_SEARCH` and Smart's reading line, `R_ACCURACY` in
-`src/domain/drive_answer_texts.py`; the threshold lives only there): find / which files / do I have is answered from the cards
+`src/domain/drive_answer_texts.py`; the threshold is `CARD_ACCURACY_TRUST` in `src/domain/drive_index_params.py`, which code uses to pick the line, and those texts): find / which files / do I have is answered from the cards
 at any accuracy; a question about a value is answered from the card at the threshold or more, and below it the specialist
 asks for the file's passages (born-digital) or for the file itself (image text: passages would repeat the same reading).
 Code chooses the line (`ReadFacts.low_accuracy_image`). The access line (§4.18) overrides the stale and accuracy rules. A
@@ -969,7 +965,7 @@ existing index.
 ### 4.21 Photo location prior and scene labels
 
 - **The prior.** Triage's line for each thumbnail carries the place and rounded coordinates when the record has them
-  (`coarse_location` in `drive_card.py`, rounded to about 110 m: full-precision GPS never leaves the index). The rule is in
+  (`coarse_location` in `drive_card.py`, rounded coarsely: full-precision GPS never leaves the index). The rule is in
   `COGNITIVE_PROCESS_DRIVE_TRIAGE`: name a landmark only when recognised in the image; the location decides between
   look-alikes and never invents. Landmark names stay in the description and objects (automatic, never exact).
 - **Scene labels.** Triage returns `scene_labels` from the fixed `SCENE_LABELS`; unknown values are dropped, capped at
@@ -978,7 +974,7 @@ existing index.
 
 ### 4.23 Transcripts of recordings
 
-The owner's voice memos, meetings and videos used to be known by name, date and length only. With transcription on, the bot
+Without transcription a recording is known by name, date and length only. With transcription on, the bot
 listens in the background and writes down what was said, with speakers and times (`[12:40] Speaker 2: …`). That text is
 indexed like any document, so a search finds the recording by what was said and Smart can open the transcript. Nothing is read
 aloud or sent to a chat on its own. Decision records:
@@ -1017,7 +1013,7 @@ there is no Cabinet toggle. The spend is bounded by the kill switch and the mont
 
 **Record states** (`transcript_state`, `src/domain/drive_transcript_plan.py`): `none`, `ready`, `working`, `waiting`
 (submitted), `current` (done, or a stub), `held` (timed: cooldown, quiet, retry, resubmit), `parked` (the month's cap),
-`failed` (three charged attempts). A model outage is not a state: it pauses the stage's queue and records stay `ready`.
+`failed` (`MAX_ATTEMPTS` charged attempts). A model outage is not a state: it pauses the stage's queue and records stay `ready`.
 Outcomes: a transcript with text is `indexed`; `no_speech` / `no_audio` are `metadata_only / no_text` (not counted as
 unread); `too_large` / `too_long` are `metadata_only / too_large`; a file the decoder cannot read fails after three
 attempts. A batch is written down as `submitting` before it is sent; an unclear send is found again at the provider by name
@@ -1164,13 +1160,13 @@ converted. A whole file is still opened when the user wants all of it, or when a
 
 **The flow.**
 1. Smart commissions `work_with_drive_files` with the need ("everything about X" is a content need, not a find).
-2. The specialist calls `find_passages(question, folder, file_refs)`: `DriveSearchService.excerpts` embeds the question, takes
+2. The specialist calls `find_passages` (question, folder, file refs): `DriveSearchService.excerpts` embeds the question, takes
    the nearest chunks of the readable generation (kNN, fenced), ranks them by RRF of the vector order and a lexical rank
    (`src/domain/drive_excerpts.py::rank_excerpts`), and keeps whole chunks until the caps (`ExcerptCaps`, a per-file cap
    included); adjacent chunks merge into a run.
 3. `file_refs` win over `folder`, a folder over the whole drive. Files in scope with no indexed text are counted on one line,
    never silently absent. The index being built or rebuilt is said, not hidden.
-4. If a passage is cut or a neighbour is needed, `read_passages(file_ref, passages)` takes a number or range from a head
+4. If a passage is cut or a neighbour is needed, `read_passages` takes a number or range from a head
    line. Nothing is expanded automatically.
 5. The specialist judges only whether the passages suffice; it never writes the answer. Code keeps a ledger of every chunk
    returned in the run (`drive_excerpt_ledger.py`), so each passage reaches Smart once, in one block, after a `Searched:`
@@ -1239,10 +1235,10 @@ caps are per drive.
    transcript extraction step in its own window (`TRANSCRIBE_SHARE`); the **upgrade pass** only if no class stopped on its
    budget, then the card-cap and chunk-cap releases; and **last the mirror step** (§4.23) with a reserved tail, so the
    content classes stop shortly before the start budget's end while the mirror has work. Waiting for a batch continues
-   nothing: the periodic fan-out polls.
+   nothing, and the mirror step never asks for a continuation: the periodic fan-out polls and paces it.
 5. **Continue**: release the lease, then enqueue a continuation if anything is left.
 
-**The scope diff** (`_scope_step` → `_apply_scope_change`; DRIVE_SCOPE_WALK_RFC). After the gate and before the feed it reads
+**The scope diff** (`_apply_scope_change`, called directly before the observe step; `_scope_step` later does the top-level pass, skeleton re-derivation and removing roots; DRIVE_SCOPE_WALK_RFC). After the gate and before the feed it reads
 the stored parent map of the saved, applied and removing roots (a read that runs out of item calls leaves the diff to the next
 tick), then marks the work and stamps the new set. It deletes nothing itself. **Walk:** a root the index does not hold gets one
 `get_change` and becomes a normal folder with `reobserve_pending`; the listing is the existing re-listing recursion
@@ -1299,7 +1295,7 @@ summed, coverage combined so anything one drive could not see stays named. Ident
 the other copies under `also on`. Passages are fetched per drive and merged the same way (`merge_excerpts`); their ledger is
 keyed by ref tag because item ids can repeat across drives. Each drive's search skips records outside that connection's scope
 (while a narrowed scope is still being re-indexed). **Every live drive not searched is named** (`drives not searched: …`, which
-makes coverage incomplete so "complete" stays a reliable not-found; `R_NOT_SEARCHED` tells the specialist to say so).
+makes coverage incomplete so "complete" stays a reliable not-found; the reading line `R_NOT_SEARCHED` tells Smart to say so, and the specialist's `PROTOCOL_DRIVE_SEARCH` carries the same rule).
 `read_passages` takes no `drives` (its ref names the drive).
 
 **The pipeline, in order:**
@@ -1417,10 +1413,9 @@ hedge. The enrichment counts come from the sync state, so a search runs no count
 each footer speaks of "the files searched" and none says "final".
 
 **A card** is one nonce-tagged `<drive_document>` wrapper holding the card text (capped at `CARD_RENDER_MAX`), then:
-`matched:` with its sources in query order (each labelled "automatic" when it came through an automatic key); `not matched
-(common)` for a word it was allowed to miss; `date: <day> (<source>)`; `valid until`; `capture:`, `card accuracy:`,
-`index: <state> (<reason>)`; `stale`, `truncated`, `keys cut`, `identical copies also at`; and for a match from a chunk or a
-grounded keyword a cut `passage:`. Related cards are shorter. Past `RESULT_CHARS_MAX` the lowest tiers' cards are cut first
+the match explanation (`matched:` with each source labelled "automatic" when it came through an automatic key; a cut `passage:`
+for a chunk or grounded-keyword match), the date, validity, capture, accuracy, owner-note, scene and index-state lines, and the
+stale, truncated and keys-cut flags (`card_body` in `src/domain/drive_tier_render.py` owns the order). Related cards are shorter. Past `RESULT_CHARS_MAX` the lowest tiers' cards are cut first
 and the result says so.
 
 **The nonce is the defence**: only a wrapper-tag look-alike in the text loses its `<` (its gaps bounded so hostile whitespace
@@ -1439,7 +1434,7 @@ cards, the not-found bullets). Changing a reading line is a code deploy; `PROTOC
 
 **The one date rule.** The `query` text keeps a date written *inside* a document in the words (it becomes an `n:` number term
 and meets the document's own date in any of five languages); the date fields hold a **time span the user gives** (a span left
-in the words is removed as time words and named in the ignored list). The token's `dates` line keeps the retry rule: if a
+in the words is removed as time words and named in the ignored list). The `again` block of `PROTOCOL_DRIVE_SEARCH` keeps the retry rule: if a
 date-filtered search does not show the file asked for, search again without the filter. For what expires the fields bound the
 expiry date.
 
@@ -1456,10 +1451,14 @@ Smart sends one commission, `work_with_drive_files`: what the user wants, the wo
 (`src/agents/drive_agent.py`; strategy entry `drive` in `src/services/agent_context_builder.py`: Claude, with OpenAI as the
 fallback for the **first call only**, because after a tool turn the transcript is provider-locked) runs at most `DRIVE.max_turns`
 within a soft deadline (earlier under the caller's budget) through local tools, each one `DriveOperations` call: `search_drive`,
-`search_deleted_recordings_and_notes`, `list_folder`, `open_drive_file`, `get_recording_link`, `copy_file_to_drive`,
+`find_passages`, `read_passages`, `search_deleted_recordings_and_notes`, `list_folder`, `open_drive_file`, `get_recording_link`, `copy_file_to_drive`,
 `save_text_file`, `create_folder`, `move_file`, `append_to_file`, `replace_file_content`, `delete_drive_item`, then
 `report_to_orchestrator`; with the notes switch on, `get_note` and, on an owner turn, the note writers (§4.24). A turn-cap exit
-is logged at ERROR. An identical search is not run twice in one commission; there is no search cap in production (G3 only reports
+is logged at ERROR. **Provider trap:** per user the provider is resolved by `AgentContextBuilder.resolve_provider_name` (per-agent override, then the global `provider_preference` when the strategy allows it, then the default); `openai` is in the `drive` strategy's allowed providers, so a user whose global preference is `openai` runs the specialist on OpenAI at the user's tier (the strategy comment in `src/services/agent_context_builder.py` notes OpenAI's BALANCED is a small model, which is why the fallback is pinned to PERFORMANCE). Pin `config.agent_providers["drive"] = "claude"` for such a user. **Provider trap:** per user the provider is resolved by `AgentContextBuilder.resolve_provider_name` (per-agent override, then the global `provider_preference` when the strategy allows it, then the default); `openai` is in the `drive` strategy's allowed providers, so a user whose global preference is `openai` runs the specialist on OpenAI at the user's tier (the strategy comment in `src/services/agent_context_builder.py` notes OpenAI's BALANCED is a small model, which is why the fallback is pinned to PERFORMANCE). Pin `config.agent_providers["drive"] = "claude"` for such a user. **Provider trap:** per user the provider is resolved by `AgentContextBuilder.resolve_provider_name` (per-agent
+override, then the global `provider_preference` when the strategy allows it, then the default); `openai` is in the `drive`
+strategy's allowed providers, so a user whose global preference is `openai` runs the specialist on OpenAI at the user's tier
+(the strategy comment notes OpenAI's BALANCED is a small model, which is why the fallback is pinned to PERFORMANCE). Pin
+`config.agent_providers["drive"] = "claude"` for such a user (`src/services/agent_context_builder.py`). An identical search is not run twice in one commission; there is no search cap in production (G3 only reports
 the count, §7). The `execute_as_given` rule of `COGNITIVE_PROCESS_DRIVE` splits the two: changes the commission names on refs
 it gives run as given; a read method in the commission is a hint, never an order.
 
@@ -1492,7 +1491,7 @@ Smart.
 - **Logs.** Indexer service (`make fetch-logs-indexer K=300`, Cloud Logging only: no Logfire and no `prompt_content` capture, so
   verbatim scans stay out of BigQuery): one `[DriveIndex] tick user=… end=done|continued {…}` line per completed tick with
   counters and the dollars per class; one `[DriveIndex] run …` line per index run (§7.1); `[DriveReader]`, `[DriveTriage]`,
-  `[DriveProfiler]`, `[DrivePassages]` per model request; `[DriveExtract]` for parser failures (type, position, hash);
+  `[DriveProfiler]`, `[DrivePassages]` per model request; `[SandboxParse]` for the sandbox parser client's failures (the child's stderr is recorded by the sandbox service; `[DriveExtract]` only appears in local runs of `SubprocessContentExtractor`);
   `[drive_reader]` / `[drive_triage]` for each failed model call and how it was classified; `[DriveMirror]` and `mirror={…}` in
   the tick line; `rebuild progress`, `initial build closed`, `index purged`. An idle tick still observes a few items (the root
   and re-emitted unchanged items arrive every round) but adds no cards. Main service (`make fetch-logs`): `[DriveSync]` (the
@@ -1515,18 +1514,14 @@ Smart.
   credential, then the purge task. A drive that suddenly lists nothing is first a scope or a missing write folder, not an
   index fault. A search warning `capabilities of a connection failed, scope filter off` means only the second-line filter was
   skipped.
-- **Owner scripts** (`scripts/infrastructure/`, dry run by default, `--apply` to act; those acting on one drive take
-  `--connection <id>` next to `--user`, defaulting to the user's one live connection and refusing with the list when there are
-  several; `drive_connection_arg.py`): `drive_index_rebuild.py` (takes the connection's lease, marks the sync state `purging`;
-  the next tick purges and re-onboards from epoch 1; skips a state that already carries the gate key unless `--force`),
-  `drive_content_requeue.py` (re-reads `failed`, truncated or textless files under the user's lease, one selection per run),
-  `drive_index_smoke.py` (runs every repository read once against live Firestore and names any missing index; writes
-  nothing), `drive_initial_build_reset.py`, `drive_transcribe_flag.py`, `drive_transcript_sweep.py`, `drive_mirror_status.py`
-  (read-only report of the mirror's ledger, marks, cursors and holds; writes only under `scripts/memory/`),
-  `drive_wipe.py` (deletes every drive document of one user, keeps the monthly usage, the credentials and the note erase
-  requests; run only with the drive queue and the fan-out paused). A manual `drive_sync` body is `{"user_id", "connection_id"}`.
-  Review scripts (`scripts/validation/drive_card_review.py`, `drive_query_vocabulary.py`) are read-only and write only under
-  `scripts/memory/`.
+- **Owner scripts** (`scripts/infrastructure/drive_*.py`; dry run by default, `--apply` to act; their docstrings own the flags).
+  Those acting on one drive take `--connection <id>` next to `--user` (default: the user's one live connection, refused with the
+  list when there are several; `drive_connection_arg.py`). The ones to know: `drive_index_rebuild.py` (takes the connection's
+  lease and marks the sync state `purging`; the next tick purges and re-onboards from epoch 1), `drive_index_smoke.py` (names
+  any missing index; writes nothing), `drive_wipe.py` (every drive document of one user, keeping the monthly usage, credentials
+  and note erase requests; only with the drive queue and the fan-out paused), `drive_mirror_status.py` (read-only).
+  A manual `drive_sync` body is `{"user_id", "connection_id"}`. Review scripts in `scripts/validation/` are read-only and write
+  only under `scripts/memory/`.
 - **Eval and checks.** `python -m scripts.validation.drive_eval` indexes a synthetic drive with the real tick, parser, reader
   and triage and runs the gold cases through the real search, failing when recall falls below the recorded bars or a case that
   hit when the bars were recorded misses now (`--record` re-records bars; only for a deliberate change, after reading the
@@ -1538,8 +1533,7 @@ Smart.
   question that does not open a low-accuracy file (`must_open`). Search counts (`SEARCH_CALL_CEILING`) are reported, never a
   failure (owner ruling). The **live model check** (`scripts/validation/drive_model_check.py`)
   runs the production reader on real files per provider; the **live check** (`drive_eval/live_check.py`) indexes a local
-  folder under a `zz-synthetic-` id with the live repository and refuses to start unless the drive queue is paused. Output of
-  both goes only to `scripts/memory/`. `tests/integration/offline/test_drive_g2_end_to_end.py` is the offline G2 case.
+  folder under a `zz-synthetic-` id with the live repository and refuses to start unless the drive queue is paused. Their reports go only to `scripts/memory/` (the live check also prints each query's result to the terminal). `tests/integration/offline/test_drive_g2_end_to_end.py` is the offline G2 case.
   Search metrics, an LLM judge and a weekly report are designed, not built:
   [drive_search_metrics_not_built.md](../../04_solution_strategy/decisions/drive_search_metrics_not_built.md).
 - **Mirror rollback.** Pause the drive queue and the fan-out job, move `_Transcripts` out of the App Folder (it keeps its item
@@ -1568,8 +1562,8 @@ Then the indexer's logs (grep the item id): the `[DriveIndex] run` line (outcome
 refused, truncated; one per index run, held and deferred runs included), `[DriveReader]` (what the reader did), the
 `outage charged` line, the chunk-cap refusal line, the "run abandoned, the attempt is not counted" line (a systemic error), the
 ERROR "an index is missing or building" line (nothing is indexed until the named composite index is `READY`), and
-`[DriveExtract]` (a killed or failed parser: type, position and hash, no item id). A hash tells two failures apart without
-quoting the document.
+`[SandboxParse]` (a killed or failed parse, no item id). A failure is labelled by type, position and hash, which tells two
+failures apart without quoting the document.
 
 **"N documents could not be read."** The bot is not told this number
 ([decision](../../04_solution_strategy/decisions/drive_unreadable_files_cabinet_only.md)); the Cabinet's drive card lists up to
@@ -1577,7 +1571,7 @@ a few such files by name with the reason, filled from the counters and `unreadab
 search's results, and counts documents of a content kind (and images triaged as `text`) in `failed` (any reason) or
 `metadata_only` with reason `too_large`, `no_text`, `machine_text` or `user_chunk_cap`. It does **not** count `encrypted`,
 `unsupported`, photographs, or kinds never read. "N documents are not read yet" is the other counter (`pending`, not
-card-capped). To find which: in the Firestore console filter `{prefix}drive_index_records` on `user_id` and `state`
+card-capped). To find which: in the Firestore console filter `{prefix}drive_index_records` on `connection_id` and `state`
 (`FirestoreDriveIndexRepository.unread_count_queries` holds the counter's own queries); from chat, any filter-only search shows
 each file's `index: <state> (<reason>)` line.
 
@@ -1599,6 +1593,8 @@ reader must know:
   runs under the monthly caps (no initial-build reset unless the owner says so). The multi-drive slice was wipe-and-rebuild with
   no rollback ([decision](../../04_solution_strategy/decisions/multi_drive_wipe_not_migrate.md)): the previous revision
   cannot read the new documents.
+- **Off then on is not a rebuild.** Turning indexing off purges only when a tick's gate sees it off (`access_action`); switched
+  back on before that tick, the gate answers PROCEED and the index is kept. Use the rebuild script for a rebuild.
 - **The upgrade pass** can be stopped in an emergency with `DRIVE_UPGRADE_PASS_DEV=off` in `.env` (a value set with `gcloud run
   services update` is lost at the next deploy); a parser version bump ships with it `off`, the probe runs, and the pass is
   switched on after the owner's OK (§4.12).
@@ -1615,7 +1611,7 @@ reader must know:
   because a primary without a key fails the context build before any failover); turn the Gemini fallback off by setting
   `"fallback": None` in the drive entries of `AgentProviderStrategy.STRATEGIES`; switch a reader's provider (§4.16); turn
   indexing off for one user (the purge removes chunks, records and sync state).
-- **Files the bot cannot open** need the composite index `user_id + inaccessible_since` on the records collection `READY`
+- **Files the bot cannot open** need the composite index `connection_id + inaccessible_since` on the records collection `READY`
   before the deploy; a rollback to a revision that predates the marks would treat a marked file's next 404 as a deletion again.
 - **Mirror:** §7 (mirror rollback and indexes).
 

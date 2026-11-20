@@ -10,7 +10,7 @@ Rules (RFC §4.4):
   new connection: a random id, a new tag unique among every connection the user ever had (DISCONNECTED included, never
   reused), the lowest free name of `Drive`, `Drive 2`, … (E11; `drive_mounts.default_mount_name`: no live
   connection's current or held former name), recorded as the first `name_history` entry at the creation instant,
-  indexing and transcription off (the `DriveConnection` defaults), read-only (no write folder, D11), searched by
+  indexing off and transcription on (the `DriveConnection` defaults), read-only (no write folder, D11), searched by
   default, the feed's default scope. DISCONNECTED is terminal.
 - The primary pointer (`DriveUserSettings.primary_connection_id`) is read fresh on every use and written only here.
   I2: the primary is an ACTIVE connection with a write folder. A connection becomes the primary when the user has none
