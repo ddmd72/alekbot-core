@@ -18,8 +18,8 @@ security-sensitive for phone binding, where OTP possession is the only proof of 
 
 Wrap the read, conflict query, and write in a single `@firestore.async_transactional`
 function: `user_ref.get(transaction=transaction)`, `conflict_query.stream(transaction=transaction)`,
-and `transaction.set(user_ref, ...)` all execute under one transaction handle. `tests/unit/adapters/test_firestore_user_repo_oauth.py::test_link_platform_identity_success`
-now asserts both reads pass `transaction=transaction` explicitly — without that assertion, a
+and `transaction.set(user_ref, ...)` all execute under one transaction handle. `tests/unit/adapters/test_user_store_kit.py::test_link_reads_the_user_inside_its_transaction` and
+`::test_link_runs_its_conflict_query_inside_its_transaction` now assert both reads run inside the transaction — without that assertion, a
 regression back to untransacted reads would still pass every test in the file silently, since
 the mocks don't otherwise distinguish a transactional call from a bare one.
 
@@ -98,10 +98,9 @@ Build the uniqueness-registry + `transaction.create()` fix **before**:
 
 ## Verification
 
-`tests/unit/adapters/test_firestore_user_repo_oauth.py` — 11 tests covering
-`link_platform_identity` (success, not-found, conflict, idempotent same-user relink,
-multiple platforms, timestamp update) plus the two integration-style query-pattern tests;
-`test_link_platform_identity_success` additionally asserts both reads carry
-`transaction=transaction`.
+`tests/unit/adapters/test_user_store_kit.py` — `link_platform_identity` (success, not-found,
+conflict, idempotent same-user relink, timestamp update);
+`test_link_reads_the_user_inside_its_transaction` and
+`test_link_runs_its_conflict_query_inside_its_transaction` pin that both reads run inside the transaction.
 
 [fs-tx]: https://cloud.google.com/firestore/docs/manage-data/transactions

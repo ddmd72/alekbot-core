@@ -7,11 +7,13 @@ check; `test_names_and_deadlines_are_valid_for_cloud_tasks` checks them. Asserti
 (requests, decoded bodies), never calls. `schedule_time` is bounded by the real clock before and after the call: the
 adapter imports the `datetime` module, which `pin_datetime` cannot pin (gap named for P16).
 """
+import asyncio
 import datetime as dt
 import enum
 import hashlib
 import json
 import re
+import threading
 from typing import Any, Dict, List
 from unittest import mock
 
@@ -376,3 +378,63 @@ def test_bodies_are_json_bytes(qc):
     asyncio.run(queue.enqueue_email_indexing_task("job-1"))
     body = client.validated[0].task.http_request.body
     assert isinstance(body, bytes) and json.loads(body) == {"task_type": "email_indexing", "job_id": "job-1"}
+
+
+# ------------------------------------------------------- moved from the retired mock-SDK files (P11 card D)
+
+async def test_different_dedup_keys_are_different_tasks(qc):
+    queue, client = qc
+    await queue.enqueue_worker_task("smart_timeout_retry", {"user_id": "u1"}, dedup_key="u1:C1")
+    await queue.enqueue_worker_task("smart_timeout_retry", {"user_id": "u1"}, dedup_key="u1:C2")
+    await queue.enqueue_agent_task("html", "create_html_page", "q", dict(IDS), dedup_key="k1")
+    await queue.enqueue_agent_task("html", "create_html_page", "q", dict(IDS), dedup_key="k2")
+    assert [t["name"] for t in _tasks(client)] == [
+        f"{PARENT}/tasks/smart_timeout_retry-{_digest('u1:C1')}", f"{PARENT}/tasks/smart_timeout_retry-{_digest('u1:C2')}",
+        f"{PARENT}/tasks/agent_execution-{_digest('k1')}", f"{PARENT}/tasks/agent_execution-{_digest('k2')}"]
+
+
+@pytest.mark.parametrize("method", ["worker", "video", "companion"])
+async def test_an_unnamed_task_returns_the_name_cloud_tasks_gave_it(qc, method):
+    queue, client = qc
+    assert await _every_method(queue)[method]() == f"{PARENT}/tasks/fake-1"     # the name the client answered
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (SA + "\n", SA), ("  " + SA + "  ", SA), (SA, SA), (None, None), ("", None), (" \n", None),
+])
+async def test_oidc_identity_is_stripped(raw, expected):
+    queue, client = _build(sa=raw)
+    await queue.enqueue_email_indexing_task("job-1")
+    token = _tasks(client)[0]["http_request"].get("oidc_token")
+    assert (queue.service_account_email, token["service_account_email"] if token else None) == (expected, expected)
+
+
+class _LoopProbeClient(ValidatingTasksClient):
+    """Records the thread of each create, then waits until the event loop has run a probe: a create made on the loop
+    thread blocks the loop, so the probe never runs and the bounded wait fails the create."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.threads: List[int] = []
+        self.loop_ran = threading.Event()
+
+    def create_task(self, request: Dict[str, Any], **kwargs: Any) -> Any:
+        self.threads.append(threading.get_ident())
+        if not self.loop_ran.wait(timeout=2):        # a bound, not a timing assertion
+            raise AssertionError("the event loop did not run while create_task was in flight")
+        return super().create_task(request, **kwargs)
+
+
+@pytest.mark.parametrize("method", METHODS)
+async def test_every_create_runs_off_the_event_loop(method):
+    queue, client = _build(client_cls=_LoopProbeClient)
+
+    async def probe():
+        await asyncio.sleep(0)
+        client.loop_ran.set()
+
+    probing = asyncio.create_task(probe())
+    await _every_method(queue)[method]()
+    await probing
+    assert client.threads and client.threads[0] != threading.get_ident()
+    assert len(client.create_task_requests) == 1

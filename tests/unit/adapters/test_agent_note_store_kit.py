@@ -9,6 +9,8 @@ non-timestamp `due`) are not pinned: their behaviour waits for the data audit.
 """
 import asyncio
 import dataclasses
+import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -125,6 +127,20 @@ async def test_create_refuses_more_than_25_words_and_writes_nothing(notes):
     assert notes.docs == {}
 
 
+async def test_create_accepts_exactly_25_words(notes):
+    text = " ".join(["garden"] * 25)
+    note = await create(notes, texts=dict(text=text, instruction="Remind Kim."))
+    assert note.text == text and notes.docs[note.note_id]["text"] == text
+
+
+async def test_a_note_id_is_the_creation_millisecond_and_a_uuid4_hex(notes):
+    note = await create(notes)
+    ms, _, suffix = note.note_id.partition("-")
+    assert ms == str(int(T0.timestamp() * 1000)) and len(ms) == 13
+    assert re.fullmatch(r"[0-9a-f]{32}", suffix) and uuid.UUID(hex=suffix).version == 4
+    assert list(notes.docs) == [note.note_id]
+
+
 async def test_create_refuses_the_31st_active_note_and_past_notes_do_not_count(notes, monkeypatch):
     for i in range(30):
         notes.seed(f"past{i}", user_id="u1", text="dentist", due=T0 - timedelta(days=1), created_at=T0)
@@ -203,6 +219,31 @@ async def test_update_clear_flags_set_none(notes, flag, field):
     updated = await notes.port.update_note(NoteUpdate(note_id=note.note_id, user_id="u1", **{flag: True}))
     assert notes.docs[note.note_id][field] is None
     assert getattr(updated, field) is None
+
+
+SINGLE_FIELD_PATCHES = {     # case -> (update_note keywords, or None for mark_fire_delivered; the field; its new value)
+    "clear_recurrence": ({"clear_recurrence": True}, "recurrence", None),
+    "clear_workspace_file": ({"clear_workspace_file": True}, "workspace_file", None),
+    "instruction": ({"instruction": "Remind Alex to call dad after dinner."}, "instruction",
+                    "Remind Alex to call dad after dinner."),
+    "recurrence": ({"recurrence": "FREQ=WEEKLY;BYDAY=SU"}, "recurrence", "FREQ=WEEKLY;BYDAY=SU"),
+    "mark_fire_delivered": (None, "last_delivered_due", DUE),
+}
+
+
+@pytest.mark.parametrize("case", list(SINGLE_FIELD_PATCHES))
+async def test_a_single_field_operation_changes_exactly_that_field(notes, case):
+    kwargs, field, value = SINGLE_FIELD_PATCHES[case]
+    note = await create(notes, due=DUE, recurrence="FREQ=DAILY", workspace_file="projects/dad.md")
+    before = dict(notes.docs[note.note_id])
+    if kwargs is None:
+        await notes.port.mark_fire_delivered(note.note_id, DUE)
+    else:
+        await notes.port.update_note(NoteUpdate(note_id=note.note_id, user_id="u1", **kwargs))
+    after = notes.docs[note.note_id]
+    changed = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
+    assert changed == {field}
+    assert after[field] == value
 
 
 async def test_update_sets_recurrence_instruction_and_workspace_file(notes):
@@ -416,6 +457,14 @@ async def test_mark_fire_delivered_stamps_and_a_repeat_is_identical(notes):
     await notes.port.mark_fire_delivered(note.note_id, T0)
     assert notes.docs[note.note_id] == first
     assert (await notes.port.get_note("u1", note.note_id)).last_delivered_due == T0
+
+
+async def test_a_naive_stored_last_delivered_due_reads_as_utc_defensive_branch(notes):
+    """A defensive branch, not a contract: the client always returns an aware Timestamp."""
+    notes.seed("m1", user_id="u1", text="call dad", due=DUE, created_at=T0,
+               last_delivered_due=(T0 - timedelta(days=1)).replace(tzinfo=None))
+    note = await notes.port.get_note("u1", "m1")
+    assert note.last_delivered_due == T0 - timedelta(days=1) and note.last_delivered_due.tzinfo is timezone.utc
 
 
 async def test_mark_fire_delivered_on_a_deleted_note_raises_not_found(notes):

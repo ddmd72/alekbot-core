@@ -9,6 +9,7 @@ so it can be neither shown nor excluded here; it waits for a parity scenario).
 `_adapter(db)` is the one place the adapter is constructed.
 """
 import asyncio
+import logging
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -365,3 +366,279 @@ async def test_delete_skill_failing_midway_leaves_the_skill_listed_and_a_repeat_
     monkeypatch.setattr(store.db, "batch", real_batch)
     assert await store.repo.delete_skill("u1", "car-service") is True
     assert store.files() == {} and store.versions() == {} and await store.repo.list_current("u1") == []
+
+
+# ------------------------------------------------------- moved from the retired mock-SDK files (G3 store 4)
+
+async def test_create_draft_stores_the_whole_draft_document(store):
+    logbook = fil()
+    assert await store.repo.create_draft("u1", "ab12", skill(files=[logbook]), staged={logbook.sha256: LOGBOOK})
+    assert await store.repo.create_draft("u1", "cd34", skill(name="library-card"))
+    assert store.docs(DR)["u1:ab12"] == {
+        "user_id": "u1", "name": "car-service", "description": "Steps for the yearly car service", "body": BODY,
+        "files": [logbook.model_dump()], "staged": [logbook.sha256], "created_at": NOW,
+        "expires_at": NOW + timedelta(days=30)}
+    assert (store.docs(DR)["u1:cd34"]["files"], store.docs(DR)["u1:cd34"]["staged"]) == ([], [])
+    assert store.draft_files("cd34") == {}
+
+
+@pytest.mark.h1_only("replaces the document factory of the fake's staged-files collection with one whose write fails")
+async def test_create_draft_writes_the_staged_files_before_the_draft(store, monkeypatch):
+    def failing_document(doc_id=None):
+        async def set(data, merge=False):
+            raise ServiceUnavailable("down")
+        return SimpleNamespace(set=set)
+
+    monkeypatch.setattr(store.db.collection(f"{DR}/u1:ab12/draft_files"), "document", failing_document)
+    logbook = fil()
+    with pytest.raises(ServiceUnavailable):
+        await store.repo.create_draft("u1", "ab12", skill(files=[logbook]), staged={logbook.sha256: LOGBOOK})
+    assert "u1:ab12" not in store.docs(DR)              # a valid code never points at missing files
+
+
+async def test_get_draft_returns_the_drafted_skill_at_version_zero(store):
+    logbook = fil()
+    await store.repo.create_draft("u1", "ab12", skill(files=[logbook]), staged={logbook.sha256: LOGBOOK})
+    assert await store.repo.get_draft("u1", "ab12") == Skill(
+        name="car-service", description="Steps for the yearly car service", body=BODY, version=0, files=[logbook])
+
+
+async def test_get_current_carries_the_current_version_and_the_file_manifest(store):
+    logbook = fil()
+    seed_file(store)
+    for body in ("v1 body", "v2 body", "v3 body"):
+        await store.repo.save_version("u1", "a1", skill(files=[logbook], body=body), cap=20)
+    got = await store.repo.get_current("u1", "car-service")
+    assert (got.version, got.body, got.files) == (3, "v3 body", [logbook])
+
+
+async def test_a_corrupt_draft_or_skill_reads_none_and_logs_an_error(store, caplog):
+    await store.repo.create_draft("u1", "ab12", skill())
+    del store.docs(DR)["u1:ab12"]["body"]
+    await store.repo.save_version("u1", "a1", skill(), cap=20)
+    store.docs(SK)["u1:car-service"]["files"] = [{"path": "../x.md", "sha256": sha256_text(LOGBOOK), "size": 17}]
+    with caplog.at_level(logging.ERROR):
+        assert await store.repo.get_draft("u1", "ab12") is None
+        assert await store.repo.get_current("u1", "car-service") is None
+    assert [r.levelno for r in caplog.records if "[Skills]" in r.getMessage()] == [logging.ERROR, logging.ERROR]
+
+
+async def test_saving_consumes_only_this_users_drafts_of_that_name(store):
+    await store.repo.create_draft("u1", "ab12", skill())
+    await store.repo.create_draft("u2", "ab12", skill())
+    await store.repo.save_version("u1", "a1", skill(), cap=20, consume_drafts_named="car-service")
+    assert list(store.docs(DR)) == ["u2:ab12"]
+
+
+async def test_a_save_without_consume_keeps_the_drafts_of_that_name(store):
+    due = fil("due.md", DUE)
+    await store.repo.create_draft("u1", "ab12", skill(files=[due]), staged={due.sha256: DUE})
+    assert await store.repo.save_version("u1", "a1", skill(), cap=20) == 1
+    assert list(store.docs(DR)) == ["u1:ab12"] and list(store.draft_files("ab12")) == [due.sha256]
+
+
+async def test_saving_a_draft_that_adds_a_file_keeps_the_inherited_one(store):
+    logbook, due = fil(), fil("due.md", DUE)
+    earlier = NOW - timedelta(days=3)
+    store.files()[logbook.sha256] = {"content": LOGBOOK, "size": len(LOGBOOK.encode()), "created_at": earlier}
+    await store.repo.save_version("u1", "a1", skill(files=[logbook]), cap=20)
+    both = skill(files=[due, logbook], body="Book the service; the due date is in due.md")
+    await store.repo.create_draft("u1", "ab12", both, staged={due.sha256: DUE})
+    assert await store.repo.save_version("u1", "a1", both, cap=20, consume_drafts_named="car-service",
+                                         draft_code="ab12") == 2
+    assert store.files() == {
+        logbook.sha256: {"content": LOGBOOK, "size": len(LOGBOOK.encode()), "created_at": earlier},
+        due.sha256: {"content": DUE, "size": len(DUE.encode()), "created_at": NOW}}
+    manifest = [due.model_dump(), logbook.model_dump()]
+    assert store.docs(SK)["u1:car-service"]["files"] == manifest and store.versions()["v2"]["files"] == manifest
+    assert list(store.docs(DR)) == [] and store.draft_files("ab12") == {}
+
+
+async def test_an_older_draft_saves_its_own_manifest_over_a_newer_current(store):
+    logbook, due = fil(), fil("due.md", DUE)
+    seed_file(store)
+    seed_file(store, DUE)
+    await store.repo.save_version("u1", "a1", skill(files=[logbook]), cap=20)
+    await store.repo.create_draft("u1", "ab12", skill(files=[logbook], body="old body"))
+    await store.repo.save_version("u1", "a1", skill(files=[due], body="newer body"), cap=20)
+    assert await store.repo.save_version("u1", "a1", skill(files=[logbook], body="old body"), cap=20,
+                                         consume_drafts_named="car-service", draft_code="ab12") == 3
+    index = store.docs(SK)["u1:car-service"]
+    assert (index["files"], index["body"], index["current"]) == ([logbook.model_dump()], "old body", 3)
+
+
+@pytest.mark.h1_only("counts the fake's batch commits (commits)")
+async def test_delete_skill_of_a_small_skill_is_one_batch_and_of_a_missing_one_none(store):
+    seed_file(store)
+    await store.repo.save_version("u1", "a1", skill(files=[fil()]), cap=20)
+    commits_before = len(store.db.commits)
+    assert await store.repo.delete_skill("u1", "car-service") is True
+    assert len(store.db.commits) - commits_before == 1
+    assert await store.repo.delete_skill("u1", "car-service") is False
+    assert len(store.db.commits) - commits_before == 1
+
+
+@pytest.mark.h1_only("drives the fake's interference hook and query log (interfere_on_txn_query, executed)")
+async def test_the_cap_query_is_part_of_the_save_transaction(store):
+    """Another commit to a skill the cap query returned re-runs the save of a new name (its count is re-read)."""
+    await store.repo.save_version("u1", "a1", skill(name="library-card"), cap=20)
+    queries_before = len(store.db.collection(SK).executed)
+    store.db.interfere_on_txn_query(SK, "u1:library-card", {"description": "Renew the library card"})
+    assert await store.repo.save_version("u1", "a1", skill(), cap=20) == 1
+    assert len(store.db.collection(SK).executed) - queries_before == 2
+
+
+@pytest.mark.h1_only("drives the fake's interference hooks and query log (interfere_on_txn_*, executed)")
+@pytest.mark.parametrize("read", ["drafts query", "draft", "staged file", "inherited file"])
+async def test_every_read_of_a_save_from_a_draft_is_part_of_its_transaction(store, read):
+    """Another commit to anything the save read re-runs it (the drafts query runs again), and the save then lands."""
+    logbook, due = fil(), fil("due.md", DUE)
+    seed_file(store)
+    await store.repo.save_version("u1", "a1", skill(files=[logbook]), cap=20)
+    both = skill(files=[due, logbook])
+    await store.repo.create_draft("u1", "ab12", both, staged={due.sha256: DUE})
+    if read == "drafts query":
+        store.db.interfere_on_txn_query(DR, "u1:ab12", {"body": "edited"})
+    elif read == "draft":
+        store.db.interfere_on_txn_read(DR, "u1:ab12", {"body": "edited"}, after_read=True)
+    elif read == "staged file":
+        store.db.interfere_on_txn_read(f"{DR}/u1:ab12/draft_files", due.sha256, {"size": 99}, after_read=True)
+    else:
+        store.db.interfere_on_txn_read(f"{SK}/u1:car-service/files", logbook.sha256, {"size": 99}, after_read=True)
+    assert await store.repo.save_version("u1", "a1", both, cap=20, consume_drafts_named="car-service",
+                                         draft_code="ab12") == 2
+    assert len(store.db.collection(DR).executed) == 2
+    assert list(store.docs(DR)) == [] and sorted(store.files()) == sorted([logbook.sha256, due.sha256])
+
+
+def _record_get_all(store, monkeypatch) -> list:
+    """Each `get_all` the adapter sends, as (document ids, field mask, inside a transaction)."""
+    calls, real = [], store.db.get_all
+
+    def recording(refs, field_paths=None, transaction=None):
+        calls.append(([r.id for r in refs], field_paths, transaction is not None))
+        return real(refs, field_paths=field_paths, transaction=transaction)
+
+    monkeypatch.setattr(store.db, "get_all", recording)
+    return calls
+
+
+def _refuse_reads(collection) -> None:
+    def refused(*args, **kwargs):
+        raise AssertionError(f"{collection.name} was read")
+    collection.get = collection.stream = refused
+
+
+@pytest.mark.h1_only("records the fake's get_all and refuses reads of its collections")
+async def test_a_save_reads_the_staged_then_the_inherited_files_once_each(store, monkeypatch):
+    """Staged contents by ref inside the transaction; inherited files by a `size` mask (no content); the other consumed
+    draft's staged files are deleted by ref, never read."""
+    logbook, due = fil(), fil("due.md", DUE)
+    seed_file(store)
+    await store.repo.save_version("u1", "a1", skill(files=[logbook]), cap=20)
+    both = skill(files=[due, logbook])
+    await store.repo.create_draft("u1", "ab12", both, staged={due.sha256: DUE})
+    await store.repo.create_draft("u1", "cd34", skill(body="another take", files=[fil("x.md", "X")]),
+                                  staged={sha256_text("X"): "X"})
+    other = store.db.collection(f"{DR}/u1:cd34/draft_files")
+    _refuse_reads(other)
+    real_document = other.document
+
+    def unreadable_document(doc_id=None):
+        ref = real_document(doc_id)
+
+        async def get(*args, **kwargs):
+            raise AssertionError("a consumed draft's staged file was read")
+        ref.get = get
+        return ref
+
+    monkeypatch.setattr(other, "document", unreadable_document)
+    calls = _record_get_all(store, monkeypatch)
+    await store.repo.save_version("u1", "a1", both, cap=20, consume_drafts_named="car-service", draft_code="ab12")
+    assert calls == [([due.sha256], None, True), ([logbook.sha256], ["size"], True)]
+    assert list(store.docs(DR)) == [] and store.draft_files("cd34") == {}
+
+
+@pytest.mark.h1_only("records the fake's get_all")
+async def test_a_fileless_save_and_an_empty_staging_read_no_files(store, monkeypatch):
+    await store.repo.create_draft("u1", "ab12", skill())
+    calls = _record_get_all(store, monkeypatch)
+    assert await store.repo.save_version("u1", "a1", skill(name="library-card"), cap=20) == 1
+    assert await store.repo.get_draft_files("u1", "ab12") == {}
+    assert await store.repo.save_version("u1", "a1", skill(), cap=20, draft_code="ab12") == 1
+    assert calls == []
+
+
+@pytest.mark.h1_only("counts the fake's batch commits and refuses reads of its collections")
+async def test_delete_skill_lists_the_file_refs_without_reading_them_and_deletes_in_chunks_of_450(store, monkeypatch):
+    await store.repo.save_version("u1", "a1", skill(), cap=20)
+    files = store.files()
+    for i in range(460):
+        files[sha256_text(f"file {i}")] = {"content": f"file {i}", "size": 6, "created_at": NOW}
+    files_col = store.db.collection(f"{SK}/u1:car-service/files")
+    versions_col = store.db.collection(f"{SK}/u1:car-service/versions")
+    _refuse_reads(files_col)
+    order, real_list, real_versions_get = [], files_col.list_documents, versions_col.get
+
+    def listing(*args, **kwargs):
+        order.append("files")
+        return real_list(*args, **kwargs)
+
+    async def versions_get(*args, **kwargs):
+        order.append("versions")
+        return await real_versions_get(*args, **kwargs)
+
+    monkeypatch.setattr(files_col, "list_documents", listing)
+    monkeypatch.setattr(versions_col, "get", versions_get)
+    commits_before = len(store.db.commits)
+    assert await store.repo.delete_skill("u1", "car-service") is True
+    commits = store.db.commits[commits_before:]
+    assert order == ["files", "versions"]
+    assert [len(c) for c in commits] == [450, 12]
+    last = commits[-1][-1][1]
+    assert (last.col.name, last.id) == (SK, "u1:car-service")        # the index document is the last write
+    assert store.files() == {} and store.versions() == {}
+
+
+@pytest.mark.h1_only("replaces the document factory of the fake's staged-files and drafts collections")
+async def test_create_draft_writes_the_staged_files_concurrently_then_the_draft(store, monkeypatch):
+    logbook, due = fil(), fil("due.md", DUE)
+    events, both_started = [], asyncio.Event()
+    files_col, drafts_col = store.db.collection(f"{DR}/u1:ab12/draft_files"), store.db.collection(DR)
+    real_file_document, real_draft_document = files_col.document, drafts_col.document
+
+    def file_document(doc_id=None):
+        ref = real_file_document(doc_id)
+        real_set = ref.set
+
+        async def set(data, merge=False):
+            events.append(f"start {doc_id[:4]}")
+            if sum(e.startswith("start") for e in events) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)   # a sequential writer never starts the second
+            return await real_set(data, merge=merge)
+        ref.set = set
+        return ref
+
+    def draft_document(doc_id=None):
+        ref = real_draft_document(doc_id)
+        real_create = ref.create
+
+        async def create(data):
+            events.append("draft")
+            return await real_create(data)
+        ref.create = create
+        return ref
+
+    monkeypatch.setattr(files_col, "document", file_document)
+    monkeypatch.setattr(drafts_col, "document", draft_document)
+    assert await store.repo.create_draft("u1", "ab12", skill(files=[logbook, due]),
+                                         staged={logbook.sha256: LOGBOOK, due.sha256: DUE}) is True
+    assert sorted(events[:2]) == sorted([f"start {logbook.sha256[:4]}", f"start {due.sha256[:4]}"])
+    assert events[-1] == "draft" and sorted(store.draft_files("ab12")) == sorted([logbook.sha256, due.sha256])
+
+
+async def test_a_draft_without_an_expiry_is_read(store):
+    store.docs(DR)["u1:ab12"] = {"user_id": "u1", "name": "car-service", "description": "d", "body": BODY, "files": [],
+                                 "staged": [], "created_at": NOW}
+    assert (await store.repo.get_draft("u1", "ab12")).body == BODY

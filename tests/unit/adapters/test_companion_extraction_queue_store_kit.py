@@ -3,7 +3,8 @@
 the raw stored documents and on what readers return.
 
 No test asserts the unbounded FAILED revival as correct: it is P15-D5, pinned as a strict xfail in
-`tests/unit/handlers/test_worker_redelivery_chains.py`. Legacy batches missing a field are not pinned (data audit).
+`tests/unit/handlers/test_worker_redelivery_chains.py`. Legacy batches missing a field are not pinned (data audit), except a batch without `session_id`: the stuck-session
+read leaves it out, so the hourly sweep never gets a None id.
 """
 import time
 from pathlib import Path
@@ -61,6 +62,12 @@ async def test_pending_limit_after_filter_and_other_sessions_excluded(queue):
         await put(queue, n, t)
     assert ids(await queue.get_pending_batches(SID, limit=2)) == ["c3", "c2"]
     assert ids(await queue.get_pending_batches(SID2)) == ["other"]
+
+
+async def test_pending_excludes_a_completed_batch(queue):
+    await put(queue, "done", 0.6, BatchStatus.COMPLETED)
+    await put(queue, "c1", 5.0)
+    assert ids(await queue.get_pending_batches(SID)) == ["c1"]
 
 
 async def test_enqueue_twice_is_one_document_and_delete_is_idempotent(queue):
@@ -128,6 +135,13 @@ async def test_stuck_session_ids_are_distinct(queue):
     assert await queue.get_stuck_session_ids() == []
 
 
+async def test_a_stored_batch_without_a_session_id_is_not_a_stuck_session(queue):
+    await put(queue, "c1", 1.0)
+    await queue.db.collection(QUEUE).document("no-session").set({"batch_id": "no-session", "status": "pending",
+                                                                   "messages": MESSAGES, "created_at": 2.0})
+    assert await queue.get_stuck_session_ids() == [SID]
+
+
 # --------------------------------------------------------------------------------------------------- create-if-absent
 
 async def test_a_repeated_enqueue_keeps_a_picked_up_batch_as_stored(queue):
@@ -157,3 +171,10 @@ async def test_an_enqueue_after_the_batch_was_deleted_stores_it_again(queue):
     await queue.delete_batch("c1")
     await put(queue, "c1", 2.0)
     assert ids(await queue.get_pending_batches(SID)) == ["c1"]
+
+
+async def test_enqueue_stores_the_whole_batch_under_its_id_and_returns_the_id(queue):
+    batch = CompanionExtractionBatch(session_id=SID, account_id="a1", companion_type="tutor", created_by_user_id="u1",
+                                     messages=MESSAGES, created_at=1.0)
+    assert await queue.enqueue_batch(batch) == batch.batch_id
+    assert docs(queue) == {batch.batch_id: batch.model_dump(mode="python") | {"status": "pending"}}
