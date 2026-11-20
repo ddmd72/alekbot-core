@@ -810,7 +810,8 @@ and the `make logs*` / `fetch-logs*` targets. Log queries and the Logfire cascad
 [ALERTING.md](ALERTING.md).
 
 **Keep-alive and image cleanup.** Scale-to-zero costs cold starts; a keep-alive ping costs cents a month; `min-instances=1`
-costs a real monthly amount. Setup: [KEEP_ALIVE_SETUP.md](KEEP_ALIVE_SETUP.md). Every deploy moves `:latest` and leaves the
+costs a real monthly amount. The keep-alive scheduler job is created by the deploy build itself (`scheduler-jobs` step);
+no setup script is needed: [KEEP_ALIVE_SETUP.md](KEEP_ALIVE_SETUP.md). Every deploy moves `:latest` and leaves the
 previous digest untagged; the standing cleanup is the retention policy under Standing levers. `scripts/infra/` holds the
 older manual cleaner for the `gcr.io` repository (`cleanup_gcr_images.py`, `gcr-io-cleanup-policy.json`), superseded by it.
 
