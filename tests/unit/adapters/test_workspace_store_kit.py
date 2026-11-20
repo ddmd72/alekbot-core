@@ -338,3 +338,9 @@ async def test_list_entry_carries_the_write_stamps(fake, store):
     assert (entry.origin, entry.fire, entry.write_id, entry.restored_from, entry.live, entry.deleted_at) == (
         FIRE.origin, FIRE.fire, e2.write_id, e1.generation, True, None)
     assert entry.updated == fake.live(BUCKET, "u1/" + P).time_created
+
+
+async def test_delete_of_a_path_never_written_is_file_not_found(fake, store):
+    with pytest.raises(FileNotFoundError):
+        await store.delete("u1", P, 1001, WorkspaceDeleteMeta(deleted_by="chat"))
+    assert fake.versions(BUCKET, "u1/" + P) == []

@@ -636,3 +636,9 @@ async def test_create_draft_writes_the_staged_files_concurrently_then_the_draft(
                                          staged={logbook.sha256: LOGBOOK, due.sha256: DUE}) is True
     assert sorted(events[:2]) == sorted([f"start {logbook.sha256[:4]}", f"start {due.sha256[:4]}"])
     assert events[-1] == "draft" and sorted(store.draft_files("ab12")) == sorted([logbook.sha256, due.sha256])
+
+
+async def test_a_draft_without_an_expiry_is_read(store):
+    store.docs(DR)["u1:ab12"] = {"user_id": "u1", "name": "car-service", "description": "d", "body": BODY, "files": [],
+                                 "staged": [], "created_at": NOW}
+    assert (await store.repo.get_draft("u1", "ab12")).body == BODY
