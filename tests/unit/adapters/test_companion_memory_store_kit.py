@@ -140,3 +140,9 @@ async def test_find_nearest_propagates_backend_errors(store):
     store.db.collection(REC).fail = ServiceUnavailable("down")
     with pytest.raises(ServiceUnavailable):
         await store.repo.find_nearest(SESSION, "a1", VEC)
+
+
+async def test_find_nearest_keeps_an_id_field_that_differs_from_the_document_id(store):
+    raw(store, "stored-under", id="r-own-id")
+    [got] = await store.repo.find_nearest(SESSION, "a1", VEC)
+    assert got.id == "r-own-id"

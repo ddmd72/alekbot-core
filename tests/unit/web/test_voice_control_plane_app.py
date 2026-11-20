@@ -322,7 +322,7 @@ async def test_session_config_consumes_the_ticket_so_it_cannot_be_replayed(app_a
     Firestore round trips, and two concurrent redemptions of the same ticket
     could both complete their read before either delete landed. The atomicity
     itself is proven at the adapter
-    (`tests/unit/adapters/test_firestore_ephemeral_store.py`); what this test
+    (`tests/unit/adapters/test_ephemeral_store_kit.py`); what this test
     pins is that the route reaches for the atomic method at all.
     """
     app, ephemeral_store, *_rest = app_and_deps

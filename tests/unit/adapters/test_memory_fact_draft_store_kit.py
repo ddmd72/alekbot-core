@@ -126,3 +126,8 @@ async def test_a_draft_can_be_created_again_once_deleted(store):
     await store.repo.delete_draft("u1", "ab12")
     assert await store.repo.create_draft("u1", "ab12", draft(TEA)) is True
     assert await store.repo.get_draft("u1", "ab12") == draft(TEA)
+
+
+async def test_a_document_without_expires_at_or_origin_session_id_reads_as_a_live_draft_without_an_origin(store):
+    raw(store, expires_at=..., origin_session_id=...)
+    assert await store.repo.get_draft("u1", "ab12") == draft(GYM, origin=None)

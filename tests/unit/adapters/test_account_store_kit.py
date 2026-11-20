@@ -273,3 +273,65 @@ async def test_a_backend_error_propagates(accounts, monkeypatch, method):
     with pytest.raises(RuntimeError, match="unavailable"):
         await getattr(accounts.repo, method)(*args)
     assert accounts.docs["a1"] == before
+
+
+# ------------------------------------------------------------------------------------- increment: moved cases
+
+async def test_an_accounts_own_daily_cost_limit_is_reported_and_crossed(accounts):
+    await accounts.seed(daily_cost=20.0, daily_cost_limit=25.0)
+    result = await accounts.repo.increment_account_usage("a1", tokens=10, cost=6.0)
+    assert result.daily_cost_limit == 25.0
+    assert result.crossed_daily_limit
+
+
+async def test_an_integer_daily_cost_is_read_from_the_servers_integer_result(accounts):
+    await accounts.seed()
+    await accounts.db.collection(ACCOUNTS).document("a1").update({"usage.daily_cost": 5})
+    result = await accounts.repo.increment_account_usage("a1", tokens=1, cost=2)
+    assert (result.daily_cost_before, result.daily_cost_after) == (5.0, 7.0)
+
+
+async def test_a_day_rotation_snapshots_the_day_that_ended_and_restarts_the_day(accounts):
+    await accounts.seed()
+    yesterday = T0 - timedelta(days=1)
+    await accounts.db.collection(ACCOUNTS).document("a1").update(
+        {"usage.daily_tokens": 1234, "usage.daily_cost": 0.07, "usage.daily_reset_at": yesterday})
+    await accounts.repo.increment_account_usage("a1", tokens=10, cost=0.001)
+    usage = accounts.usage()
+    assert (usage["prev_daily_tokens"], usage["prev_daily_cost"], usage["prev_daily_date"]) == (
+        1234, pytest.approx(0.07), yesterday.date().isoformat())
+    assert (usage["daily_tokens"], usage["daily_cost"]) == (10, pytest.approx(0.001))
+
+
+async def test_a_month_end_rotation_snapshots_the_month_that_ended(accounts):
+    await accounts.seed(reset_at=T0.replace(day=1) - timedelta(days=1))       # stamped on the last day of September
+    await accounts.repo.increment_account_usage("a1", tokens=10, cost=0.5)
+    usage = accounts.usage()
+    assert (usage["prev_monthly_month"], usage["prev_monthly_cost"]) == ("2026-09", pytest.approx(12.0))
+    assert usage["daily_reset_at"] == T0 and usage["monthly_reset_at"] == T0
+
+
+ROTATIONS = {"same_window": {}, "daily": {"usage.daily_reset_at": T0 - timedelta(days=1)},
+             "monthly": {"usage.monthly_reset_at": T0.replace(day=1) - timedelta(days=1)},
+             "no_stamps": {"usage.daily_reset_at": None, "usage.monthly_reset_at": None}}
+
+
+@pytest.mark.h1_only("counts the fake's transactions and traces its EvalDocRef writes")
+@pytest.mark.parametrize("window", list(ROTATIONS))
+async def test_only_an_increment_that_rotates_a_window_opens_a_transaction(accounts, monkeypatch, window):
+    """The same-window hot path is one lock-free update; a due rotation is one transaction and no direct write."""
+    await accounts.seed(daily_cost=3.0)
+    if ROTATIONS[window]:
+        await accounts.db.collection(ACCOUNTS).document("a1").update(ROTATIONS[window])
+    opened = []
+    make_transaction = accounts.db.transaction
+    monkeypatch.setattr(accounts.db, "transaction", lambda: opened.append(1) or make_transaction())
+    events = io_trace(monkeypatch)
+    result = await accounts.repo.increment_account_usage("a1", tokens=10, cost=0.4)
+    writes = [e for e in events if e[0] == "write"]
+    if window == "same_window":
+        assert (opened, writes) == ([], [("write", "a1")])
+    else:
+        assert (len(opened), writes) == (1, [])
+    if window in ("daily", "no_stamps"):
+        assert result.daily_cost_before == 0.0

@@ -154,3 +154,10 @@ async def test_no_sink_is_a_no_op(monkeypatch, kit_db):
     await billing.seed(daily_cost=4.6)
     assert await billing.quota.record_usage("a1", MODEL, 300, 0.5) is None
     assert billing.usage()["daily_cost"] == pytest.approx(5.1)
+
+
+async def test_the_crossing_logs_the_budget_event(billing, caplog):
+    await billing.seed(daily_cost=4.6)
+    with caplog.at_level("INFO"):
+        await billing.quota.record_usage("a1", MODEL, 300, 0.5)
+    assert "budget_daily_limit_crossed" in caplog.text

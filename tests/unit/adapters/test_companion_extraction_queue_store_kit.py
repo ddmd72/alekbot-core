@@ -163,3 +163,10 @@ async def test_an_enqueue_after_the_batch_was_deleted_stores_it_again(queue):
     await queue.delete_batch("c1")
     await put(queue, "c1", 2.0)
     assert ids(await queue.get_pending_batches(SID)) == ["c1"]
+
+
+async def test_enqueue_stores_the_whole_batch_under_its_id_and_returns_the_id(queue):
+    batch = CompanionExtractionBatch(session_id=SID, account_id="a1", companion_type="tutor", created_by_user_id="u1",
+                                     messages=MESSAGES, created_at=1.0)
+    assert await queue.enqueue_batch(batch) == batch.batch_id
+    assert docs(queue) == {batch.batch_id: batch.model_dump(mode="python") | {"status": "pending"}}
