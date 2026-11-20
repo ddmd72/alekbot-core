@@ -47,6 +47,9 @@ def _make_agent(
     prompt_builder=None,
     user_id: str = "u1",
 ) -> DeepResearchAgent:
+    if prompt_builder is None:
+        prompt_builder = AsyncMock(spec=PromptBuilderPort)
+        prompt_builder.build_for_agent.return_value = "stub system prompt"
     return DeepResearchAgent(
         config=_make_config(),
         job_port=job_port,
