@@ -563,7 +563,7 @@ Implementations: `SlackNotificationAdapter`, `TelegramNotificationAdapter`.
 - [GMAIL_EMAIL_INDEXING_RFC.md](./GMAIL_EMAIL_INDEXING_RFC.md) — shares `_notify_completion()`
 
 **Building Blocks:**
-- [Multi-Agent System](../05_building_blocks/multi_agent_system/README.md)
+- [Agent Registry](../05_building_blocks/agent_registry/README.md)
 
 ---
 

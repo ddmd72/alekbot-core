@@ -60,7 +60,7 @@ ALL_DESCRIPTORS = [..., FOO]    # append to the existing list
 **When to use `eager=False`:** agents called on <10% of requests (document generation, deep
 research, file management). The descriptor is still registered at startup — intents appear in
 LLM tool lists immediately. The agent instance is created on first delegation via
-`AgentFactoryPort`. See [Agent Registry §3.5](../05_building_blocks/agent_registry/README.md).
+`AgentFactoryPort`. See [Agent Registry, flow 4](../05_building_blocks/agent_registry/README.md).
 
 Both Quick and Smart automatically discover the new intent — no changes to either orchestrator.
 
@@ -680,8 +680,7 @@ Shared token (mirror + upload draft, then snapshot_upload.py):
 
 ## Cross-References
 
-- [Agent Registry Building Block](../05_building_blocks/agent_registry/README.md) — registry mechanics, §9 step details
-- [Multi-Agent System](../05_building_blocks/multi_agent_system/README.md) — agent categories overview
+- [Agent Registry Building Block](../05_building_blocks/agent_registry/README.md) — registry mechanics and the runtime flows
 - [`COMPUTE_AGENT_RFC.md`](../10_rfcs/COMPUTE_AGENT_RFC.md) — canonical reference for a simple SYNC specialist
 - [`firestore_utils/README.md`](../../firestore_utils/README.md) — download/upload commands reference
 - `CLAUDE.md` — "Adding a New Specialist Agent" links here as the authoritative reference

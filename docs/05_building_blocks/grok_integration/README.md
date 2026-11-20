@@ -1,210 +1,135 @@
+<!-- living-doc
+covers:
+  src/adapters/grok_adapter.py
+-->
 # xAI Grok Integration
 
-**Status:** ⚠️ Functional, but not a default for any agent
-**Last verified against the live API:** 2026-08-14
-**Provider:** xAI (Grok)
+## Purpose
 
----
+This block is the text-LLM adapter for xAI Grok: `GrokAdapter` implements `LLMPort` against xAI's **Responses API**
+(`/v1/responses`) through the same pinned `openai` SDK that `OpenAIAdapter` uses, with a different `base_url`. There is
+no `xai-sdk` dependency. The Responses API is the only xAI surface that has server-side search (`web_search`,
+`x_search`), so the adapter cannot go back to Chat Completions.
 
-## Overview
+It is the boundary for one provider: it turns domain `Message`/tool/`LLMRequest` objects into Responses items, calls
+xAI, and turns the output items back into an `LLMResponse` with usage. Which agent runs on Grok, what a tier costs and
+how a failed call fails over are decided elsewhere (see Flows).
 
-`GrokAdapter` implements `LLMPort` against xAI's **Responses API** (`/v1/responses`) using the
-OpenAI SDK with a custom `base_url`. No `xai-sdk` dependency — the same pinned `openai` package
-serves `OpenAIAdapter`, `OpenAITranscriptionAdapter`, and this adapter.
+What it is not: it does not cover Grok image and video generation (`grok_image_adapter`, `grok_video_adapter`, their own
+ports) or the voice models, and it does not offer file upload or controllable prompt caching.
 
-**Read [`decisions/grok_revival_2026_08.md`](../../04_solution_strategy/decisions/grok_revival_2026_08.md)
-before changing anything here.** It records why this integration sat dead for months (a trailing
-newline in the `XAI_API_KEY` secret, misdiagnosed as xAI blocking Google Cloud) and why the
-transport moved off Chat Completions.
+## Owned data
 
-### What works (verified live, not inferred)
+None. The adapter keeps no state between calls. Two things leave the process:
 
-- Function calling, including `tool_choice="required"` and multi-turn tool round-trips
-- Server-side search: `{"type": "web_search"}` (and `x_search`) — **Responses API only**
-- `instructions` as the system prompt, `temperature`, `reasoning.effort`
-- `response_schema` forwarded natively as `text.format.json_schema` (strict=False)
-- **Image input** — `input_image` accepted on grok-4.6 and grok-4.3 (minimum 8x8 px); grok-4.7 lists image input
-- `url_citation` annotations on grounded answers → appended as a `*Sources:*` block
-- `store` and `prompt_cache_key`
-- Automatic prompt caching, reported via `usage.input_tokens_details.cached_tokens`
-- Reasoning traces via `reasoning` output items → `LLMResponse.thought_text`
+- Every request is sent with `store=True`, so xAI keeps the response in its dashboard for debugging.
+- The credential is `XAI_API_KEY` (Secret Manager in the deploy, `.env` locally), read by `load_settings()` and handed to
+  `ServiceContainer._init_grok`, which returns `None` when the key is absent: the bot starts without Grok.
 
-### What does not
+Prices are not here: `src/domain/billing.py::_PRICING_PER_MILLION_TOKENS` holds them, keyed by the model ids that
+`GrokAdapter.MODEL_TIERS` returns.
 
-- **File upload** — there is no Files API here, so `upload_file()` raises `NotImplementedError`
-  and non-image binaries cannot be forwarded (`OpenAIAdapter` has an `input_file` path; this does
-  not). Upstream `FileConversionService` normally converts those to text first.
-- **Controllable prompt caching** — caching happens, but there is no API surface to steer it, so
-  `context_caching=False` and `generate_content` rejects a `cache_config`.
-### Role precedence — measure it, don't assume it
+## Flows
 
-**`developer` > `instructions` > `user`**, the same order as OpenAI. Measured 2026-08-15: six runs
-per cell, both orderings, conflicting output-language instructions.
+**Which requests reach Grok.** `src/services/agent_context_builder.py::AgentProviderStrategy.STRATEGIES` lists `grok` in
+`allowed_providers` per agent type and names it `default_provider` for three agent types: `html_page`, and the
+prompt-crafting calls of `image_generation` and `video_generation` (both Grok-only; their rendering uses separate
+image/video registries and ports, not this adapter). Three things override a default:
 
-`GrokAdapter._extract_turn_anchor` therefore lifts `USER_TURN_SYSTEM_ANCHOR` out of the last user
-turn into a `developer` item, mirroring `OpenAIAdapter` — otherwise the anchor sits in the weakest
-channel available.
+1. a per-agent override, `UserBotConfig.agent_providers[agent_type]`;
+2. the global `UserBotConfig.provider_preference`;
+3. a per-complexity `ComplexitySettings.provider_override` (`src/domain/complexity_settings.py`), applied by
+   `AgentContextBuilder.resolve_for_task`. It is set per task complexity, not per agent, so it can move a whole class of
+   background work onto Grok without touching any agent.
 
-> An earlier version of this document claimed the precedence was *reversed* on xAI. That came from
-> a single run with a degenerate instruction ("reply with the word BANANA") and no control for
-> ordering — i.e. noise. If you need to re-derive precedence, use a measurable non-degenerate
-> signal and test both orderings.
+Items 1 and 2 (`AgentContextBuilder.resolve_provider_name`) are ignored when the provider is outside the agent's
+`allowed_providers`; item 3 is not checked, so it can put an agent on Grok where `grok` is not allowed. Cross-provider rotation
+(`AgentContextBuilder.resolve_next_provider`, on a terminal `TranscriptLockedError`) walks `allowed_providers` in
+declared order, and `grok` is last for `smart`. Moving a default to Grok needs an eval first
+(`decisions/html_page_grok_default.md` is the precedent).
 
-**Not ported from `OpenAIAdapter`:** its large hand-written "PERSONALITY ANCHOR" block, injected
-when the system prompt contains `humor_engine`. That text was written and validated against a
-specific OpenAI failure mode and has never been tested on Grok.
+**One call, `GrokAdapter.generate_content`.** The steps that are not obvious from the function:
 
----
+1. The system prompt is cut at `PROMPT_CACHE_BOUNDARY`; `prompt_cache_key` derives from the text before it. An enabled
+   `cache_config` is ignored with a debug line, never an error.
+2. `USER_TURN_SYSTEM_ANCHOR` (`GrokAdapter._extract_turn_anchor`) and `build_persona_anchor` (`src/domain/llm.py`) go into
+   **one** `developer` input item placed first.
+3. The output format follows this order: grounding sends none; a dict schema together with tools becomes a synthesized
+   `deliver_response` function (`GrokAdapter.TERMINAL_TOOL_NAME`) and forces `tool_choice="required"`; a dict schema
+   alone is `json_schema` with `strict=False`; a bare `application/json` mime type is `json_object`.
+4. SDK errors map to domain errors; a 4xx is deterministic and not a failover trigger.
+5. `GrokAdapter._parse_response` keeps the xAI `call_id` in `ToolCall.thought_signature`, appends `url_citation`
+   annotations as a `*Sources:*` block, and stores the output items in `raw_content`, which `_convert_input` replays
+   verbatim on the next turn so the reasoning and function-call sequence survives.
 
-## Model tiers
+## Invariants and traps
 
-Defined in `GrokAdapter.MODEL_TIERS` — the single source of truth (no env override).
+- **The key is stripped, and that is load-bearing.** Secret Manager mounts the value verbatim. A trailing newline makes
+  `httpx` refuse the Authorization header, the SDK reports `APIConnectionError`, and the adapter maps it to
+  `LLMNetworkError`: it looks like "xAI blocks Google Cloud" while nothing leaves the container. `GrokAdapter.__init__`
+  strips; create the secret with `printf %s`. Test: `test_api_key_whitespace_is_stripped`. History:
+  `decisions/grok_revival_2026_08.md`.
+- **A retired model id does not fail, it mis-bills.** xAI keeps answering HTTP 200 for a retired id and serves another
+  model. `MODEL_TIERS` may hold only ids that `GET /v1/models` lists, and every id in it needs a row in
+  `_PRICING_PER_MILLION_TOKENS`, because `calculate_cost` returns 0.0 for an unknown model without any error.
+- **Long-context cost is under-counted.** xAI doubles input and output prices at long prompts; `billing.py` does not
+  model it (comment above the Grok rows).
+- **Role precedence is `developer` > `instructions` > `user`** (measured with both orderings and a non-degenerate signal;
+  the same as OpenAI). That is why the turn anchor is lifted into `developer`. `_extract_turn_anchor` searches backwards
+  through all messages: from delegation turn 2 the last message is a tool result with no text, so looking only at the
+  last one finds nothing. Tests: `test_turn_anchor_lifted_into_developer_item`,
+  `test_turn_anchor_and_personality_share_one_developer_item`.
+- **Structured output and function calling compete.** With a JSON format and tools both set, the model often writes the
+  promised action into the answer field and calls nothing (measured on the real orchestrator prompt). So the schema moves
+  onto the synthesized `deliver_response` tool, which `DelegationEngine` already treats as terminal. The name is
+  duplicated on purpose (adapters cannot import agents); it must equal the `terminal_tool` the delegating agents
+  pass to `DelegationEngine`. A terminal call can arrive in one batch next to real tool calls; `DelegationEngine` dispatches those too.
+  Tests: `test_schema_plus_tools_synthesizes_terminal_tool`, `test_grounding_does_not_synthesize_terminal_tool`.
+- **Grounding is paid input.** Declaring `web_search` adds thousands of input tokens before any search, and a grounded
+  answer costs a large multiple of a plain one; JSON mode is dropped while it is on. Do not ground by default.
+- **Both models reason by default**, with no `reasoning` block. Effort values come from user config, so an unknown value
+  is normalised to `medium` (a bad string must not become an HTTP 400 mid-conversation). `none` is accepted only for ids
+  starting with `GrokAdapter._EFFORT_NONE_MODELS` and is clamped to `medium` elsewhere. Grounding forces no effort
+  (unlike `OpenAIAdapter`). Tests: `test_effort_none_allowed_on_grok_43`, `test_effort_none_clamped_to_medium_on_grok_46`,
+  `test_unknown_effort_normalised_to_medium`.
+- **Caching is automatic and not controllable.** `CAPABILITIES.context_caching` is `False`, which means "no breakpoints
+  to place", not "no caching": cache hits are read from `usage.input_tokens_details.cached_tokens` and priced by the
+  `cache_read` multiplier. `_parse_response` follows the repo convention that `UsageMetadata.prompt_tokens` is **uncached**
+  input only (`input - cached`), with `cache_read_tokens` carrying the rest. Reasoning tokens are billed as output, so
+  `total_tokens` is not `prompt + completion`.
+- **Latency is minutes, not seconds, on a long multi-turn run.** The client timeout and `max_retries` are set in the `AsyncOpenAI(...)` call in `GrokAdapter.__init__`; retries multiply
+  the timeout, so one call can take several times the ceiling when no `request.timeout` is given; an explicit one bounds the total. A background
+  task needs a Cloud Tasks `dispatch_deadline` that can hold a Grok run: `docs/07_deployment/SCHEDULERS.md`. Tests:
+  `test_client_timeout_matches_openai_adapter`, `test_request_timeout_is_forwarded_to_the_sdk`.
+- **No files except images.** `upload_file` raises `NotImplementedError`; `_convert_input` drops non-image binaries with a
+  warning and sends images as `input_image` data URLs. `native_formats` reports images only on `_GROK_VISION_MODELS` and
+  never a PDF, so `FileConversionService` converts a PDF to text before it gets here.
+- **Old history still loads.** A model message whose `raw_content` is a pre-migration Chat Completions object is converted
+  by `_convert_input`; do not remove that branch while such sessions exist.
+- **Deliberate duplicates.** `_prompt_cache_key` and `_to_json_schema` copy `OpenAIAdapter`'s, because adapters may not
+  import each other (REQ-ARCH-23). `_to_json_schema` lowercases `type` values, since some callers declare Gemini-style
+  uppercase types.
+- **Function tools send `strict=False` explicitly** so a provider default change cannot turn on strict grammar
+  (`decisions/delegate_tool_contract_and_strict.md`). No sampling parameter is sent (`decisions/temperature_removed.md`).
 
-| Tier | Model | Notes |
-|------|-------|-------|
-| `ECO`, `BALANCED`, `TIER1/2/3` | `grok-4.3` | $1.25/$2.50 per 1M, 1M context, reasons by default |
-| `PERFORMANCE`, `ULTRA` | `grok-4.7` | $2/$6 per 1M, default effort `high` (same as 4.6); 4.6 until 2026-10-03 |
+## Links
 
-**grok-4.7 (2026-10-03).** Same price as 4.6. Live probe at `reasoning.effort=medium` on
-Smart-like tool turns: p50 1.6s vs 3.8s, max 3.2s vs 5.4s, 2-3x fewer output tokens. With no effort
-it runs at its API default `high` and showed sporadic 12-60s tails and one odd refusal of a
-trivial "reply with exactly OK". Long-context pricing (2x) applies above 200k prompt tokens.
-It wraps HTML output in a markdown fence (the HTML page agent strips it).
+- [`decisions/grok_revival_2026_08.md`](../../04_solution_strategy/decisions/grok_revival_2026_08.md): why the integration
+  was dead for months, why the transport moved to Responses.
+- [`decisions/html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md): the first
+  agent that defaulted to Grok.
+- [`decisions/delegate_tool_contract_and_strict.md`](../../04_solution_strategy/decisions/delegate_tool_contract_and_strict.md),
+  [`decisions/temperature_removed.md`](../../04_solution_strategy/decisions/temperature_removed.md).
+- [`ADAPTER_WIRE_TESTING.md`](../../how_to/ADAPTER_WIRE_TESTING.md): wire tests mock `adapter.client.responses.create`.
+  Grok's are `tests/unit/adapters/test_grok_adapter.py`, the shared offline stub in
+  `tests/integration/offline/adapters/`, and the `"grok"` validators in `tests/contracts/adapter_contracts.py`.
+- [`SCHEDULERS.md`](../../07_deployment/SCHEDULERS.md): task deadlines for long Grok runs.
 
-**Both models reason by default** — probed 2026-08-15, a bare request with no `reasoning`
-block still returns a `reasoning` item (4.3: 83 tokens, 4.6: 66). Earlier docs said 4.3 did
-not; it does.
+## Where to start reading
 
-> ⚠️ **Retired IDs fail silently.** `grok-4-1-fast-reasoning` / `-non-reasoning` are gone from
-> `GET /v1/models`, but still return HTTP 200 — xAI serves `grok-4.3` and reports it in the
-> response body. A retired ID therefore does not error, it **mis-bills**. Only put IDs in this map
-> that `GET /v1/models` actually lists.
->
-> xAI has also retired the sub-$1 tier: the cheapest live model is now $1.25/$2.50, which is
-> *more* expensive than `gpt-6-luna` ($0.10/$0.50) or `gemini-3.5-flash-lite` ($0.30/$2.50).
-
-Pricing lives in `src/domain/billing.py`. `cache_read` is a multiplier of input price
-(4.6 → 0.25, 4.5 → 0.15, 4.3 → 0.16). **Not modelled:** xAI doubles both input and output once a
-prompt reaches 200k tokens, so long-context requests are under-costed 2x.
-
----
-
-## Where Grok sits in routing
-
-`AgentProviderStrategy.STRATEGIES` (`src/services/agent_context_builder.py`) lists grok in
-`allowed_providers` for **router**, **quick**, and **smart** only. **No agent defaults to it.**
-Three ways a request reaches Grok today:
-
-1. Per-agent override — `UserBotConfig.agent_providers["smart"] = "grok"`
-2. Global preference — `UserBotConfig.provider_preference = "grok"`
-3. Per-complexity override — `UserBotConfig.complexity_settings_overrides[<complexity>]
-   .provider_override = "grok"`. **This is the one that surprises**: it is set per task
-   complexity, not per agent, so it can quietly own a whole class of background work
-   (this is how the daily briefing ended up on Grok).
-4. Smart's provider rotation — grok is **last** in `allowed_providers` for smart, so it is only
-   tried after claude, openai, and gemini have all been attempted in one turn
-
-Promoting Grok to a default requires an eval first, as was done for `gpt-5.4-mini`.
-
----
-
-## Latency — budget for it
-
-Measured on the real Smart delegation workload, grok-4.6 at `reasoning.effort=medium`:
-
-| Context | Latency |
-|---------|---------|
-| ~20k tokens | 42s |
-| ~55k tokens | 25s |
-| ~73k tokens | 49s |
-| ~100k tokens | **> 60s** |
-
-The client ceiling is **300s** (matching `OpenAIAdapter`; it was 60s until 2026-08-15 and
-truncated exactly the turns above). An explicit `LLMRequest.timeout` is forwarded to the SDK
-as well as bounding total wall-time, so a caller can go lower or higher deliberately.
-
-Two consequences worth holding onto:
-
-- **A multi-turn Grok run is minutes, not seconds.** Five delegation turns at ~50s each is
-  over four minutes of pure inference before any tool work. Background task types must have
-  a Cloud Tasks `dispatch_deadline` that can contain that — see `docs/07_deployment/SCHEDULERS.md`.
-- **`max_retries=2` multiplies a timeout by three.** Worst case for a single call is 900s.
-
----
-
-## Configuration
-
-```bash
-# .env (local) — loading strips the trailing newline
-XAI_API_KEY=xai-...
-```
-
-```yaml
-# cloudbuild-dev.yaml — Cloud Run mounts the secret VERBATIM
---set-secrets=...,XAI_API_KEY=XAI_API_KEY:latest,...
-```
-
-**Create the secret without a trailing newline**, or the Authorization header becomes illegal and
-every call dies as a bogus "connection error":
-
-```bash
-printf %s "$KEY" | gcloud secrets versions add XAI_API_KEY --data-file=- --project=<PROJECT_ID>
-# verify: the last byte must NOT be 0a
-gcloud secrets versions access latest --secret=XAI_API_KEY --project=<PROJECT_ID> | xxd | tail -1
-```
-
-`ServiceContainer._init_grok` returns `None` and logs `ℹ️ Grok not configured` when the key is
-absent — the bot starts fine without it.
-
----
-
-## Grounding costs real money
-
-Server-side search is not a free bonus. One measured grounded query:
-
-| | Input tokens | Cost |
-|---|---|---|
-| Plain call | ~200 | ~$0.0003 |
-| `use_grounding=True` | ~17,000 across 5 server-side tool calls | ~$0.040 |
-
-JSON mode is suppressed when grounding is on (search and structured output conflict), mirroring
-`OpenAIAdapter`.
-
----
-
-## Prompt overhead xAI adds by itself
-
-Measured 2026-08-14 with a one-character input: **~206 tokens on grok-4.6, ~193 on grok-4.3**
-arrive before anything we send. Identical on chat/completions, so it is server-side, not ours.
-Our `instructions` and tool declarations stack on top linearly. ~128 of it comes back cached.
-The content is not disclosed — the model refuses to reproduce it.
-
-Declaring `{"type": "web_search"}` costs far more: input jumps from ~207 to **~3,900 tokens**
-before any searching happens.
-
-## Token accounting
-
-`_parse_response` follows the repo-wide convention that `UsageMetadata.prompt_tokens` holds
-**uncached input only**:
-
-```
-prompt_tokens     = input_tokens - cached_tokens
-cache_read_tokens = cached_tokens
-```
-
-Reasoning tokens are billed as output and are included in `total_tokens`, which is why
-`total_tokens != prompt_tokens + completion_tokens` on grok-4.6.
-
-`usage.cost_in_usd_ticks` (USD × 1e10) is xAI's own cost figure — useful for reconciling
-`billing.py` against the provider, though nothing reads it today.
-
----
-
-## Testing
-
-Wire tests mock at the SDK boundary `adapter.client.responses.create`
-(see [`ADAPTER_WIRE_TESTING.md`](../../how_to/ADAPTER_WIRE_TESTING.md)):
-
-- `tests/unit/adapters/test_grok_adapter.py`
-- `tests/integration/offline/adapters/` — reuses `OpenAIResponsesCapturingStub`, shared with `OpenAIAdapter`
-- `tests/contracts/adapter_contracts.py` — `"grok"` validators for tool_choice and grounding
+- `src/adapters/grok_adapter.py::GrokAdapter.generate_content`
+- `src/adapters/grok_adapter.py::GrokAdapter._parse_response`
+- `src/adapters/grok_adapter.py::GrokAdapter._extract_turn_anchor`
+- `src/adapters/grok_adapter.py::GrokAdapter.MODEL_TIERS`
+- `src/services/agent_context_builder.py::AgentContextBuilder.resolve_provider_name`
+- `src/composition/service_container.py::ServiceContainer._init_grok`

@@ -179,7 +179,7 @@ Do **not**:
 
 - File naming changed to `YYYY-MM-DD_HH-MM-SS_request/response.txt` (no agent prefix)
 - `tools:` header shows only tool names (was: full ToolDeclaration str())
-- `AgentResponse.history_context` — specialist-driven history persistence (see multi_agent_system § 9)
+- `AgentResponse.history_context` — specialist-driven history persistence (see [agent_registry](../agent_registry/README.md), flow 7)
 - `ConversationHandler`: generic `*_context` loop; `rich_content` appended to `full_text`
 
 ### 2026-03-07 (1) — Centralized request logging

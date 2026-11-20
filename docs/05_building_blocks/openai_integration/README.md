@@ -1,274 +1,128 @@
+<!-- living-doc
+covers:
+  src/adapters/openai_adapter.py
+-->
 # OpenAI Integration
 
-**Status:** Production Ready
-**Date:** 2026-04-03
-**Provider:** OpenAI (Responses API)
-
----
-
-## Overview
-
-Integration of **OpenAI** as a full LLM provider in Alek-Core with 100% feature parity with
-GeminiAdapter and ClaudeAdapter. Any agent (Router, Quick, Smart, etc.) can be routed to OpenAI
-via `config.provider_preference = "openai"` or per-agent override in UserBotConfig.
-
-### Key Features
-
-- **Responses API** — modern API with native tool support and agentic capabilities
-- **Native Function/Tool Calling** — internally-tagged format, strict by default
-- **Web Search** — native `{"type": "web_search"}` with url_citation annotations and agentic search
-- **JSON Mode** — `text.format=json_object` when `response_mime_type="application/json"`
-- **Vision** — base64-encoded images in input content (gpt-5 family supports multimodal)
-- **Large Context Window** — 1M tokens (gpt-5 family)
-- **Hexagonal Architecture** — implements `LLMPort` port; agents are provider-agnostic
-
----
-
-## Architecture
-
-### Components
-
-```
-AgentContextBuilder
-  └─→ ProviderRegistry.get("openai")
-        └─→ OpenAIAdapter(LLMPort)
-              └─→ openai.AsyncOpenAI → client.responses.create()
-```
-
-### File Structure
-
-```
-src/adapters/openai_adapter.py          # Main adapter (Responses API)
-src/composition/service_container.py    # Initialization + registry registration
-src/composition/user_agent_factory.py   # openai_service constructor param
-src/services/agent_context_builder.py   # "openai" added to allowed_providers
-src/config/settings.py                  # OPENAI_API_KEY loading
-```
-
----
-
-## Configuration
-
-### Model Tiers
-
-```python
-MODEL_TIERS = {
-    PerformanceTier.ECO: "gpt-6-luna",          # $0.10/$0.50 — effort "none" when no thinking is requested
-    PerformanceTier.BALANCED: "gpt-6-luna",     # Smart / web_search / maps / tutor
-    PerformanceTier.PERFORMANCE: "gpt-6.1-sol", # $2/$10, cache read 0.05x
-    PerformanceTier.ULTRA: "gpt-6-astra",       # $10/$50 — top of the GPT-6 family
-    # since 2026-10-03; rollback without redeploy: OPENAI_TIER_OVERRIDES / make openai-rollback
-}
-```
-
-For the ULTRA tier rationale see [decisions/openai_ultra_tier_to_gpt_5_5_pro.md](../../04_solution_strategy/decisions/openai_ultra_tier_to_gpt_5_5_pro.md).
-
-Verify current model IDs at https://platform.openai.com/docs/models.
-
-### Provider Capabilities
-
-```python
-CAPABILITIES = ProviderCapabilities(
-    native_tools=True,
-    context_caching=False,
-    vision=True,
-    max_context_window=1047576,
-    supports_system_prompt=True,
-    supports_json_mode=True,
-    native_grounding=True,  # web_search with url_citation annotations
-)
-```
-
-### Sampling Parameter Restriction
-
-The gpt-5 family does not support sampling parameters. Sending `temperature`, `top_p`,
-`frequency_penalty`, or `presence_penalty` returns a 400 error from the API.
-
-`_is_reasoning_model(model_name)` gates this via prefix match:
-
-```python
-_REASONING_PREFIXES = ("gpt-5", "o1", "o3")
-```
-
-Temperature is excluded from `create_kwargs` for any model whose name starts with one of these prefixes.
-
-### Reasoning Effort Floor (`reasoning.effort`)
-
-The unified `thinking` parameter maps to `reasoning.effort` (`low`/`medium`/`high`); grounding without
-an explicit `thinking` forces `"low"` so agentic web search stays enabled. **`gpt-5.5-pro` (ULTRA)
-rejects `"low"`** — its floor is `medium`:
-
-```
-400 Unsupported value: 'low' is not supported with the 'gpt-5.5-pro' model.
-    Supported values are: 'medium', 'high', and 'xhigh'.
-```
-
-The adapter clamps `low → medium` for these models via prefix match, mirroring the sampling gate:
-
-```python
-_MIN_MEDIUM_EFFORT_PREFIXES = ("gpt-5.5-pro",)
-```
-
-The clamp runs after `reasoning_effort` is resolved (so it covers both the explicit `thinking="low"`
-and the grounding-forced `"low"`) and before it is written into `create_kwargs["reasoning"]`. Floor
-map verified via live API probe 2026-07-13 — `gpt-5.4-nano/mini` and `gpt-5.4` accept `low`; only
-`gpt-5.5-pro` floors at `medium`. This surfaced through the Smart provider-rotation path (a hard
-question → ULTRA tier; on a claude 529 the rotation rebuilds Smart on OpenAI at the same tier →
-`gpt-5.5-pro` + `low`). See `decisions/cross_provider_execution_retry.md`.
-
-**GPT-6 (live probe 2026-10-03).** The family rejects `temperature` (`_REASONING_PREFIXES` includes
-`gpt-6`) and `minimal`. Accepted efforts: `gpt-6-luna` / `gpt-6-sol` / `gpt-6-astra`
-`none`…`xhigh`; **`gpt-6.1-sol` floors at `low`** (`_MIN_LOW_EFFORT_PREFIXES`, `none` → `low`).
-`gpt-6-luna` reasons when `reasoning` is omitted, so a caller with no `thinking` gets `effort: none`
-(`_THINKING_OFF_EFFORT`). `none` and `xhigh` are forwarded as-is (they used to collapse to `medium`).
-
-### Default Provider Strategy
-
-OpenAI is added to `allowed_providers` in `AgentProviderStrategy` for Router, Quick, and Smart.
-It is NOT the default — agents default to Gemini unless the user or agent overrides.
-
----
-
-## Environment Variables
-
-**Local Development (.env):**
-
-```bash
-OPENAI_API_KEY=sk-svcacct-...
-```
-
-**Cloud Run (GCP Secret Manager):**
-
-Secret created under project `$PROJECT_ID` (dev).
-`load_settings()` fetches automatically when `.env` value is absent.
-
----
-
-## Feature Details
-
-### Responses API
-
-The adapter uses OpenAI's Responses API (`client.responses.create()`).
-
-Key parameter mapping from LLMPort domain:
-- `system_instruction` → `instructions` (top-level parameter, not in messages)
-- `messages` → `input` (list of items)
-- `max_tokens` → `max_output_tokens`
-- `response_mime_type` / `response_schema` → `text={"format": {"type": "json_object"}}`
-- `store=True` — responses stored in OpenAI dashboard for debugging/analysis. OpenAI does not use stored data for training.
-
-### Web Search (Grounding)
-
-When `use_grounding=True`, the adapter:
-1. Injects `{"type": "web_search"}` into tools
-2. Enables reasoning (`reasoning={"effort": "low"}`) for agentic search — gpt-5.4 defaults
-   to `effort: "none"` which disables iterative search/open_page/find_in_page
-3. Extracts `url_citation` annotations from response output and appends as `*Sources:*` block
-
-Agentic search means the model performs iterative search, opens pages, and searches within
-pages server-side. This is a capability of reasoning models — non-reasoning models do single-pass.
-
-### Tool Calling
-
-Responses API uses **internally-tagged** format (no nested `function` wrapper):
-
-```python
-# Domain format (input)        →  Responses API format (output)
-{"name": "search", ...}        →  {"type": "function", "name": "search", ...}
-```
-
-`tool_choice="required"` is set when `force_tool_use=True`.
-
-Tool call IDs use `call_id` field (Responses API) stored as `thought_signature` in domain ToolCall.
-
-### JSON Mode
-
-When `response_mime_type="application/json"` is set:
-
-```python
-text = {"format": {"type": "json_object"}}
-```
-
-### Multi-turn Tool Calling
-
-`raw_content` stores `response.output` (list of output items) for multi-turn conversations.
-When loading conversation history, output items are passed through directly to the input:
-
-```python
-# Model message with raw_content (list of output items)
-if msg.raw_content is not None and isinstance(msg.raw_content, list):
-    items.extend(msg.raw_content)
-```
-
-Tool results use `function_call_output` type:
-
-```python
-{"type": "function_call_output", "call_id": "...", "output": "..."}
-```
-
-### Prompt Cache Boundary
-
-The `<!-- CACHE_BOUNDARY -->` marker used by ClaudeAdapter is stripped from the system
-instruction before sending to OpenAI.
-
-### Vision
-
-### Files
-
-**Images**: inline base64 as `input_image` (`data:<mime>;base64,<data>`).
-
-**Non-image files** (PDF, DOCX, etc.): uploaded via OpenAI Files API (`client.files.create()`)
-→ referenced by `file_id` in input items as `{"type": "input_file", "file_id": "..."}`.
-Same pattern as Gemini (`client.files.upload()`). Adapter handles upload transparently
-from `file_data.path` (temp file from FileManagementAgent).
-
----
-
-## Deep Research
-
-Removed (2026-11). `OpenAIDeepResearchAdapter` (o3/o4-mini deep-research models, webhook delivery) and its webhook
-route are gone; Claude is the only deep-research provider (`docs/10_rfcs/DEEP_RESEARCH_RFC.md`). The changelog
-entries below are history.
-
----
-
-## Changelog
-
-### 2026-07-13 — reasoning.effort floor gate
-
-`gpt-5.5-pro` rejects `reasoning.effort="low"` (floor `medium`). Added `_MIN_MEDIUM_EFFORT_PREFIXES`
-gate that clamps `low → medium` for it, mirroring the sampling-parameter gate. Fixes HTTP 400s on
-both the direct-primary path and the Smart provider-rotation path landing on OpenAI ULTRA. Floor map
-verified via live API probe. See the Reasoning Effort Floor section above.
-
-### 2026-04-03 — Migration to Responses API
-
-- `client.chat.completions.create()` → `client.responses.create()`
-- `messages` → `instructions` + `input` (Responses API format)
-- Tools: externally-tagged `{"type": "function", "function": {...}}` → internally-tagged `{"type": "function", "name": ...}`
-- Tool results: `{"role": "tool", "tool_call_id": ...}` → `{"type": "function_call_output", "call_id": ...}`
-- Response parsing: `choices[0].message` → `response.output` items + `response.output_text`
-- Web search: native `{"type": "web_search"}` with `reasoning={"effort": "low"}` for agentic search
-- URL citations: `url_citation` annotations extracted and appended as `*Sources:*` block
-- Files: non-image files uploaded via Files API (`file_id`), images inline base64
-- JSON mode: `response_format` → `text.format`
-- `max_completion_tokens` → `max_output_tokens`
-- `store=True` for dashboard visibility (OpenAI does not use stored data for training)
-- `raw_content` stores `response.output` (list) for multi-turn
-- `native_grounding=True` in CAPABILITIES
-- Tests: 31 unit tests rewritten for Responses API
-
-### 2026-03-04 — AsyncJobPort hexagonal refactor
-
-- `DeepResearchPort` → `AsyncJobPort`: port named after the pattern, not the use-case
-- Both adapters are now pure API clients
-- Per-user provider selection via `UserBotConfig.agent_providers["deep_research"]`
-
-### 2026-03-04 — OpenAI Deep Research adapter
-
-- Added `OpenAIDeepResearchAdapter` implementing `AsyncJobPort` via OpenAI Responses API
-
-### 2026-03-03 — Initial Integration
-
-- Created `OpenAIAdapter` with full LLMPort parity (Chat Completions API)
-- Registered in `ServiceContainer` + `ProviderRegistry`
+## Purpose
+
+`OpenAIAdapter` makes OpenAI an LLM provider behind the same port as the Gemini, Claude and Grok adapters
+(`src/ports/llm_port.py::LLMPort`). An agent never knows it is talking to OpenAI: the provider is chosen per agent by
+`AgentProviderStrategy` (`src/services/agent_context_builder.py`) and the user's `UserBotConfig`, and the adapter
+translates the domain request into one call of the Responses API and the answer back into an `LLMResponse`.
+
+What it is not: not the realtime voice adapter, not the transcription adapter, and not deep research (Claude is the only
+deep-research provider; `docs/10_rfcs/DEEP_RESEARCH_RFC.md`, `decisions/openai_deep_research_adapter_deferred.md`).
+OpenAI is the default provider of some agents (`default_provider` entries in `AgentProviderStrategy.STRATEGIES`, e.g.
+`web_search`, `notes`, `tutor`) and an allowed override or failover target for most others.
+
+## Owned data
+
+None stored. The adapter keeps no state between calls. Its configuration:
+
+- `OPENAI_API_KEY` is an optional secret listed in `src/config/settings.py::load_settings` (from `.env`, else Secret
+  Manager). `ServiceContainer._init_openai` (`src/composition/service_container.py`) builds the adapter only when the
+  key is set and `ServiceContainer.__init__` registers it in the `ProviderRegistry` under `"openai"`; without a key
+  OpenAI is simply absent and the bot runs on the other providers. The drive indexer builds its own adapter
+  (`src/composition/drive_model_setup.py`); without the key its OpenAI-backed drive models are unavailable.
+- `OPENAI_TIER_OVERRIDES` (`tier=model,tier=model`) is an optional knob read with `os.getenv` in
+  `OpenAIAdapter.__init__`, so it needs no `load_settings` entry. It remaps `OpenAIAdapter.MODEL_TIERS` without a
+  redeploy; a malformed pair is logged and skipped (`_parse_tier_overrides`), never fatal. `make openai-model`
+  shows it, `make openai-rollback` sets the previous model map, `make openai-forward` removes it.
+- The tier to model map is the class constant `OpenAIAdapter.MODEL_TIERS`; why the models are what they are:
+  `decisions/model_refresh_2026_10.md`, `docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md`. Prices live in
+  `src/domain/billing.py`, not here (`decisions/openai_gpt56_price_cut.md`).
+
+## Flows
+
+**One request** (`OpenAIAdapter.generate_content`):
+
+1. The `PROMPT_CACHE_BOUNDARY` marker is removed from the system instruction. The text before it is kept as the seed of
+   the cache key (step 8).
+2. `USER_TURN_SYSTEM_ANCHOR` is searched backwards through all messages, found in the newest user message that holds it
+   and cut out of that message. It moves into a leading `developer` item together with the persona anchor
+   (`build_persona_anchor`), because the developer role outweighs user text (`decisions/openai_personality_grounding.md`).
+   Searching only the last message would miss it from the second delegation turn on, when the last message is a tool
+   result; the loop in `generate_content` exists for that.
+3. Messages become Responses API input items (`_convert_input`); the system instruction goes to `instructions`, not
+   into the items. A model message with `raw_content` (the earlier `response.output` list) is replayed as is; a tool
+   result becomes `function_call_output` whose `call_id` is found from the preceding call (`_find_call_id`). The
+   `call_id` is stored in `ToolCall.thought_signature`.
+4. Tools become internally tagged function tools (`_convert_tools`), `strict` always `False`, and `tool_choice` is
+   `required` for `force_tool_use`, else `auto`. With `use_grounding` the native `{"type": "web_search"}` tool is
+   prepended.
+5. Output format (`text.format`): grounding sends none; a dict `response_schema` sends `json_schema` with
+   `strict=False` (`_to_openai_json_schema` lower-cases Gemini-style `OBJECT`/`STRING` types); `application/json`
+   alone sends `json_object` plus a short `developer` item asking for JSON, since the API demands the word "json" in the
+   input.
+6. Reasoning effort (see Invariants), plus a reasoning summary for the PERFORMANCE and ULTRA tier models only.
+7. `store` is `request.allow_provider_storage`; callers such as the drive agents set it to `False`.
+8. Caching: with `cache_config.enabled`, models in `_DEPRECATED_RETENTION_PREFIXES` get `prompt_cache_key`
+   (`_prompt_cache_key`, a hash of the static prefix, sent via `extra_body`); others get `prompt_cache_retention`.
+9. The call runs under the request timeout twice: as the SDK `timeout` and as an outer `asyncio.wait_for` that bounds
+   total wall time including SDK retries. SDK errors map to the `LLM*Error` types (`src/domain/exceptions.py`) that
+   `BaseAgent._call_llm` uses to decide on failover: 429 rate limit, 503 unavailable, other 5xx server error, connection
+   error network error, 4xx client error. A 4xx whose code is in `_ACCOUNT_ERROR_CODES` (quota, billing) is
+   `LLMAccountError`, an account problem and not a failover trigger.
+
+**Response** (`_parse_response`): text is `output_text`; `url_citation` annotations are appended once each as a
+`*Sources:*` block so downstream agents see the URLs; function calls become `ToolCall`s, and unparsable (truncated)
+arguments become `{"_parse_error": "truncated_json", ...}` rather than an exception. `finish_reason` comes from
+`status` and `incomplete_details` (`_map_finish_reason`). `raw_content` is `response.output`, which step 3 replays.
+
+**Files** (`_file_input_part`): an image becomes inline `input_image`, any other file inline `input_file` with a
+base64 data URL; there is no Files API upload (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §24.2). A part that cannot be
+read or has no content raises `LLMClientError`, because a request silently missing its file answers about nothing. A
+file part carrying a `ref` key is skipped. What the models read natively (images, PDF) is `native_formats`.
+
+## Invariants and traps
+
+- **No sampling parameter is ever sent** (`decisions/temperature_removed.md`). `_REASONING_PREFIXES` gates only
+  `reasoning.effort` (`_is_reasoning_model`); other models get no `reasoning` block at all.
+- **Effort rules are per model and verified by live probes, not by documentation.** `thinking` values in `_EFFORTS`
+  pass through, anything else becomes `medium`. Grounding without `thinking` forces `low`, so agentic web search stays
+  on; with both, `thinking` wins. A model that reasons when `reasoning` is omitted is given an explicit effort when the
+  caller asks for none (`_THINKING_OFF_EFFORT`, exact model ids). Two floors clamp upward before the call:
+  `_MIN_LOW_EFFORT_PREFIXES` (`none` becomes `low`) and `_MIN_MEDIUM_EFFORT_PREFIXES` (`none` and `low` become
+  `medium`); without them the API answers 400. The floors matter on the provider-rotation path, where a Smart run
+  that lost its primary provider is rebuilt on OpenAI at the same tier (`decisions/cross_provider_execution_retry.md`).
+  Tests: `tests/unit/adapters/test_openai_adapter.py`. A new model: probe its accepted efforts first and extend the
+  constants.
+- **Tools are sent with `strict=False` explicitly.** Omitted, the API defaults to strict and rewrites the schema (every
+  property required); with the delegation tool's shared `context` object the model then streamed whitespace for
+  minutes (`decisions/delegate_tool_contract_and_strict.md`).
+- **Cache legs must not overlap.** OpenAI's `input_tokens` already includes `cached_tokens` and `cache_write_tokens`,
+  and both sit in `input_tokens_details`. `_parse_response` subtracts both so `prompt_tokens`, `cache_read_tokens` and
+  `cache_creation_tokens` are disjoint; subtracting only the read leg billed written tokens twice
+  (`decisions/openai_cache_write_tokens_location.md`, `decisions/billing_cache_write_and_voice_seconds.md`).
+- **`CAPABILITIES.context_caching` is `True` while `supports_caching()` returns `False`.** The flag is what counts:
+  `PromptCacheStrategy.resolve` (`src/services/prompt_cache_strategy.py`) gates on it and `CachingLLMProxy` injects the
+  resulting `cache_config` that step 8 consumes; consolidation also requires it in `AgentProviderStrategy`.
+  `supports_caching()` has no caller beyond the proxies delegating it. Do not set the flag to `False` to match.
+- **Grounding and JSON mode exclude each other** (the API answers 400), hence step 5; a grounded call that needs
+  structured output has to parse text.
+- **`call_id` carries the tool-call identity.** `_find_call_id` raises `ValueError` when no earlier call matches a tool
+  result; a history that lost its model turn cannot be replayed on OpenAI.
+- The effort gates match by `startswith`, so an unknown future model with a known prefix inherits that family's rules;
+  `_THINKING_OFF_EFFORT` and the summary gate match exact ids and need an entry per model. Check them when a new family
+  ships.
+
+## Links
+
+- `docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md` (probe results, caching decision), `decisions/model_refresh_2026_10.md` (current
+  tier map), `decisions/openai_ultra_tier_to_gpt_5_5_pro.md` (earlier ULTRA choice, kept for the effort-floor origin).
+- `decisions/openai_personality_grounding.md`, `decisions/delegate_tool_contract_and_strict.md`,
+  `decisions/temperature_removed.md`, `decisions/openai_cache_write_tokens_location.md`,
+  `decisions/openai_gpt56_price_cut.md`, `decisions/cross_provider_execution_retry.md`.
+- `docs/10_rfcs/EXTERNAL_FILES_RFC.md` (native formats), `docs/how_to/ADAPTER_WIRE_TESTING.md` (mandatory protocol for
+  changing this adapter), `src/adapters/CLAUDE.md`, `docs/05_building_blocks/provider_resolution/README.md`.
+- Decision records are in `docs/04_solution_strategy/decisions/`.
+
+## Where to start reading
+
+- `src/adapters/openai_adapter.py::OpenAIAdapter.generate_content` - the whole request path.
+- `src/adapters/openai_adapter.py::OpenAIAdapter._convert_input` - history and tool-result replay.
+- `src/adapters/openai_adapter.py::OpenAIAdapter._parse_response` - citations, tool calls, usage legs.
+- `src/adapters/openai_adapter.py::OpenAIAdapter.MODEL_TIERS` - tier map and the effort-gate constants beside it.
+- `src/services/agent_context_builder.py::AgentProviderStrategy` - which agents may use OpenAI.
+- `src/composition/service_container.py::ServiceContainer._init_openai` - wiring.

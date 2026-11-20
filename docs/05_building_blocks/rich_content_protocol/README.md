@@ -24,7 +24,7 @@ This document MUST be updated when:
 
 - **RFC:** [../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md](../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md)
 - **Rich Content RFC (original):** [../../10_rfcs/RICH_CONTENT_RFC.md](../../10_rfcs/RICH_CONTENT_RFC.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
+- **Agent Registry:** [../agent_registry/README.md](../agent_registry/README.md)
 
 ---
 

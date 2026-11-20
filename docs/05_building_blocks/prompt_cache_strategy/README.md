@@ -22,7 +22,7 @@ This document MUST be updated when:
 
 - **RFC:** [../../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md](../../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md)
 - **Provider Resolution:** [../provider_resolution/README.md](../provider_resolution/README.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
+- **Agent Registry:** [../agent_registry/README.md](../agent_registry/README.md)
 
 ---
 
