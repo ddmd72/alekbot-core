@@ -2,8 +2,8 @@
 # deploy-main -> main-public-iam. Only after that do the independent rest run in PARALLEL (queue -> indexer -> its IAM;
 # the research job; relay -> its IAM; the scheduler script after the queue it feeds), so a drive or relay failure can
 # never stop a bot hotfix: every one of them waits for main-public-iam, and none of them is a dependency of main.
-# The sandbox steps (light family, then render family) stay serial and wait for all four branches, exactly as before
-# (after every drive step).
+# The sandbox steps form two families (light, render): each is serial inside, and both wait for all four branches
+# (after every drive step); the two families do not wait for each other.
 steps:
   # Pull previous image to use as build cache (|| true so first deploy doesn't fail)
   - name: "gcr.io/cloud-builders/docker"
@@ -320,8 +320,8 @@ steps:
       - "SERVICE_URL=$_SERVICE_URL"
 
   # Untrusted-content sandbox, light (parse) family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12, §11). Same rules as the render
-  # family below: after every drive step, each step a no-op while _SANDBOX_LIGHT_SA is empty. The render steps stay the
-  # last four.
+  # family below: after every drive step, each step a no-op while _SANDBOX_LIGHT_SA is empty. The two families run in
+  # parallel; neither waits for the other.
   - name: "gcr.io/cloud-builders/docker"
     id: "sandbox-light-pull"
     waitFor: ["indexer-public-iam", "deploy-research-job", "relay-public-iam", "scheduler-jobs"]
