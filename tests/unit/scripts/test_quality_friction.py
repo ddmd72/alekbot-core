@@ -70,7 +70,8 @@ def test_bookkeeping_counts_existing_ledgers_and_mechanical_branch_commits():
     not_prefix = BranchCommit("p" * 40, "fix: test(mechanical) in the middle", (f(TEST_A, added=40),))
     row = one_week(
         unit(1, f(SRC, added=200), f(LEDGER, added=2), f("tests/unit/new_list.txt", "A", added=70),
-             f("tests/fixtures/alpha.txt", added=90), branch=(mechanical, other, not_prefix)),
+             f("tests/fixtures/alpha.txt", added=90), f(TEST_A, added=43, deleted=3),  # TEST_A existed: M
+             branch=(mechanical, other, not_prefix)),
         unit(2, f(LEDGER, added=500)),  # no src change: outside bookkeeping
     )
     assert (row["existing_ledger_lines_changed"], row["mechanical_test_lines_changed"]) == (2, 6)

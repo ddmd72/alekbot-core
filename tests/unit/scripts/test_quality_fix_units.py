@@ -32,7 +32,7 @@ def unit(n: int, title: str, *files: FileChange, at: datetime = AT, pr: int | No
     ("fix(queue): keep order", True),
     ("fix!: drop the old field", True),
     ("fixture: add a sample", False),
-    ("Fix the queue", False),
+    ("Fix the queue", True),  # case-insensitive, whitespace after `fix`
     ("refactor: fix the queue", False),
     ("fixes: the queue", False),
     (" fix: the queue", False),
@@ -98,7 +98,8 @@ def test_fix_record_facts_and_an_add_only_fix():
         "sha": u.sha, "date": "2026-01-20T12:00:00+00:00", "pr": 40, "title": "fix(queue): keep order",
         "layers": ["entry", "src/services"], "src_lines_changed": 8,
         "tests_added": 3, "existing_test_files_modified": 1, "has_regression_test": True,
-        "fixed_lines_age_days": {"min_age_days": None, "max_age_days": None, "blamed_lines": 0},
+        "fixed_lines_age_days": {"min_age_days": None, "max_age_days": None, "blamed_lines": 0,
+                                 "min_age_on_main_days": None, "max_age_on_main_days": None},
         "introduced_by": [],
     }
     assert fix_record(unit(2, "fix: x", FileChange("src/alpha.py", "M", 1, 1)), [], [])["has_regression_test"] is False
@@ -216,7 +217,9 @@ def test_fix_units_end_to_end(repo, monkeypatch, capsys):
     assert (rec["src_lines_changed"], rec["tests_added"], rec["existing_test_files_modified"]) == (4, 1, 0)
     assert rec["has_regression_test"] is True
     # line 3 came from the branch commit (10 days before the fix), line 8 from the initial commit (15 days)
-    assert rec["fixed_lines_age_days"] == {"min_age_days": 10.0, "max_age_days": 15.0, "blamed_lines": 2}
+    # on main: line 3 since the merge (7 days before the fix), line 8 on the first-parent chain itself (15 days)
+    assert rec["fixed_lines_age_days"] == {"min_age_days": 10.0, "max_age_days": 15.0, "blamed_lines": 2,
+                                           "min_age_on_main_days": 7.0, "max_age_on_main_days": 15.0}
     # one line each: the older unit first; the branch commit maps to the merge that brought it in
     assert [(d["sha"], d["title"]) for d in rec["introduced_by"]] == [
         (repo["initial"], "feat(queue): add alpha"), (repo["merge"], "feat(drive): change a value")]
@@ -241,9 +244,9 @@ def test_unknown_ref_and_shallow_history_exit_2(repo, tmp_path, monkeypatch, cap
     assert (code, out) == (2, "") and "shallow" in err
     code, _, err = _run(fix_units.main, ["--since", "2026-01-05", "--until", "2026-01-26"], capsys)
     assert code == 2 and "shallow" in err
-    # a window after the oldest reachable commit is covered by the shallow clone
-    code, out, _ = _run(fix_units.main, ["--since", "2026-01-21", "--until", "2026-01-26"], capsys)
-    assert code == 0 and json.loads(out)["fix_units"] == []
+    # a window after the oldest reachable commit is refused too: blame would stop at the shallow boundary
+    code, out, err = _run(fix_units.main, ["--since", "2026-01-21", "--until", "2026-01-26"], capsys)
+    assert (code, out) == (2, "") and "shallow" in err and len(err.strip().splitlines()) == 1
 
 
 # ------------------------------------------------------------------------------------------- review fixes (fast)
