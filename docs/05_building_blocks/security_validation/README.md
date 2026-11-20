@@ -27,9 +27,9 @@ untrusted unless a caller passes `TrustZone.TRUSTED`.
 
 ## Owned data
 
-None. The only trace pattern validation leaves is the `validation` entry (risk level, score, patterns, action) that
-`Token.create` writes into a prompt token's `metadata`. The turn key is never stored: it is a local variable of one
-orchestrator run (`src/agents/core/smart_response_agent.py::SmartResponseAgent.execute`,
+None. The only trace pattern validation leaves is the `validation` entry that `Token.create` writes into a prompt
+token's `metadata`. The turn key is never stored: it is a local variable of one
+orchestrator attempt (`src/agents/core/smart_response_agent.py::SmartResponseAgent._run`,
 `src/agents/core/quick_response_agent.py::QuickResponseAgent.execute`).
 
 ## Flows
@@ -37,8 +37,7 @@ orchestrator run (`src/agents/core/smart_response_agent.py::SmartResponseAgent.e
 ### Pattern validation
 
 `SecurityPort.validate(text, context, zone)` (`src/ports/security_port.py::SecurityPort`) returns a
-`ValidationResult` (`src/domain/prompt_v3/security.py::ValidationResult`: `sanitized_text`, `risk_level`,
-`action_taken`, `patterns_detected`).
+`src/domain/prompt_v3/security.py::ValidationResult`.
 
 - `src/adapters/security/regex_adapter.py::RegexSecurityAdapter.PATTERNS` holds the regexes by level. CRITICAL and HIGH
   raise `ValueError` (action `blocked`); MEDIUM replaces every matching pattern with `[REDACTED]` (action `sanitized`);
@@ -46,8 +45,8 @@ orchestrator run (`src/agents/core/smart_response_agent.py::SmartResponseAgent.e
   same full scan (`tests/unit/adapters/security/test_regex_adapter.py::test_semi_trusted_zone_still_validates`).
 - `src/adapters/security/composite_adapter.py::CompositeAdapter` runs its adapters, turns an adapter's `ValueError`
   into a CRITICAL `blocked` result, and aggregates by strategy (`worst_case`, `majority_vote`, `all_pass`).
-- Production wiring is one `CompositeAdapter([RegexSecurityAdapter()], "worst_case")`, built in
-  `src/composition/service_container.py::ServiceContainer` and in `src/composition/prompt_assembly_setup.py`.
+- Every production port is a `CompositeAdapter([RegexSecurityAdapter()], "worst_case")`; there are several instances,
+  built in `src/composition/service_container.py::ServiceContainer` and in `src/composition/prompt_assembly_setup.py`.
 - `src/adapters/security/llm_adapter.py::LLMSecurityAdapter` and
   `src/adapters/security/external_api_adapter.py::ExternalAPIAdapter` are placeholders: each hands the call to the
   `SecurityPort` injected as `fallback` (they are not wired in production).
@@ -67,7 +66,8 @@ Callers, each applying its own policy to the result:
 Spec: `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`. Steps of one turn:
 
 1. The orchestrator draws a key, three words of `src/domain/system_fingerprint.py::WORDS`, with
-   `src/infrastructure/turn_key.py::draw_turn_key` (`secrets`), once per `execute`. Tests inject their own source.
+   `src/infrastructure/turn_key.py::draw_turn_key` (`secrets`), once per orchestrator attempt (Smart: per `_run`,
+   so a provider rotation gets a fresh key; Quick: per `execute`). Tests inject their own source.
 2. `src/services/prompt_v3/prompt_assembly_service.py::PromptAssemblyService` renders the key as the `session_key`
    block (`system_fingerprint.py::render_session_key`), the last dynamic block after the cache boundary, so it is
    never cached. The static `provenance` rule (`system_fingerprint.py::PROVENANCE_CLASS`) is kept at the head of the
@@ -76,8 +76,9 @@ Spec: `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`. Steps of one turn:
    engine's wrap-up and meanwhile notes, Smart's running-jobs header (`src/infrastructure/turn_fingerprint.py::keyed_header`),
    Quick's fallback note.
 4. Look-alikes lose their tag: loaded history (`turn_fingerprint.py::neutralize_history`, a copy; persisted text is
-   unchanged), tool results and the owner's lines inside keyed notes (`src/infrastructure/delegation_engine.py`, via
-   `src/domain/untrusted_text.py::neutralize_system_tag`).
+   unchanged), tool results (`src/infrastructure/delegation_engine.py`) and the owner's lines that follow a keyed header, outside
+   its tag (meanwhile note: `delegation_engine.py`; running jobs: `turn_fingerprint.py::keyed_header`), all via
+   `src/domain/untrusted_text.py::neutralize_system_tag`.
 5. Model output is scrubbed of the key: tool-call names and arguments, values and dict keys
    (`delegation_engine.py::_scrub_tool_calls`), and the final reply (text, structured data, link list, history
    summary) via `turn_fingerprint.py::scrub_reply`. `system_fingerprint.py::scrub` matches the key's three words in
@@ -88,12 +89,14 @@ Spec: `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`. Steps of one turn:
 - **A new text path carrying owner or model words into a prompt must call the port.** Nothing enforces it
   structurally; `tests/unit/services/prompt_v3/test_prompt_assembly_service.py::test_security_validation_called_for_runtime_data`
   covers the assembly path only.
-- **`Token.create` validates in the TRUSTED zone**, so the regex adapter skips the scan and prompt tokens are in
-  practice not pattern-checked (`tests/unit/domain/prompt_v3/test_token.py` asserts the zone). Token safety rests on
-  admin control of the token store, not on this block.
+- **`Token.create` calls the port on every token build, the repository's every read included, but in the TRUSTED
+  zone**, so the regex adapter skips the scan, the HIGH/CRITICAL rejection in `Token.create` never fires, and prompt
+  tokens are in practice not pattern-checked (`tests/unit/domain/prompt_v3/test_token.py` asserts the zone). This block gives tokens no
+  protection.
 - **Also unvalidated:** orchestrator-built `pending_notes` in the prompt (`PromptAssemblyService`, commented as TRUSTED);
-  and, in the code, model output is not passed through `SecurityPort` anywhere. The old "output" and "RAG" layers are
-  not implemented.
+  and model output is not passed through `SecurityPort` anywhere. Retrieval returned as tool results (memory or drive
+  search through delegation) is not validated either; only the router's semantic-lens facts, which become the
+  query-specific context, are.
 - **`ValueError` is the block signal**, not a result flag. A caller that forgets `except ValueError` turns an
   injection phrase in user history into a failed turn; the three refusing services above catch it.
 - **MEDIUM is a rewrite, not a refusal** in assembly, but skills, memory facts and notes treat any non-`passed`
@@ -101,11 +104,11 @@ Spec: `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`. Steps of one turn:
 - **`majority_vote` can outvote a block**: a blocked adapter raises only when the majority risk level is CRITICAL
   (`CompositeAdapter._majority_vote`). Only `worst_case` is wired; do not switch strategy without reading it.
 - **The key lives only in locals.** It must never reach `self.*`, `message.context` or engine context
-  (comment at `SmartResponseAgent.execute`); a stored key would survive its turn. `require_valid_key` never echoes it.
+  (comment at `SmartResponseAgent._run`); a stored key would survive its turn. `require_valid_key` never echoes it.
 - **Keyed notes keep their text word for word**; `wrap_system` adds lines around it, never inside, because protocol
   tokens may quote the note verbatim.
-- **Scrubbing is spelling-tolerant, wrapping is not**: only the exact `<system_note key="…">` form counts as the
-  system's; every other look-alike is neutralised.
+- **Scrubbing is spelling-tolerant, wrapping is not**: only notes that code builds in the current turn keep the
+  `<system_note key="…">` form; the tag is neutralised everywhere else (history, tool results, owner lines, output).
 - Code-written text sent into the user channel uses `wrap_system` with the turn's key; tool results say
   `Tool note:` or `Tool error:` (root `CLAUDE.md` traps).
 
