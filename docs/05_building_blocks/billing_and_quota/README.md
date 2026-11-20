@@ -22,11 +22,11 @@ honest.
 What it is not: **it is not a cap.** The owner dropped the monthly cap and ruled the daily limit advisory: crossing it
 posts one alert and nothing is refused (`src/adapters/firestore_quota_service.py::FirestoreQuotaService`). A counter that
 is wrong must never switch the bot off, which is a worse failure than an overspent day. `check_quota` on the account
-repository exists and has no caller, by decision.
+repository exists and has no caller (kept unwired on purpose, `billing_execution_scoped_ledger.md`).
 
-The account counters are also **not a historical source.** They were inflated before the ledger became per-execution and
-mispriced before it became per-model, and the old values were left as they were. For any past cost question use the
-BigQuery `prompt_content` table, never the counters.
+The account counters are also **not a historical source.** Older values carry earlier accounting defects and were left
+as they were (the decision records list which). For LLM token cost within the last 30 days use the BigQuery
+`prompt_content` table, never the counters; it holds LLM-call rows only, so image and video spend has no row there.
 
 ## Owned data
 
@@ -43,11 +43,9 @@ writes: `src/domain/billing.py::AccountUsageStats`.
 - Written by `FirestoreAccountRepository.increment_account_usage`, only; read by the daily summary and by the increment
   itself.
 
-**The price tables** are constants in `src/domain/billing.py`, the one place a price is changed:
-`_PRICING_PER_MILLION_TOKENS` (text and embedding models, with cache multipliers), `_IMAGE_TIER_PRICING_USD` and
-`_EXTERNAL_COST_PER_UNIT` (image and video services), `_REALTIME_PRICING_PER_MILLION_TOKENS`,
-`_REALTIME_PRICING_PER_SECOND` and `_REALTIME_PRICING_PER_CALL` (voice), `_TRANSCRIPTION_PRICING` (audio files).
-`BATCH_DISCOUNT` halves a Gemini batch request.
+**The price tables** are constants in `src/domain/billing.py`, the one place a price is changed: every price table and rate lives there (text and
+embedding models with their cache multipliers, image and video services, the realtime voice legs, audio transcription),
+and `BATCH_DISCOUNT` is the discount a Gemini batch request gets.
 
 **The price schedule** is `scripts/validation/price_consensus.py::PRICE_SCHEDULE`: dated price changes the providers have
 announced, and `HOLD_FINAL_PRICE`, the models whose table row deliberately holds the final price of a promotion. It is
@@ -59,7 +57,7 @@ Nothing else is stored. The ledger lives in memory for one unit of work.
 
 ### Pricing a call
 
-`src/domain/billing.py::calculate_cost` prices the three non-overlapping legs of a request (uncached input, output,
+`src/domain/billing.py::calculate_cost` prices the four non-overlapping legs of a request (uncached input, output,
 cache read, cache write) at the model's row. **An unknown model prices at 0.0, silently** (the same fail-open contract in
 `calculate_external_cost` and `calculate_realtime_cost`), which is why a model is added to the table before any tier
 points at it. `src/services/cost_calculator.py` is a re-export kept for old import paths; new code imports the domain.
@@ -90,9 +88,7 @@ Indexers, the fact profile step and some web routes embed text with no agent aro
 each response's prompt tokens to the ledger in scope (`src/adapters/gemini_embedding_adapter.py::_record_embedding_usage`).
 `src/utils/billed_scope.py::billed_scope` opens a ledger for one natural unit (a drive tick, an email page, a fact profile
 run, a Cabinet request, an MCP call, a note write) and records one `record_usage` per model leg when the block ends,
-also on error. Callers: `src/services/drive_indexing_service.py`, `src/services/email_card_indexer.py`,
-`src/services/fact_profile_service.py`, `src/services/companion_extraction_service.py`,
-`src/services/drive_note_service.py`, `src/web/user_cabinet_app.py`, `src/composition/drive_mcp_setup.py`.
+also on error. Grep `billed_scope(` for the callers.
 
 A scope opened inside an agent execution replaces its ledger for the block, so the inner scope bills its own usage and
 the agent the rest, nothing twice. With no scope at all, embedding tokens go to a process tally
@@ -148,7 +144,7 @@ usage of every account that had activity, through the same alert sink. It reads 
 model live, reads two voting catalogs (LiteLLM and models.dev), compares them with the table, and writes a gitignored
 report. OpenRouter is shown for reference only: it is a reseller, and a lower price there is a lead, not a correction.
 The verdict rule is the pure module `scripts/validation/price_consensus.py` (`CONFIRMED`, `CONSENSUS_DIFFERS`,
-`SCHEDULE_DRIFT`, `SCHEDULE_STALE`, and the rest of `NEEDS_REVIEW`). **A dated `PRICE_SCHEDULE` entry outranks catalog
+`SCHEDULE_DRIFT`, `SCHEDULE_STALE`; `NEEDS_REVIEW` is the set that needs a human). **A dated `PRICE_SCHEDULE` entry outranks catalog
 consensus**, because both catalogs publish today's price with no expiry and lag an announced change by days. Act on
 `consensus_differs` and `schedule_drift`; verify everything else at the provider.
 
@@ -158,36 +154,40 @@ output and cache) that reads the prices from `src/domain/billing.py`, so its ari
 ## Invariants and traps
 
 - **Accumulation is per execution, never per agent instance.** An agent instance is a per-user singleton and a tool
-  batch runs executions of it concurrently; instance counters once billed running totals (several times the real
-  spend) and lost usage. The ContextVar is the isolation, and `ledger_scope`'s `reset` is load-bearing: an agent
+  batch runs executions of it concurrently; instance-level counters pool unrelated executions and bill running totals. The ContextVar is the isolation, and `ledger_scope`'s `reset` is load-bearing: an agent
   awaited inline has no task boundary, so without the reset its ledger would stay current for the caller. No ledger in
   scope means no accumulation, not a lazily created unowned ledger. Test:
   `tests/unit/agents/test_base_agent_billing_isolation.py`.
 - **The price belongs to the model that ran the turn.** The ledger holds one leg per model; nothing prices an execution
-  with the agent's default model. Smart resolves its tier per request and `fetch_url` runs on a cheaper tier, so the
-  default under- and over-reported. Test: `tests/unit/domain/test_billing_accounting.py`.
+  with the agent's default model. an execution can span several models (tier escalation, downgrade, failover), which one
+  default price cannot express. Test: `tests/unit/domain/test_billing_accounting.py`.
 - **An unknown model costs 0.0 without an error.** Add a price row before any tier or config points at a model.
 - **Hold the final price of a promotion; never under-report.** `HOLD_FINAL_PRICE` members keep the standard price in the
   table while a promotion lasts, so spend reads high until it ends; the audit states that instead of calling it drift.
   A member must also have a `PRICE_SCHEDULE` entry, and a scheduled promotion that ends makes the verdict plain
   `confirmed`. Remove entries once the catalogs carry the change.
-- **The table models one price per model.** Long-context tariffs (OpenAI and xAI double input past a threshold) are not
+- **The table models one price per model.** Long-prompt tiers (OpenAI, xAI and an Anthropic Haiku tier have them) are not
   modelled, so very long requests under-report.
 - **Provider usage shapes differ; the adapter must normalise.** OpenAI cache writes are a subset of input; Anthropic's
   legs are separate; Gemini has no write leg. xAI voice `billable_audio_seconds` is a **running total**, so
   `src/adapters/xai_realtime_adapter.py::XaiRealtimeAdapter` emits only the increment and `VoiceCallBuffer` stays
   provider-agnostic and sums. Known remaining under-reports: silence between the last reply and hang-up, and xAI text
   input priced per token where the provider prices per event.
+- **A second, dormant writer bypasses the quota service.** `src/adapters/firestore_user_repo.py::FirestoreUserRepository.increment_usage`
+  forwards to `increment_account_usage`; nothing calls it today. Calling it would count usage without ever announcing the
+  day's crossing, which breaks the rule above.
+- **A voice `x_search` call is priced as an assumed item count at the profile rate** (`_XAI_X_SEARCH_ASSUMED_ITEMS_PER_CALL`):
+  an upper estimate, not a measurement.
 - **Cost is not tokens.** A per-second voice leg is priced but kept out of the token counter (`realtime_token_count`).
 - **Speech-to-text of a chat voice message is not billed**, deliberately, as infrastructure overhead, with a recorded
   list of revisit triggers. Opened audio files (`DocumentService._audio`) are billed.
 - **Embeddings are billed from the SDK's own `usage_metadata`**, so the Gemini SDK version floor in `requirements.txt` is
   load-bearing; a response without usage logs a warning and is not billed.
-- **The increment stays lock-free.** Reintroducing a read-modify-write transaction on the hot path made concurrent
+- **The increment stays lock-free.** A read-modify-write transaction on the hot path makes concurrent
   executions abort each other and silently lose usage. The mapping of server transform results to field paths is by
   sorted path, not insertion order (`FirestoreAccountRepository._applied_value`); a mismatch falls back to an estimate
-  with a warning. Test: `tests/unit/adapters/test_quota_service_kit.py`,
-  `tests/unit/adapters/test_firestore_quota_service_alert.py`.
+  with a warning. Test: `tests/unit/adapters/test_quota_service_kit.py` (crossing once, also concurrently),
+  `tests/unit/adapters/test_account_store_kit.py` (lock-free increment, rotation).
 - **A new price constant belongs only in `src/domain/billing.py`.** Provider-model-shaped string literals are
   restricted elsewhere (REQ-ARCH-12); callers reference the exported constants.
 - **Never write a price into a doc.** Name the constant; the table moves under you.
