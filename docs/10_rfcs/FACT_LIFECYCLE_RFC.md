@@ -878,7 +878,7 @@ the rollout notes (ops), step M.
   `none` when unsure ("when unsure, keep the fact") and accepts a filtered set, so that documents an old revision rewrote in a
   rollback window (they lose `expiry_kind`, `stale_since` and `lifecycle_events` and keep a stale `expires_at`, which the
   janitor skips) can be re-classified after the roll-forward.
-- **Deploy-step script (Q6 a):** `scripts/migration/fact_s3_stamp_legacy_stale.py` stamps `stale_since = now` and one event
+- **Deploy-step script (Q6 a):** `fact_s3_stamp_legacy_stale.py` (in `scripts/migration/`, retired after it ran) stamped `stale_since = now` and one event
   (`migration`, "legacy stale, stamped at S3") on stale facts without one (2 live on 2026-10-23), nothing else, under the scan's
   `update_time`; its dry run prints counts only and writes ids and text to `scripts/memory/`; `last_updated` is left alone, the
   only age signal those facts have.
@@ -1053,7 +1053,7 @@ by the "set aside lately" list and the digest. `vector` is read by the review's 
 **S5 as built (2026-10-27).** Classify, the audit's expiry classes and the bench 7 fix are built; classify was applied on 2026-10-27, and the
 janitor has written since that day's deploy.
 
-- *The script.* `scripts/migration/fact_s5_classify.py`, owner-run, with its pure rules in `fact_s5_classify_rules.py`. Two modes.
+- *The script.* `fact_s5_classify.py` (in `scripts/migration/`, retired after it ran), owner-run, with its pure rules in `fact_s5_classify_rules.py`. Two modes.
   **Dry run** (the default) scans the current facts (reads only), checks the live prompt (below), asks the live consolidation
   agent, and writes the owner's report and a replay plan under `scripts/memory/`; it writes nothing to the database. **Apply**
   (`--apply <plan>`) reads a plan, makes no model call and costs nothing. Scope: a current fact with an account that is not
