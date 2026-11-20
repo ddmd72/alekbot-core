@@ -23,4 +23,5 @@ jobs:
       - name: Check the PR against the living docs
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: python -m scripts.ci.living_docs_pr_check --base origin/${{ github.base_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: python -m scripts.ci.living_docs_pr_check --base "origin/$BASE_REF"
