@@ -39,7 +39,7 @@ grants for Gmail, Google Tasks, Microsoft To Do and the drives, how a consent is
 when lost).
 
 The tenant is the `BillingAccount`: a user registered through the Cabinet gets a new account of their own and is its
-owner, and every record that has an owner is addressed through `account_id`. A user can later move into another
+owner. A user can later move into another
 account through a team invite.
 
 What it is not: the web routes, cookies and JWTs of the Cabinet sign-in are [oauth_web_api](../oauth_web_api/README.md);
@@ -56,14 +56,15 @@ Firestore, `us-production` database, environment prefix on collection names (`En
   provider data; its `email` is what a session renewal re-checks), `platform_identities` (platform name to the
   platform's user id), `account_id`.
 - **Accounts** (`EnvironmentConfig.account_collection_name`, `FirestoreAccountRepository`): the `BillingAccount`,
-  its `iam_policy` (user id to role value: `owner`, `member`, `viewer`, `Role`) and `account_defaults`.
+  its `iam_policy` (user id to the stored `Role` value) and `account_defaults`.
 - **Whitelist** (`EnvironmentConfig.domain_whitelist_collection`, singleton document `config`,
   `FirestoreWhitelistRepository`): allowed emails and allowed domains. No cache; a missing document is an empty list,
   which allows nobody.
 - **Invite codes** (`EnvironmentConfig.domain_invite_codes_collection`, `FirestoreInviteCodeRepository`):
   `InviteType.SELF_LINK` or `TEAM_INVITE`, the account, the role (team invite), expiry and the claim and completion
-  stamps. The raw code is shown once at creation; storage holds a digest and a 4-character hint
-  (`domain/invite_code.py::InviteCode`).
+  stamps. The raw code is shown once at creation; storage holds a digest and a short hint
+  (`domain/invite_code.py::InviteCode`, `HINT_LENGTH`). A new code never replaces a stored one: creation is a
+  transaction that refuses an existing id (`FirestoreInviteCodeRepository.create`).
 - **Credentials** (`EnvironmentConfig.credentials_collection`, `FirestoreCredentialStore`): one document per stored
   grant, id `{user_id}:{credential_id}`. Plaintext, queried fields: `user_id`, `credential_id` (opaque, random, kept
   across every refresh and re-consent of the same provider account), `kind`, `integration`, `account_id`,
@@ -71,11 +72,10 @@ Firestore, `us-production` database, environment prefix on collection names (`En
   access token, the refresh token and the account label, with the document id in its AAD, so a ciphertext copied to
   another document does not decrypt.
 - **Connect flows** (`EnvironmentConfig.oauth_flows_collection` through `FirestoreEphemeralStore`): one pending flow
-  per started consent, key `oauth_flow:<keyed digest of the OAuth state>`, single use, ten minutes
+  per started consent, key `oauth_flow:<keyed digest of the OAuth state>`, single use, short-lived
   (`oauth_connect_service.py::_FLOW_TTL_S`). The PKCE verifier is stored sealed.
 
-The connector kinds are data, in `composition/connector_registry.py`: `GMAIL`, `GOOGLE_TASKS` (frozen, not
-`offered`), `MICROSOFT_TODO`, `MICROSOFT_ONEDRIVE`, `GOOGLE_DRIVE`. Each `ConnectorSpec` names its integration (the
+The connector kinds are data, in `composition/connector_registry.py` (`_SPECS`; a frozen kind has `offered` False). Each `ConnectorSpec` names its integration (the
 Cabinet group: mail, tasks, drive), its realm (`google`, `microsoft`), the scopes a consent must grant, whether a user
 may hold several credentials of the kind (`multiple`: the two drives), and for drives the `id_space` prefix.
 
@@ -95,16 +95,18 @@ every message, no cache. A platform user that exists and whose email is still wh
 rejected with a "register in the Cabinet first" message, a de-listed one with a "revoked" message. Chat can never
 create an account.
 
-**Platform linking.** After registering, the owner binds a platform id from the Cabinet (`web/user_cabinet_app.py`:
+**Linking a Google identity.** A user record without a Google identity can link one from the Cabinet (`web/oauth_app.py`: `/auth/link-oauth`, `AuthenticationService.link_oauth_identity`): the same whitelist gate, and an identity already linked to another user is refused.
+
+**Platform linking.** After registering, the user binds a platform id from the Cabinet (`web/user_cabinet_app.py`:
 `/api/user/link-platform` for the allowed platforms, Telegram and phone have their own validating routes). The binding is
 `FirestoreUserRepository.link_platform_identity`, one transaction that refuses an id already bound to another user.
 
-**Team invite** (`services/invite_code_service.py::InviteCodeService.consume_team_invite`). Checks, in order: code
+**Team invite.** Only an account owner can generate one (`web/user_cabinet_app.py`, the only role gate in the code); accepting is `services/invite_code_service.py::InviteCodeService.consume_team_invite`). Checks, in order: code
 exists and is valid (or the same user is resuming), type is a team invite, the joiner is not already a member, the
 joiner's email is whitelisted, the target account exists, the role parses. Then the code is claimed in one transaction
 (`InviteCodeRepository.claim`), the role is written (`AccountRepository.set_member_role`), the user's `account_id` is
 moved, and the code is stamped complete. A failure after the claim leaves the code claimed and unfinished; the same user
-can retry until a day past expiry (`_RESUME_GRACE`); a completed code is refused to everyone.
+can retry until a grace period past expiry (`_RESUME_GRACE`); a completed code is refused to everyone.
 
 **Connecting an integration** (`services/oauth_connect_service.py::OAuthConnectService`; routes
 `GET /auth/connect/<kind>` and `GET /auth/connect/callback` in `web/oauth_app.py`).
@@ -142,14 +144,14 @@ records a deliberate disconnect. The drive's notice runs in the drive fan-out in
 
 **Configuration inheritance** (`services/configuration_service.py::ConfigurationService`). The limit getters
 (for example `get_semantic_search_limit`) resolve user override, then `account_defaults`, then the system default.
-`get_effective_config`, the field-by-field merge of whole configs, has no caller in `src/` outside the service.
 
 ## Invariants and traps
 
-- **The whitelist gates three doors, and each has its own check:** every Cabinet sign-in and renewal
-  (`AuthenticationService`), every chat message (`IAMService.authorize`), every team-invite accept
-  (`consume_team_invite`). `IAMService` does not gate the web; there is no web branch in it. A new entry path needs its
-  own check. Why: `decisions/cabinet_oauth_whitelist_gate.md`.
+- **Every entry path has its own whitelist check; there is no shared gate.** Cabinet sign-in, link and renewal
+  (`AuthenticationService`), chat messages and button choices (`IAMService.authorize`), team-invite accept
+  (`consume_team_invite`), the remote MCP server's grants at each refresh rotation
+  (`services/mcp_authorization_service.py`), the voice MCP token mint (`services/voice_mcp_token_service.py`).
+  `IAMService` does not gate the web. A new entry path needs its own check. Why: `decisions/cabinet_oauth_whitelist_gate.md`.
 - **Chat cannot register.** Accounts are created only by `register_new_user`, reached only from the web sign-in.
 - **One user's credential is never served to another.** The store checks the stored `user_id` on `get`
   (`FirestoreCredentialStore.get`); only `list_by_account` and `list_user_ids` read across users.
@@ -166,9 +168,12 @@ records a deliberate disconnect. The drive's notice runs in the drive fan-out in
   (`OAuthConnectService._warn_extra_scopes`). The edge's own identity scopes do not count as extra.
 - **Cardinality is policy above the store.** The store holds any number of records per user and kind; `spec.multiple`
   and `_store` decide.
-- **Credential writes are unconditional** (refresh, disconnect, reconnect flag): a refresh finishing after a disconnect
-  can recreate the record. Known and accepted: `decisions/oauth_credential_writes_unconditional.md`.
-- **Roles are stored lowercase** in `iam_policy` (`ports/iam_port.py::Role`); a team invite keeps its role uppercase and
+- **`update` never recreates a deleted record** (it is a transaction that returns False when the document is gone), so a
+  refresh finishing after a disconnect writes nothing; `save` is called only by the connect flow. Still unconditional:
+  an `update` from a stale copy overwrites tokens and flag, for example a reconnect flag written from a copy read
+  before a new consent puts the old tokens back. The decision record
+  `decisions/oauth_credential_writes_unconditional.md` predates the store and describes the old repository.
+- **Role values are stored lowercase** in `iam_policy` (`ports/iam_port.py::Role`); a team invite keeps its role uppercase and
   converts before writing. Writing a member is a field-path update, never a whole-map write, so concurrent adds are kept.
 - **Joining a team overwrites the user's `account_id`.** Data the user owned in their previous account is not migrated
   (`consume_team_invite` comment).
