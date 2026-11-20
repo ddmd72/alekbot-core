@@ -1,324 +1,125 @@
-# Prompt Cache Strategy (Building Block)
+<!-- living-doc
+covers:
+  src/services/prompt_cache_strategy.py
+  src/services/caching_llm_proxy.py
+  src/ports/prompt_cache_strategy_port.py
+-->
+# Prompt Cache Strategy
 
 ## Purpose
 
-Describes the transparent prompt caching system that applies API-level caching (Claude `cache_control`) without agents knowing about it. Agents declare their identity; the strategy decides what to cache.
-
-### When to Read
-
-- Before modifying how agents interact with LLM providers, or when adding new agent types.
-- When troubleshooting cache-related issues, optimizing token costs, or extending caching to new providers.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] A new agent type is added that should benefit from caching.
-- [ ] A new LLM provider with caching support is integrated.
-- [ ] The caching strategy rules change (which agents cache, TTL policy, etc.).
-- [ ] The `CachingLLMProxy` behavior is modified.
-
-### Cross-References
-
-- **RFC:** [../../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md](../../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md)
-- **Provider Resolution:** [../provider_resolution/README.md](../provider_resolution/README.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-
----
-
-## 1. Overview
-
-The **Prompt Cache Strategy** decouples caching decisions from agent logic. Agents only declare their type ("consolidation", "smart", "quick"). A strategy service resolves whether API-level prompt caching should be applied, and a transparent proxy wraps the LLM provider to inject `cache_config` into every request.
-
-**Core Principle:** Agents declare **what** they are, not **how** their prompts should be cached.
-
----
-
-## 2. Defaults
-
-Out of the box — zero configuration required:
-
-| Agent | Default Provider | Caching On? | Reason |
-|-------|-----------------|:-----------:|--------|
-| `consolidation` | Claude | **Yes** | Claude default + static 8k system prompt across 10 turns |
-| `smart` | Gemini | No | Gemini doesn't support `context_caching` |
-| `quick` | Gemini | No | Same — activates automatically when provider switches to Claude |
-| `router` | Gemini | No | Short classification prompt, not worth it by design |
-| `web_search` | Gemini | No | No system prompt to cache |
-
-Caching activates automatically when **two conditions are true simultaneously**:
-1. The agent type is in `CACHEABLE_AGENTS` (`consolidation`, `smart`, `quick`)
-2. The resolved provider has `capabilities.context_caching = True` (only `ClaudeAdapter`)
-
----
-
-## 3. Integration Flow
-
-```
-AgentContextBuilder.build(agent_type, user_config)
-  │
-  ├─ 1. Resolve provider via ProviderRegistry
-  ├─ 2. Resolve tier + model
-  ├─ 3. strategy.resolve(agent_type, capabilities)
-  │      ├─ "consolidation" + Claude → PromptCacheConfig(enabled=True)
-  │      ├─ "smart" + Claude        → PromptCacheConfig(enabled=True)
-  │      ├─ "quick"  + Gemini       → None (Gemini: context_caching=False)
-  │      └─ "router" + any          → None (not in CACHEABLE_AGENTS)
-  ├─ 4. If config returned: provider = CachingLLMProxy(provider, config)
-  └─ 5. Return AgentExecutionContext(provider=wrapped_or_raw)
-
-CachingLLMProxy.generate_content(request=LLMRequest(...))
-  ├─ request.cache_config is None → inject PromptCacheConfig(enabled=True)
-  └─ forward to ClaudeAdapter → adds cache_control: ephemeral to system_parts
-```
-
----
-
-## 4. Configuration Guide
-
-### 4.1 Enable caching for `smart` or `quick` (switch provider to Claude)
-
-Caching activates automatically once the provider is Claude. Two ways to switch:
-
-**Option A — per user, per agent** (Firestore `UserBotConfig`):
-
-```python
-user_config.agent_providers["smart"] = "claude"
-# or
-user_config.agent_providers["quick"] = "claude"
-```
-
-**Option B — per user, global provider preference**:
-
-```python
-user_config.provider_preference = "claude"
-# All agents that allow "claude" in allowed_providers will use it
-```
-
-Default values:
-- `user_config.agent_providers` → `{}` (empty — use strategy default)
-- `user_config.provider_preference` → `None` (empty — use strategy default)
-
-No code changes needed. Caching activates automatically after provider switch.
-
----
-
-### 4.2 Add a new agent type to caching
-
-**File:** `src/services/prompt_cache_strategy.py`
-
-```python
-CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick"})
-# Add your new type:
-CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "my_new_agent"})
-```
-
-**Prerequisites:**
-- The new agent's default provider must support `context_caching` (currently only Claude).
-- Or the agent must be used only with Claude via `agent_providers` override.
-- System prompt must be >1024 tokens (Anthropic minimum for caching).
-
-**Also update:**
-- `AgentProviderStrategy.STRATEGIES` — add entry if agent type is new (or it falls back to `"quick"` strategy).
-- This document (section 2 and 5).
-
----
-
-### 4.3 Disable caching for a specific agent type
-
-**File:** `src/services/prompt_cache_strategy.py`
-
-```python
-# Remove from CACHEABLE_AGENTS:
-CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "quick"})  # smart removed
-```
-
-Result: `smart` context will contain raw `ClaudeAdapter` instead of `CachingLLMProxy`.
-
----
-
-### 4.4 Disable caching for a specific user (route to non-caching provider)
-
-```python
-user_config.agent_providers["consolidation"] = "gemini"
-```
-
-`AgentContextBuilder` will resolve Gemini → `capabilities.context_caching = False` → strategy returns `None` → no proxy wrapping. Caching silently off for this user.
-
----
-
-### 4.5 Disable caching globally (all users, all agents)
-
-**File:** `src/composition/service_container.py`
-
-```python
-# Remove cache_strategy from builder:
-self.context_builder = AgentContextBuilder(self.registry)
-# (cache_strategy defaults to None — no wrapping ever happens)
-```
-
----
-
-### 4.6 Disable caching for one specific LLM call (inside an agent)
-
-If an agent needs to skip caching for a particular request:
-
-```python
-request = LLMRequest(
-    ...,
-    cache_config=PromptCacheConfig(enabled=False),  # explicit override
-)
-response = await self._llm.generate_content(request=request)
-```
-
-`CachingLLMProxy` checks `if not request.cache_config` — a non-None value (even `enabled=False`) is treated as explicit and **never overridden**. This is the only case where an agent touches `PromptCacheConfig` directly.
-
----
-
-### 4.7 Add a new provider with caching support
-
-1. Implement the adapter, set `CAPABILITIES = ProviderCapabilities(context_caching=True, ...)`.
-2. Handle `cache_config.enabled` in the adapter's `generate_content` to apply provider-specific caching headers/params.
-3. Register in `ProviderRegistry` (in `ServiceContainer`).
-4. No changes to `PromptCacheStrategy` needed — it checks `capabilities.context_caching` automatically.
-
----
-
-## 5. Caching Benefit by Agent Type
-
-| Agent | System Prompt | Multi-turn | Default Provider | Cached? | Net savings over session |
-|-------|--------------|------------|-----------------|:-------:|--------------------------|
-| `consolidation` | ~8 000 tokens, 100% static | 10 turns | Claude | **Yes** | ~60–70% input token reduction |
-| `smart` | ~4 000 tokens, ~80% static | 5 turns | Gemini (Claude via override) | If Claude | ~50–60% |
-| `quick` | ~2 000 tokens, ~80% static | 1 turn | Gemini (Claude via override) | If Claude | Moderate — benefits repeated calls within 5-min window |
-| `router` | ~500 tokens | 1 turn | Gemini | No | Not worth overhead |
-| `web_search` | Empty | 1 turn | Gemini | No | No benefit |
-
-Cache write penalty: **+25%** on first call. Cache read discount: **−90%** on subsequent calls within TTL.
-
----
-
-## 6. Core Components
-
-### 6.1 PromptCacheStrategyPort
-
-Abstract interface (`src/ports/prompt_cache_strategy_port.py`):
-
-```python
-def resolve(agent_type: str, capabilities: ProviderCapabilities) -> Optional[PromptCacheConfig]
-```
-
-Port exists for testable substitution and to allow environment-specific strategies (e.g., `NoCacheStrategy` for dev cost control).
-
-### 6.2 PromptCacheStrategy
-
-Default implementation (`src/services/prompt_cache_strategy.py`). Stateless. Business rules:
-
-- Guard 1: `capabilities.context_caching == False` → `None` immediately.
-- Guard 2: `agent_type not in CACHEABLE_AGENTS` → `None`.
-- Otherwise: `PromptCacheConfig(enabled=True)`.
-
-### 6.3 CachingLLMProxy
-
-Transparent `LLMPort` decorator (`src/services/caching_llm_proxy.py`):
-
-1. Wraps a real provider (e.g., `ClaudeAdapter`).
-2. Intercepts `generate_content()`.
-3. If `request.cache_config is None` → injects strategy-resolved config via `model_copy()` (immutable).
-4. If request has explicit `cache_config` → **never overrides**.
-5. Delegates all other methods to inner provider.
-
-### 6.4 PromptCacheConfig fields
-
-Defined in `src/ports/llm_port.py`:
-
-| Field | Default | Status |
-|-------|---------|--------|
-| `enabled` | `False` | Active — read by `ClaudeAdapter` |
-| `ttl_seconds` | `None` | Reserved — TTL managed by provider (Claude ephemeral ≈ 5 min, auto-extended on hit) |
-| `cache_scope` | `"user"` | Reserved — future per-scope invalidation |
-| `cache_key` | `None` | Reserved — future manual cache key control |
-
----
-
-## 7. Wiring (Composition Root)
-
-`src/composition/service_container.py`:
-
-```python
-self.cache_strategy = PromptCacheStrategy()
-self.context_builder = AgentContextBuilder(
-    self.registry,
-    cache_strategy=self.cache_strategy,  # pass None to disable globally
-)
-```
-
-`src/services/user_agent_factory.py` calls `context_builder.build(agent_type, user_config)` for each agent. Caching is applied (or not) transparently before the agent is created.
-
----
-
-## 7b. CACHE_BOUNDARY: Splitting Static vs Dynamic Prompt Content
-
-Agents like `smart` and `consolidation` have prompts that mix static content (token assembly, biography, history) with dynamic content (current datetime, query-specific context). Caching the entire prompt would be incorrect — the dynamic part changes every request.
-
-The **CACHE_BOUNDARY** mechanism handles this split transparently inside `ClaudeAdapter`.
-
-### How It Works
-
-```
-PromptAssemblyService._inject_runtime_context()
-  │
-  ├─ Assembles full system instruction (token sections + runtime context)
-  ├─ Separates biographical facts by tag:
-  │    facts WITHOUT "semantic_lens" tag → static section (before boundary)
-  │    facts WITH "semantic_lens" tag   → dynamic section (after boundary)
-  ├─ Removes [[CURRENT_DATE_TIME]] from static section (placeholder removed, not replaced)
-  └─ Appends: "\n\n<!-- CACHE_BOUNDARY -->\n" + current_datetime [+ query-specific context]
-
-ClaudeAdapter.generate_content()
-  │
-  ├─ Receives system_instruction as a single string
-  ├─ Splits on PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
-  ├─ Block 1 (static prefix) → added to messages with cache_control: ephemeral
-  └─ Block 2 (dynamic suffix) → added without cache_control (never cached)
-```
-
-If no boundary marker is present in the instruction (legacy agents, edge cases), the entire instruction is sent as a single block with `cache_control: ephemeral`.
-
-### Why This Matters
-
-Without the split, adding `cache_control` to the entire system instruction would cache the datetime and query-specific context — causing stale responses on cache hit. The boundary ensures:
-
-- **Cached:** Token assembly (5–10 kB), biography, conversation history summary — stable across requests.
-- **Not cached:** Current datetime, semantic-lens query-specific facts — changes every request.
-- **Orchestrator turns (Smart, Quick):** the dynamic block always ends with `session_key { … }`, a fresh three-word key per attempt, so it is never empty. No new cache mark; the static block, which carries the `provenance` head, and its mark are unchanged. Inside a turn the key is constant, so the rolling message marks keep working (`SYSTEM_TURN_FINGERPRINT_RFC.md` §4.9).
-
-### Constants and Ownership
-
-| Item | Location |
-|---|---|
-| `PROMPT_CACHE_BOUNDARY` constant | `src/ports/llm_port.py` |
-| Boundary injection logic | `src/services/prompt_v3/prompt_assembly_service.py` — `_inject_runtime_context()` |
-| Boundary split + `cache_control` injection | `src/adapters/claude_adapter.py` — `generate_content()` |
-| GeminiAdapter | Strips the boundary marker before sending (Gemini ignores `cache_control`) |
-
-### RFC Reference
-
-Full specification: `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md` Section 13.
-
----
-
-## 8. Status & Roadmap
-
-**Status:** Implemented — commit ae280f2, 2026-02-24
-
-### Planned Enhancements
-
-- **Conversation prefix caching:** Apply `cache_control` breakpoints to conversation history (not just system instruction) for multi-turn agents.
-- **Per-agent TTL:** Different TTL for consolidation (long sessions) vs quick (short bursts). Uses reserved `ttl_seconds` field.
-- **Cache metrics:** Track cache hit/miss rates per agent type. `LLMResponse.cache_metadata` already populated by `ClaudeAdapter`.
-- **NoCacheStrategy:** Environment-specific strategy for dev/staging to avoid cache write costs.
-
----
-
-**Last Updated:** 2026-03-02
+This block decides, per agent, whether a request asks its LLM provider for prompt caching, and attaches that request
+without the agent knowing. An agent declares only its type (`consolidation`, `smart`, ...); the strategy turns the type
+and the provider's capabilities into a `PromptCacheConfig`, and a proxy around the provider writes that config into
+every request. The provider adapter then does the provider-specific work (Anthropic breakpoints, OpenAI cache
+parameters).
+
+It is the *decision* and the *injection*. It is not the cut between static and dynamic prompt text (the assembler
+places `PROMPT_CACHE_BOUNDARY`, the Claude adapter splits on it; see Flows) and it does not measure hits: billing
+reads cached tokens from each adapter's usage parsing.
+
+## Owned data
+
+None. The block is stateless: no collection, no cache of its own. `PromptCacheConfig` (`src/domain/llm.py`) is the one
+value it passes around, and only two of its fields exist: `enabled`, and `cache_last_message` (also place a breakpoint
+on the messages of a multi-turn loop, not only on the system prompt). The config is per request and never stored.
+
+## Flows
+
+### Resolving and wrapping (once per agent context)
+
+1. `AgentContextBuilder._build` (`src/services/agent_context_builder.py`) resolves the provider for the agent type, then
+   calls `PromptCacheStrategy.resolve(agent_type, capabilities)` with the provider's `ProviderCapabilities`.
+2. `resolve` returns `None` when `capabilities.context_caching` is false or the type is not in
+   `PromptCacheStrategy.CACHEABLE_AGENTS`; otherwise `PromptCacheConfig(enabled=True, cache_last_message=...)`, with
+   `cache_last_message` true only for `PromptCacheStrategy.MULTI_TURN_AGENTS`. The reason a type is in or out is the
+   class docstring: a multi-turn loop amortises the write surcharge, a single-turn call does not.
+3. If a config came back, the builder wraps the provider in `CachingLLMProxy`, then wraps that in the alerting proxy
+   (outermost). The fallback provider (`AgentProviderStrategy.STRATEGIES[...]["fallback"]`) is wrapped by the alerting
+   proxy only: a cache is useless after switching provider.
+4. The wiring is `ServiceContainer` in `src/composition/service_container.py`: it builds one `PromptCacheStrategy` and
+   passes it to `AgentContextBuilder` together with `caching_proxy_factory=CachingLLMProxy`. The builder wraps only when
+   it holds both.
+
+### Injecting into a request (every call)
+
+`CachingLLMProxy.generate_content` copies the request with the proxy's config when `request.cache_config` is empty and
+forwards it. A request that already carries a `cache_config`, even `enabled=False`, is never overridden: that is how
+one call opts out. Every other `LLMPort` method is delegated to the inner provider.
+
+### What each adapter does with an enabled config
+
+- **Claude** (`ClaudeAdapter.generate_content`): the system instruction is split at `PROMPT_CACHE_BOUNDARY`
+  (`src/domain/llm.py`). The static prefix becomes a system block with `cache_control: ephemeral`; the text after the
+  boundary becomes a second block with no mark, and is omitted when empty. With no boundary the whole instruction is one
+  marked block. Empty text is never marked (Anthropic rejects it). With `cache_last_message`, `ClaudeAdapter._convert_messages`
+  also marks the last content block of the last user message and of the previous user message (a rolling pair, so the
+  chain survives a turn with more than 20 tool blocks). At most three marks are placed.
+- **OpenAI** (`OpenAIAdapter.generate_content`): no markers. For models whose prefix is in
+  `OpenAIAdapter._DEPRECATED_RETENTION_PREFIXES` it sends a `prompt_cache_key` hashed from the static prefix
+  (`OpenAIAdapter._prompt_cache_key`); for older models `prompt_cache_retention` of 24 hours.
+- **Gemini and Grok** declare `context_caching=False`, so the strategy never returns a config for them. They still strip
+  the boundary marker from the instruction. Grok ignores an enabled config with a log line; **Gemini raises
+  `ValueError`** for one.
+
+### Building the prompt so the cut lands in the right place
+
+`PromptAssemblyService._inject_runtime_context` (`src/services/prompt_v3/prompt_assembly_service.py`) appends
+everything that changes per request after `PROMPT_CACHE_BOUNDARY`: query-specific facts (facts tagged `semantic_lens`
+are partitioned out of the biography in `src/services/prompt_builder.py`), reminders, the current date and time (only
+when `include_datetime`), the tail block and, for the orchestrators, the turn's `session_key` (last). Everything before
+it (template, biography, knowledge base, skills catalog, standing directives) must be stable between requests. Smart
+and Quick pass a `session_key`, so their dynamic block is never empty; the key is constant inside a turn, so the
+rolling message marks keep hitting (`SYSTEM_TURN_FINGERPRINT_RFC.md` section 4.9).
+
+## Invariants and traps
+
+- **Both conditions are needed, and the agent-type string is the key.** An unknown type gets no caching. The name must
+  match what the builder is called with: the builder is called with `web_search`, while `CACHEABLE_AGENTS` lists
+  `websearch` (the name `WebSearchAgent` gives the prompt builder), so web search is **not** cached today. Pinned by
+  `tests/unit/services/test_prompt_cache_strategy.py`.
+- **`context_caching` is not Claude-only.** `OpenAIAdapter.CAPABILITIES` sets it, so Smart or Quick moved to OpenAI
+  by user config receive an enabled config. Grok sets it false on purpose: its caching is automatic with nothing to
+  control (comment at `GrokAdapter.CAPABILITIES`).
+- **The default provider decides what is cached out of the box**, not the strategy: `AgentProviderStrategy.STRATEGIES`
+  gives `consolidation`, `quick`, `drive` and `fact_profiler` Claude by default and `smart` Gemini, so Smart is cached
+  only for a user who moves it to Claude or OpenAI. `tests/unit/services/test_agent_context_builder.py` pins the wrapping
+  for a caching provider and its absence otherwise.
+- **Multi-turn marks only for loops that will read them.** A single-turn agent with `cache_last_message` would pay the
+  write surcharge with nothing to read; that is why `quick` is cacheable but not in `MULTI_TURN_AGENTS`. Pinned by
+  `tests/unit/services/test_prompt_cache_strategy.py`.
+- **Dynamic text before the boundary silently kills the cache.** A date, a per-query fact or a per-attempt key placed in
+  the static part changes the prefix on every request: the call becomes a write each time and never a read. A new
+  per-request block belongs after `PROMPT_CACHE_BOUNDARY`. An agent that builds its own prompt must place the boundary
+  itself (`DriveAgent` appends it when absent).
+- **An agent never sets `cache_config` except to opt out.** An explicit config bypasses the proxy; on Gemini any
+  enabled config raises.
+- **No cache across a provider switch.** The fallback gets the raw provider (see Flows), and a cache written on one
+  provider is not read on another.
+- **`ttl` and scope are not controllable here.** `PromptCacheConfig` has no such field; the provider's own default
+  applies. Do not document or build on per-agent TTL.
+- **No hit metrics are recorded by this block.** `LLMResponse.cache_metadata` exists but no adapter fills it; cached
+  tokens reach billing through each adapter's usage parsing.
+
+Adding a cacheable agent type: put it in `CACHEABLE_AGENTS` (and `MULTI_TURN_AGENTS` if its loop has at least two turns
+within the provider's cache lifetime), make sure its default provider has `context_caching`, and give the builder the
+exact same type string. Adding a provider: set `context_caching=True` only if its adapter acts on an enabled
+`cache_config`; the strategy needs no change.
+
+## Links
+
+- [`HEXAGONAL_PROMPT_CACHING_RFC.md`](../../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md): the design record, section 13 for
+  the cache boundary.
+- [`SYSTEM_TURN_FINGERPRINT_RFC.md`](../../10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md): section 4.9, the session key and the
+  cache.
+- [provider_resolution](../provider_resolution/README.md): how the provider the strategy looks at is chosen.
+- [prompt_design_system_v3](../prompt_design_system_v3/README.md): the assembler that places the boundary.
+
+## Where to start reading
+
+1. `src/services/prompt_cache_strategy.py::PromptCacheStrategy.resolve`: the whole decision.
+2. `src/services/caching_llm_proxy.py::CachingLLMProxy.generate_content`: the injection.
+3. `src/services/agent_context_builder.py::AgentContextBuilder._build`: where wrapping happens.
+4. `src/adapters/claude_adapter.py::ClaudeAdapter.generate_content`: the boundary split and system marks.
+5. `src/adapters/claude_adapter.py::ClaudeAdapter._convert_messages`: the rolling message marks.
+6. `src/services/prompt_v3/prompt_assembly_service.py::PromptAssemblyService._inject_runtime_context`: what sits after the boundary.
