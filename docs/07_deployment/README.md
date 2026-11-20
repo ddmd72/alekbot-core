@@ -1,6 +1,5 @@
 <!-- living-doc
 covers:
-  docs/07_deployment/README.md
   Makefile
   Dockerfile*
   .dockerignore
@@ -33,6 +32,9 @@ How to deploy Alek-Core the standard way from a fresh checkout, and keep deployi
 - One-off rollout steps of a single feature (migration orders, rollbacks of a release, first-run checks) are not kept
   here; they live in the rollout notes (ops).
 
+`.dockerignore` keeps `.env` and key files out of the image; `.env.example` lists the keys a checkout needs;
+`src/composition/deploy_topology.py::DeployTopology` is the one place that derives the service URL, queue suffix and regions.
+
 Placeholders only (`<PROJECT_ID>`, `<SERVICE_URL>`, service accounts): the real values live in `.env`, Secret Manager or
 memory, never in this file. Resource values (memory, timeouts, scaling, secret lists) live in `cloudbuild-dev.yaml`,
 `scripts/infrastructure/cloudbuild_sandbox_light.sh`, `scripts/infrastructure/cloudbuild_sandbox_render.sh` and the
@@ -43,7 +45,7 @@ memory, never in this file. Resource values (memory, timeouts, scaling, secret l
 ## Deploy units
 
 Six units. The first four share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`, `Dockerfile`) and one build config
-(`cloudbuild-dev.yaml`); a unit differs only by `--command`/`--args` and its own service account. The two sandbox services
+(`cloudbuild-dev.yaml`); a unit differs by its own service account, `--command`/`--args` (not the main service), env, secrets and resource limits. The two sandbox services
 have their own image file (`Dockerfile.sandbox`, one target each) and are built by the same `make deploy`.
 
 | Unit | Kind | Entry point | Why it is its own unit |
@@ -128,8 +130,10 @@ The Makefile maps each `*_DEV` key to a `_SUBSTITUTION`, and `cloudbuild-dev.yam
 **Deploy only from a checkout that has the real `.env`.** Without it the build ships empty values into the live
 environment and breaks OAuth and voice. A second working copy has no `.env` of its own: link the main checkout's file
 first (`ln -s ../alekbot-core/.env .env`). Before every deploy, check what will be sent:
-`make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be non-empty, except `_INDEXER_URL` on the
-indexer's first pass and the sandbox keys before the sandbox exists.
+`make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be non-empty, except the optional ones (`_DRIVE_TRANSCRIBE_USD_CAP`,
+`_VOICE_DEBUG_TRANSCRIPT_USERS`), `_VOICE_RELAY_URL` / `_INDEXER_URL` on their first passes and the sandbox render keys and
+`_SANDBOX_LIGHT_SA` / callers before the sandbox exists (the light URL and both VPC keys are never empty: `make deploy`
+refuses).
 
 | `.env` key | Substitution → variable | Notes |
 |---|---|---|
@@ -151,7 +155,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 ### Transcripts switch and cap
 
 - `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` turns the indexer's transcription kill switch on, `off` turns it off; no other
-  value is accepted. **Live value: `on`** (the Makefile default is `off`). `make deploy` refuses unless it is exactly `on` or
+  value is accepted. The Makefile default is `off`. `make deploy` refuses unless it is exactly `on` or
   `off`, and echoes the effective switch and cap before it submits. It also reaches the main service, where the Cabinet
   shows the disclosure only if it is on. It is a substitution, not a by-hand variable, because `--set-env-vars` replaces
   every variable on each deploy. A manual `gcloud builds submit` without the Makefile deploys `off`
@@ -325,7 +329,8 @@ appear in it (a test enforces the prefix).
   or pass it): `PROJECT_ID=<PROJECT_ID> FIRESTORE_DATABASE=<DATABASE> scripts/infrastructure/create_drive_vector_indexes.sh`
   (drive; `COLLECTION_PREFIX` defaults to `development_`) and `scripts/infrastructure/create_task_search_vector_indexes.sh`
   (task search). A vector index carries only the dimension and `flat`; the distance measure is chosen per query.
-- Both need the project id passed explicitly: `.env` has `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`.
+- The direct python call and the vector scripts need the project id passed explicitly (`.env` has `GOOGLE_CLOUD_PROJECT`,
+  not `PROJECT_ID`); `make deploy-indexes` derives it itself.
 - **Wait for `READY`.** This prints the ones still building:
   ```bash
   gcloud firestore indexes composite list --database=us-production --project=<PROJECT_ID> \
@@ -472,7 +477,7 @@ A false positive is overridden with the PR label `pii-ok` (create it once). PRs 
 
 ## First deploy: the two-pass URLs
 
-Three units publish a URL that another unit needs, and the URL exists only after the unit's first deploy. Each is deployed
+Four units publish a URL that another unit needs, and the URL exists only after the unit's first deploy. Each is deployed
 twice once; after that the URL is stable and `.env` keeps it. The relay and indexer are below; the render and light
 sandbox services follow the same pass-one / read-URL / pass-two shape in their own sections.
 
@@ -629,16 +634,16 @@ the prefixes `parse` and `media`. The indexer needs no extra env key: the media 
    empty caller set on Cloud Run refuses the revision. `SANDBOX_LIGHT_URL_DEV` is required by the deploy target itself:
    for pass one set it to the service's expected `https://` URL (Cloud Run derives it from the service name and project
    number).
-4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` empty, serves **only `/health`**, and answers every
-   op with `503 unconfigured`.
-5. **Read the URL back** and put it in `.env` as `SANDBOX_LIGHT_URL_DEV=<service URL>`:
+4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` set to the expected URL from step 3, so it is
+   configured at once; the callers' invoker grant (step 6) is still missing, so their calls are refused until then.
+5. **Read the URL back** and check it equals `SANDBOX_LIGHT_URL_DEV`; if it differs, correct the key:
    ```bash
    gcloud run services describe alek-bot-sandbox-light-dev --region=us-central1 --format='value(status.url)'
    ```
 6. **Grant invoker to the two callers only:** `roles/run.invoker` on the light service to `<main-runtime-sa>` and
    `<indexer-runtime-sa>`; never `allUsers` or `allAuthenticatedUsers`. Audit once and after each deploy that neither the
    project nor the service policy contains them.
-7. **Pass two: `make deploy`.** The light service now knows its audience.
+7. **Pass two (only if the URL had to be corrected): `make deploy`.** The service and its callers now agree on the audience.
 
 While `SANDBOX_LIGHT_SA_DEV` is empty, `cloudbuild_sandbox_light.sh` exits 0 in every mode.
 
@@ -702,7 +707,7 @@ release, never earlier: a protocol restored first runs the new code with the old
 release's own values are in its rollout notes (ops).
 
 **Image registry retention.** `python scripts/infrastructure/artifact_registry_retention.py` (dry run; `--apply` sets the
-cleanup policy and cleans the backlog) keeps the newest image versions per package and deletes older ones; it refuses when
+cleanup policy and cleans the backlog) deletes versions older than the policy's age that are not among the newest kept per package; it refuses when
 an image a revision or job needs would go (`decisions/artifact_registry_retention.md`).
 
 **The `:latest` trap.** After a failed deploy or a traffic rollback, `:latest` still points at the new image. Every
@@ -720,8 +725,8 @@ deploy key unless stated; set one by hand only for a test, a lasting value goes 
 - **Fact profile step cap.** `FACT_PROFILER_MAX_PER_RUN` (`src/composition/fact_profile_setup.py::max_per_run`): the most
   model calls one profile step makes in a leased run; `0` = re-derivation only, no spend; an unparsable or negative value
   is the default with one WARNING.
-- **Email card online step.** `EMAIL_CARD_ONLINE` (code default off; `1` = on) makes the indexer also card each new kept
-  mail. `make deploy` sets it on the main service from `_EMAIL_CARD_ONLINE` (default `1`), fed by the deploy-only key
+- **Email card online step.** `EMAIL_CARD_ONLINE` (code default off; `1` = on) makes the main service's email indexing also card
+  each new kept mail. `make deploy` sets it on the main service from `_EMAIL_CARD_ONLINE` (default `1`), fed by the deploy-only key
   `EMAIL_CARD_ONLINE_DEV` (`0` turns it off across deploys). With it off, kept mail gets no card and memory sees its
   headers only. `EMAIL_READER_PAGES_PER_DAY` (`src/domain/email_attachment_policy.py::EMAIL_READER_PAGES_PER_DAY_DEFAULT`;
   `0` = the online scan reader off) caps the daily pages the card step may hand to the paid reader; it has no deploy key.
@@ -806,10 +811,8 @@ and the `make logs*` / `fetch-logs*` targets. Log queries and the Logfire cascad
 
 **Keep-alive and image cleanup.** Scale-to-zero costs cold starts; a keep-alive ping costs cents a month; `min-instances=1`
 costs a real monthly amount. Setup: [KEEP_ALIVE_SETUP.md](KEEP_ALIVE_SETUP.md). Every deploy moves `:latest` and leaves the
-previous digest untagged, so the `gcr.io` repository grows without bound; `set-cleanup-policies` does not work reliably in
-the current gcloud CLI, so clean up by hand (`python3 scripts/infra/cleanup_gcr_images.py --dry-run`, then without the
-flag). [`scripts/infra/gcr-io-cleanup-policy.json`](../../scripts/infra/gcr-io-cleanup-policy.json) is a placeholder for a
-future `set-cleanup-policies`; the script is the working implementation.
+previous digest untagged; the standing cleanup is the retention policy under Standing levers. `scripts/infra/` holds the
+older manual cleaner for the `gcr.io` repository (`cleanup_gcr_images.py`, `gcr-io-cleanup-policy.json`), superseded by it.
 
 ---
 
