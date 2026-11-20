@@ -320,7 +320,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── groovy_to_markdown_transformer.py # Groovy DSL → Markdown converter (USE_MARKDOWN_PROMPT feature, currently off)
 ├── performance_logger.py  # Performance timing helpers
 ├── timer.py               # Timer utilities
-├── weather_parser.py      # 🆕 Structured weather data extraction
 └── server.py
 
 ## `src/`

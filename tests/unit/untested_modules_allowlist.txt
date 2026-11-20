@@ -22,4 +22,3 @@ src.domain.prompt_v3.slot_exclusion  # "removed in Prompt Builder v4" stub; noth
 src.services.variable_formatter  # no importer anywhere in src/
 src.utils.performance_logger  # no importer anywhere in src/
 src.utils.weather_locales  # no importer anywhere in src/
-src.utils.weather_parser  # no importer anywhere in src/
