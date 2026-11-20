@@ -28,6 +28,7 @@ covers:
   src/adapters/firestore_user_repo.py
   src/adapters/firestore_account_repo.py
   src/adapters/firestore_whitelist_repo.py
+  src/domain/turn_identity.py
 -->
 # OAuth Multi-Tenant
 

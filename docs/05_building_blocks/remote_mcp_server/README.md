@@ -23,6 +23,8 @@ covers:
   src/domain/mcp_resource.py
   src/domain/connector_texts.py
   src/domain/voice_mcp_token.py
+  src/ports/media_stream_port.py
+  src/adapters/http_media_stream_adapter.py
 -->
 # Remote MCP Server
 

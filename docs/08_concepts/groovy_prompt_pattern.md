@@ -1,5 +1,6 @@
 <!-- living-doc
-covers: none
+covers:
+  src/utils/groovy_grammar.lark
 -->
 
 # Groovy-Style Prompt Pattern
