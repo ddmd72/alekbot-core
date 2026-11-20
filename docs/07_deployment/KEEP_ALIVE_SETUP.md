@@ -1,6 +1,5 @@
 <!-- living-doc
-covers:
-  scripts/infrastructure/setup-keep-alive.sh
+covers: none
 -->
 
 # Keep-Alive
@@ -24,21 +23,6 @@ through Cloud Tasks, a separate request with full CPU (`CLAUDE.md` § Traps, `do
 - **Target:** `GET /health`, unauthenticated, answers 200 with a healthy status body
   (`src/web/main_service_routes.py::create_main_service_blueprint`).
 - **The voice relay has its own keep-alive** (a different job, through the main service); see SCHEDULERS.md.
-
-## Manual setup (a standalone service)
-
-`scripts/infrastructure/setup-keep-alive.sh` creates or updates a job named `alek-bot-keep-alive` against any
-service URL. It reads `GCP_PROJECT_ID`, `SCHEDULER_LOCATION` and `CLOUD_RUN_URL` from the environment (its defaults are
-placeholders, so always export all three), then runs the job once and prints its description.
-
-```bash
-SERVICE_URL=$(gcloud run services describe <service> --region=<region> --format='value(status.url)')
-GCP_PROJECT_ID=<project-id> SCHEDULER_LOCATION=<region> CLOUD_RUN_URL="$SERVICE_URL" \
-  ./scripts/infrastructure/setup-keep-alive.sh
-```
-
-Trap: its job name differs from the build-managed one. Running it against the live service adds a second pinger
-next to `alek-bot-dev-keep-alive`; use it only for a service the build does not manage.
 
 ## Checking and fixing
 
