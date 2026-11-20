@@ -101,7 +101,8 @@ class UsageIncrement(BaseModel):
     """Outcome of one usage increment — enough to detect a budget-limit crossing.
 
     Returned by the increment so the caller can alert without a second read: the
-    transaction already held the account document.
+    lock-free path reads it from the server's post-increment value, the rotation transaction from the
+    document it already held.
     """
     daily_cost_before: float
     daily_cost_after: float

@@ -12,6 +12,6 @@ class QuotaService(ABC):
         Alert: when this increment takes the account's UTC day from under `daily_cost_limit` to at or over it, one
         post to the alert sink (if any); a failed post is logged. Exactly one increment per day crosses, also
         under concurrent callers. Every writer of usage goes through here, or that day's crossing is never announced
-        (P11-G1-4: job_main writes the repository directly).
+        (job_main goes through FirestoreQuotaService).
         """
         pass

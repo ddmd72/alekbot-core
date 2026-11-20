@@ -15,7 +15,7 @@ covers:
 
 Cloud Run kills a container when its metered memory crosses the limit, and a kill leaves no log of what was running.
 This block puts that figure on record: every process samples its own memory, brackets units of work, and writes
-structured log lines that a log sink routes to BigQuery (the research Job is the exception, see Invariants). It answers "how much memory did the container use, and which
+structured log lines that a log sink routes to BigQuery. It answers "how much memory did the container use, and which
 work units were open when it peaked". It is a measurement tool only: it never gates, throttles or restarts anything,
 and it never raises into the code it measures (a failed probe or contributor is logged once and skipped,
 `MemoryTelemetryService._warn_once`).
@@ -101,10 +101,6 @@ at most once per `CENSUS_COOLDOWN_S` (`is_census_due`), `MemoryTelemetryService.
 - **`memory.payload` covers OpenAI only.** Claude, Gemini and Grok requests are not measured. It can be joined to
   `memory.scope` by `trace_id`, which for a payload row is in the log labels, not in `jsonPayload`; both ids come from
   the request's tracing context and are not guaranteed equal.
-- **The research Job's records do not reach the sink today.** `src/utils/logger.py` installs the structured JSON
-  handler only when `K_SERVICE` is set (line 82); a Cloud Run Job sets `CLOUD_RUN_JOB`, so its logs go through the
-  console handler, which drops `json_fields`, and the sink filter (`jsonPayload.event:"memory."`) never matches.
-  `job_main.py` still builds the service and brackets `deep_research_job`.
 - **The census is slow by design.** `tracemalloc` slows the process and holds bookkeeping memory: switch it on for one
   investigation window and off after. `traced_mb` counts Python allocations since tracing started; `usage_mb` is the
   whole container, so the two differ by the interpreter, native libraries and the tracing bookkeeping.

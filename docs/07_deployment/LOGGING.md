@@ -20,17 +20,14 @@ The content stores (BigQuery, Logfire) and their sensitivity rules are described
 
 ## How a log line is produced
 
-`src/utils/logger.py::setup_logger` picks the handler by `K_SERVICE`, which Cloud Run services set and Cloud Run Jobs and local runs do not:
+`src/utils/logger.py::setup_logger` picks the handler by `src/utils/cloud_run.py::on_cloud_run` (a Cloud Run service sets `K_SERVICE`, a job sets `CLOUD_RUN_JOB`):
 
-- **Cloud Run service:** `StructuredLogHandler` at INFO writes one JSON object per line to stdout. `_CloudContextFilter` adds
+- **Cloud Run (service or job):** `StructuredLogHandler` at INFO writes one JSON object per line to stdout. `_CloudContextFilter` adds
   the labels `user_id`, `session_id`, `event_id`, `trace_id` (from `src/utils/logging_context.py` and the active span),
   so they are filterable as `labels.user_id=...` in Cloud Logging. Only INFO and above reach it.
-- **Otherwise (local, and the deep-research job):** INFO to the console through `AlekFormatter`, DEBUG to `alek_debug.log` (truncated on every start).
+- **Otherwise (local only):** INFO to the console through `AlekFormatter`, DEBUG to `alek_debug.log` (truncated on every start).
 
 Traps:
-- The deep-research job (`job_main.py`) sets `CLOUD_RUN_JOB`, not `K_SERVICE` (`src/utils/cloud_run.py`), so it takes the
-  plain-text branch: no labels and no parsed severity. `labels.user_id=` and `severity>=ERROR` filters miss its lines;
-  find them by resource type and message text.
 - `LOG_TRACE_CONTEXT` (`make logs-mode-clean` / `logs-mode-full`) is read only by `AlekFormatter`. A Cloud Run service
   uses no such formatter, so on the service those two targets change nothing in the logs.
 - `extra={...}` fields of a log call do not reach Cloud Logging: the handler serializes the message and the labels
