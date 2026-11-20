@@ -46,10 +46,12 @@ class DocPlannerAgent(BaseAgent):
     Returns the file as a DeliveryItem for Cloud Task delivery.
     """
 
-    # ASYNC document creation runs in its own Cloud Task; a transient
-    # in-process retry would re-do the entire generation (LLM tokens +
-    # downstream DocGenerator hop). Cloud Tasks queue retry handles the
-    # retry layer for the whole task — see RFC § retry policy.
+    # ASYNC document creation runs in its own Cloud Task; an in-process retry
+    # would re-do the entire generation (LLM tokens + downstream DocGenerator
+    # hop). Transient provider errors are already covered per call, by the SDK
+    # retries and the cross-provider fallback in BaseAgent._call_llm. A failure
+    # that survives them ends the task: the worker answers 200 (so Cloud Tasks
+    # do not retry) and the user gets the failure notice.
     RETRY_POLICY = NO_RETRY_POLICY
 
     MAX_TOKENS = DOC_PLANNER.max_tokens
