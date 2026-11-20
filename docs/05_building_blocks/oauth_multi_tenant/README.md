@@ -1,124 +1,197 @@
-# OAuth Multi-Tenant (Building Block)
+<!-- living-doc
+covers:
+  src/adapters/firestore_credential_store.py
+  src/ports/oauth_credentials_port.py
+  src/services/oauth_connect_service.py
+  src/services/integration_reconnect_service.py
+  src/composition/oauth_connect_setup.py
+  src/adapters/google/google_oauth_provider.py
+  src/adapters/microsoft/microsoft_oauth_provider.py
+  src/ports/oauth_provider_port.py
+  src/composition/connector_registry.py
+  src/domain/connector_spec.py
+  src/domain/oauth_credential.py
+  src/domain/oauth_flow.py
+  src/domain/oauth_grant.py
+  src/domain/credential_key.py
+  src/domain/connect_outcome.py
+  src/domain/flow_intent.py
+  src/domain/revocation_scope.py
+  src/domain/provider_account.py
+  src/domain/integration.py
+  src/services/credential_revocation_service.py
+  src/services/authentication_service.py
+  src/services/iam_service.py
+  src/services/invite_code_service.py
+  src/services/configuration_service.py
+  src/composition/identity_setup.py
+  src/adapters/firestore_user_repo.py
+  src/adapters/firestore_account_repo.py
+  src/adapters/firestore_whitelist_repo.py
+-->
+# OAuth Multi-Tenant
 
-## 1. Overview
+## Purpose
 
-Alek-Core is a **Multi-Tenant Bot-as-a-Service** platform. It supports multiple isolated accounts (tenants), each containing one or more users. Authentication is handled via Google OAuth 2.0, and authorization is centralized in the `IAMService`.
+This block answers two questions for every request the system serves: **who is this person and may they be here**
+(identity, tenancy, the whitelist, invites, roles), and **which outside accounts have they connected** (the OAuth
+grants for Gmail, Google Tasks, Microsoft To Do and the drives, how a consent is taken, stored, revoked and noticed
+when lost).
 
-**Core Principle:** Data isolation is enforced at the account level. Users belong to accounts, and facts/sessions are owned by accounts.
+The tenant is the `BillingAccount`: a user registered through the Cabinet gets a new account of their own and is its
+owner, and every record that has an owner is addressed through `account_id`. A user can later move into another
+account through a team invite.
 
----
+What it is not: the web routes, cookies and JWTs of the Cabinet sign-in are [oauth_web_api](../oauth_web_api/README.md);
+the Cabinet pages are [user_cabinet](../user_cabinet/README.md); refreshing an access token belongs to each data
+adapter's token provider, not to this block (`OAuthProviderPort` has no refresh); what a drive connection does after
+a consent is the drive block's.
 
-## 2. Multi-Tenancy Model
+## Owned data
 
-### 2.1 Master Account First Paradigm
+Firestore, `us-production` database, environment prefix on collection names (`EnvironmentConfig`).
 
-Every new user registration automatically creates a new `BillingAccount`.
+- **Users** (`EnvironmentConfig.domain_users_collection`, `FirestoreUserRepository`): `user_id` (internal UUID),
+  `external_user_id` (`firebase|<sub>`, set by the Google sign-in), `email`, `auth_metadata` (the last sign-in's
+  provider data; its `email` is what a session renewal re-checks), `platform_identities` (platform name to the
+  platform's user id), `account_id`.
+- **Accounts** (`EnvironmentConfig.account_collection_name`, `FirestoreAccountRepository`): the `BillingAccount`,
+  its `iam_policy` (user id to role value: `owner`, `member`, `viewer`, `Role`) and `account_defaults`.
+- **Whitelist** (`EnvironmentConfig.domain_whitelist_collection`, singleton document `config`,
+  `FirestoreWhitelistRepository`): allowed emails and allowed domains. No cache; a missing document is an empty list,
+  which allows nobody.
+- **Invite codes** (`EnvironmentConfig.domain_invite_codes_collection`, `FirestoreInviteCodeRepository`):
+  `InviteType.SELF_LINK` or `TEAM_INVITE`, the account, the role (team invite), expiry and the claim and completion
+  stamps. The raw code is shown once at creation; storage holds a digest and a 4-character hint
+  (`domain/invite_code.py::InviteCode`).
+- **Credentials** (`EnvironmentConfig.credentials_collection`, `FirestoreCredentialStore`): one document per stored
+  grant, id `{user_id}:{credential_id}`. Plaintext, queried fields: `user_id`, `credential_id` (opaque, random, kept
+  across every refresh and re-consent of the same provider account), `kind`, `integration`, `account_id`,
+  `account.realm` and `account.subject`, `scopes`, `token_expiry`, `needs_reconnect`. One `secret` ciphertext holds the
+  access token, the refresh token and the account label, with the document id in its AAD, so a ciphertext copied to
+  another document does not decrypt.
+- **Connect flows** (`EnvironmentConfig.oauth_flows_collection` through `FirestoreEphemeralStore`): one pending flow
+  per started consent, key `oauth_flow:<keyed digest of the OAuth state>`, single use, ten minutes
+  (`oauth_connect_service.py::_FLOW_TTL_S`). The PKCE verifier is stored sealed.
 
-- **Owner:** The registering user is assigned the `OWNER` role.
-- **Isolation:** All data created by this user is scoped to their new `account_id`.
-- **Collaboration:** Owners can invite other users to their account (Phase 2+).
+The connector kinds are data, in `composition/connector_registry.py`: `GMAIL`, `GOOGLE_TASKS` (frozen, not
+`offered`), `MICROSOFT_TODO`, `MICROSOFT_ONEDRIVE`, `GOOGLE_DRIVE`. Each `ConnectorSpec` names its integration (the
+Cabinet group: mail, tasks, drive), its realm (`google`, `microsoft`), the scopes a consent must grant, whether a user
+may hold several credentials of the kind (`multiple`: the two drives), and for drives the `id_space` prefix.
 
-### 2.2 Identity Model
+## Flows
 
-- **UserProfile:** Internal system identity (UUID).
-- **External Identity:** OAuth-provided ID (e.g., `firebase|abc123`).
-- **Platform Identities:** Bindings to messaging platforms (e.g., `slack:U123`, `telegram:456`).
-- **Linking:** A single `UserProfile` can link multiple platform identities to one OAuth account.
+**Sign-in and registration** (`services/authentication_service.py::AuthenticationService.handle_oauth_callback`).
+The code is exchanged and the ID token verified through the auth provider, then the whitelist gate
+(`_require_allowed_email`) runs before any user read or write; no email, an unverified email or a non-listed one
+raises `AccessDeniedError`. The user is then found by `external_user_id`; else by email, and the Google identity is
+linked to that existing user; else `register_new_user` creates a free-tier `BillingAccount` and the user, and writes
+the user as `owner` in `iam_policy`. A pending team-invite cookie is consumed after the callback, best effort
+(`web/oauth_app.py`). Session renewal re-runs the whitelist check on the stored email
+(`AuthenticationService.resume_session`), so an email taken off the list stops renewing.
 
----
+**Chat authorization** (`services/iam_service.py::IAMService.authorize`). Called by the Slack and Telegram adapters on
+every message, no cache. A platform user that exists and whose email is still whitelisted is allowed; an unknown one is
+rejected with a "register in the Cabinet first" message, a de-listed one with a "revoked" message. Chat can never
+create an account.
 
-## 3. Authentication Flow (Web UI)
+**Platform linking.** After registering, the owner binds a platform id from the Cabinet (`web/user_cabinet_app.py`:
+`/api/user/link-platform` for the allowed platforms, Telegram and phone have their own validating routes). The binding is
+`FirestoreUserRepository.link_platform_identity`, one transaction that refuses an id already bound to another user.
 
-The Web UI is the only entry point for account creation and management.
+**Team invite** (`services/invite_code_service.py::InviteCodeService.consume_team_invite`). Checks, in order: code
+exists and is valid (or the same user is resuming), type is a team invite, the joiner is not already a member, the
+joiner's email is whitelisted, the target account exists, the role parses. Then the code is claimed in one transaction
+(`InviteCodeRepository.claim`), the role is written (`AccountRepository.set_member_role`), the user's `account_id` is
+moved, and the code is stamped complete. A failure after the claim leaves the code claimed and unfinished; the same user
+can retry until a day past expiry (`_RESUME_GRACE`); a completed code is refused to everyone.
 
-1. **Login:** User initiates OAuth flow at `/auth/login`.
-2. **Callback:** Backend receives OIDC tokens at `/auth/callback`.
-3. **Resolution:**
-   - If `external_user_id` exists: Authenticate existing user.
-   - If `email` exists in system: Link OAuth to existing platform user.
-   - If new user: Check `WhitelistRepository`. If allowed, create new `UserProfile` + `BillingAccount`.
-4. **Session:** Issue JWT access and refresh tokens stored in secure, HttpOnly cookies.
+**Connecting an integration** (`services/oauth_connect_service.py::OAuthConnectService`; routes
+`GET /auth/connect/<kind>` and `GET /auth/connect/callback` in `web/oauth_app.py`).
+1. `start` resolves the spec and the realm's edge, picks the intent (`FlowIntent.CONNECT`, `ADD`, or `RECONNECT` when a
+   credential id is given; a reconnect wins over add and must name a credential the user holds), stores the flow, and
+   returns the edge's consent URL. The edges (`GoogleOAuthProvider`, `MicrosoftOAuthProvider`) use PKCE S256, add their
+   identity scopes to the spec's, and send a login hint only on reconnect. Microsoft uses the `consumers` tenant
+   (personal accounts only) and always shows the account chooser.
+2. `complete` consumes the flow once (`get_and_delete`), then refuses in this order: unknown or expired flow (`state`), a
+   session user other than the flow's (`user`), an exchange failure (`exchange`), a granted-scope set missing a required
+   scope (`scope`), a reconnect that came back with another provider account (`account`). Outcomes are
+   `domain/connect_outcome.py::ConnectStatus`.
+3. `_store` updates the record of the same provider account (tokens, scopes, expiry; `needs_reconnect` cleared; a
+   missing new refresh token keeps the old one) or saves a new record. For a kind with `multiple` False the new save
+   removes the user's other records of the kind through the revoke rule.
+4. The integration's activation runs (`composition/oauth_connect_setup.py::build_connect_activations`): mail and To Do
+   clear the reconnect state; To Do also enqueues the `setup_microsoft_todo` worker task; drive creates or reconnects
+   its `DriveConnection`. An activation that raises is logged and the connect still counts; one that raises
+   `ConnectActivationFailed` removes the just-saved credential and the outcome is `activation`.
 
----
+**Removing a credential** (`services/credential_revocation_service.py::CredentialRevocationService.remove`). Our
+record is always deleted. The provider grant is revoked only when the realm's revoke is `RevocationScope.GRANT_WIDE`
+(Google; Microsoft is `NONE` and never revoked) and no credential of the same provider account remains across all users
+(`OAuthCredentialsPort.list_by_account`), so removing Gmail never kills the grant the user's Google Drive still uses.
+A revoke failure is logged; the removal still counts.
 
-## 4. IAM & Authorization
+**Lost credential: reconnect state and the one notice**
+(`services/integration_reconnect_service.py::IntegrationReconnectService`). Feature state, not the credential store,
+says a connection existed (Gmail indexing state; To Do config with a primary list; the drive's connections). A past
+connection with no credential, and not a deliberate disconnect, shows Reconnect in the Cabinet (`status`) and the hourly
+`sweep` sends one chat notice per user and integration, guarded by a flag that goes up before the send and down again
+only when nothing can have been sent. `consented` clears the state on a new consent; `mark_disconnected` (Gmail only)
+records a deliberate disconnect. The drive's notice runs in the drive fan-out instead of the sweep. Rules:
+`domain/reconnect_policy.py::r1_due`, `reconnect_needed`.
 
-### 4.1 IAMService
+**Configuration inheritance** (`services/configuration_service.py::ConfigurationService`). The limit getters
+(for example `get_semantic_search_limit`) resolve user override, then `account_defaults`, then the system default.
+`get_effective_config`, the field-by-field merge of whole configs, has no caller in `src/` outside the service.
 
-The central authority for all access decisions. Every request from Slack, Telegram, or Web API must pass through `iam_service.authorize()`.
+## Invariants and traps
 
-**Decision Logic:**
+- **The whitelist gates three doors, and each has its own check:** every Cabinet sign-in and renewal
+  (`AuthenticationService`), every chat message (`IAMService.authorize`), every team-invite accept
+  (`consume_team_invite`). `IAMService` does not gate the web; there is no web branch in it. A new entry path needs its
+  own check. Why: `decisions/cabinet_oauth_whitelist_gate.md`.
+- **Chat cannot register.** Accounts are created only by `register_new_user`, reached only from the web sign-in.
+- **One user's credential is never served to another.** The store checks the stored `user_id` on `get`
+  (`FirestoreCredentialStore.get`); only `list_by_account` and `list_user_ids` read across users.
+- **`credential_id` is chosen by the store**, never by a caller, and an update never takes identity fields (kind,
+  integration, account, realm, subject) from its argument. `save` refuses a credential without account subject,
+  `integration` or `account_id` and stores nothing. Contract: `ports/oauth_credentials_port.py::OAuthCredentialsPort`,
+  shape test `tests/unit/test_req_arch_33_credential_port_shape.py`.
+- **An existence check never decrypts.** `list_keys`, `list_by_account`, `list_user_ids` read plaintext fields only, so
+  a cipher failure can never read as "not connected"; a decrypt failure on `get` or `list_for_user` raises.
+- **Services hold no kind literal and no OAuth parameter name.** A service gets its `ConnectorSpec` by constructor and
+  filters by `spec.kind`, never by integration: one integration can have several kinds (To Do and Google Tasks are both
+  tasks). The edge, not the service, maps intent and login hint to its realm's parameters.
+- **A consent grant wider than asked is stored as is**; only the count is logged, never a scope string
+  (`OAuthConnectService._warn_extra_scopes`). The edge's own identity scopes do not count as extra.
+- **Cardinality is policy above the store.** The store holds any number of records per user and kind; `spec.multiple`
+  and `_store` decide.
+- **Credential writes are unconditional** (refresh, disconnect, reconnect flag): a refresh finishing after a disconnect
+  can recreate the record. Known and accepted: `decisions/oauth_credential_writes_unconditional.md`.
+- **Roles are stored lowercase** in `iam_policy` (`ports/iam_port.py::Role`); a team invite keeps its role uppercase and
+  converts before writing. Writing a member is a field-path update, never a whole-map write, so concurrent adds are kept.
+- **Joining a team overwrites the user's `account_id`.** Data the user owned in their previous account is not migrated
+  (`consume_team_invite` comment).
+- **A deliberate disconnect must not read as a loss.** Gmail records it (`mark_disconnected`); To Do's disconnect resets
+  its config; a drive disconnect ends the connection.
+- **Test trap:** a reconnect must not trigger a reindex (`tests/unit/test_reconnect_does_not_reindex.py`).
 
-- **Branch 1 (Chat):** Does `platform_user_id` exist? If yes, allow access to the linked account.
-- **Branch 2 (Web):** Does `external_user_id` exist? If yes, allow access to the User Cabinet.
-- **Branch 3 (New):** Is the email whitelisted? If yes, trigger account creation.
+## Links
 
-### 4.2 Roles & Permissions
+- [`oauth_web_api`](../oauth_web_api/README.md) (routes, cookies, JWT), [`user_cabinet`](../user_cabinet/README.md),
+  [`gmail_email_indexing`](../gmail_email_indexing/README.md).
+- RFCs: [`MULTI_DRIVE_RFC`](../../10_rfcs/MULTI_DRIVE_RFC.md) (connectors, connect flow, revoke rule),
+  [`SECRETS_AT_REST_RFC`](../../10_rfcs/SECRETS_AT_REST_RFC.md) (credential store, R1 reconnect notice).
+- Decisions (`docs/04_solution_strategy/decisions/`): `cabinet_oauth_whitelist_gate.md`, `credential_store_cutover.md`,
+  `oauth_credential_writes_unconditional.md`, `reconnect_notice_r1.md`, `gmail_reconnect_notice_at_most_once.md`,
+  `gmail_grant_revoked_reconnect.md`, `secrets_at_rest_cipher_and_digest.md`.
 
-- **OWNER:** Full access to account settings, billing, and all facts.
-- **MEMBER:** Can interact with the bot and see shared facts.
-- **VIEWER:** Read-only access to shared facts (no bot interaction).
+## Where to start reading
 
----
-
-## 5. Platform Linking
-
-Users can unify their identities across platforms:
-
-1. **Step 1:** Register via Web UI (Google OAuth).
-2. **Step 2:** Open User Cabinet.
-3. **Step 3:** Click "Link Slack" or "Link Telegram".
-4. **Step 4:** The system binds the platform ID to the `UserProfile`, enabling persistent memory across all clients.
-
----
-
-## 6. Code References
-
-- `src/domain/user.py`: `UserProfile` and `UserBotConfig` definitions.
-- `src/domain/billing.py`: `BillingAccount` and `IAMPolicy` definitions.
-- `src/services/authentication_service.py`: OAuth flow orchestration.
-- `src/services/iam_service.py`: Centralized authorization logic.
-- `src/web/oauth_app.py`: Web endpoints for authentication.
-
----
-
-## 7. Status & Roadmap
-
-**Status:** ✅ Production Ready
-
-### Planned Enhancements
-
-- **Invite System:** Full implementation of organization-level invite codes.
-- **RBAC:** Granular permission control for enterprise accounts.
-- **Multi-Provider:** Support for AWS Cognito and Okta alongside Firebase.
-
----
-
----
-
-## 8. Third-Party OAuth Providers
-
-Beyond Google (login), the system supports connecting external services via separate OAuth flows. Every integration connects through one route pair, `GET /auth/connect/<kind>` and `GET /auth/connect/callback`, and stores its credential in `{env}_credentials` (doc ID: `{user_id}:{credential_id}`; `decisions/credential_store_cutover.md`).
-
-### Gmail (provider: `"gmail"`)
-
-- **Scope:** `gmail.readonly`
-- **Tenant:** Google (same as login provider, but separate credential entry)
-- **Flow:** `GET /auth/connect/gmail` → `GET /auth/connect/callback`
-- **Purpose:** Email indexing pipeline (`EmailIndexingService`)
-
-### Microsoft To Do (provider: `"microsoft_todo"`)
-
-- **Scope:** `Tasks.ReadWrite offline_access`
-- **Tenant:** Azure `consumers` endpoint — personal Microsoft accounts only
-- **Token endpoint:** `https://login.microsoftonline.com/consumers/oauth2/v2.0/token`
-- **Flow:** `GET /auth/connect/microsoft_todo` → `GET /auth/connect/callback`
-- **On connect:** The connect activation enqueues `setup_microsoft_todo` Cloud Task → `TaskSetupService.setup()` → creates "Alek Bot Tasks" list (if absent) + registers Graph API subscriptions + triggers initial reindex
-- **Token refresh:** Auto-refreshed by `MicrosoftToDoAdapter` when token < 5 min from expiry, using the same refresh pattern as `GmailProviderAdapter`
-- **Purpose:** Task CRUD + search via `TasksAgent`
-
----
-
-**Last Updated:** 2026-03-19 (Microsoft To Do OAuth added)
-**Status:** ✅ Complete
-**Phase:** Documentation Audit Phase 3.4
+- `src/services/authentication_service.py::AuthenticationService.handle_oauth_callback` (sign-in, registration).
+- `src/services/iam_service.py::IAMService.authorize` (chat authorization).
+- `src/services/invite_code_service.py::InviteCodeService.consume_team_invite` (team join).
+- `src/services/oauth_connect_service.py::OAuthConnectService.complete` (the connect flow).
+- `src/composition/connector_registry.py::ConnectorRegistry` (the kinds and their specs).
+- `src/adapters/firestore_credential_store.py::FirestoreCredentialStore` (the credential record).
+- `src/services/integration_reconnect_service.py::IntegrationReconnectService.sweep` (lost-credential notices).

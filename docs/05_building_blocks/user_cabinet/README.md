@@ -471,7 +471,7 @@ Vector index was already present. Pagination indexes added in `config/firestore.
 - **Facts data model:** [Database Schema](../../08_concepts/DATABASE_SCHEMA.md) — `domain_facts_v2` collection
 - **Semantic search infrastructure:** [Search Enrichment](../search_enrichment/README.md) — `find_nearest`, RRF
 - **Embedding generation:** [Embedding System](../embedding_system/README.md)
-- **User identity:** [User Management System](../user_management_system/README.md)
+- **User identity:** [OAuth Multi-Tenant](../oauth_multi_tenant/README.md)
 
 ---
 
