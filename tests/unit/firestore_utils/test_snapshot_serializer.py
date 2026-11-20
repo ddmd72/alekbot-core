@@ -1,8 +1,7 @@
 import importlib.util
 import os
 
-# Load the non-package tooling module by path (repo's established pattern;
-# see tests/unit/scripts/test_migrate_to_embedding_v2.py).
+# Load the non-package tooling module by path.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))  # tests/unit/firestore_utils -> repo root
 _MODPATH = os.path.join(_ROOT, "firestore_utils", "snapshot_serializer.py")
