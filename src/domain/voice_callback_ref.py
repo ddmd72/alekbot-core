@@ -10,7 +10,6 @@ decrypts it, and the relay never accepts it.
 The reference sits in a Twilio-signed URL, so it uses the URL-safe base64 alphabet without padding: it survives with no
 percent-encoding and the signed URL stays byte-identical on both ends.
 """
-import base64
 import re
 
 CALLBACK_REF_AAD = "voice/twilio-callback-ref"
