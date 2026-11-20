@@ -2,12 +2,12 @@
 a versioned bucket). The contract test (test_workspace_store_contract.py) already covers create, overwrite, stale
 writes, delete, exact names, isolation, the meta round-trip and the read-backs; this kit adds the axes it lacks:
 tenancy at the prefix boundary, listing contents, legacy objects, write fields, reads of old and vanished versions,
-idempotency of delete, and the stamp a failed delete leaves (P11-G4-1). The `put` generation precondition is held by
-the contract test (create on an existing path, stale overwrite), not by this kit."""
+idempotency of delete, and the stamp a failed delete leaves (P11-G4-1). The tests after those were moved here from the
+retired mock-SDK file: the put stamps, content types and generation precondition, the read-backs, the delete stamps."""
 import logging
 
 import pytest
-from google.api_core.exceptions import ServiceUnavailable
+from google.api_core.exceptions import NotFound, PreconditionFailed, ServiceUnavailable
 
 from src.adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
 from src.domain.exceptions import WorkspaceConflict
@@ -251,3 +251,90 @@ async def test_stamp_that_cannot_be_read_back_still_reports_the_conflict(fake, s
         with pytest.raises(WorkspaceConflict):
             await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(deleted_by="chat"))
     assert any("left its stamp" in r.getMessage() for r in caplog.records)
+
+
+def test_no_client_is_built_at_construction():
+    adapter = GcsWorkspaceAdapter(BUCKET)
+    assert adapter._client is None
+
+
+async def test_put_stores_only_its_stamps_and_returns_the_live_entry(fake, store):
+    entry = await store.put("u1", P, b"hello", CHAT, 0)
+    live = fake.live(BUCKET, "u1/" + P)
+    assert live.metadata == {"origin": "chat", "write_id": entry.write_id} and entry.write_id
+    assert (live.data, live.content_type, live.custom_time) == (b"hello", "text/markdown; charset=utf-8", None)
+    assert (entry.path, entry.generation, entry.origin, entry.live) == (P, live.generation, "chat", True)
+
+
+@pytest.mark.parametrize("path, content_type", [
+    ("NOTES.MD", "text/markdown; charset=utf-8"),
+    ("binary_files/lease.pdf", "application/pdf"),
+])
+async def test_put_content_type_follows_the_extension(fake, store, path, content_type):
+    await store.put("u1", path, b"x", CHAT, 0)
+    assert fake.live(BUCKET, "u1/" + path).content_type == content_type
+
+
+async def test_put_on_a_taken_generation_is_a_conflict(fake, store):
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+    with pytest.raises(WorkspaceConflict):
+        await store.put("u1", P, b"create again", CHAT, 0)
+    await store.put("u1", P, b"v2", CHAT, e1.generation)
+    with pytest.raises(WorkspaceConflict):
+        await store.put("u1", P, b"stale", CHAT, e1.generation)
+    assert fake.live(BUCKET, "u1/" + P).data == b"v2"
+    assert [v.data for v in fake.versions(BUCKET, "u1/" + P)] == [b"v1", b"v2"]
+
+
+async def test_retried_put_that_had_landed_returns_its_own_entry(fake, store):
+    fake.fail_next("upload", PreconditionFailed("412"), landed=True)
+    entry = await store.put("u1", P, b"v1", CHAT, 0)
+    [version] = fake.versions(BUCKET, "u1/" + P)
+    assert (entry.generation, entry.write_id) == (version.generation, version.metadata["write_id"])
+
+
+@pytest.mark.parametrize("lost_as", [PreconditionFailed, NotFound])
+async def test_retried_delete_that_had_landed_is_success(fake, store, lost_as):
+    """The deleted version is the newest of its exact name, behind an older version and a newer longer name."""
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+    e2 = await store.put("u1", P, b"v2", CHAT, e1.generation)
+    await store.put("u1", P + ".bak", b"backup", CHAT, 0)
+    fake.fail_next("delete", lost_as("lost answer"), landed=True)
+    await store.delete("u1", P, e2.generation, WorkspaceDeleteMeta(deleted_by="chat"))
+    assert fake.live(BUCKET, "u1/" + P) is None
+    assert fake.names(BUCKET) == ["u1/" + P + ".bak"]
+
+
+async def test_delete_stamps_who_where_and_why_on_the_deleted_version(fake, store):
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+    await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(
+        deleted_by="chat", deleted_fire=FIRE.fire, renamed_to="projects/b.md"))
+    [v] = fake.versions(BUCKET, "u1/" + P)
+    assert not v.live
+    assert {k: v.metadata[k] for k in ("deleted_by", "deleted_fire", "renamed_to")} == (
+        {"deleted_by": "chat", "deleted_fire": FIRE.fire, "renamed_to": "projects/b.md"})
+    [entry] = await store.list("u1", P, include_versions=True)
+    assert (entry.deleted_by, entry.deleted_fire, entry.renamed_to, entry.delete_id) == (
+        "chat", FIRE.fire, "projects/b.md", v.metadata["delete_id"]) and entry.delete_id
+
+
+async def test_minimal_delete_clears_the_stamp_of_a_failed_one(fake, store):
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+    fake.fail_next("delete", ServiceUnavailable("503"))          # the patch landed, the delete did not
+    with pytest.raises(ServiceUnavailable):
+        await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(
+            deleted_by="background:execute_reminder", deleted_fire=FIRE.fire, renamed_to="projects/b.md"))
+    await store.delete("u1", P, e1.generation, WorkspaceDeleteMeta(deleted_by="chat"))
+    [v] = fake.versions(BUCKET, "u1/" + P)
+    assert not v.live and v.metadata["deleted_by"] == "chat"
+    assert "deleted_fire" not in v.metadata and "renamed_to" not in v.metadata
+
+
+async def test_list_entry_carries_the_write_stamps(fake, store):
+    e1 = await store.put("u1", P, b"v1", CHAT, 0)
+    e2 = await store.put("u1", P, b"v1 again", WorkspaceWriteMeta(
+        origin=FIRE.origin, fire=FIRE.fire, restored_from=e1.generation), e1.generation)
+    [entry] = await store.list("u1", P)
+    assert (entry.origin, entry.fire, entry.write_id, entry.restored_from, entry.live, entry.deleted_at) == (
+        FIRE.origin, FIRE.fire, e2.write_id, e1.generation, True, None)
+    assert entry.updated == fake.live(BUCKET, "u1/" + P).time_created
