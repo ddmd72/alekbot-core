@@ -1,6 +1,7 @@
 # RFC: Deliberate Fact Management System
 
 **Status:** Implemented as the base of the fact model (fact types, domains and states, SCD2 versioning by `lineage_id`: `src/domain/entities.py`). Partly superseded by `FACT_LIFECYCLE_RFC.md`: §2.2 axis 2 "Lifecycle Transitions", §4.4 (default TTL by class), §4.5 (state transition rules), §5.3 "Update Modes" and §7.1 `FactLifecycleService` are replaced by it; the rest (taxonomy, tools, cognitive process) stays in force. Per-section build status was not audited.  
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/memory/README.md)
 **Created:** 2026-02-16  
 **Updated:** 2026-02-16 (v2.2: Architecture Finalization + Reviewer Feedback Integration)  
 **Author:** AI Development Team  
@@ -3032,7 +3033,7 @@ USER: Yes, exactly.
 
 **Architecture:**
 
-- [Hexagonal Architecture Patterns](../08_concepts/hexagonal_architecture_patterns.md)
+- Hexagonal rules: the root `CLAUDE.md` (§ Architecture, § Import Rules) and `src/adapters/CLAUDE.md`; the former patterns guide is deleted
 - [Building Blocks Overview](../05_building_blocks/README.md)
 
 ---

@@ -57,6 +57,11 @@ Every event (message or mention) triggers an `iam_service.authorize("slack", sla
 
 ---
 
+### 3.3 Slack platform limits
+
+Slack expects the event acknowledgement within 3 seconds (hence the immediate 200 and the Cloud Tasks enqueue, §2.1), allows
+about 3000 characters of text per block, and asks bots to stay near one message per second per channel (status updates are throttled).
+
 ## 4. Code References
 
 - `src/composition/slack_adapter_factory.py`: Builds the adapter (lives in `composition/` — creates `ConversationHandler` and injects it as a port).

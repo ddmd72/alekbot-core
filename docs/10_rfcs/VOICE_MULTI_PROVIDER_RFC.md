@@ -1,6 +1,7 @@
 # RFC: Voice on more than one realtime provider
 
 **Status:** A+B merged (#26); C done (#27, UAT 2026-09-30); D dropped (owner: works as is)
+**History:** a point-in-time design record; how it works now: [lelik_voice_modes.md](../04_solution_strategy/decisions/lelik_voice_modes.md)
 **Date:** 2026-09-30
 **Owner:** Dmytro
 **Milestone:** Voice — provider choice

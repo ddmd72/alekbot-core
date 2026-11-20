@@ -1,6 +1,7 @@
 # RFC: Rich Content — Files and Media Delivery
 
 **Status:** Implemented (V1)
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/rich_content_protocol/README.md)
 **Author:** Solo dev
 **Created:** 2026-02-25
 **Updated:** 2026-02-26

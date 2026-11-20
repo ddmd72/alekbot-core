@@ -32,7 +32,7 @@ class FirestoreAccountRepository(AccountRepository):
             collection_name: Full collection name (e.g., "dev_accounts_oauth")
         """
         self.db_client = db_client
-        # ADR-006: collection_name is passed from environment.py (e.g. domain_accounts_v2)
+        # Naming scheme (decisions/collection_prefix_retained.md): collection_name is passed from environment.py (e.g. domain_accounts_v2)
         self.accounts_collection = db_client.collection(collection_name)
 
     async def get_account(self, account_id: str) -> Optional[BillingAccount]:

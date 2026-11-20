@@ -783,6 +783,14 @@ service's `--set-env-vars`); the rollback lever is removing that variable (a dep
 
 ---
 
+## Platform limits the design works around
+
+External limits, not our constants (the constants live in code):
+
+- **Cloud Run request timeout:** at most 60 minutes per request; longer work goes to Cloud Tasks or a Cloud Run Job.
+- **Cloud Run filesystem:** in-memory and per instance, no persistent disk; all state is in Firestore or GCS.
+- **Firestore document size:** at most 1 MiB; a session or fact set that can grow is split into several documents.
+
 ## Operations
 
 **Status and logs.**

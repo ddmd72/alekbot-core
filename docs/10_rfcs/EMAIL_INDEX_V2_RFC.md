@@ -1,6 +1,7 @@
 # RFC: Email index v2 — one card per mail, keyed search on the drive's engine, a re-card of stored ids
 
 **Status:** Slices 0–10 and 9b built (per-slice table in §9).
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/gmail_email_indexing/README.md)
 **Date:** 2026-11-16 (design 2026-11-13; as-built deltas folded in).
 **Builds on, does not repeat:** fresh headers + exact keys (`decisions/email_search_fresh_headers.md`): code, not Smart,
 lists mail newer than the index and literal Gmail matches of up to 3 identifiers. v2 changes what the **index** holds

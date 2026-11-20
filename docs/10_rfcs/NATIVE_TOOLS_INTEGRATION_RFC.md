@@ -6,7 +6,7 @@
 **Owner:** AI Engineering
 **Milestone:** M4 (Multi-Agent Integration)
 
-**Related ADR:** ADR-005 (Router-Centric Enrichment)
+**Related decision record:** [router_prefetch_once_per_message.md](../04_solution_strategy/decisions/router_prefetch_once_per_message.md) (formerly ADR-005)
 **Related Building Block:** Search Enrichment
 **Implemented Sections:** 3.2 (Router-Centric Enrichment), 4 (SearchEnrichmentService), 5 (Biographical Cache — see HEXAGONAL_PROMPT_CACHING_RFC.md)
 
@@ -379,7 +379,7 @@ Provider selection and billing overrides per user are deferred to a later milest
 ## 14. Detailed Implementation Workflow (2026-01-27) — Superseded
 
 > Steps 1–5 below reflect the original plan. All steps are either implemented differently or superseded.
-> See current architecture in `docs/04_solution_strategy/current_implementation/STRUCTURE.md`.
+> See current architecture in the root `CLAUDE.md` § Architecture (the former structure overview is deleted).
 
 - Step 1 (Port Extensions): `AgentExecutionContext` + `ProviderCapabilities` implemented (supersedes `AutomaticFunctionCallingConfig`).
 - Step 2 (Native Grounding): Implemented for WebSearchAgent and WebSearchLightAgent only. Quick uses function calling.

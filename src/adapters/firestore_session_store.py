@@ -72,7 +72,7 @@ class FirestoreSessionStore(SessionStore):
                 Returns None to use the constructor defaults for that session.
         """
         self.db = db_client
-        # ADR-006: collection_name is now passed explicitly (e.g. development_sessions)
+        # collection naming (decisions/collection_prefix_retained.md): collection_name is now passed explicitly (e.g. development_sessions)
         if collection_prefix:
             # Fallback for old calls: try to construct name or use as is
             self.collection_name = f"{collection_prefix}sessions" if not collection_prefix.endswith("sessions") else collection_prefix

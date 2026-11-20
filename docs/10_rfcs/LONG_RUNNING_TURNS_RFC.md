@@ -1,6 +1,7 @@
 # RFC: Long-running turns — a chat turn may run long, and says so
 
 **Status:** Implemented, see `decisions/long_running_turns.md`. The rest of §7 (deadline + wrap-up for `ask_alek`, `tell_alek`, background notifications and bound/companion channels) is frozen by the owner (2026-11-06).
+**History:** a point-in-time design record; the decision and how it works now: [long_running_turns.md](../04_solution_strategy/decisions/long_running_turns.md)
 **Date:** 2026-10-05 (first draft 2026-10-04)
 **Owner decisions:**
 - **Universal, not skill-specific.** Agent Skills exposed the problem; it belongs to every turn that does many tool calls or one long reasoning call.

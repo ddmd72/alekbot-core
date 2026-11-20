@@ -1,6 +1,7 @@
 # RFC: Deep Research Integration
 
 **Status:** Gemini backend implemented ✅ → removed 2026-05-29 ❌ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅ | Claude runner implemented ✅ | Cloud Run Jobs migration: Implemented ✅
+**History:** a point-in-time design record; how it works now: [CLAUDE.md](../../src/agents/CLAUDE.md)
 **Date:** 2026-03-03
 **Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07; Claude runner 2026-03-13; Cloud Run Jobs migration 2026-03-14; **Gemini backend removed 2026-05-29** (see [decisions/gemini_deep_research_adapter_removal.md](../04_solution_strategy/decisions/gemini_deep_research_adapter_removal.md))
 **Owner:** AI Engineering

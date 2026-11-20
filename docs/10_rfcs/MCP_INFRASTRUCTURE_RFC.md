@@ -1,6 +1,7 @@
 # RFC: MCP Protocol Infrastructure + Maps Grounding Lite Pilot
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/mcp_infrastructure/README.md)
 **Date:** 2026-03-08
 **Owner:** AI Engineering
 **Milestone:** Specialist Agents — MCP Integration

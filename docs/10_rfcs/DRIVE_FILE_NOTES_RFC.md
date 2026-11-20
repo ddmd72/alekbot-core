@@ -1,6 +1,7 @@
 # RFC: Owner notes on drive files
 
 **Status:** Implemented, rev 3.3 (2026-10-28): every open decision answered by the owner (D11–D21); rev 3.1 aligns the
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/user_drive/README.md)
 deleted-files search and the deletion "why" with the transcripts mirror (§0.3); rev 3.2 records the owner's ruling on
 editing archived and other-drive notes (D21) and the deltas of the built S1 core (§0.4); rev 3.3 moves the write side
 from Smart into the drive specialist (`DRIVE_SPECIALIST_RFC.md` §9) and records what that build changed (§0.5). S1–S3
@@ -1058,7 +1059,7 @@ whenever the noted item itself is observed (named residual).
   realtime voice provider, which hears the caller say it like everything said on a call.
   Accepted, the same as any drive card.
 - **Logs** carry ids, counts, versions and statuses, never the text. A future search-metrics event
-  (`DRIVE_SEARCH_METRICS_RFC.md`) must store `noted: true`, never the note.
+  (`decisions/drive_search_metrics_not_built.md`) must store `noted: true`, never the note.
 - **Sensitive notes** stay out of other surfaces: no Cabinet listing in v1, no export, no default search of archived
   notes (D9).
 - **Tenancy.** `user_id` and `account_id` on every document; every query filters `user_id ==`.

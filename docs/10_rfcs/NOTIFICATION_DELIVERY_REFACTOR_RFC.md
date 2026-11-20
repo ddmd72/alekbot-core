@@ -1,6 +1,7 @@
 # Notification Delivery Refactor — RFC
 
 **Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.
+**History:** obsolete; kept for its reasoning. Living doc: [rich_content_one_delivery_path.md](../04_solution_strategy/decisions/rich_content_one_delivery_path.md)
 **Date:** 2026-04-30
 **Author:** Dmytro Deleur
 

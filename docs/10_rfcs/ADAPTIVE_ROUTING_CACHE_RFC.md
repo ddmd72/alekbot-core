@@ -7,7 +7,7 @@
 **Scope:** RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent
 **Goal:** Scalable hybrid architecture with native tools, adaptive caching, and continuity-aware routing.
 
-**Related ADR:** ADR-005 (Router-Centric Enrichment)
+**Related decision record:** [router_prefetch_once_per_message.md](../04_solution_strategy/decisions/router_prefetch_once_per_message.md) (formerly ADR-005)
 **Related Building Block:** Search Enrichment
 **Implemented Sections:** 3.2 (Triple Search), 7 (Dedup Strategy), 3.1–3.5 (Router), 4 (Quick), 5 (Smart)
 **Superseded Section:** §8 (Adaptive Cache Strategy) → see HEXAGONAL_PROMPT_CACHING_RFC.md

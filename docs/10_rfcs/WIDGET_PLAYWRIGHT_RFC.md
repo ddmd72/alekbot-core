@@ -1,6 +1,7 @@
 # RFC: HTML Card — Inline Images via Playwright
 
 **Status:** Implemented (2026-02-26)
+**History:** a point-in-time design record; how it works now: [CLAUDE.md](../../src/agents/CLAUDE.md)
 **Date:** 2026-02-26
 **Author:** Solo dev
 **Scope:** HtmlRendererPort, PlaywrightHtmlRenderer, RichContentService, ConversationHandler, Docker

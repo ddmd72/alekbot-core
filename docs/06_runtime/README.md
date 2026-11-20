@@ -49,7 +49,7 @@ sequenceDiagram
    transcribed into the user's own text; other attachments go through `FileConversionService` into GCS
    (reference-only parts); `UserAgentFactory.ensure_agents_for_user` builds or refreshes the user's agents.
 3. **`RouterAgent`** (`src/agents/core/router_agent.py`): LLM triage (rule-based fallback), one memory prefetch via
-   `SearchEnrichmentService` (ADR-005), the user's active reminders as `agent_notes`; it always routes to Smart.
+   `SearchEnrichmentService` (`decisions/router_prefetch_once_per_message.md`), the user's active reminders as `agent_notes`; it always routes to Smart.
 4. **`SmartResponseAgent`** runs the multi-turn tool loop in `DelegationEngine`
    (`src/infrastructure/delegation_engine.py`). `delegate_to_specialist` goes through
    `AgentCoordinator.handle_delegation`: a **SYNC** intent runs inline and returns its result; an **ASYNC** intent is

@@ -1,6 +1,7 @@
 # RFC: ImageGenerationAgent — Image Generation & Editing via grok-imagine-image-2.0
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [CLAUDE.md](../../src/agents/CLAUDE.md)
 **Date:** 2026-08-21
 **Owner:** AI Engineering
 **Milestone:** Specialist Agents — new capability

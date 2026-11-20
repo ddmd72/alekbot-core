@@ -1,6 +1,7 @@
 # RFC: Geo marks — the owner shares where he is, on purpose
 
 **Status:** Implemented v1 (2026-11-19); landmarks around the position added the same day (§2, §4.1–§4.4, §4.7).
+**History:** a point-in-time design record; how it works now: root [CLAUDE.md](../../CLAUDE.md) § Where things live
 Product decisions are the owner's (2026-11-18) and final; this RFC turns them into a
 design. Open: §8 and the Telegram picked-point probe (§9). Slices, file anchors and tests: the private delivery plan.
 

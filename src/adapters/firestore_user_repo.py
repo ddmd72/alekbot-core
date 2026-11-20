@@ -58,7 +58,7 @@ class FirestoreUserRepository(UserRepository):
         self.env_config = env_config
         self.account_repo = account_repo
 
-        # Use dynamic collection name (ADR-006 Semantic Naming)
+        # Use dynamic collection name (decisions/collection_prefix_retained.md)
         collection_name = env_config.domain_users_collection
         self.users_col = self.db.collection(collection_name)
 

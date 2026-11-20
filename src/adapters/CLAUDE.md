@@ -9,6 +9,24 @@ Firestore repos, Slack/Telegram, Gmail, MicrosoftToDo (GoogleTasks frozen), Node
 `adapters/ → domain/, ports/, config/` only. **No cross-subpackage adapter imports** (REQ-ARCH-23).
 See the root `CLAUDE.md` (Import Rules, Layer Semantics) for the full boundary map.
 
+## Why models and providers stay inside adapters (REQ-ARCH-12/13)
+
+Guarded by `tests/unit/test_req_arch_01_hexagonal_isolation.py`. The rules exist because a model or provider name outside
+an adapter is knowledge the adapter was meant to own.
+
+- **REQ-ARCH-12 — no model-name literals** (`claude-*`, `gemini-*`, `gpt-*`, `grok-*`) in `agents/`, `services/`, `domain/`,
+  `ports/`. A model is replaced every few months; if its name lives only in an adapter's `MODEL_TIERS` and the billing
+  price table, a model refresh is a change in those two places. A literal in an agent becomes a hidden second source of
+  truth that silently pins one provider's model when the user's tier or provider changes. An agent with no context passes
+  `None` and lets the adapter resolve the tier. Exemptions are listed in `MODEL_NAME_WHITELIST_FILES`
+  (`tests/unit/arch_tech_debt.py`): the pricing table and agents that are provider-specific on purpose.
+- **REQ-ARCH-13 — no provider-name comparisons** (`== "gemini"`, `in ("claude", ...)`) in `agents/` or `services/`.
+  A branch on a name makes the agent know every provider, so a new provider means editing every such agent, and a
+  forgotten branch fails only at run time on that provider. Differences are expressed as `ProviderCapabilities` fields
+  (`native_tools` and the like): the agent builds one request, the adapter translates it to its SDK's format.
+- A third case follows from the same idea: a type two ports both need belongs in `domain/`, never re-exported
+  from one port, so ports do not depend on each other.
+
 ## Adding or Modifying an LLM Adapter
 
 Mandatory protocol: [`docs/how_to/ADAPTER_WIRE_TESTING.md`](../../docs/how_to/ADAPTER_WIRE_TESTING.md).

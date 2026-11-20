@@ -1,6 +1,7 @@
 # RFC: Voice Web Transport — call Lelik from the Cabinet over WebRTC
 
 **Status:** Implemented
+**History:** a point-in-time design record; how it works now: [voice_web_transport_cloudflare_sfu.md](../04_solution_strategy/decisions/voice_web_transport_cloudflare_sfu.md)
 **Date:** 2026-09-27
 **Owner:** Dmytro
 **Milestone:** Voice — second transport

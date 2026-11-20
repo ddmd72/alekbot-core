@@ -2,8 +2,6 @@
 
 Cross-cutting ideas that more than one building block relies on.
 
-- **[Hexagonal Architecture Patterns](./hexagonal_architecture_patterns.md)** — where a class goes, how layers stay
-  apart, and the architecture tests that enforce it.
 - **[Multi-Vector RRF Search](./multi_vector_rrf_search.md)** — why memory search fuses ranks from several vectors,
   and how duplicates are judged.
 - **[Groovy Prompt Pattern](./groovy_prompt_pattern.md)** — why prompts are written as a Groovy-style class, and how

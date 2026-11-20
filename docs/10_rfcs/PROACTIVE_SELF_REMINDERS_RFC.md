@@ -1,6 +1,7 @@
 # RFC: Proactive Self-Reminders
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [CLAUDE.md](../../src/agents/CLAUDE.md)
 **Date:** 2026-03-22
 **Replaces:** AGENT_NOTES_RFC.md (superseded — do not use)
 

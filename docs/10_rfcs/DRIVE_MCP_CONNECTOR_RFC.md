@@ -1,6 +1,7 @@
 # RFC: Drive MCP connector — the drive's read tools for an outside MCP client
 
 **Status:** Implemented (2026-11-03). The owner answered the three questions the re-verification raised (D8–D11, §2); no
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/remote_mcp_server/README.md)
 owner question is open.
 Slice 2 (the read tools, token-backed) is built (2026-11-03); the sections below state what it ships.
 §14 (wide results and passage batches, D12) is built (2026-11-04).

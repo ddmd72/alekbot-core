@@ -1,6 +1,7 @@
 # RFC: Memory facts the owner confirms — `propose_memory_facts` + `$memory save`
 
 **Status:** Accepted (owner, 2026-10-19); implemented on `feat/memory-propose-facts`. Replaces the `save_to_memory` intent.
+**History:** a point-in-time design record; the decision and how it works now: [memory_facts_owner_confirmed.md](../04_solution_strategy/decisions/memory_facts_owner_confirmed.md)
 **Where the code and this text differ, the code is the truth.**
 **Related:** `AGENT_SKILLS_RFC.md` (the draft + `$skill save` pattern this copies),
 `AGENT_WORKSPACE_RFC.md` (task state and the bot's own notes), `STANDING_DIRECTIVES_RFC.md`,

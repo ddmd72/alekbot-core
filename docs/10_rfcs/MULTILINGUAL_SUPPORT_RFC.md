@@ -1,6 +1,7 @@
 # RFC: Multilingual Support — Hexagonal Localization Architecture
 
 **Status:** IMPLEMENTED
+**History:** a point-in-time design record; how it works now: [README.md](../05_building_blocks/localization_system/README.md)
 **Created:** 2026-02-21
 **Scope:** Domain, Ports, Adapters, Services, Web Cabinet, ResponseChannel, PromptBuilder
 **Goal:** First-class language support that can be extended without rearchitecting.

@@ -1,6 +1,7 @@
 # 04 Solution Strategy
 
 ## 📂 Contents
-- Target Architecture: [target_architecture/TARGET_ARCHITECTURE.md](./target_architecture/TARGET_ARCHITECTURE.md)
+- Architecture and layer rules: the root `CLAUDE.md` (§ Architecture, § Import Rules)
+- Decision records: [decisions/](./decisions/)
 - Milestone map
 - Strategy overview

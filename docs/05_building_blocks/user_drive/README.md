@@ -2596,8 +2596,8 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   is left. It refuses any id that does not start with `zz-synthetic-`, and refuses to start unless the drive queue
   (`drive-sync-dev`) is PAUSED: the owner pauses it before and resumes it after (the fan-out would otherwise tick the
   synthetic user live); the script prints the resume command when it ends.
-- **Search metrics (planned, not built):** live search and drive-turn metrics, an LLM judge and a weekly report —
-  [DRIVE_SEARCH_METRICS_RFC.md](../../10_rfcs/DRIVE_SEARCH_METRICS_RFC.md).
+- **Search metrics (designed, not built):** live search and drive-turn metrics, an LLM judge and a weekly report —
+  [drive_search_metrics_not_built.md](../../04_solution_strategy/decisions/drive_search_metrics_not_built.md).
 - **Deploy and rollback**: §7.2.
 - **Scripts take a connection.** The drive scripts that act on one drive (`drive_index_rebuild.py`,
   `drive_transcribe_flag.py`, `drive_initial_build_reset.py`, `drive_transcribe_requeue.py`, `drive_mirror_status.py`,
