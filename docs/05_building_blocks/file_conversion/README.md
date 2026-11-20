@@ -1,237 +1,256 @@
+<!-- living-doc
+covers:
+  src/services/file_conversion_service.py
+  src/services/document_service.py
+  src/composition/document_service_setup.py
+  src/domain/document_open.py
+  src/domain/document_open_texts.py
+  src/domain/document_read.py
+  src/domain/document_presentation.py
+  src/domain/document_limits.py
+  src/domain/active_kind.py
+  src/domain/file_ref.py
+  src/domain/untrusted_text.py
+  src/domain/container_facts.py
+  src/domain/audio_transcript.py
+  src/utils/file_conversion.py
+  src/utils/document_hardening.py
+  src/ports/document_read_port.py
+  src/ports/container_facts_port.py
+  src/ports/pdf_splitter_port.py
+  src/ports/audio_transcription_port.py
+  src/ports/transcript_cache_port.py
+  src/adapters/openai_transcription_adapter.py
+  src/adapters/firestore_transcript_cache.py
+-->
 # File Conversion and the Open Path
 
 ## Purpose
 
-Turns a file ref into what a model can read, before any LLM adapter sees it: text, a note, or a native file the
-consumer attaches. One path serves every interactive open (chat uploads, delivered documents, `workspace:` files, drive
-files) and the specialists' prefetch. Spec: [`docs/10_rfcs/EXTERNAL_FILES_RFC.md`](../../10_rfcs/EXTERNAL_FILES_RFC.md)
-(§4.2 the open path, §4.4 the document service, §4.5 caps, §4.6 marking; U3 built).
+This block turns a file ref into what a model can read, before any LLM adapter sees it: text, a note, or a native
+file the consumer attaches. One path serves every interactive open (chat uploads, delivered documents, `workspace:`
+files, `email:` attachments, and the file-reading half of drive opens) and the specialists' prefetch. It is what makes
+file reading independent of the provider: the adapters never parse a file.
 
-Goal — LLM-agnosticism: read once, works for Claude, Gemini, Grok, OpenAI without changes in adapters.
+It also resolves a ref to plain bytes for the two actions no model reads (save to the drive, send to the chat), and
+decides which email attachments may not be forwarded.
 
----
+What it is not: it does not store uploads (see [file_storage](../file_storage/README.md)), it does not decide a
+drive open's §29 bound, folders, recordings or video (`DriveOperations` does, see [user_drive](../user_drive/README.md)),
+and it runs no parser itself (the sandbox's light service does). The spec is
+[`EXTERNAL_FILES_RFC.md`](../../10_rfcs/EXTERNAL_FILES_RFC.md).
 
-## Place in Architecture
+## Owned data
 
-```
-upload turn:  ConversationHandler -> FileConversionService.process_attachment -> GCS + label-only MessagePart
-              (no parsing, no content in history; no file service -> storage_unavailable_alert, see file_storage §2.1)
+One collection: the transcript cache of chat audio, `EnvironmentConfig.audio_transcripts_collection`, written and read
+only by `FirestoreTranscriptCache` (`src/adapters/firestore_transcript_cache.py`). Document id
+`{account_id}:{sha256 of the bytes}:{transcriber model}`; fields `text`, `account_id`, `written_at`, `purge_after`
+(`TRANSCRIPT_CACHE_DAYS` after the write; a read treats an expired entry as absent). Schema row:
+[`DATABASE_SCHEMA.md`](../../08_concepts/DATABASE_SCHEMA.md) §3.3. The cache outlives the upload it was made from: the
+bucket lifecycle deletes the upload sooner (see file_storage).
 
-read turn:    opener (FileManagementAgent / DriveOperations, or the coordinator's prefetch)
-                 |  open(ref, user_id, account_id, consumer=<native declaration>, deadline_at)
-                 v
-              FileConversionService.open        resolve the ref in its store, size check on metadata, stage bytes
-                 |  ReadRequest(bytes, name, declared mime, store, caller, native formats, deadline_at)
-                 v
-              DocumentService.read              kind from bytes -> caps -> native or pipeline -> ReadOutcome
-                 |
-                 v
-              OpenedFile(body | note | native file)  ->  the opener's presenter marks and cuts (present_text)
-```
+Nothing else is stored. Uploaded bytes live in the storage block; a read file's text is the tool result of its turn and
+is never put in session history.
 
-Layers: `FileConversionService` (`src/services/file_conversion_service.py`) resolves refs and stages bytes;
-`DocumentService` (`src/services/document_service.py`) reads bytes behind `DocumentReadPort`
-(`src/ports/document_read_port.py`); the macro check's ZIP facts come behind `ContainerFactsPort`
-(`src/ports/container_facts_port.py`); contracts and texts are pure domain modules (`src/domain/document_read.py`,
-`document_open.py`, `active_kind.py`, `container_facts.py`, `document_limits.py`, `document_presentation.py`, `document_open_texts.py`);
-`src/utils/file_conversion.py` keeps the alert texts and the type helpers; `convert_file_to_text` and `build_markitdown` are gone (U5).
+## Flows
 
-> **See also:** [../file_storage/README.md](../file_storage/README.md) (GCS storage, the upload turn),
-> [../user_drive/README.md](../user_drive/README.md) (drive opens, §29 bound).
+### Upload turn
 
----
+`ConversationHandler` calls `FileConversionService.process_attachment`: the bytes go to storage, and the message gets a
+label-only `MessagePart` (`[File: "<ref>" (<size>)]`, plus `file_data` with ref, mime, size, original name, and the local
+path for a native binary). Nothing is parsed and no content enters history; the model reads the file later with
+`open_file`. With no file service the handler answers `storage_unavailable_alert` (`src/utils/file_conversion.py`).
 
-## The open path
+### Open (one file, for a model)
 
-### `FileConversionService.open` / `prefetch`
+Entry: `FileConversionService.open(ref, user_id, account_id, *, consumer, deadline_at, caller)`. `consumer` is the
+consuming model's native declaration (`NativeFormat` tuple; empty means text only); `caller` is one of `CALLER_OPEN`,
+`CALLER_PREFETCH`, `CALLER_CONNECTOR`, `CALLER_INDEX` (`src/domain/document_read.py`).
 
-`open(ref, user_id, account_id, *, consumer=(), deadline_at, caller=CALLER_OPEN) -> OpenedFile`
-(`file_conversion_service.py:200`). It classifies the ref (`classify_ref`), resolves it in its store (delivered keys
-carry the ownership check), refuses an oversize file on metadata before any download, stages the bytes for this call
-only, reads them through the document service and answers exactly one of: `body` (today's `[File: <name>]` text, raw,
-unmarked and uncut), `note` (a `[System: ...]` line), or a native file (`native_path` + `native_mime`). `consumer` is
-the consuming model's native declaration (empty: text only). Store errors propagate; the callers map them. Folders,
-recordings, video and the drive's §29 decision stay with the caller (`DriveOperations`). `email:` refs open through `open_email` (U4a): one listing of the message, a match by part id or name, one download, the document service with store `email`; a name that matches several parts returns candidate labels, never a guess.
+1. `classify_ref` (`src/domain/file_ref.py::classify_ref`) picks the store: email, skill, workspace, delivered, drive,
+   else chat. Prefix decides first, so a chat file whose name contains `drive:` stays chat
+   (`file_conversion_service.py::_is_drive_ref`).
+2. The ref is resolved in its store. Delivered keys carry an ownership check (the second path segment must be the
+   requesting user; `_download_by_ref`). A drive ref goes through `DriveConnectionService` and the access policy's READ
+   check before any download or any text that prints its path (`_drive_item`). Store errors propagate; the callers map
+   them.
+3. Size: a drive file and an email part are checked on metadata before download; chat, delivered and workspace bytes
+   are downloaded first and capped by the document service. A drive text file is streamed up to
+   `MAX_TEXT_EXPORT_BYTES`.
+4. The bytes go to `DocumentService.read` as a `ReadRequest` (bytes and plain values only, `store` = the ref kind).
+5. The answer is an `OpenedFile` (`src/domain/document_open.py`): `body` (`[File: <name>]` text, raw, unmarked, uncut),
+   a `note`, or a native file (`native_path` + `native_mime`). The opener's presenter marks and cuts the text (see
+   Presentation). Folders, recordings, video and the drive's §29 decision stay with the caller.
 
-`prefetch(ref, ..., deadline_at) -> Prefetched` (`:295`) is `open` as text only for a specialist
-(DocPlanner, PdfGenerator, HtmlPageGenerator): the text as `content`, marked and cut at 60 000 characters, or a `note`
-the specialist reports ("do not guess"). It never raises and never transcribes. The coordinator injects `file_content`
-or `file_note` into the specialist's params (`agent_coordinator.py:609`).
+`email:` refs open through `FileConversionService.open_email`: one part listing, a match by part id (authoritative: a
+part id that matches nothing is "missing", never a fall back to the name) or by name, one download, then the document
+service with store `email`. A name matching several parts opens nothing and returns candidates plus the choose-one note;
+that is a successful answer. Every expected failure is a note from `src/domain/email_open_texts.py`.
 
-### `FileConversionService.resolve_file` (save and send)
+A native file is written to a temp file outside any staging directory (`_native_file`) because the adapter reads it later
+in the turn; the consumer that attaches it owns it, and `DelegationEngine.execute` removes it when the run ends.
 
-`resolve_file(ref, user_id, *, action) -> ResolvedFile` (`action` is `"save"` or `"send"`) returns the bytes, name and
-declared mime of any ref for an action that no model reads: nothing is parsed, marked or cut. The cap is the action's
-(`action_cap()`), checked on metadata where the store has it (drive) and on the bytes elsewhere. An `email:` ref costs one
-part listing and one download (the part found by its id). A Google native is named by its export (`DriveItem.exported`:
-the export's mime and extension). What the service decides itself raises `FileNotResolved`, whose `line` is the honest
-note (cap, folder, every email note); the callers answer with it. Callers: `copy_file_to_drive` (accepts `email:` refs) and
-the FileManagement intent `send_file_to_user` (SYNC; `file_ref` plus an optional `file_name`; delivery through
-`UserNotificationService.notify_file_bytes` to the origin channel; a refusal answers with a note, a failed upload is a
-failure).
+### Prefetch (a specialist's file)
 
-**D13: active kinds from email are not sent or saved.** For an `email:` ref only, `send_file_to_user` and the email branch of
-`DriveOperations.copy` (`copy_file_to_drive`; a refusal uploads nothing, owner 2026-11-05) call
-`active_kind_of(resolved, deadline_at=...)` on the file as resolved and again under the name the model gave. It compares
-the head (64 KiB) in `src/domain/active_kind.py` (HTML, SVG, shortcut, disk image, executable, script) and, for a ZIP
-family file or an OLE2 head, i.e. a legacy `.doc`/`.xls`/`.ppt` under any name (`needs_container_check`), asks `ContainerFactsPort.container_facts` for the macro facts. The adapter is
-`SandboxContentExtractor` over the sandbox light op `parse.container_facts` (central directory and `[Content_Types].xml`
-only; for an OLE2 file its directory, never a stream body: `vba_storage` is a `Macros`, `_VBA_PROJECT_CUR` or `VBA`
-storage, a plain or encrypted-OOXML OLE2 file has none); the main service reads no container. A name or mime naming an active kind blocks too, never unblocks. **Fail closed:** no
-port, an outage, a run failure, `error` or `too_large` leaves the container unchecked, and `active_kind` answers
-`unchecked_container`: the file is refused with a "could not be checked" note, never sent. Drive and chat refs are sent
-without the check.
+`FileConversionService.prefetch` is `open` as text only: the text as `content` (marked and cut), or a `note` the
+specialist reports instead of guessing. It never raises and never transcribes. `AgentCoordinator._resolve_file_refs`
+(called by `prefetch_file_ref`) puts the result in the specialist's params as `file_content` or `file_note`; an agent
+opts out with `AgentDescriptor.prefetch_file_ref=False` (the email, file-management and drive agents read for
+themselves). The synchronous path uses `INTERACTIVE_OPEN_S`; the async worker (`AgentWorkerHandler`) uses
+`PREFETCH_OPEN_S`.
 
-### `DocumentService.read`
+### Document service read
 
-`read(ReadRequest) -> ReadOutcome` never raises; every failure path returns a status and logs one line (ERROR for the
-systemic `error`, `memory`, `model_unavailable`, `parser_unavailable`; WARNING for the file's or the clock's), with the
-request id, kind and a failure label, never text or a file name (`document_service.py`). In order:
+Entry: `DocumentService.read` (`src/services/document_service.py`), behind `DocumentReadPort`. It never raises: every
+failure is a `ReadOutcome` status and one log line with the request id, kind and a failure label, never text or a file
+name. In order (`_read`, `_admit`):
 
-1. **Kind from bytes** (`sniff_kind` over the first bytes, against the declared kind); never trusted from the name alone.
-2. **Caps** (`domain/document_limits.py`, one table by store and kind): 5 MiB to parse as text; a text or text export up
-   to 10 MiB before its inline `data:` images are dropped, then the 5 MiB cap on what is left; native files at most
-   5 MiB (image) / 20 MiB (PDF), and never above the consumer's declaration.
-3. **Native decision.** An image within the declaration goes native; a PDF within the declared bytes goes native after
-   the page count (encrypted or too many pages goes to the pipeline). A text-only consumer always takes the pipeline.
-4. **Parser service.** Every parsed kind is read by the sandbox's light service through `SandboxContentExtractor`, one
-   request per call (`UNTRUSTED_CONTENT_SANDBOX_RFC`); the main service runs no parser child. An outage of the
-   service answers `PARSER_UNAVAILABLE`, never the file's outcome.
-5. **Router.** `model_route` decides from the parser's outcome whether the text is enough or the file is a scan or
-   low-density, which goes to the reader.
-6. **Reader** (`DriveReaderRunner`, no tools): at most `MODEL_EXTRACT_MAX_PAGES` = 200 pages per file (the same for
-   every store; `DocumentService.allowance`), a 60 000-character text budget (`reader_text_budget`, the store's
-   presentation cap, so nothing is read past what can be shown), under the open's deadline. When the reader is
-   unavailable for a low-density file the parser's text is returned flagged incomplete. The connector never runs the
-   reader: what the router would hand it answers `NO_TEXT` with a `READER_SKIPPED` detail. The `index` caller (the email
-   index) does the same unless the request carries `reader_pages`: then the reader runs when the parser's page count is
-   known and at most `reader_pages` (`reader_admits`, all or nothing), with `max_model_pages = reader_pages`; the
-   request stays plain values, so the email index reads a scan in two passes (the parser-only read, then the second read
-   with `reader_pages`).
-7. **Outcome** (`ReadOutcome`): status, raw text, pages total / read / skipped / `cut_within_pages`, links
+1. **Kind from bytes.** `sniff_kind` over the first bytes against the declared kind; the name alone is never trusted.
+2. **Audio** goes to the audio path below; PDF and image to step 3; the in-process text kinds
+   (`IN_PROCESS_TEXT_KINDS`, plus `other`, `data_dump`, `mhtml` when the declared mime is `text/*`) are decoded as UTF-8
+   in the service, since reading UTF-8 is not parsing; kinds in `PARSE_KINDS` go to step 4; anything else is
+   `UNSUPPORTED`.
+3. **Native decision.** An image, or a PDF, within the consumer's declared `max_bytes` goes native; a PDF also needs its
+   page count (`_native_pdf`): encrypted or over `max_pages` falls to the pipeline. A text-only consumer always takes the
+   pipeline.
+4. **Caps** (`src/domain/document_limits.py`, one table by store and kind): `parse_input_cap` before parsing; plain text
+   up to `text_export_cap`, then `MAX_FILE_BYTES` once inline `data:` images are dropped. A native declaration can never
+   exceed `native_ceiling` (checked when `NativeFormat` is built).
+5. **Parser.** Every parsed kind is read by the sandbox's light service through `SandboxContentExtractor`, one request
+   per call; the main service runs no parser child. An outage answers `PARSER_UNAVAILABLE`, never the file's outcome.
+6. **Router and reader.** `model_route` (`src/domain/document_extraction.py`) decides from the parser's outcome whether
+   the text is enough or the file is a scan or low-density. Those go to the reader (`DriveReaderRunner`, no tools): at
+   most `MODEL_EXTRACT_MAX_PAGES` pages per file for every store (`DocumentService.allowance`), a text budget equal to
+   the store's presentation cap (`reader_text_budget`), under the open's deadline. If the reader is unavailable for a
+   low-density file, the parser's text comes back flagged `may_be_incomplete`.
+7. **Outcome** (`ReadOutcome`): status, raw text, page counts (total, read, skipped, cut within), links
    (`parser@N`, `reader@N`), model calls and cost (already billed; reported, not booked again).
 
-Plain text kinds (`text`, `markdown`, `json`, `code`, `log`, and the unreadable-by-child `mhtml`, `other`, `data_dump`) are read as UTF-8 in the
-service, not in the child (reading UTF-8 is not parsing). A chat `csv` or `html` upload (also `text/*`) goes through the child like any other
-parsed kind; `convert_file_to_text` no longer exists.
-
-**Chat audio (P21).** Only a chat upload opened interactively is transcribed (`OpenAITranscriptionAdapter.
-transcribe_metered`); a prefetch never is, and drive recordings keep their own transcript-first rule. The call is
-metered: its model and usage (tokens or audio seconds) are priced (`domain/billing.py`) and booked to the account
-through the quota service. The transcript is cached per account for 90 days (the upload itself is deleted after 30 days by the bucket lifecycle)
-(`<prefix>audio_transcripts`, doc id `<account_id>:<sha256 of the bytes>:<transcriber model>`;
-`firestore_transcript_cache.py`, `DATABASE_SCHEMA.md` §3.3), so a second open costs nothing.
+Who may run the reader (`ReadRequest.caller`): open and prefetch always; `CALLER_CONNECTOR` (the drive connector) never,
+what the router would hand the reader answers `NO_TEXT` with a `READER_SKIPPED` detail; `CALLER_INDEX` (the email index)
+only when the parser's page count is known and fits `ReadRequest.reader_pages` (`reader_admits`, all or nothing), so the
+index reads a scan in two passes (parser only, then with `reader_pages`).
 
 ### Parser service
 
-There is no parser slot. The light service takes one request at a time per instance; when it is busy (HTTP 429 or 503)
-the open answers `PARSER_UNAVAILABLE` / `busy` (the "converter busy" note), and one retry follows a `recycling` answer
-(an instance replaced after a request). The same adapter object is the parser, the PDF splitter and the reader's window
-cutter. A caller that reads many files in a row backs off on `busy` (the email index: 2 in flight, retries after
-2 / 5 / 10 s, then the mail stays pending).
+There is no parser slot in the main service. The light service takes one request at a time per instance; HTTP 429, or a
+`recycling` 503 that repeats after its one retry, ends as `ParserUnavailable("busy")` and the "converter busy" note; a
+503 the sandbox never sent (a lost instance) is `unavailable` after the same one retry
+(`src/adapters/sandbox_client/sandbox_http_client.py`). One adapter object serves as the parser, the PDF splitter
+(`PdfSplitterPort`) and the container-facts reader (`ContainerFactsPort`). A caller that reads many files in a row backs
+off on `busy`: the email index (`EmailAttachmentTextService`, `PARSE_CONCURRENCY` in flight, `BUSY_RETRY_DELAYS_S`, then
+the mail stays pending; on the reader pass a busy answer is retried only while nothing was spent).
+
+### Audio
+
+Only a chat upload opened interactively is transcribed (`DocumentService._audio`): any other store, a prefetch, or no
+transcriber (no `OPENAI_API_KEY`, `build_document_backends`) answers `UNSUPPORTED` and the audio note. Drive recordings
+keep their own transcript-first rule in `DriveOperations`. The call is metered (`OpenAITranscriptionAdapter.
+transcribe_metered`): model and usage are priced (`src/domain/billing.py`) and booked to the account through the quota
+service. A cached transcript is returned before any call, so a second open costs nothing.
 
 ### Deadlines
 
-One absolute `deadline_at` (epoch seconds) from the open's start; every wait and the child's wall clock are lowered to
-the time left (`domain/document_read.py`).
+One absolute `deadline_at` (epoch seconds) from the open's start; every wait and the child's wall clock are lowered to the
+time left. `DocumentService.read` wraps the whole read in it and answers `TIMEOUT` / `deadline`.
 
 | Opener | Deadline |
 |---|---|
-| `open_file` (FileManagement) | the agent's timeout minus `OPEN_MARGIN_S` (30 s) = 90 s (`INTERACTIVE_OPEN_S`) |
+| `open_file` (`FileManagementAgent._open_budget_s`) | the agent's timeout minus `OPEN_MARGIN_S`; `INTERACTIVE_OPEN_S` with no timeout |
 | Drive and stored opens through `DriveOperations` without an explicit deadline | `INTERACTIVE_OPEN_S` |
-| Specialist prefetch on the synchronous path | `INTERACTIVE_OPEN_S` |
-| Specialist prefetch in the async worker | `PREFETCH_OPEN_S` = 270 s, under Cloud Tasks' 600 s dispatch deadline |
+| Specialist prefetch, synchronous path | `INTERACTIVE_OPEN_S` |
+| Specialist prefetch, async worker | `PREFETCH_OPEN_S`, under Cloud Tasks' dispatch deadline |
 
-A read past it answers `TIMEOUT` / `deadline` and the "could not be read in time; try again" note. `STILL_WORKING`
-exists in the contract for a remote adapter and is never returned in-process.
+`STILL_WORKING` exists in the contract for a remote adapter and is never returned in-process.
 
----
+### Resolve bytes for save and send
 
-## Presentation
+`FileConversionService.resolve_file(ref, user_id, *, action)` (`ACTION_SAVE` or `ACTION_SEND`) returns bytes, name and
+declared mime of any ref for an action no model reads: nothing is parsed, marked or cut. The cap is `action_cap()`,
+checked on metadata where the store has it (drive, email) and on the bytes elsewhere. A Google native file is named by
+its export (`DriveItem.exported`, `export_file_name`). What the service decides itself raises `FileNotResolved`, whose
+`line` is the honest note; callers answer with it. Callers: `DriveOperations.copy` (the `copy_file_to_drive` tool) and
+`FileManagementAgent._send` (`send_file_to_user`, SYNC, delivery through `UserNotificationService.notify_file_bytes`).
+`resolve_bytes` is the older bytes path for editing and copying; it refuses `email:` refs.
 
-`document_presentation.py` builds what the model gets from an outcome; the opener calls it, the service does not.
+### Active kinds from email (D13)
 
-- **Marking per store.** `present_text` wraps the text with `wrap_untrusted` under the store's tag (drive: the
-  reference reminder; every other store: the external reminder), then puts the cut note and the "what was shown" line
-  OUTSIDE the wrapper. Skill files are the system's own text and stay unmarked.
-- **The one cut.** 60 000 characters (`MAX_CONVERTED_CHARS`, D20) on every non-drive open path, email included; a drive
-  open keeps its own §29 bound (`OPEN_MAX_CHARS` = 60 000) and cut line in `DriveOperations`. The cut falls at a
-  paragraph.
-- **Notes by status** (`note_for`): every per-file failure (`no_text`, `unsupported`, `encrypted`, `error`, `memory`, a
-  timeout that is not the deadline) gives today's conversion alert, `too_large` today's size alert; the deadline,
-  `model_unavailable` and `parser_unavailable` (unavailable / misconfigured / busy) have their own; an image the
-  consumer cannot take gets the too-large or unreadable-format image note; an unsupported audio file today's audio note.
-- **Shown line (D7).** A page-wise read says what was shown ("first N of M pages", pages cut within, pages skipped).
+For an `email:` ref only, both callers above call `FileConversionService.active_kind_of` on the file as resolved and
+again under the name the model gave; a refusal uploads nothing (owner ruling 2026-11-05). The decision is the pure
+function `src/domain/active_kind.py::active_kind`: head magic over `ACTIVE_HEAD_BYTES`, then the container's macros,
+then the name's extension, then the mime. A name or mime naming an active kind blocks, never unblocks. The kind table is
+in that module's docstring. A ZIP-family file or an OLE2 head (a legacy `.doc`/`.xls`/`.ppt` under any name) needs the
+macro facts, read by the sandbox (`ContainerFactsPort`, op `parse.container_facts`, central directory and content types
+only; the main service reads no container).
 
----
+### Presentation
 
-## Untrusted input
+`src/domain/document_presentation.py` builds what the model gets from an outcome; the opener calls it, the service does
+not.
 
-Files are untrusted (chat uploads, drive files, workspace and delivered files). markitdown lives only inside the parser
-child (`src/adapters/drive_parser/readers.py`), as the DOCX, PPTX, EPUB and MSG converters: its builtins are off and only
-the classes in `MARKITDOWN_ALLOWED_CONVERTERS` (`document_hardening.py`) are registered; a test fails on any import of it
-outside `drive_parser/`. Left out on purpose:
-`ZipConverter` (inflates every member in RAM), `AudioConverter` (uploads audio to Google), `ImageConverter` and the URL
-converters. `check_zip_container()` refuses a ZIP container declaring more than `MAX_ZIP_UNCOMPRESSED_BYTES` (100 MiB)
-or `MAX_ZIP_MEMBERS` (10 000); both helpers live in `src/utils/document_hardening.py`, free of logger and telemetry
-imports because the parser child imports them for every file. Memory amplification inside a parser (a 5 KB XLSX
-measured near 1.75 GB) is bounded by the child's limits, not by these checks.
+- `present_text` wraps the text with `wrap_untrusted` under the store's tag (drive: `DRIVE_TAG` with the reference
+  reminder; every other store: `EXTERNAL_TAG` with the external reminder), cuts at a paragraph, and puts the cut note and
+  the "what was shown" line (`shown_line`) outside the wrapper. Skill files are the system's own text and stay unmarked.
+- One cut: `MAX_CONVERTED_CHARS` on every non-drive store, email included (`presentation_cap`). A drive open keeps its own
+  bound, `OPEN_MAX_CHARS`, and cut line in `DriveOperations`.
+- `note_for` maps every status that carries no text to a note: per-file failures give the conversion alert, `TOO_LARGE`
+  the size alert; the deadline, `MODEL_UNAVAILABLE` and `PARSER_UNAVAILABLE` have their own; an image the consumer cannot
+  take and an unsupported audio file have theirs. The texts are in `src/domain/document_open_texts.py`.
 
-File contents never leave in telemetry: file parts of LLM calls are replaced by `file_omitted` in exported spans
-(`docs/07_deployment/LOGGING.md`).
+## Invariants and traps
 
----
+- **Bytes decide the kind.** A file named `.pdf` that is not one is not read as a PDF (`sniff_kind`).
+- **The service returns raw text; the presenter marks it.** Text from a file reaches a model only through
+  `present_text` (or `DriveOperations`' own wrapper for the drive), under a per-call nonce; look-alike wrapper and
+  system tags in the text are neutralised (`src/domain/untrusted_text.py::wrap_untrusted`). A new opener that skips the
+  presenter hands the model unmarked file text.
+- **Every failure is a note, never an exception, and never in the system's voice.** Notes read `[Tool note: ...]` and tell
+  the model what to say; technical detail stays in logs (root `CLAUDE.md`, "Code-written text never claims the system's
+  voice"). `DocumentService.read` and `prefetch` never raise; `open` lets store errors propagate by design.
+- **An outage is not the file's outcome.** A parser or reader outage is `PARSER_UNAVAILABLE` / `MODEL_UNAVAILABLE`, so a
+  caller never records "unreadable file" for an outage (the email index keeps the mail pending). Never add an in-process
+  parser to a deployed composition (`src/services/CLAUDE.md`).
+- **Log levels feed alerting.** `DocumentService` logs ERROR for `ERROR`, `MEMORY`, `MODEL_UNAVAILABLE`,
+  `PARSER_UNAVAILABLE` and WARNING otherwise; the open path (`file_conversion_service.py::_log_unread`) also counts
+  `TIMEOUT` and `STILL_WORKING` as ERROR. Alerting reads severity, so a deadline timeout on an open pages.
+- **Fail closed on D13.** No container-facts reader, an outage, a run failure, `error` or `too_large` leaves the container
+  unchecked, and `active_kind` answers `UNCHECKED`: the file is refused with a "could not be checked" note, never sent.
+  Drive and chat refs are not checked. Tests: `tests/unit/domain/test_active_kind.py`, `tests/unit/agents/test_file_management_send_file.py`, `tests/unit/infrastructure/test_drive_operations_copy_email_active.py`.
+- **Caps live in one table.** `src/domain/document_limits.py`; `workspace.MAX_FILE_BYTES` is a different constant with the
+  same name and is never merged with it. The module is imported by the parser child, so it stays stdlib only.
+- **markitdown lives only in the parser child** (`src/adapters/drive_parser/readers.py`), through the converter classes
+  named in `MARKITDOWN_ALLOWED_CONVERTERS` (`src/utils/document_hardening.py`), called directly (no `MarkItDown` object,
+  so no builtins). Enforced by `tests/unit/test_markitdown_only_in_the_child.py` (no import elsewhere in `src/`) and
+  `tests/unit/utils/test_markitdown_allowlist.py` (the unsafe converters stay off: zip inflates every member in RAM, audio
+  uploads to a third party, image and URL converters call out).
+- **ZIP bombs.** `check_zip_container` refuses a container declaring more than `MAX_ZIP_UNCOMPRESSED_BYTES` or
+  `MAX_ZIP_MEMBERS`, reading only the central directory. `document_hardening.py` imports no logger or telemetry because the
+  child imports it for every file. Memory amplification inside a parser (a tiny XLSX can inflate to gigabytes) is bounded
+  by the child's resource limits, not by these checks.
+- **File contents never leave in telemetry.** File parts of LLM calls are replaced by `file_omitted` in exported spans
+  (`src/utils/logfire_redacting_exporter.py`, [`LOGGING.md`](../../07_deployment/LOGGING.md)).
+- **Audio is interactive and chat-only.** Prefetch never transcribes, so a specialist cannot spend on audio unasked.
+- **A native file is a temp file with an owner.** Whoever attaches `native_path` must remove it (`DelegationEngine`
+  does); a failed write removes it in `_native_file`.
+- **Dependencies.** The parser libraries, markitdown among them, are pinned in `requirements-sandbox-light.txt` (the
+  image that parses). `requirements-dev.txt` carries them for tests and local scripts; the main image does not install
+  them. markitdown needs its `[all]` extra.
 
-## Alert texts (graceful degradation)
+## Links
 
-Any failure becomes a `[System: ...]` note in the conversation, not an exception: the model sees a directive and tells
-the user in natural language what happened and what to try. Technical detail (exception type, path) stays in logs. The
-rejected alternatives were an empty response, a bot-level error message and silent data loss.
+- [`EXTERNAL_FILES_RFC.md`](../../10_rfcs/EXTERNAL_FILES_RFC.md): §4.2 the open path, §4.4 the document service, §4.5
+  caps, §4.6 marking, D13 active kinds.
+- [`UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md): the light service the parser
+  runs in.
+- [file_storage](../file_storage/README.md) (the upload turn, bucket lifecycle),
+  [user_drive](../user_drive/README.md) (drive opens, the §29 bound),
+  [gmail_email_indexing](../gmail_email_indexing/README.md) (the `index` caller).
 
-| Scenario | Text | What the model will say |
-|---|---|---|
-| File over the parse cap | `size_alert` | Ask for a smaller file or pasted text |
-| Unsupported format / conversion error | `conversion_alert` | Explain supported formats |
-| Audio without a transcriber (or a prefetch) | `audio_unavailable_note` | Ask for text instead |
-| Text cut | `cut_note` | The file was too large for full analysis; suggest splitting |
-| Converter or reader unavailable, or busy | `parser_unavailable_note`, `model_unavailable_note` | Try again later |
-| Not read in time | `deadline_note` | Try again |
+## Where to start reading
 
----
-
-## History Storage (tiered history)
-
-The upload turn stores only a label (`[File: "<ref>" (<size>)]`) plus `file_data` metadata; a file's content is never in
-session history, and the model reads it with `open_file` when it needs it. The tiered `full_text`/stub mechanism
-(`make_history_stub`, `BaseAgent._apply_history_tier`) remains for text that has both forms; a read file's text is the
-tool result of that turn, not history.
-
----
-
-## Supported Formats
-
-| Kind | Path |
-|---|---|
-| `image/*` | native when the consumer declares it and the file is within the cap; else the reader |
-| `application/pdf` | native within the declared bytes and pages; else parser, router, reader |
-| text kinds | UTF-8 in the service |
-| docx, pptx, xlsx, xls, odt, ods, odp, epub, msg, rtf, eml, subtitles, html, csv | parser child |
-| `audio/*` | chat upload, interactive open only: transcribed, metered, cached; else the audio note |
-| anything else | `unsupported` -> conversion alert |
-
----
-
-## Dependencies
-
-```
-requirements-dev.txt (tests, CI, local scripts; the main image does not install it):
-markitdown[all]   # [all] required: onnxruntime describes images inside DOCX/XLSX
-```
-
----
-
-## History
-
-Added: 2026-02-19 (Claude API returned HTTP 400 for unsupported MIME types; graceful degradation with a system alert
-chosen over silent skip). Rebuilt around one open path with the document service in U3 (EXTERNAL_FILES_RFC); the legacy
-handler branch that parsed uploads in the conversation handler is gone.
+- `src/services/file_conversion_service.py::FileConversionService.open` and `.prefetch`: the open path.
+- `src/services/document_service.py::DocumentService.read`: kind, caps, native, parser, router, reader.
+- `src/domain/document_read.py::ReadRequest` and `ReadOutcome`: the contract and its deadlines.
+- `src/domain/document_limits.py`: every cap.
+- `src/domain/document_presentation.py::present_text`: marking and the cut.
+- `src/services/file_conversion_service.py::FileConversionService.resolve_file` and `.active_kind_of`: save, send, D13.
