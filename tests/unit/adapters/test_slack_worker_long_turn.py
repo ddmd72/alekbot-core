@@ -26,7 +26,7 @@ def slack_adapter_with_handler_spy():
     adapter.app = MagicMock()
     adapter.slack_bot_token = "xoxb-test"
     adapter._localization = None
-    adapter._resolve_language = AsyncMock(return_value=(LanguageCode.EN, None, True))
+    adapter._resolve_language = AsyncMock(return_value=LanguageCode.EN)
 
     return adapter, conversation_handler
 

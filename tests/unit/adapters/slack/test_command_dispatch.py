@@ -20,7 +20,7 @@ def _make_adapter(conversation_handler, iam_service):
     adapter.app = MagicMock()
     adapter.slack_bot_token = "xoxb-test"
     adapter._localization = None
-    adapter._resolve_language = AsyncMock(return_value=(LanguageCode.EN, None, True))
+    adapter._resolve_language = AsyncMock(return_value=LanguageCode.EN)
     return adapter
 
 

@@ -159,7 +159,7 @@ def _busy_adapter(queue):
     a.conversation_handler = AsyncMock()
     a.iam_service = AsyncMock()
     a.iam_service.authorize.return_value = MagicMock(user=MagicMock(user_id="u1"))
-    a._resolve_language = AsyncMock(return_value=(LanguageCode.EN, None, True))
+    a._resolve_language = AsyncMock(return_value=LanguageCode.EN)
     a._process_message_event = AsyncMock()
     return a
 
