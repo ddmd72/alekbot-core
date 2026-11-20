@@ -52,7 +52,7 @@ Almost nothing is stored; that is the design.
    `handle_command`. Guards in `_geo_marks_for` and the handler: no service configured, a bound channel (marks live in
    the default session only), Telegram (answers with a pointer to the pin), and anything but a direct message each get
    one localized line and no link.
-2. `src/services/geo_mark_service.py::GeoMarkService.issue_link` mints a 128-bit opaque id, stores the binding under its
+2. `src/services/geo_mark_service.py::GeoMarkService.issue_link` mints an opaque random id (`secrets.token_urlsafe`), stores the binding under its
    keyed digest, returns the URL. The handler posts it through the channel's document-link send.
 3. `GET` of that URL, `src/web/geo_mark_app.py::create_geo_mark_blueprint` (`geo_page`), calls `peek_link`: it consumes
    nothing, so a link unfurler or a reload is harmless. It serves `src/web/static/geo.html` with the owner's strings in
@@ -78,7 +78,7 @@ Everything in steps 2 to 5 completes before the HTTP response: Cloud Run throttl
 `src/adapters/telegram/webhook_adapter.py::TelegramWebhookAdapter._handle_location` runs before the text path. A venue or a
 live location gets a one-line notice and no mark; a forwarded location is not taken as a mark; a plain pin becomes a `GeoFix` (time
 from the message) and goes to `ConversationHandler.handle_geo_mark`, which calls `locate` and `record` on the chat's
-session. A pin never carries text (the Bot API gives a location no caption), so there is never a turn: the owner's next
+session. A pin never carries text (the Bot API gives a location no caption, RFC §3), so there is never a turn: the owner's next
 message is an ordinary turn that sees the pair in history. A point whose accuracy is absent is worded as "a point" that
 may have been picked on the map, because the API has no flag for that.
 
@@ -125,15 +125,15 @@ sorted nearest first because Google ranks by prominence. Any failure, any non-OK
 - **No coordinates, addresses, place names or raw link ids in logs**, and the adapter logs no URL (it holds the key).
   Logs carry source, an accuracy band (`accuracy_band`), `address=yes|no`, counts, a user-id prefix and the link
   fingerprint. A test over the service checks this.
-- **Link is a capability, so every refusal is the same.** Wrong shape (`LINK_ID_PATTERN`), unknown, expired and used are
-  indistinguishable to the caller (a plain 404 on GET; on POST 404 for a wrong shape, 410 otherwise); a wrong shape
-  never reaches the store. The route is anonymous on purpose
+- **Link is a capability, so every refusal is the same.** Unknown, expired and used links are
+  indistinguishable to the caller (one plain 404 on GET, one 410 on POST). A wrong shape (`LINK_ID_PATTERN`) is a 404 on
+  both and never reaches the store. The route is anonymous on purpose
   and is pinned in `tests/unit/main_boots_offline_url_map.txt` and probed by
   `tests/unit/web/test_every_route_refuses_anonymous.py`.
 - **Direct message only.** In a shared channel any member could post forged coordinates into the owner's session and the
   redeemed address would be posted publicly. The page never sees which channel; the binding fixes it at issue time.
 - **The page never calls the Permissions API.** Slack's iOS in-app browser reports "denied" while geolocation still
-  works; the page calls `getCurrentPosition` directly. `tests/unit/web/test_geo_page_static.py` pins this, the retry
+  works (owner's observation, RFC §2); the page calls `getCurrentPosition` directly. `tests/unit/web/test_geo_page_static.py` pins this, the retry
   without reload, and the CSP: the inline script is allowed by its hash (`script_csp`), so the hash follows the script
   and nothing else may run inline.
 - **Producer and consumer of the task payload share one key list.** `GeoMarkService.redeem_link` builds the payload,
@@ -146,7 +146,11 @@ sorted nearest first because Google ranks by prominence. Any failure, any non-OK
   `WITHIN` the distance is left out, because Google measures to the landmark's point and a distance would contradict
   "within". Names are requested in English: a local name in the UI language can come back transliterated past
   recognition.
-- **Address descriptors are Experimental outside India** (Google). An absent landmark list says nothing about the place.
+- **Geocoding must be enabled and allowed, or marks silently lose their address.** The Geocoding API has to be enabled
+  on the project and permitted by the key's API restrictions (RFC §4.3 "Key", §9.1). Otherwise Google answers a non-OK
+  status, the adapter returns `GeoPlace.EMPTY` (`src/adapters/google_geocoding_adapter.py::GoogleGeocodingAdapter.look_up`)
+  and the only signal is a `[Geocoding] status=...` warning log.
+- **Address descriptors are Experimental outside India** (Google, per RFC §4.3). An absent landmark list says nothing about the place.
 - **Telegram pin vs map point is an assumption.** The Bot API has no flag; the code relies on clients attaching accuracy
   to a GPS fix. If a client sends a picked point with accuracy, it reads as a current position.
 - **Open owner questions:** whether storing geocoding results in session history fits Google Maps Platform terms, and
