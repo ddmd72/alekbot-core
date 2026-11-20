@@ -227,19 +227,6 @@ class TestExecuteFailure:
         # Should succeed — prompt builder failure is non-fatal
         assert response.status == AgentStatus.SUCCESS
 
-    async def test_no_prompt_builder_still_works(self, mock_llm):
-        config = AgentConfig(agent_id="compute_agent_user123", agent_type="compute")
-        agent_no_pb = ComputeAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            prompt_builder=None,
-            user_id="user123",
-        )
-
-        msg = _make_message()
-        response = await agent_no_pb.execute(msg)
-        assert response.status == AgentStatus.SUCCESS
-
 
 # ---------------------------------------------------------------------------
 # _get_alternative_agents

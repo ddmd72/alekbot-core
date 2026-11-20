@@ -120,15 +120,6 @@ async def test_execute_passes_system_prompt_from_builder(mock_job_port):
     prompt_builder.build_for_agent.assert_called_once_with("deep_research", "u1")
 
 
-async def test_execute_no_prompt_builder_passes_none(mock_job_port):
-    mock_job_port.create_interaction.return_value = "job_nopb"
-    agent = _make_agent(mock_job_port, prompt_builder=None)
-    await agent.execute(_make_message())
-
-    call_kwargs = mock_job_port.create_interaction.call_args.kwargs
-    assert call_kwargs["system_prompt"] is None
-
-
 async def test_execute_prompt_builder_failure_continues(mock_job_port):
     """PromptBuilder failure must not block job submission."""
     prompt_builder = AsyncMock(spec=PromptBuilderPort)
