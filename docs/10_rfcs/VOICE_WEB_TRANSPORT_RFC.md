@@ -386,11 +386,11 @@ late answer is lost with the delegation span cut short — the fix would be alwa
 main service, at its idle cost.
 
 **Test edits (reviewer-ruled, intended change — float → Timestamp `expires_at`):** in
-`tests/unit/adapters/test_firestore_ephemeral_store.py`: `test_get_returns_none_when_expired`,
-`test_get_returns_value_when_not_expired`, `test_set_writes_value_and_expires_at` (now also
-asserts a tz-aware datetime), `test_get_and_delete_returns_value_and_deletes_inside_the_transaction`,
-`test_get_and_delete_returns_none_when_expired_but_still_consumes`,
-`test_two_concurrent_get_and_delete_calls_yield_exactly_one_winner`. Fixture values changed type
+`tests/unit/adapters/test_ephemeral_store_kit.py`: `test_an_expired_value_reads_as_absent_and_is_deleted`,
+`test_a_value_is_live_up_to_its_expiry_instant`, `test_set_stores_value_and_a_utc_expires_at_for_the_ttl_policy`
+(asserts a tz-aware datetime), `test_get_and_delete_returns_the_value_once`,
+`test_get_and_delete_of_an_expired_value_consumes_it_and_returns_none`,
+`test_two_concurrent_get_and_delete_exactly_one_wins`. Fixture values changed type
 only; the expired/live semantics of each test are unchanged.
 
 **Whole-branch review, fixed:** `SfuStreamHandler` removes a call from its registry by identity,

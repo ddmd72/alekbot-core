@@ -3,9 +3,9 @@
 stored documents and on what readers return.
 
 Not duplicated here (they stay the spec): zombies and lost runs (`test_consolidation_queue_zombie_attempts.py`), bounded
-FAILED revivals (`test_consolidation_queue_failed_bounded.py`), open batches (`test_firestore_consolidation_queue_open_batches.py`),
-the pending order across queues (`test_queue_pending_order.py`). Legacy batches missing a field are not pinned: no writer
-produces one (the data audit settles them).
+FAILED revivals (`test_consolidation_queue_failed_bounded.py`), open batches (`test_firestore_consolidation_queue_open_batches.py`).
+Legacy batches missing a field are not pinned (no writer produces one; the data audit settles them), except
+a batch without `user_id`: the stuck-user read leaves it out, so the hourly sweep never gets a None id.
 """
 from pathlib import Path
 from types import SimpleNamespace
@@ -138,6 +138,13 @@ async def test_stuck_users_are_distinct_and_include_a_gave_up_batch(queue):
     await put(queue, "b2", 2.0, BatchStatus.PROCESSING)
     await put(queue, "b3", 3.0, BatchStatus.FAILED, user_id="u2", revivals=MAX_FAILED_REVIVALS)
     assert sorted(await queue.get_stuck_batch_user_ids()) == ["u1", "u2"]
+
+
+async def test_a_stored_batch_without_a_user_id_is_not_a_stuck_user(queue):
+    await put(queue, "b1", 1.0)
+    await queue.db.collection(QUEUE).document("no-user").set({"batch_id": "no-user", "status": "pending",
+                                                                "messages": MESSAGES, "created_at": 2.0})
+    assert await queue.get_stuck_batch_user_ids() == ["u1"]
 
 
 async def test_no_batches_no_stuck_users(queue):

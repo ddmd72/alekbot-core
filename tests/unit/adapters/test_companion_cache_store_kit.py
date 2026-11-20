@@ -74,3 +74,9 @@ async def test_a_session_that_never_saved_reads_none_and_sessions_are_independen
 async def test_the_owning_account_reads_its_summary_through_the_assembler(store):
     await store.repo.save_summary(SESSION, "a1", SUMMARY)
     assert await store.summary_seen_by("a1") == SUMMARY
+
+
+async def test_a_save_writes_exactly_the_four_fields_and_drops_a_field_already_on_the_document(store):
+    await store.db.collection(CACHE).document(SESSION).set({"session_id": SESSION, "summary": "old", "stale": "x"})
+    await store.repo.save_summary(SESSION, "a1", SUMMARY)
+    assert set(store.docs[SESSION]) == {"session_id", "account_id", "summary", "refreshed_at"}
