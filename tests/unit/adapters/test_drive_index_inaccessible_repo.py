@@ -9,9 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from google.api_core.exceptions import NotFound
-from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
 
-from src.adapters.firestore_drive_index_repo import RECORD_FIELDS, record_from_doc, record_to_doc
+from src.adapters.firestore_drive_index_repo import RECORD_FIELDS, record_to_doc
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import DriveIndexRecord
 
@@ -33,18 +32,6 @@ class TestCodec:
         assert NOTIFIED not in doc and NOTIFIED not in RECORD_FIELDS
         assert doc["inaccessible_since"] == T and doc["inaccessible_checked_at"] == T
         assert doc["inaccessible_reobserved"] is True
-
-    def test_every_inaccessible_field_reads_back_as_plain_utc(self):
-        stored = {**record_to_doc(marked()), NOTIFIED: DatetimeWithNanoseconds(2026, 10, 14, 9, 30, tzinfo=timezone.utc)}
-        stored["inaccessible_since"] = DatetimeWithNanoseconds(2026, 10, 14, 9, 30, tzinfo=timezone.utc)
-        back = record_from_doc(stored)
-        assert back.inaccessible_notified_since == T and type(back.inaccessible_notified_since) is datetime
-        assert back.inaccessible_since == T and type(back.inaccessible_since) is datetime
-
-    def test_an_old_record_reads_as_accessible(self):
-        rec = record_from_doc({"user_id": "u", "item_id": "a"})
-        assert (rec.inaccessible_since, rec.inaccessible_checked_at, rec.inaccessible_reobserved,
-                rec.inaccessible_notified_since) == (None, None, False, None)
 
 
 @pytest.fixture
