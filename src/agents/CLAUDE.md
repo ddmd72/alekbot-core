@@ -169,7 +169,7 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 - **DelegationEngine** (`src/infrastructure/delegation_engine.py`) owns the multi-turn loop, tool dispatch via
   AgentCoordinator, memory-first parallel execution and history via `build_tool_turn()`. It does not own LLM parameters
   (the agent builds `LLMRequest`) or response parsing. `dispatch()` is public for a caller with no loop of its own
-  (Lelik). Fan-out: `FanoutSpec` on the descriptor. Details: `docs/05_building_blocks/multi_agent_system/README.md`.
+  (Lelik). Fan-out: `FanoutSpec` on the descriptor. Details: `docs/05_building_blocks/agent_registry/README.md`.
 - **Pass `context=message.context` whole** to `engine.execute` and to any downstream message. Rebuilding the context
   loses `origin_channel_id`, `session_id` and `_call_chain`, and an agent that does so silently resets the cycle guard
   (that was `notes_agent`'s bug). `AgentCoordinator._refuse_if_looping` refuses re-entering an agent in `_call_chain`;

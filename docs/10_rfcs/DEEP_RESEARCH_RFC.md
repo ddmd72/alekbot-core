@@ -1103,7 +1103,6 @@ Shared helpers `_build_and_upload_report()` and `_format_via_smart_agent()` in
 - `UserNotificationService` — extended with `notify_raw()`
 
 **Building Blocks:**
-- [Multi-Agent System](../05_building_blocks/multi_agent_system/README.md)
 - [Agent Registry](../05_building_blocks/agent_registry/README.md)
 
 **External:**

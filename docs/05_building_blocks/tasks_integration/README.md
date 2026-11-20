@@ -29,7 +29,7 @@ This document MUST be updated when:
 
 - **RFC:** [../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md](../../10_rfcs/TASKS_LOCAL_FIRST_RFC.md)
 - **Decision record:** [../../04_solution_strategy/decisions/local_first_thin_search_index.md](../../04_solution_strategy/decisions/local_first_thin_search_index.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
+- **Agent Registry:** [../agent_registry/README.md](../agent_registry/README.md)
 - **OAuth Web API:** [../oauth_web_api/README.md](../oauth_web_api/README.md)
 
 ---

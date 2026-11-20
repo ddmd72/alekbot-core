@@ -1,622 +1,208 @@
-# Agent Registry (Building Block)
-
-## 1. Overview
-
-The **Agent Registry** is the dynamic discovery system at the core of ACP v2. It maps abstract
-*intents* to specialist agent implementations, so SmartAgent can delegate tasks without knowing
-which agent handles them or how.
-
-**Problem solved:** In ACP v1, every new integration required adding a new hardcoded tool to
-SmartAgent — prompt bloat, tight coupling, poor LLM accuracy. The Registry absorbs all growth:
-SmartAgent has 1 fixed delegation tool forever; the registry grows, SmartAgent never changes.
-
-**Core Principle:** SmartAgent knows *what* (intent names), not *how* (implementations). The
-registry translates intent → agent manifest → execution path.
-
-**Important:** QuickAgent and SmartAgent share the same `AgentRegistry` for intent discovery. The
-difference is in how they query it: Smart calls `get_available_intents()` (all non-internal intents),
-Quick calls `get_available_intents_for(descriptor)` filtered by its `allowed_intents` (same set) and
-applies `intent_remap` at dispatch time (`search_web` → `search_web_light`). `web_search_light_agent`
-is registered with `internal=True` — invisible to LLMs but reachable via remap. Both trees share
-`FactsMemoryAgent`. See [Section 5.3](#53-quick-delegation-path-protocol_quick_agent_selection) and
-[Quick Agent Delegation](../quick_agent_delegation/README.md).
-
----
-
-## 2. Architecture
-
-```
-SmartAgent (LLM)
-  │  calls: delegate_to_specialist(intent="search_memory", query="...")
-  ▼
-AgentCoordinator.handle_delegation()
-  │  registry.get_agent_for_intent("search_memory")
-  │  → AgentManifest(agent_id="facts_memory_agent", intents={"search_memory": SYNC}, ...)
-  │
-  ├─ SYNC path ──────────────────────────────────────────────────────────
-  │    _execute_sync()
-  │      Resolves per-user agent_id: "facts_memory_agent_{user_id}"
-  │      Creates AgentMessage(intent=QUERY, payload={query, **context.params})
-  │      await route_message(message) → AgentResponse
-  │      Returns result inline to SmartAgent
-  │
-  └─ ASYNC path ─────────────────────────────────────────────────────────
-       _execute_async()  [not used by deep_research — uses SYNC ACK, delivery is adapter-internal]
-         await task_queue.enqueue_agent_task(agent_id, intent, query, context) → task_id
-         Returns AgentResponse(result={"status": "started", "task_id": task_id})
-         [Cloud Tasks → /worker → AgentWorkerHandler → execute → notify user]
-
-  Note: deep_research_agent uses SYNC mode — returns ACK immediately after create_interaction().
-  Delivery mechanism is adapter-internal (not the agent's concern):
-    ClaudeDeepResearchAdapter (the only provider): starts the Cloud Run Job that delivers the report.
-```
-
----
-
-## 3. AgentRegistry
-
-Located at `src/infrastructure/agent_registry.py`.
-
-### 3.1 AgentDescriptor
-
-```python
-@dataclass
-class AgentDescriptor:
-    # Identity
-    agent_id: str          # "facts_memory_agent"
-    agent_type: str        # "facts_memory"
-
-    # A: What this agent offers other agents
-    capabilities: Dict[str, ExecutionMode]              # {"search_memory": SYNC}
-    capability_descriptions: Dict[str, str] = field(default_factory=dict)
-    context_schemas: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    # Per-intent typed context fields exposed in the LLM tool schema.
-    # Keys are intent names; values are {field_name: description} dicts.
-    # Example:
-    #   {Intent.GET_EMAIL_DETAILS: {"email_id": "Message ID from search_emails result"}}
-    # These are collected by BaseAgent._build_delegate_tool_declaration() into
-    # context.properties — so Gemini populates them instead of generating empty {}.
-    internal: bool = False   # True = not shown in LLM tool list (e.g. web_search_light)
-
-    # B: What this agent needs (to delegate)
-    # None = all non-internal intents; frozenset = explicit allow-list
-    allowed_intents: Optional[frozenset] = None
-    intent_remap: Dict[str, str] = field(default_factory=dict)
-    # e.g. {"search_web": "search_web_light"} — Quick uses cheaper variant
-    intent_fanout: Dict[str, FanoutSpec] = field(default_factory=dict)
-    # e.g. {"search_web": FanoutSpec(intents=["maps_query"], hint="...")}
-    # 1:N parallel dispatch — engine runs primary + secondaries, merges results
-
-    description: str = ""
-    requires_auth: bool = False
-
-# Backward-compatible alias
-AgentManifest = AgentDescriptor
-```
-
-**Registry rule: `internal=True` and an explicit allowlist.** `internal=True` means "not offered by default": the intent
-is excluded from `get_available_intents()` and from `get_available_intents_for(d)` when `d.allowed_intents is None`. A
-descriptor with an explicit `allowed_intents` may still name an internal intent, and `get_available_intents_for` then
-returns it for that caller only. This is how `LELIK` names `ask_alek` without making it visible to Smart or Quick
-(`decisions/allowlist_names_internal_intent.md`).
-
-### 3.2 ExecutionMode
-
-```python
-class ExecutionMode(str, Enum):
-    SYNC  = "sync"   # Immediate — returns result inline (search queries, <5s)
-    ASYNC = "async"  # Background — Cloud Tasks + user notification (long-running tasks)
-```
-
-### 3.3 Registry Methods
-
-```python
-def get_available_intents(self) -> List[Dict[str, Any]]:
-    """All non-internal intents — injected into SmartAgent tool description.
-    Each item: {"name": str, "description": str, "context_schema": dict (optional)}"""
-
-def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[str, Any]]:
-    """Intents available to a specific agent, filtered by its allowed_intents.
-    None → all non-internal; frozenset → only those matching the set."""
-```
-
-### 3.4 Current Registry (as of 2026-04-06)
-
-All descriptors registered by `build_application_graph` (`src/composition/application_graph.py`) at startup. `GcpTaskQueue` only instantiated in HTTP mode.
-Agents marked `eager=False` are **not** instantiated per user until first delegation — see §3.5.
-
-| Agent ID | Intent(s) | Mode | `internal` | `eager` | Caller |
-|----------|-----------|------|-----------|---------|--------|
-| `facts_memory_agent` | `search_memory` | SYNC | False | True | Quick, Smart |
-| `web_search_agent` | `search_web` | SYNC | False | True | Smart |
-| `web_search_light_agent` | `search_web_light` | SYNC | **True** | True | Quick (via `intent_remap`) |
-| `email_search_agent` | `search_emails`, `get_email_details`, `open_email_attachment` | SYNC | False | True | Quick, Smart |
-| `maps_search_agent` | `maps_query` | SYNC | **True** | True | Via `intent_fanout` on `search_web` |
-| `compute_agent` | `compute_math`, `compute_datetime`, `compute_finance`, `compute` | SYNC | False | True | Quick, Smart |
-| `deep_research_agent` | `deep_research` | SYNC | False | **False** | Smart |
-| `doc_planner_agent` | `create_document` | ASYNC | False | **False** | Quick, Smart |
-| `doc_generator_agent` | `generate_docx_code` | ASYNC | **True** | **False** | DocPlannerAgent only |
-| `pdf_generator_agent` | `create_pdf` | ASYNC | False | **False** | Quick, Smart |
-| `html_page_generator_agent` | `create_html_page` | ASYNC | False | **False** | Quick, Smart |
-| `help_agent` | `user_guide` | SYNC | False | True | Quick, Smart |
-| `file_management_agent` | `open_file`, `delete_file` | SYNC | False | **False** | Quick, Smart |
-| `claude_deep_research_runner` | `execute_deep_research_claude` | ASYNC | **True** | **False** | DeepResearchAgent (Cloud Task) |
-| `notes_agent` | `manage_self_reminders` | SYNC | False | True | Quick, Smart |
-| `tasks_agent` | `manage_user_tasks` | SYNC | False | True | Quick, Smart |
-| `consolidation_agent` | `consolidate`, `consolidate_cluster`, `consolidate_email`, `consolidate_full` | ASYNC | **True** | True | ConversationHandler (overflow) |
-
-`web_search_light_agent` is `internal=True` — it never appears in LLM tool lists. Quick reaches it
-via `intent_remap: {"search_web": "search_web_light"}` at dispatch time.
-
-`doc_generator_agent` is `internal=True` — never shown in LLM tool lists. It is enqueued
-exclusively by `DocPlannerAgent` as a second ASYNC Cloud Task.
-
-### 3.5 Lazy Agent Loading
-
-Agents marked with `eager=False` on their `AgentDescriptor` are **not** instantiated during
-`UserAgentFactory.ensure_agents_for_user()`. Their descriptors are still registered in
-`AgentRegistry` at startup, so intents appear in LLM tool declarations immediately.
-
-**Trigger:** when `AgentCoordinator.handle_delegation()` encounters a non-eager descriptor, it
-calls `AgentFactoryPort.create_agent_on_demand(agent_type, user_id)` before dispatching.
-For ASYNC Cloud Tasks callbacks via `route_message()`, the coordinator parses the recipient
-(`{base_agent_id}_{user_id}`), looks up the descriptor via `registry.get_descriptor(base_id)`,
-and lazy-loads if `eager=False`. A missing recipient whose descriptor is eager was unregistered by an
-eviction (`$admin_cache_reset`, the TTL sweep), possibly while a turn was still delegating: the coordinator
-calls `restore_agents_for_user(user_id)`, which rebuilds the user's eager set, instead of answering
-"Unknown recipient" (P15-S4).
-
-**Port:** `AgentFactoryPort` (`src/ports/agent_factory_port.py`) — one abstract method
-`create_agent_on_demand(agent_type, user_id) -> bool`, and `restore_agents_for_user(user_id) -> bool`
-(default `False`, for a factory with no eager agents). `UserAgentFactory` implements both.
-The coordinator depends on the port (not on the factory class), preserving hexagonal layering.
-
-**Wiring:** `build_application_graph` calls `coordinator.set_agent_factory(agent_factory)` after both objects
-exist. Before this call, lazy loading is a no-op (factory is `None`).
-
-**Concurrency:** per-user `asyncio.Lock` prevents duplicate instantiation.
-`coordinator.get_agent(expected_id)` check provides idempotency. The lazy build re-reads the user's
-cache entry under the lock and, if an eviction dropped it meanwhile, rebuilds the entry first (P15-S1).
-
-**Eviction:** `_lazy_agent_ids` list tracks created lazy agents per user. Background TTL sweep
-unregisters them alongside eager agents. Eviction takes no lock, so it advances a per-user generation; a
-build that an eviction overtook (a reset while the profile was being read) is redone, at most three
-builds, the last one kept (P15-S1b).
-
----
-
-## 4. SmartAgent as Generic Orchestrator
-
-SmartAgent and QuickAgent expose exactly one delegation tool to the LLM:
-
-```python
-delegate_to_specialist(
-    intent: str,    # one of the available intents
-    query:  str,    # self-contained query, resolvable without prior context
-    context: dict   # typed optional parameters (e.g., email_id, filename)
-)
-```
-
-The tool declaration is built by `BaseAgent._build_delegate_tool_declaration(available_intents)` —
-a single shared implementation used by both Quick and Smart. It:
-1. Injects the list of available intents into the tool description.
-2. Collects all `context_schemas` fields from all available intents and exposes them as typed
-   `context.properties` in the JSON schema — so Gemini populates them instead of generating `{}`.
-
-Available intents are injected at runtime:
-- SmartAgent calls `coordinator.get_available_intents_for(self._descriptor)` — all non-internal intents.
-- QuickAgent calls `coordinator.get_available_intents_for(self._descriptor)` — filtered by its
-  own `allowed_intents` (currently `None` → same result as Smart).
-
-When a new agent is registered in `agent_manifest.py` with `internal=False`, both agents automatically see
-the new intent — no code change required in either agent.
-
-### 4.1 Memory-First Parallel Optimization
-
-When SmartAgent detects `intent == "search_memory"` among multiple concurrent delegations, it
-schedules memory search first so retrieved facts are available when the LLM formulates the final
-response. Implemented in `_execute_agents_smart_parallel()` in `smart_response_agent.py`.
-
----
-
-## 5. Firestore Prompt: PROTOCOL_SMART_AGENT_SELECTION
-
-The canonical rules for when and how SmartAgent uses `delegate_to_specialist` live in the Firestore
-token `PROTOCOL_SMART_AGENT_SELECTION`. This token is the *behavior specification* for the
-delegation protocol — the code tool definition is generic; the Firestore token makes it intelligent.
-
-### 5.1 facts_memory_specialist (`search_memory`)
-
-- **`search_memory` — When:** User asks about personal data requiring KB retrieval beyond the biographical baseline.
-- **`search_memory` — How:** Formulate a **self-contained query** — resolve conversational references ("this", "tell
-  me more", "the project I mentioned") using conversation history before delegating. The query must
-  be understandable without prior context.
-- **Saving:** there is no save intent. When the user asks to remember facts from a document, Smart calls its local tool `propose_memory_facts`; the owner confirms with `$memory save <code>` (`MEMORY_FACT_CONFIRMATION_RFC.md`).
-- **Anti-patterns:** Passing the raw user message verbatim for `search_memory` when it contains unresolved anaphora; using for external/real-time information.
-
-### 5.2 web_search_agent (`search_web`)
-
-- **When:** External, current, or real-time information (news, prices, world facts, documentation).
-- **How:** Pass the user's question naturally, preserving their language.
-- **Anti-patterns:** Using for personal data questions; changing the query language unnecessarily.
-
-### 5.3 compute_agent (`compute_math`, `compute_datetime`, `compute_finance`, `compute`)
-
-- **When:** Any numeric task that can be solved with Python: arithmetic, algebra, unit conversions, date/time arithmetic, financial formulas (numbers provided by user), statistics.
-- **How:** Pass the task verbatim as the `query`. The agent is self-contained.
-- **Anti-patterns:** Using for tasks that require live data (exchange rates, stock prices) — use `search_web` instead. Compute agent has no internet access; it will honestly report the failure.
-- **Four intents by type:** `compute_math` (arithmetic/algebra/units), `compute_datetime` (dates/countdowns/age), `compute_finance` (loan/mortgage/compound interest with provided numbers), `compute` (general numeric fallback — BMI, averages, custom formulas).
-
-### 5.4 Quick Delegation Path: PROTOCOL_QUICK_AGENT_SELECTION
-
-QuickAgent uses a **separate Firestore token** (`PROTOCOL_QUICK_AGENT_SELECTION`) to control when it calls `delegate_to_specialist`. The intent set is smaller and scoped to what Quick can meaningfully handle:
-
-- `search_memory` — same rules as SmartAgent: self-contained query, no raw user message verbatim.
-- `search_web_light` — **When:** Quick, factual external lookup (current date/time, price, weather, single fact). Simple single-answer queries. **How:** Pass a short, precise question. **Anti-patterns:** Complex multi-part research; queries that benefit from full synthesis (route those to Smart instead); personal data (use `search_memory`).
-
-**Key behavioral constraints for Quick delegation:**
-- `MAX_DELEGATION_TURNS = 5` — if the LLM hasn't responded after 5 tool rounds, stop.
-- Memory calls execute first (sequential); other calls run in parallel (`asyncio.gather`).
-- `_clean_history_for_quick` strips all `tool_call`/`tool_response` turns from session history before injecting it into the LLM — Quick's history context is always clean text, never polluted with prior tool scaffolding.
-
----
-
-## 6. FactsMemoryAgent: Two Intents
-
-`FactsMemoryAgent` (`src/agents/memory_search_agent.py`) is the memory specialist exposed
-to both Quick and Smart via the registry. It handles one intent:
-
-| Intent | Trigger | Payload key | Side effect |
-|--------|---------|-------------|-------------|
-| `search_memory` | KB retrieval request | `queries` (and `query`, logged only) | None — read only |
-
-The `save_to_memory` intent was removed: it let the bot write text that the consolidator read as the owner's words.
-Facts from a document are proposed with Smart's local tool `propose_memory_facts` and saved when the owner pastes
-`$memory save <code>` (see `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`).
-
-### 6.2 `search_memory`: the caller writes the phrases
-
-`FactsMemoryAgent` has no model call of its own. The calling model (Smart, Quick, Lelik, or the claude.ai connector
-through `get_user_context`) sends `context.queries`: one to four English phrases, most important first, each about one
-subject. `query` stays in the payload as the need in a few words and is only logged. The coordinator spreads declared
-context fields into the payload, so the agent reads `queries` from there; `can_handle` accepts any QUERY message, and a
-call without `queries` comes back as a tool note naming the field instead of falling through to another agent.
-
-Each phrase is read into slots by the slots agent, and `FactSearchService.search_phrases` scores the candidates and fuses
-the phrases (`docs/10_rfcs/FACT_PROFILE_RFC.md` §5.3-§5.4). The field text that tells a caller how to write phrases is
-`QUERIES_FIELD_TEXT` in `src/domain/memory_search_texts.py`, shared by the manifest entry and the connector tool.
-The former key-formulation step (the `MEMORYSEARCH_*` tokens and the keywords / primary / alternative query output, mapped
-onto `SearchEnrichmentService.enrich_context`) is gone.
-
----
-
-## 7. AgentCoordinator: handle_delegation()
-
-Added to the existing coordinator without modifying `route_message()`, `register_agent()`, or
-`parallel_execute()` — fully backward compatible with ACP v1.
-
-### 7.1 SYNC Flow
-
-```
-handle_delegation(intent="search_memory", query="...", context={user_id, account_id, params})
-  ├─ registry.get_agent_for_intent("search_memory") → AgentManifest(agent_id="facts_memory_agent")
-  ├─ _execute_sync(manifest, intent, query, context)
-  │    ├─ agent_id = f"facts_memory_agent_{context['user_id']}"
-  │    ├─ message = AgentMessage(sender="coordinator", recipient=agent_id,
-  │    │                         intent=QUERY, payload={query, **context.params})
-  │    └─ return await route_message(message)
-  └─ Returns AgentResponse directly to SmartAgent
-```
-
-### 7.2 ASYNC Flow
-
-```
-handle_delegation(intent="index_gmail", query="...", context={...})
-  ├─ registry.get_agent_for_intent("index_gmail") → AgentManifest (mode=ASYNC)
-  ├─ _execute_async(manifest, intent, query, context)
-  │    └─ task_id = await task_queue.enqueue_agent_task(agent_id, intent, query, context)
-  └─ Returns AgentResponse(result={"status": "started", "task_id": task_id})
-```
-
-### 7.3 Unknown Intent
-
-Returns `AgentResponse(status=FAILED, error="UNKNOWN_INTENT")`. SmartAgent surfaces an appropriate
-user-facing message without exposing internal details.
-
----
-
-## 8. AgentWorkerHandler
-
-Handles `task_type="agent_execution"` payloads at the `/worker` Cloud Tasks endpoint:
-
-```python
-payload = {
-    "task_type": "agent_execution",
-    "agent_id":  "gmail_agent",
-    "intent":    "index_gmail",
-    "query":     "...",
-    "context":   {"user_id": ..., "account_id": ...}
-}
-```
-
-Routes via `coordinator.route_message()`. User notification deferred — a platform-agnostic callback
-will be implemented alongside the first ASYNC agent (Gmail indexing).
-
----
-
-## 9. Adding a New Specialist Agent
-
-Complete checklist. Touch files IN THIS ORDER.
-
-### Step 1 — `src/infrastructure/agent_manifest.py`
-
-Add `Intent` constant + `AgentDescriptor` + append to `ALL_DESCRIPTORS`:
-
-```python
-class Intent:
-    FOO = "foo"                          # new
-
-FOO = AgentDescriptor(
-    agent_id="foo_agent",
-    agent_type="foo",
-    capabilities={Intent.FOO: ExecutionMode.SYNC},
-    description="...",
-    capability_descriptions={
-        Intent.FOO: "What this agent does. payload: {\"query\": \"<task>\"}"
-    },
-    # Optional: declare typed context fields for intents that require structured input.
-    # These become context.properties in the LLM tool schema — Gemini will populate them
-    # instead of generating {}. Only needed when the intent requires non-query parameters.
-    # context_schemas={
-    #     Intent.FOO: {"some_id": "Description of this field for the LLM"},
-    # },
-    internal=False,
-)
-
-ALL_DESCRIPTORS = [..., FOO]
-```
-
-`build_application_graph` registers `ALL_DESCRIPTORS` automatically. Both Quick and Smart see the new intent
-immediately — no changes to either orchestrator.
-
-### Step 2 — `src/infrastructure/agent_config.py`
-
-Add a typed `@dataclass` config and singleton:
-
-```python
-@dataclass
-class FooAgentConfig:
-    timeout_ms: int = 60_000
-    # any other agent-specific tunable params
-
-FOO = FooAgentConfig()
-```
-
-### Step 3 — `src/services/agent_context_builder.py`
-
-Add provider strategy for the new agent type:
-
-```python
-AgentProviderStrategy.STRATEGIES["foo"] = {
-    "default_provider": "gemini",
-    "allowed_providers": ["gemini"],
-    "required_capabilities": ["native_tools"],
-    "fallback": None,
-}
-```
-
-### Step 4 — `src/agents/foo_agent.py`
-
-Implement the agent class. **Follow this exact structure — no deviations:**
-
-```python
-class FooAgent(BaseAgent):
-    def __init__(
-        self,
-        config: AgentConfig,
-        execution_context: AgentExecutionContext,
-        # domain-specific deps (e.g. grounding_tool, service port)...
-        prompt_builder: Optional[PromptBuilderPort] = None,  # REQUIRED — see §9 note
-        user_id: Optional[str] = None,
-    ):
-        super().__init__(config)
-        self._llm = execution_context.provider
-        self.model_name = execution_context.model_name
-        self.prompt_builder = prompt_builder
-        self.user_id = user_id
-
-    async def can_handle(self, message: AgentMessage) -> bool:
-        if message.intent != AgentIntent.QUERY:
-            return False
-        return bool(message.payload.get("query", ""))
-
-    async def execute(self, message: AgentMessage) -> AgentResponse:
-        query = message.payload.get("query", "")
-        if not query:
-            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id,
-                                         error="No query provided in payload")
-        return await self._call_foo(message, query)
-
-    async def _call_foo(self, message: AgentMessage, query: str) -> AgentResponse:
-        self._on_agent_start(query)
-        system = await self.prompt_builder.build_for_agent("foo", self.user_id) \
-                 if self.prompt_builder else ""
-        try:
-            self._debug_prompt(system, query, model=self.model_name)
-            response = await self._llm.generate_content(LLMRequest(...))
-            self._debug_response(response.text or "")
-            self._on_agent_success(len(response.text or ""), output_text=response.text or "")
-            return AgentResponse.success(...)
-        except Exception as e:
-            self._on_agent_error(e)
-            return AgentResponse.failure(...)
-
-    def _get_alternative_agents(self) -> list[str]:
-        return ["web_search_agent", "memory_search_agent"]
-```
-
-> **Note on `prompt_builder`:** All specialist agents receive `PromptBuilderPort` — this is
-> mandatory. System instructions come through the port, not hardcoded in the class. The only
-> exception is when no prompt profile exists yet — mark it as technical debt with a comment
-> (see `MapsSearchAgent.SYSTEM_INSTRUCTION` for the anti-pattern and the required TODO).
-
-> **Note on provider-specific tools (e.g. code_execution, grounding):** Do NOT inject Gemini-specific
-> `types.Tool(...)` objects from the factory or the agent class. Use `LLMRequest` flags instead:
-> `use_code_execution=True` (sandbox Python execution, Gemini only) or `use_grounding=True`
-> (Google Search grounding, Gemini only). `GeminiAdapter` reads the flag and injects the tool
-> internally. Other adapters silently ignore the flag. See `ComputeAgent` as the reference
-> implementation.
-
-> **Note on extended thinking:** Use `LLMRequest.thinking: Optional[str]` — the unified
-> provider-agnostic thinking field. Values: `"low"` | `"medium"` | `"high"` | `None` (disabled).
-> Each adapter maps this to its own API: `GeminiAdapter` → `ThinkingConfig(thinking_level=LOW/MEDIUM/HIGH)`;
-> `ClaudeAdapter` (Sonnet/Opus) → `thinking={"type": "adaptive"}, effort=...`. Do NOT put
-> Gemini `ThinkingLevel` or Claude `budget_tokens` in the agent class — those are adapter internals.
-> `ConsolidationAgent` (Claude Sonnet, BALANCED) uses `thinking="high"` (complex multi-turn reasoning).
-> `EmailClassificationAgent` (Gemini) uses `thinking="medium"`. When `thinking=None`, Claude Sonnet
-> defaults to adaptive with `effort="medium"` at the adapter level.
-
-### Step 5 — `src/composition/user_agent_factory.py`
-
-Wire the agent into the factory. Choose **eager** or **lazy** based on usage frequency.
-
-**Eager agents** (called on most requests: memory, web search, email search, compute, maps)
-are created in `_create_and_cache_agents()`. **Lazy agents** (called rarely: doc generation,
-deep research, file management) are created on first delegation. See §3.5 for architecture.
-
-#### Option A — Eager agent (4 touch points)
-
-```python
-# 1. Import at top
-from ..infrastructure.agent_config import FOO as FOO_CFG
-from ..agents.foo_agent import FooAgent
-
-# 2. Inside _create_and_cache_agents():
-foo_context = self.context_builder.build("foo", user_profile.config)
-foo_agent = FooAgent(
-    config=AgentConfig(
-        agent_id=f"foo_agent_{user_id}",
-        agent_type="foo",
-        timeout_ms=FOO_CFG.timeout_ms,
-        capabilities=["..."],
-    ),
-    execution_context=foo_context,
-    prompt_builder=prompt_builder,
-    user_id=user_id,
-)
-
-# 3. Register
-self._register_agents([..., foo_agent])
-
-# 4. Cache dict + eviction key
-cached = {..., "foo_agent": foo_agent}
-# In _evict_expired_cache: add "foo_agent" to the key tuple
-```
-
-#### Option B — Lazy agent (3 touch points)
-
-Set `eager=False` on the `AgentDescriptor` in `agent_manifest.py` (Step 1), then:
-
-```python
-# 1. Import at top (same as eager)
-from ..infrastructure.agent_config import FOO as FOO_CFG
-from ..agents.foo_agent import FooAgent
-
-# 2. Add builder method:
-def _build_foo(self, user_id: str, ctx: _UserContext) -> FooAgent:
-    execution_context = self.context_builder.build("foo", ctx.user_profile.config)
-    return FooAgent(
-        config=AgentConfig(
-            agent_id=f"foo_agent_{user_id}",
-            agent_type="foo",
-            timeout_ms=FOO_CFG.timeout_ms,
-            capabilities=["..."],
-        ),
-        execution_context=execution_context,
-        prompt_builder=ctx.prompt_builder,
-        user_id=user_id,
-    )
-
-# 3. Register in dispatch tables:
-_LAZY_BUILDERS = {..., "foo": _build_foo}
-_LAZY_AGENT_IDS = {..., "foo": "foo_agent"}
-```
-
-No cache dict entry needed — lazy agents are tracked via `_lazy_agent_ids` automatically.
-Eviction is handled generically by the factory.
-
-### Step 6 — `tests/unit/agents/test_foo_agent.py`
-
-Minimum required coverage:
-
-- `can_handle`: correct intent + valid query → True
-- `can_handle`: wrong intent → False; missing/empty query → False
-- `execute` happy path: LLM called, result structure matches AgentResponse.success
-- `execute` error path: empty query → AgentResponse.failure; LLM exception → AgentResponse.failure
-
-### Step 7 — Prompt work (via PromptBuilderPort)
-
-Create upload files and upload in this order (token → blueprint → profile):
-
-1. **Token** (`firestore_utils/uploads/COGNITIVE_PROCESS_FOO.json`):
-   `token_id`, `category: "cognitive_process"`, `class: "cognitive_process"`, `content`, `metadata`.
-   Upload: `python firestore_utils/upload.py <collection> COGNITIVE_PROCESS_FOO --format json`
-
-2. **Blueprint** (`firestore_utils/uploads/foo_agent_v1.json`):
-   `blueprint_id: "foo_agent_v1"`, `outer_class: "FooAgent extends Agent"`, `class_order: ["cognitive_process"]`.
-   Upload: `python firestore_utils/upload.py <collection> foo_agent_v1 --format json`
-
-3. **Profile** (`firestore_utils/uploads/foo.json`):
-   `agent_id: "foo"`, `blueprint_id: "foo_agent_v1"`, `tokens: {"COGNITIVE_PROCESS_FOO": {"order": 10, "non_overridable": true}}`.
-   Document ID = `agent_type` string passed to `build_for_agent()`. Upload: `python firestore_utils/upload.py <collection> foo --format json`
-
-4. Update `PROTOCOL_SMART_AGENT_SELECTION` token: add `when` / `how` / `anti_patterns`
-   for the new intent
-5. If Quick should also call it: update `PROTOCOL_QUICK_AGENT_SELECTION` token
-
-### Verification
-
-```bash
-make test-unit      # all unit tests green
-make test-e2e-all   # Quick and Smart delegate correctly to the new agent
-```
-
-**SmartAgent and QuickAgent require zero code changes. The registry handles everything.**
-
----
-
-## 10. Code References
-
-- `src/infrastructure/agent_manifest.py` — **Single source of truth** for all agent declarations: `Intent` constants, `AgentDescriptor` instances for every agent (specialists + orchestrators), `ALL_DESCRIPTORS` list. Start here when adding or understanding any agent.
-- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts and thinking config (no temperature — see decisions/temperature_removed.md). `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large). `HtmlPageGeneratorAgentConfig.max_tokens=64_000` (high creativity for layout/design; full HTML+CSS+JS document).
-- `src/infrastructure/agent_registry.py` — `AgentDescriptor` dataclass (alias: `AgentManifest`; includes `eager: bool` field), `AgentRegistry` mechanics, `ExecutionMode`, `get_available_intents()`, `get_available_intents_for(descriptor)`, `get_descriptor(agent_id)`. Descriptor instances live in `agent_manifest.py`.
-- `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), _ensure_lazy_agent(), _try_lazy_load(), get_available_intents(), get_available_intents_for(). Accepts `AgentFactoryPort` for lazy agent instantiation.
-- `src/ports/agent_factory_port.py` — `AgentFactoryPort` ABC with `create_agent_on_demand(agent_type, user_id) -> bool`. Implemented by `UserAgentFactory`.
-- `src/agents/base_agent.py` — lifecycle hooks, `_debug_prompt`, `_debug_response`
-- `src/agents/core/smart_response_agent.py` — delegate_to_specialist tool, memory-first parallel scheduling. Class-level `_descriptor = SMART_RESPONSE`.
-- `src/agents/core/quick_response_agent.py` — `MAX_DELEGATION_TURNS=5`, `_execute_quick_delegation_loop`, `_execute_quick_parallel`, `_clean_history_for_quick`. Class-level `_descriptor = QUICK_RESPONSE` (intent_remap lives in descriptor).
-- `src/agents/memory_search_agent.py` — memory search over `queries` (no model call of its own)
-- `src/agents/web_search_light_agent.py` — Lightweight grounding specialist (`internal=True`, Quick path via remap)
-- `src/handlers/agent_worker_handler.py` — ASYNC task execution handler
-- `src/ports/task_queue.py` — enqueue_agent_task() protocol method
-- `src/adapters/gcp_task_queue.py` — Cloud Tasks enqueuing implementation
-- `src/adapters/claude_adapter.py` — Claude adapter. Model tiers: ECO=`claude-haiku-5-5`, BALANCED=`claude-haiku-5-5` (both were Haiku 4.5 until 2026-10-08; `CLAUDE_SMALL_MODEL` env repoints the small tiers), PERFORMANCE=`claude-sonnet-5-5`, ULTRA=`claude-fable-5-1` (since 2026-10-03; see decisions/model_refresh_2026_10.md). Adaptive thinking + `output_config.effort` are gated on `_THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")` substring tuple — both parameters are silently dropped when the resolved model is Haiku 4.5 (verified against `models.retrieve(...).capabilities.effort.supported`; Haiku 4.5 returns `False` and the API rejects with HTTP 400; Haiku 5.5 returns `True`). The same substring gate now also lives in `claude_deep_research_runner_agent.py` (unified 2026-05-30 to fix divergence). `max_tokens` reads from `LLMRequest.max_tokens` (default 16,000). SDK pin: `anthropic >= 0.97.0`.
-- `src/adapters/gemini_adapter.py` — Gemini adapter. Maps `LLMRequest.thinking` → `ThinkingConfig(thinking_level=LOW/MEDIUM/HIGH)`. `use_code_execution=True` injects `types.Tool(code_execution=...)` internally.
-- `src/composition/application_graph.py` — registers `ALL_DESCRIPTORS` into `AgentRegistry` at startup (1 loop, no inline declarations)
-- Firestore token: `PROTOCOL_SMART_AGENT_SELECTION` — delegation rules for SmartAgent
-- Firestore token: `PROTOCOL_QUICK_AGENT_SELECTION` — delegation rules for QuickAgent
-- Firestore token: `OUTPUT_FORMAT_MEMORY_SEARCH` — the former key-formulation output constraints (no longer read by `FactsMemoryAgent`)
-- Firestore token: `COMPUTE_COGNITIVE_PROCESS` — ComputeAgent identity, capability, rules, failure protocol (`domain_prompt_tokens_v3_system`)
-- Firestore profile: `universal_agent_v1_SYSTEM_memorysearch` (collection: `development_domain_prompt_profiles_v3`)
-- Firestore blueprint: `compute_agent_v1` (collection: `domain_prompt_blueprints_v3`)
-- Firestore profile: `compute` (collection: `domain_prompt_profiles_v3`) — document ID = `agent_type`
-- Building Block: [Quick Agent Delegation](../quick_agent_delegation/README.md)
-
----
-
-## 11. Status
-
-**Status:** ✅ Production Ready (SYNC path)
-**ASYNC path:** Infrastructure complete; activated with the first ASYNC agent (Gmail indexing).
-**Last Updated:** 2026-03-14
-**Implemented via:** [ACP v2 Simplified RFC](../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md)
+<!-- living-doc
+covers:
+  src/infrastructure/agent_registry.py
+  src/infrastructure/agent_manifest.py
+  src/infrastructure/agent_coordinator.py
+  src/infrastructure/agent_config.py
+  src/agents/base_agent.py
+  src/agents/agent_runtime.py
+  src/domain/agent.py
+  src/domain/delegation_timestamp.py
+  src/domain/retry_policy.py
+  src/handlers/agent_worker_handler.py
+  src/composition/user_agent_factory.py
+  src/ports/agent_factory_port.py
+  src/services/agent_fallback_service.py
+  src/utils/circuit_breaker.py
+  src/utils/retry.py
+-->
+# Agent Registry and the Multi-Agent Runtime
+
+## Purpose
+
+This block is how one chat turn becomes work done by specialist agents. Smart, Quick and the bound-channel agents
+(Lelik, the tutor, the domain researcher) each hold one LLM tool, `delegate_to_specialist(intent, query, context)`. They
+know intent names, never implementations. The registry maps an intent to the agent that owns it; the coordinator
+dispatches the call, inline or through Cloud Tasks; the per-user factory builds the agent on first use. A new specialist
+is one descriptor in `src/infrastructure/agent_manifest.py` plus a factory builder: no orchestrator changes.
+
+It also owns what every agent shares: the message and response contract (`AgentMessage`, `AgentResponse`,
+`DeliveryItem`), the execution wrapper (circuit breaker, typed retry, timeout), the worker that runs ASYNC intents, and
+the fallback chain that guarantees a displayable answer.
+
+Not here: the multi-turn tool loop itself (`DelegationEngine`, see [hybrid_router](../hybrid_router/README.md) and
+[quick_agent_delegation](../quick_agent_delegation/README.md)), per-agent behaviour (each specialist's own block or
+`src/agents/CLAUDE.md`), provider failover (see [provider_resolution](../provider_resolution/README.md)), and the
+step list for adding an agent ([`NEW_AGENT_PLAYBOOK.md`](../../how_to/NEW_AGENT_PLAYBOOK.md)).
+
+## Owned data
+
+Nothing is stored. State is in memory, per process:
+
+- **Registry**: `AgentRegistry._agents` (agent id to descriptor) and `_intent_to_agent`. Filled once at startup from
+  `src/infrastructure/agent_manifest.py::ALL_DESCRIPTORS` by `src/composition/application_graph.py::_build_coordinator`.
+- **Coordinator**: `AgentCoordinator.agents`, the live per-user instances, keyed `{base_agent_id}_{user_id}`.
+- **Factory cache**: per user, a profile plus the built agents, one hour TTL swept every five minutes, plus a per-user
+  generation counter that eviction bumps (`UserAgentFactory._evict_user`).
+- **Circuit breaker**: failure counts per agent id (`src/agents/base_agent.py::CircuitBreaker`), one instance per agent.
+
+`AgentDescriptor` (`src/infrastructure/agent_registry.py`) has two halves. Part A is what an agent offers:
+`capabilities` (intent to `ExecutionMode`), per-intent descriptions, `context_schemas` (typed fields that become
+`context.properties` of the tool schema), `internal`, `eager`, `dispatch_deadline_s` (Cloud Tasks deadline of an ASYNC
+intent), `prefetch_file_ref`. Part B is what an orchestrator may call: `allowed_intents`, `intent_remap`,
+`intent_fanout` (`FanoutSpec`: secondary intents dispatched in parallel with the primary). The two orchestrator
+descriptors (`QUICK_RESPONSE`, `SMART_RESPONSE`) are class attributes of their agents and are not in `ALL_DESCRIPTORS`.
+
+The wire contract is in `src/domain/agent.py`: `AgentMessage` (`QUERY`, `DELEGATE`, `INFORM`, `REQUEST_FEEDBACK`),
+`AgentResponse` (statuses `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, `CANNOT_HANDLE`; `delivery_items`; `history_context`)
+and `AgentConfig` (timeout, breaker threshold and recovery).
+
+## Flows
+
+### 1. Which intents an LLM sees
+
+1. `src/infrastructure/agent_coordinator.py::AgentCoordinator.get_available_intents_for` delegates to
+   `AgentRegistry.get_available_intents_for(descriptor)`.
+2. `allowed_intents is None` gives every non-internal intent. A frozenset gives exactly the registered intents it names,
+   internal ones included. `internal=True` means "not offered by default", not "unreachable"
+   (`decisions/allowlist_names_internal_intent.md`).
+3. `BaseAgent._build_delegate_tool_declaration` renders them into the one tool, merging every `context_schemas` field.
+
+### 2. A SYNC delegation
+
+1. The orchestrator calls `AgentCoordinator.handle_delegation(intent, query, context, calling_agent_id)`.
+2. The registry resolves the intent to a descriptor. An unknown intent returns a `FAILED` response ("No agent
+   registered for intent") with the available intent names as suggestions.
+3. The cycle guard (`_refuse_if_looping`) refuses a target already in the call chain (`CALL_CHAIN_KEY` in the context)
+   or a chain deeper than `MAX_DELEGATION_DEPTH`, logs ERROR and posts to the alert sink
+   (`decisions/delegation_cycle_guard.md`).
+4. A non-eager agent is built first (flow 4).
+5. The query gets a `[Fri 13 Nov 2026, 09:05 UTC]`-shaped prefix so specialists resolve relative dates against the right
+   year. `src/domain/delegation_timestamp.py::strip_delegation_timestamp` removes it where the raw text is needed.
+6. `_execute_sync` prefetches a `file_ref` into `file_content` or `file_note` (`prefetch_file_ref`, unless the descriptor
+   opts out), then routes an `AgentMessage(QUERY)` with payload `{query, intent, **params}` to
+   `{agent_id}_{user_id}` through `route_message` and `BaseAgent.process` (flow 5).
+
+The execution mode is the manifest's. The caller cannot choose it (`decisions/delegate_mode_parameter_removed.md`,
+`tests/unit/infrastructure/test_delegation_mode_is_the_manifests.py`).
+
+### 3. An ASYNC delegation
+
+1. `handle_delegation` steps 1 to 5 as above; then `_execute_async` enqueues a Cloud Task through `TaskQueue`
+   (`enqueue_agent_task`, with the descriptor's deadline) and returns `{"status": "started", "task_name": ...}`. The
+   caller tells the user the result arrives separately.
+2. `/worker` hands `task_type="agent_execution"` to `src/handlers/agent_worker_handler.py::AgentWorkerHandler.handle_task`.
+   It opens the context in a `RequestContext` (a task carries none), prefetches the `file_ref` just before the
+   specialist runs (the task carries the ref, never file text), and routes an `AgentMessage(DELEGATE)` to
+   `{agent_id}_{user_id}`.
+3. Delivery is a branch on the intent inside `handle_task`: the deep-research runner, DOCX, and PDF, HTML page and image
+   `document` items each have their own deliverer; a failure notice exists only for those and for `send_to_chat`.
+
+### 4. A lazy agent, and eviction
+
+1. `eager=False` descriptors are registered at startup (their intents are visible at once) but built on first use. The
+   coordinator calls `AgentFactoryPort.create_agent_on_demand(agent_type, user_id)` from `handle_delegation`, and from
+   `route_message` through `_try_lazy_load` for a recipient that is not registered (a Cloud Task callback).
+2. `UserAgentFactory.create_agent_on_demand` looks up `_LAZY_BUILDERS[agent_type]` under the per-user lock, binds the
+   runtime (`BaseAgent.bind_runtime` with `AgentRuntime`) before registering the agent, and records its id in
+   `_lazy_agent_ids` for eviction.
+3. Eviction (`$admin_cache_reset`, the TTL sweep) takes no lock, so it bumps the user's generation. A build that an
+   eviction overtook is discarded and redone, at most `_MAX_BUILD_ATTEMPTS` times (`_build_unless_overtaken`).
+4. A turn that was delegating during an eviction finds its eager agents unregistered. `_try_lazy_load` sees an eager
+   descriptor and calls `restore_agents_for_user`, which rebuilds the set, instead of answering "Unknown recipient".
+
+### 5. One execution
+
+`src/agents/base_agent.py::BaseAgent.process` wraps every `execute()`:
+
+1. Breaker check: `AgentConfig.circuit_breaker_threshold` failures open it for `circuit_breaker_recovery_ms`; an open
+   breaker answers `FAILED` without running the agent.
+2. `can_handle()`; a false answer is `CANNOT_HANDLE` with `_get_alternative_agents()` as suggestions.
+3. `_run_retry_loop` runs `execute()` under `timeout_ms` (the message's overrides the config's). Only
+   `LLMRateLimitError` and `LLMUnavailableError` are retried, with `RetryPolicy` (`src/domain/retry_policy.py`) through
+   `src/utils/retry.py::retry_async`. A timeout is never retried (`TIMEOUT` response), nor is any other exception.
+   `CancelledError` propagates and does not count as a failure.
+4. Outcome: success resets the breaker; every other outcome records a failure.
+
+Retry is switched off for an execution under an outer retry (`context["suppress_transient_retry"]`, set by Cloud Task
+callers that return 5xx) and for the orchestrator of a clocked long turn (`BaseAgent._effective_retry_policy`).
+Agents whose retry would redo billed or long work set `RETRY_POLICY = NO_RETRY_POLICY` (the generators, the router, the
+deep-research runner). Decision: `decisions/typed_retry_policy.md`.
+
+### 6. Failure of the main agent
+
+`ConversationHandler._route_with_fallback` calls `AgentFallbackService.try_quick_fallback` after the router answer
+(only before the turn's 90 s mark, `decisions/long_running_turns.md`). Any non-`SUCCESS` status goes to Quick directly
+(bypassing the router) with `context["fallback_note"]`; an ops alert is posted when a sink is wired. If Quick also fails or raises, the service
+returns a synthetic `SUCCESS` carrying `AgentFallbackService._APOLOGY_TEXT`, so the user never sees an error status.
+The service is built in `build_application_graph`; without it the turn returns the raw failure.
+
+### 7. What a specialist hands back
+
+- **`history_context`**: a specialist that wants its result visible to the LLM on later turns sets
+  `AgentResponse.history_context = {"<name>_context": value}`. The delegation engine accumulates it generically and
+  `ConversationHandler._prepare_history_texts` writes every metadata key ending in `_context` (via
+  `src/domain/history_context_block.py::history_context_block`) into the model message's `full_text`, never into the
+  summary text. Whether the LLM sees it depends on history tiering: `BaseAgent._apply_history_tier` keeps full text for
+  recent model turns only.
+- **`delivery_items`**: typed artifacts delivered after the text. The orchestrator extends them without looking inside.
+  The synchronous consumer is `ConversationHandler._deliver_item` (one branch per `type`); ASYNC results are delivered by
+  `AgentWorkerHandler`. A new type is one branch in the consumer that will see it.
+- **History summary**: Smart returns `metadata["response_summary_task"]`; `_prepare_history_texts` awaits it under
+  `asyncio.shield` with a 10 s timeout after the reply is sent, and falls back to the full text.
+
+## Invariants and traps
+
+- **Orchestrators never change for a new specialist.** Both read intents from the registry. Enforced by the descriptor
+  tests in `tests/unit/infrastructure/test_agent_manifest.py` and `test_registry_internal_allowlist.py`.
+- **`ALL_DESCRIPTORS` is the whole registry.** An agent built by the factory but missing from it has no intent, so no
+  delegation reaches it. The consolidation agent and the deep-research runner are such agents: they are addressed by
+  agent id (`/worker` payload, `route_message`), not by intent.
+- **An intent belongs to one agent.** `AgentRegistry.register` logs a WARNING and the later registration wins.
+- **`context_schemas` fields are merged by name and the first intent wins.** Two intents declaring the same field must
+  describe it identically (`FILE_REF_DESCRIPTION`), or one description is silently lost.
+- **The intent to `agent_type` link is by string.** `_LAZY_BUILDERS` and `_LAZY_AGENT_IDS` are keyed by the descriptor's
+  `agent_type`; a mismatch makes `create_agent_on_demand` log "No lazy builder" and return `False`, and the delegation
+  then fails at routing.
+- **A new eager agent must be added to `UserAgentFactory._EAGER_AGENT_KEYS`.** Eviction unregisters only the keys listed
+  there; a missing one stays registered and later registrations are refused as duplicates (logged ERROR), so a reset
+  keeps serving the old config.
+- **`bind_runtime` before `register_agent`.** An agent routable without its coordinator, content store and quota service
+  runs unbilled and uncaptured (`tests/unit/composition/test_agent_registration_window.py`).
+- **An ASYNC intent that must reach the user needs a branch in `AgentWorkerHandler.handle_task`.** Without one the task
+  succeeds and nothing is delivered. Generators return `DeliveryItem`s; the worker, not the agent, sends them.
+- **The native-format declaration travels only to file-opening intents.** `_specialist_context` strips
+  `NATIVE_FORMATS_KEY` for every intent outside `NATIVE_OPENING_INTENTS`, in message and in task body
+  (`tests/unit/infrastructure/test_coordinator_native_formats.py`).
+- **A gathered child's failure is that child's.** In the engine a specialist's exception or its own `CancelledError`
+  becomes a failed tool result; only a cancel of the turn itself propagates.
+- **Two classes are named `CircuitBreaker`.** The agent breaker is `src/agents/base_agent.py::CircuitBreaker`
+  (per agent id, thresholds from `AgentConfig`). `src/utils/circuit_breaker.py::CircuitBreaker` is a different, async,
+  call-wrapping breaker used by the Slack and Telegram adapters; it never guards an agent.
+- **`BaseAgentConfig.history_full_turns` is dead.** Nothing reads it; the live value is the literal
+  `BaseAgent.HISTORY_FULL_TURNS`, and the two disagree. Editing `src/infrastructure/agent_config.py` does not change
+  history tiering.
+- **Bot-written text never becomes memory through history.** The consolidation serializer reads user-role text and the
+  legacy `MessagePart.consolidation_text` (`src/domain/consolidation_serialization.py`); facts from a document go through
+  the owner-confirmed path (`decisions/memory_facts_owner_confirmed.md`).
+
+## Links
+
+- [`ACP_V2_SIMPLIFIED_RFC.md`](../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md): the registry design (history).
+- Decisions: `decisions/allowlist_names_internal_intent.md`, `delegation_cycle_guard.md`, `delegate_mode_parameter_removed.md`,
+  `delegate_tool_contract_and_strict.md`, `typed_retry_policy.md`, `transcript_integrity_one_provider.md`,
+  `long_running_turns.md` (all under `docs/04_solution_strategy/decisions/`).
+- [hybrid_router](../hybrid_router/README.md), [quick_agent_delegation](../quick_agent_delegation/README.md),
+  [agent_logging](../agent_logging/README.md), [document_generation](../document_generation/README.md).
+- Adding an agent: [`NEW_AGENT_PLAYBOOK.md`](../../how_to/NEW_AGENT_PLAYBOOK.md); the roster and per-agent traps:
+  `src/agents/CLAUDE.md`.
+
+## Where to start reading
+
+- `src/infrastructure/agent_manifest.py::ALL_DESCRIPTORS`: every agent and intent, with `Intent`.
+- `src/infrastructure/agent_registry.py::AgentRegistry`: intent lookup and the `internal` rule.
+- `src/infrastructure/agent_coordinator.py::AgentCoordinator.handle_delegation`: the dispatch path.
+- `src/composition/user_agent_factory.py::UserAgentFactory.create_agent_on_demand`: lazy build and eviction.
+- `src/agents/base_agent.py::BaseAgent.process`: breaker, retry, timeout.
+- `src/handlers/agent_worker_handler.py::AgentWorkerHandler.handle_task`: ASYNC execution and delivery.
+- `src/services/agent_fallback_service.py::AgentFallbackService.try_quick_fallback`: the degradation chain.

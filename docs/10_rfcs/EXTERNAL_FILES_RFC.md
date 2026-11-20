@@ -824,7 +824,7 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
       `send_file_to_user` stays out of it;
     - `src/agents/CLAUDE.md` names no email intent today (its roster row names EmailSearch only), so it changes only
       if U4 adds a trap;
-    - the building-block READMEs `agent_registry`, `quick_agent_delegation`, `multi_agent_system`,
+    - the building-block READMEs `agent_registry`, `quick_agent_delegation`,
       `gmail_email_indexing`; the former structure overview (deleted).
   - **Tests** that encode the removed intent, named for the reviewer, with this section as their spec:
     `tests/unit/agents/test_email_search_agent.py:312`, `:384-466`; `tests/unit/services/test_email_review_service.py:310`.

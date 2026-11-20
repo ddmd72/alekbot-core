@@ -25,7 +25,7 @@ This document MUST be updated when:
 ## Cross-References
 
 - **Dynamic Execution:** [../smart_agent_execution/README.md](../smart_agent_execution/README.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
+- **Multi-Agent System:** [../agent_registry/README.md](../agent_registry/README.md)
 - **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
 - **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
 

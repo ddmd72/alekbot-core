@@ -30,7 +30,7 @@ history management for user file attachments.
 
 - **File Conversion:** [../file_conversion/README.md](../file_conversion/README.md) — text extraction utilities
 - **Document Generation:** [../document_generation/README.md](../document_generation/README.md) — file_ref support in generators
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md) — FileManagementAgent in catalogue
+- **Multi-Agent System:** [../agent_registry/README.md](../agent_registry/README.md) — registry, coordinator and worker
 - **RFC:** [../../10_rfcs/FILE_STORAGE_RFC.md](../../10_rfcs/FILE_STORAGE_RFC.md) — design decisions and rationale
 - **Decision:** [../../04_solution_strategy/decisions/private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md) — private bucket + capability-token `/f/` route + server-side agent re-fetch (§2.4)
 

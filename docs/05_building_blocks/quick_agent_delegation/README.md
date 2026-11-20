@@ -177,7 +177,7 @@ model history entry contains a JSON block:
 {"email_search_context":[{"you_searched":"...","you_received":[{"id":"...","from":"...","date":"...","summary":"..."}]}]}
 ```
 Use `id` from prior turns directly with `get_email_details` / `open_email_attachment` without
-re-searching. See [Multi-Agent System § 9](../multi_agent_system/README.md#9-conversationhandler-email-search-context-persistence).
+re-searching. See [Agent Registry, flow 7](../agent_registry/README.md#7-what-a-specialist-hands-back).
 
 ### 3.4 maps_query → MapsSearchAgent (via intent fan-out)
 
