@@ -66,6 +66,6 @@ covers:
   [groovy prompt pattern](./08_concepts/groovy_prompt_pattern.md).
 - [10 RFCs](./10_rfcs/README.md) — proposals and their status.
 - [11 Quality](./11_quality/README.md) — quality gates and where the test rules live.
-- [12 Risks](./12_risks/README.md) — open risks and technical debt.
+- [12 Risks](./12_risks/README.md) — open risks and technical debt; [implementation roadmap](./12_risks/IMPLEMENTATION_ROADMAP.md).
 - How-to: [adapter wire testing](./how_to/ADAPTER_WIRE_TESTING.md),
   [new agent playbook](./how_to/NEW_AGENT_PLAYBOOK.md).

@@ -1,3 +1,7 @@
+<!-- living-doc
+covers: none
+-->
+
 # 05 Building Blocks
 
 ## Contract
@@ -22,38 +26,49 @@ Anything smaller is described by its code and docstrings.
 Everything general (the `<!-- living-doc` header and `covers:` ownership, what a living doc never holds, how it stays
 current) is in [`../README.md`](../README.md#living-docs).
 
-## 📂 Contents
+## Contents
 
-### Core Systems
+### Chat turn and agents
 
-- Prompt Design System v3: [prompt_design_system_v3/README.md](./prompt_design_system_v3/README.md)
-- Security Validation: [security_validation/README.md](./security_validation/README.md)
-- Agent Registry (ACP v2): [agent_registry/README.md](./agent_registry/README.md)
-- Hybrid Router: [hybrid_router/README.md](./hybrid_router/README.md)
+- [Agent Registry](./agent_registry/README.md) — how one turn becomes work done by specialist agents.
+- [Hybrid Router](./hybrid_router/README.md) — the front door of a turn: classification and routing.
+- [Prompt Design System v3](./prompt_design_system_v3/README.md) — how stored fragments become an agent's system prompt.
+- [Prompt Cache Strategy](./prompt_cache_strategy/README.md) — which requests ask the provider for prompt caching.
+- [Security Validation](./security_validation/README.md) — keeping written text from being read as a system instruction.
+- [Localization System](./localization_system/README.md) — response language versus UI language.
 
-### Memory & Context
+### Memory and search
 
-- Memory (owner's map: facts, consolidation, baseline, directives, search): [memory/README.md](./memory/README.md)
-- Embedding System: [embedding_system/README.md](./embedding_system/README.md)
+- [Memory](./memory/README.md) — the owner's map: facts, consolidation, directives, search.
+- [Memory Telemetry](./memory_telemetry/README.md) — process memory records that explain a container kill.
+- [Embedding System](./embedding_system/README.md) — turning text into vectors for search.
 
-### Platform Integration & External Services
+### Chat platforms, web and OAuth
 
-- MCP Infrastructure: [mcp_infrastructure/README.md](./mcp_infrastructure/README.md)
-- Gmail Email Indexing: [gmail_email_indexing/README.md](./gmail_email_indexing/README.md)
-- OAuth Web API: [oauth_web_api/README.md](./oauth_web_api/README.md)
-- OAuth Multi-Tenant: [oauth_multi_tenant/README.md](./oauth_multi_tenant/README.md)
-- User Cabinet: [user_cabinet/README.md](./user_cabinet/README.md)
-- Slack Integration: [slack_integration/README.md](./slack_integration/README.md)
-- Telegram Integration: [telegram_integration/README.md](./telegram_integration/README.md)
-- Rich Content Protocol: [rich_content_protocol/README.md](./rich_content_protocol/README.md)
-- File Conversion Service: [file_conversion/README.md](./file_conversion/README.md)
-- User Drive (file area + index and search): [user_drive/README.md](./user_drive/README.md)
+- [Slack Integration](./slack_integration/README.md) — Slack messages in, answers out.
+- [Telegram Integration](./telegram_integration/README.md) — the Telegram door into a turn.
+- [Rich Content and Notifications](./rich_content_protocol/README.md) — structured items and one delivery routine.
+- [OAuth Web API](./oauth_web_api/README.md) — signing in to the web side.
+- [OAuth Multi-Tenant](./oauth_multi_tenant/README.md) — who a person is and whether they may be here.
+- [User Cabinet](./user_cabinet/README.md) — the owner's web page for what chat is a poor place for.
 
-### Infrastructure & Providers
+### Files, drive and documents
 
-- Provider Resolution: [provider_resolution/README.md](./provider_resolution/README.md)
-- OpenAI Integration: [openai_integration/README.md](./openai_integration/README.md)
-- Grok Integration: [grok_integration/README.md](./grok_integration/README.md)
-- Prompt Cache Strategy: [prompt_cache_strategy/README.md](./prompt_cache_strategy/README.md)
-- Observability Strategy: [observability_strategy/README.md](./observability_strategy/README.md)
-- Localization System: [localization_system/README.md](./localization_system/README.md)
+- [File Storage](./file_storage/README.md) — what the user attaches and the system generates.
+- [File Conversion](./file_conversion/README.md) — from a file ref to what a model can read.
+- [Document Generation](./document_generation/README.md) — DOCX, PDF and single-page documents from a chat request.
+- [User Drive](./user_drive/README.md) — the file area, its index and search.
+
+### External services
+
+- [Gmail Email Indexing](./gmail_email_indexing/README.md) — the mailbox as part of the system's reach.
+- [Microsoft To Do Integration](./tasks_integration/README.md) — personal tasks in chat.
+- [MCP Infrastructure](./mcp_infrastructure/README.md) — calling tools on external MCP servers.
+- [Remote MCP Server](./remote_mcp_server/README.md) — letting outside MCP clients use the owner's data.
+
+### LLM providers and observability
+
+- [Provider Resolution](./provider_resolution/README.md) — performance tier to provider and model.
+- [OpenAI Integration](./openai_integration/README.md) — OpenAI behind the LLM port.
+- [Grok Integration](./grok_integration/README.md) — xAI Grok behind the LLM port.
+- [Observability](./observability_strategy/README.md) — what the system records about itself, and why.
