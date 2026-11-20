@@ -1131,7 +1131,7 @@ Shared helpers `_build_and_upload_report()` and `_format_via_smart_agent()` in
 
 ### 2026-03-07 (revision 4 — delivery deduplication)
 
-- **Extracted `src/handlers/deep_research_delivery.py`** — shared module with `upload_html_report()`,
+- **Extracted the shared delivery module** (today `src/services/deep_research_delivery.py`) with `upload_html_report()`,
   `deliver_deep_research()`, and `NotificationPort` Protocol. Eliminates 3 copies of identical
   delivery logic across `worker_handler`, `agent_worker_handler`, and `deep_research_webhooks`.
 - **Fixed circular import:** `agent_worker_handler` no longer uses deferred import of
