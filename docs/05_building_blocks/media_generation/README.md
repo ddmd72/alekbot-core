@@ -31,8 +31,8 @@ The two media differ in shape, and that is the main thing to know:
   render and delivers it later.
 
 What it is not: it holds no store of its own (nothing generated is kept except through file storage), it does not pick a
-user's channel (the request's origin channel is carried through), and it is not a general media pipeline: no extension,
-reference-to-video or multi-image output (`n` is always one).
+user's channel (the request's origin channel is carried through), and it is not a general media pipeline: one image per
+request, and no video extension or reference-to-video.
 
 ## Owned data
 
@@ -41,16 +41,19 @@ The block owns no collection. What it touches:
 - **Generated files.** An image goes to file storage as a `document` through `DocumentDeliveryService` (see
   [file_storage](../file_storage/README.md)). A video goes straight to media storage under the key prefix
   `video_generation/<user_id>/`, with a link built by the file link service and shortened by the short-link service.
-- **Usage cost.** Every render records an external, non-token cost on the account through
+- **Usage cost.** A successful render records an external, non-token cost on the account through
   `QuotaService.record_usage` (tokens zero, cost from `src/domain/billing.py::calculate_external_cost`). The service
   keys are the constants `IMAGE_GENERATE_MODEL`, `IMAGE_EDIT_MODEL`, `VIDEO_GENERATE_MODEL`; the tier table
   (`_IMAGE_TIER_PRICING_USD`), the edit surcharge and the per-second video price live only in that module. This path
   does not go through `TokenLedger`, so without it xAI spend would be invisible to the `daily_cost_limit` alert.
-- **User setting.** `UserBotConfig.max_video_duration_s` (optional) caps the video duration; resolved user, then account
-  default, then `DEFAULT_MAX_VIDEO_DURATION_S` by `ConfigurationService.get_max_video_duration`. No Cabinet screen sets
+- **User setting.** `UserBotConfig.max_video_duration_s` (optional) caps the video duration; resolved by
+  `ConfigurationService.get_max_video_duration`, which supports user, account default and `DEFAULT_MAX_VIDEO_DURATION_S`, but
+  the only caller (`UserAgentFactory._build_video_generation`) passes no account default, so in practice user, then the
+  system constant. No Cabinet screen sets
   it; it is edited in the stored profile.
-- **Poll state** exists only in the payload of the next `video_generation_polling` Cloud Task: `request_id`, `user_id`,
-  `account_id`, `session_id`, `duration_s`, `origin_platform`, `attempt`.
+- **Poll state** exists only in the payload of the next `video_generation_polling` Cloud Task (the request id, the
+  caller's identity and session, the duration estimate, the origin platform and the attempt count), built in
+  `src/adapters/gcp_task_queue.py::GcpTaskQueue.enqueue_video_generation_polling`.
 
 ## Flows
 
@@ -70,8 +73,7 @@ Each agent has two provider axes: the text model for the crafting call (strategy
    `AgentCoordinator` enqueues a Cloud Task and `AgentWorkerHandler` runs the agent
    (`src/agents/image_generation_agent.py::ImageGenerationAgent.execute`). The task deadline is the descriptor's
    `dispatch_deadline_s`.
-2. `edit_image` is validated **before** the paid crafting call: `image_refs` present, at most three
-   (`_MAX_REFERENCE_IMAGES`). With more than one reference the crafting call is told the count and the placeholders
+2. `edit_image` is validated **before** the paid crafting call: `image_refs` present, at most `_MAX_REFERENCE_IMAGES`. With more than one reference the crafting call is told the count and the placeholders
    `<IMAGE_0>`, `<IMAGE_1>`, `<IMAGE_2>`, xAI's positional convention.
 3. The crafting call builds the prompt text. An empty answer fails the request.
 4. Generate: `GrokImageAdapter.generate` posts to the images endpoint through the SDK. Edit: the agent resolves every ref
@@ -82,7 +84,7 @@ Each agent has two provider axes: the text model for the crafting call (strategy
    `file_upload` is false on purpose: the channel unfurls the link inline, and a native upload would show the picture
    twice. A failed task goes through `_notify_docx_failure`.
 
-Resolution and quality are **never inferred**: the agent uses `1k` / `medium` unless the orchestrator passes
+Resolution and quality are **never inferred**: the agent uses its fixed defaults (see `_resolve_resolution`, `_resolve_quality`) unless the orchestrator passes
 `resolution` / `quality` in `context`, which the manifest tells it to do only when the user stated one. Price is tiered
 by that pair, so the choice is a cost lever.
 
@@ -94,9 +96,9 @@ by that pair, so the choice is a cost lever.
 2. `edit_video` needs `video_ref`, checked before the crafting call. The crafting call returns JSON
    (`video_prompt`, `aspect_ratio`), parsed in `_parse_crafted_response`; truncation and malformed JSON become a
    user-facing failure with nothing submitted.
-3. Duration and resolution are **not crafted by the model**. `_resolve_duration` uses the default constants
-   (`DEFAULT_VIDEO_DURATION_S`, `DEFAULT_VIDEO_RESOLUTION`) unless the orchestrator passed an explicit value, then clamps
-   to the user's cap. This keeps the cost-bearing choice deterministic and attributable.
+3. Duration and resolution are **not crafted by the model**. `_resolve_duration` uses `DEFAULT_VIDEO_DURATION_S` and `_resolve_resolution` uses
+   `DEFAULT_VIDEO_RESOLUTION`, unless the orchestrator passed an explicit value; only the duration is then clamped to the
+   user's cap. This keeps the cost-bearing choice deterministic and attributable.
 4. Generate with an `image_ref` is image-to-video: the bytes are resolved and sent, and the crafted `aspect_ratio` is
    **dropped** (the source image's own proportions must govern, otherwise xAI distorts it).
 5. Edit: `_execute_edit` resolves the bytes, refuses a clip over `MAX_EDIT_VIDEO_BYTES`, then asks `VideoDurationPort`
@@ -119,7 +121,7 @@ by that pair, so the choice is a cost lever.
 ### Duration check of a user's input video
 
 `VideoDurationPort.duration_s` never raises and answers `None` when it cannot tell. The adapter wired in
-`src/composition/sandbox_media_setup.py::build_sandbox_media` is `SandboxMediaAdapter`: the bytes are streamed to the sandboxed media decoder, where
+`src/composition/sandbox_media_setup.py::build_sandbox_media` is `SandboxMediaAdapter`: the bytes go to the sandboxed media decoder, where
 `ffprobe` runs, so a user's untrusted video is never decoded in the main service (see
 [`sandbox_render_service.md`](../../04_solution_strategy/decisions/sandbox_render_service.md) and
 `docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md` S5b).
@@ -129,16 +131,17 @@ by that pair, so the choice is a cost lever.
 - **No retries anywhere on a render.** Both agents set `RETRY_POLICY = NO_RETRY_POLICY` and both adapters build their
   client with `max_retries=0`: a 5xx can arrive after xAI has rendered and billed. Do not raise either, and keep the
   image task deadline above the agent timeout so a Cloud Tasks retry cannot re-run the render
-  (`tests/unit/agents/test_image_generation_agent.py`, `tests/unit/adapters/test_grok_image_adapter.py`).
+  (only the image adapter's `max_retries=0` is pinned, in `tests/unit/adapters/test_grok_image_adapter.py`; the agents' policy and the deadline ordering are held by comments in `src/infrastructure/agent_config.py` and `src/infrastructure/agent_manifest.py` alone).
 - **Context fields arrive in `message.payload`, not `message.context`.** The coordinator spreads the orchestrator's
   `context={...}` into the payload; `message.context` holds coordinator fields only. Reading `resolution`, `duration`,
-  `image_ref(s)` or `video_ref` from the wrong one drops them silently, and this shipped broken once.
+  `image_ref(s)` or `video_ref` from the wrong one drops them silently, and the value is then silently ignored.
 - **File refs are explicit fields, not the generic `file_ref` injection**, which is text-only and would misfire on binary.
   `edit_image` takes the array `image_refs`; `edit_video` takes `video_ref`; both are declared in `context_schemas`.
 - **Rollout order for a new context field:** code first, then the Firestore `PROTOCOL_SMART_AGENT_SELECTION` text. The
   tool schema is generated from the manifest, so the reverse order has Smart passing a field the deployed agent ignores.
 - **Do not use the SDK's typed methods for xAI.** `images.edit()` sends multipart, which xAI rejects; the typed
-  `videos.*` methods follow OpenAI's own Sora shape. Both adapters use `AsyncOpenAI.post/get`, and the video adapter uses
+  `videos.*` methods follow OpenAI's own Sora shape. Image edit and all video calls use `AsyncOpenAI.post/get` (image
+  generate does use the typed `images.generate`), and the video adapter uses
   `cast_to=object` so an unmodeled status or field cannot raise a validation error.
 - **Edit takes a different shape.** One reference goes in `image`, two or three in the plural `images` (mutually
   exclusive). Video edit uses `_EDIT_MODEL`, a different model id from `_MODEL`; do not "unify" them without a live call.
@@ -163,7 +166,7 @@ by that pair, so the choice is a cost lever.
 
 - [`IMAGE_GENERATION_RFC.md`](../../10_rfcs/IMAGE_GENERATION_RFC.md) and
   [`VIDEO_GENERATION_RFC.md`](../../10_rfcs/VIDEO_GENERATION_RFC.md): why the agent crafts a prompt, why video is a
-  separate poll shape, the cost-safeguard rulings (default 5 s / 480p, duration cap, external-cost billing). Both are
+  separate poll shape, the cost-safeguard rulings (fixed video defaults, duration cap, external-cost billing). Both are
   point-in-time records; where they differ from the code, the code is right.
 - [`image_edit_multi_reference.md`](../../04_solution_strategy/decisions/image_edit_multi_reference.md): up to three
   references, per-image mime type, the order contract.
