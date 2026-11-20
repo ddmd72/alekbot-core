@@ -227,20 +227,6 @@ class PromptBuilder(PromptBuilderPort):
             session_key=session_key,
         )
 
-    def _get_static_rules(self) -> str:
-        """
-        Get static Slack formatting rules (doesn't change, so no caching needed).
-        """
-        return """
-@critical rule Slack_Formatting_Protocol() {
-  instruction: "Your responses will be displayed in Slack, which uses a specific 'mrkdwn' format. You MUST adhere to it strictly."
-  instruction: "For bold text, you MUST use single asterisks: *bold text*."
-  instruction: "For italic text, you MUST use underscores: _italic text*."
-  instruction: "For lists, you MUST use bullet points with an asterisk and a space: * List item."
-  instruction: "Do NOT use standard Markdown like '**bold**' or numbered lists ('1. ...'), as they will not render correctly."
-}
-"""
-
     def _build_lens_instructions(self, lens: Dict) -> str:
         """
         Build lens-specific instructions (for Milestone 5).
