@@ -17,21 +17,21 @@ HTTP endpoints: [API_REFERENCE.md](./API_REFERENCE.md).
    `src/adapters/telegram/webhook_adapter.py::TelegramWebhookAdapter._handle_telegram_update`) and hands the event to
    Cloud Tasks as a **named** task (`src/adapters/gcp_task_queue.py::GcpTaskQueue.enqueue_slack_event`, `enqueue_worker_task`).
    The name derives from the platform's event or update id, so a platform retry meets `ALREADY_EXISTS` and makes no
-   second turn. The adapter answers 200 without running the turn: Cloud Run throttles CPU once a response is sent.
-2. **`/worker`.** `src/handlers/worker_handler.py::WorkerHandler.handle` claims the delivery by Cloud Tasks task name
+   second turn. The adapter answers 200 without running the turn (Telegram runs inline only with no queue wired): Cloud Run throttles CPU once a response is sent.
+2. **`/worker`.** `src/handlers/worker_handler.py::WorkerHandler.handle` claims a Cloud Tasks delivery by task name (Scheduler and manual calls carry none and are not claimed)
    (`src/ports/task_claim_store.py::TaskClaimStore`; a store error runs the task anyway: a duplicate beats a lost task),
    then dispatches by `task_type`. A queued Slack event has no `task_type`; it goes to
    `HTTPModeAdapter.handle_queued_event`, a Telegram update to `TelegramWebhookAdapter.handle_queued_update`.
    Detail: `decisions/worker_task_dedup.md`.
-3. **Per-session serialisation (Slack only).** `handle_queued_event` holds one lock per session id. A turn behind a busy
+3. **Per-session serialisation (Slack only).** `handle_queued_event` holds one in-process lock per queued-event `session_id` (the thread ts, else the message ts, else the channel), not per chat session. A turn behind a busy
    session waits `BUSY_WAIT_S`, then is re-queued under a new task name (`BUSY_MAX_REQUEUES` times), then the user is
    told the message was not processed. The lock is released at the long-turn mark, so a later message can run beside a
    long turn.
 4. **Authorization.** The adapter authorizes the sender against the whitelist (`src/services/iam_service.py::IAMService.authorize`),
    builds a `MessageContext` and calls the handler through `src/ports/conversation_handler_port.py::ConversationHandlerPort`.
-5. **Commands.** The adapter sends a message that starts with `$` to `ConversationHandler.handle_command`
+5. **Commands.** The adapter sends a Telegram message or a Slack `message` event that starts with `$` (not an `app_mention`) to `ConversationHandler.handle_command`
    (`src/handlers/conversation_handler.py::ConversationHandler.handle_command`), which answers without an LLM turn.
-   The services behind `$skill`, `$memory save`, `$drive-notes` and `$geo` arrive as one optional bundle,
+   The services behind these commands arrive as one optional bundle,
    `src/handlers/command_services.py::CommandServices`; a command whose service is absent answers "unavailable".
 6. **Message preparation** (`ConversationHandler.handle_message`). Voice notes are transcribed and enter the turn as the
    user's own text. Other attachments become reference parts through
@@ -53,8 +53,7 @@ HTTP endpoints: [API_REFERENCE.md](./API_REFERENCE.md).
    mode, `decisions/delegate_mode_parameter_removed.md`) and refuses a cycle or an over-deep chain. A **SYNC** intent
    runs inline and returns its result. An **ASYNC** intent is enqueued as an `agent_execution` task and returns an
    acknowledgement; `src/handlers/agent_worker_handler.py::AgentWorkerHandler.handle_task` runs it later and delivers
-   through `UserNotificationService` to the channel that asked. Local tools (skills, workspace, memory-fact drafts,
-   cancelling a long turn) are built by Smart and served by the engine itself. Roster and traps: `src/agents/CLAUDE.md`.
+   through `UserNotificationService` to the channel that asked. Local tools are built by Smart and served by the engine itself. Roster and traps: `src/agents/CLAUDE.md`.
 9. **Delivery and history.** The handler sends the answer and its delivery items (files, links, rich content), then
    appends the user/model pair to the session `{user_id}:{channel_id}` (`ConversationHandler._save_history_with_retry`).
    A failed history save is logged, never turned into an error reply: the answer is already delivered.
@@ -84,14 +83,14 @@ Everything that is not a chat turn arrives as `POST /worker` (Cloud Tasks or Clo
 types, and one runner per heavier type (`src/domain/worker_task.py::WorkerTask`, built by
 `src/composition/worker_setup.py::build_worker_tasks`). Task types and schedules: `docs/07_deployment/SCHEDULERS.md`.
 Proactive messages (reminders, daily email review, job results) go out through
-`src/services/user_notification_service.py::UserNotificationService`, to the user's last active channel.
+`src/services/user_notification_service.py::UserNotificationService`, to the origin channel of an async task if it names one, else the primary channel, else the last active one.
 
 Three runtime units run outside the main service:
 
 | Unit | Entry point | Does |
 |------|-------------|------|
 | Drive indexer | `indexer_main.py` | `drive_sync` ticks for the user drive index (`docs/05_building_blocks/user_drive/README.md`) |
-| Deep research job | `job_main.py` | Claude deep research as a Cloud Run Job; its result comes back as an `agent_execution` task (`decisions/cloud_tasks_vs_jobs.md`) |
+| Deep research job | `job_main.py` | Claude deep research as a Cloud Run Job; it delivers its links itself and the HTML report comes back as an `agent_execution` task (`decisions/cloud_tasks_vs_jobs.md`) |
 | Voice relay | `relay_main.py` | Live call audio, section 4 |
 
 ## 4. A voice call (Lelik)
@@ -113,12 +112,12 @@ The call setup, the relay and the main service are three processes (`docs/10_rfc
    ticket atomically and returns the session config; `/voice/delegate` runs a specialist call through
    `LelikAgent.delegate` (`src/agents/lelik_agent.py`), the same `DelegationEngine` path as a chat turn, and an answer the
    relay stopped waiting for goes to chat once; `/voice/submit-transcript` records usage and cost, hands the transcript
-   to the summary consumer, and always releases the one-call marker.
+   to the summary consumer, and releases the one-call marker even if usage or summary fails (only while it still names this call; the summary is skipped for voicemail and some modes).
 
 ## 5. Failure handling
 
 - **Agents:** `src/agents/base_agent.py::BaseAgent` wraps every execution in a per-agent circuit breaker and timeout
-  (`src/domain/agent.py::AgentConfig`: `circuit_breaker_threshold`, `circuit_breaker_recovery_ms`, `timeout_ms`).
+  (`src/domain/agent.py::AgentConfig`).
   A timeout is not retried: the same budget would fail again.
 - **Providers:** same-provider retry, then cross-provider failover (`docs/05_building_blocks/provider_resolution/README.md`).
 - **The user always gets a displayable message:** a failed primary turn falls back to Quick; if Quick fails too,
