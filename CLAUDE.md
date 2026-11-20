@@ -111,6 +111,7 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
   direct pushes, force pushes and deletion for everyone, owner included, with no bypass (cloud sessions push with the
   owner's token). Small isolated changes get a small PR. Every change keeps the affected docs (this file, arc42 in
   `docs/`, decision records) in sync — documentation drift is what branch discipline exists to prevent.
+- **Living docs:** a PR that touches code a living doc covers (`covers:` in its `<!-- living-doc` header) changes that doc or carries `Docs not affected: <doc> — <why>` in its description; CI job `living_docs.yml` enforces it (`decisions/living_docs_contract.md`).
 - **Deploy-substitution trap:** `make deploy` does `include .env` and passes some keys as cloudbuild `--substitutions`,
   so any `.env` key reused that way bakes its **local** value into the deployed revision (this leaked `localhost` into
   `OAUTH_REDIRECT_URI`). When a value differs between local and deploy, give the deploy side its own key (e.g.
