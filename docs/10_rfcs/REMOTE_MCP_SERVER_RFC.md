@@ -11,7 +11,7 @@
 > connector no longer calls `SearchEnrichmentService`. The sections below that name `query`, `alternate_phrasing`,
 > `keywords` or the direct call (§2 goals 1 and 5, §4.1, §4.7, §5.2, the flow in §6, §7) describe the first design and
 > are kept as history; the current shape is in
-> [`remote_mcp_server/README.md`](../05_building_blocks/remote_mcp_server/README.md) §3.2 and §9.
+> [`remote_mcp_server/README.md`](../05_building_blocks/remote_mcp_server/README.md) (Facts tool call; Invariants and traps).
 
 **Related:** `MCP_INFRASTRUCTURE_RFC.md` (the **inverse** direction — alekbot as MCP *client* to Google Maps)
 

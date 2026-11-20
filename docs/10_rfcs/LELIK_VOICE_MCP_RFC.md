@@ -34,7 +34,7 @@ through `delegate_to_specialist` over three intents (`src/infrastructure/agent_m
   seconds" by its own description (`agent_manifest.py:908`); one live `ask_alek` took 105 s (`relay_main.py:154`).
 
 Both of our MCP servers already answer these reads with no model call: `get_user_context` on the facts resource and
-the read-only drive tools on the drive resource (building block §1). xAI voice sessions accept remote MCP servers as
+the read-only drive tools on the drive resource (building block, Purpose). xAI voice sessions accept remote MCP servers as
 server-side tools. Lelik can call them directly.
 
 ## 2. Goal and non-goals
@@ -82,7 +82,7 @@ wraps every tool as `{"type": "function", **tool}` (`src/adapters/xai_realtime_a
 **Change.**
 1. `session_config` adds `mcp_servers`: a list of a new domain value `RemoteToolServer(label, url, description,
    allowed_tools)`, **only** when the knob is on, the provider is xAI (O6) and the mode is `LELIK` (O7). URLs are the
-   existing resource URIs (`MCP_RESOURCE_URI`, the drive URI derived from it, building block §10.1): no new URL key.
+   existing resource URIs (`MCP_RESOURCE_URI`, the drive URI derived from it, building block, Owned data): no new URL key.
    No token at this step.
 2. `/voice/session-config` mints the tokens at redemption (§5.2, O1) and returns them next to the descriptors, in the
    field `voice_mcp_tokens` (`{"facts", "drive"}`, built in S1). The ticket record in Firestore never holds a token.
