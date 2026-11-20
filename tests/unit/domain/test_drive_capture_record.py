@@ -1,9 +1,10 @@
 """Capture on the record (USER_DRIVE_INDEXING_RFC §26.3, D34, Δ47, Δ57): `file_capture` per kind, what the planner's
-`triaged`, `indexed` and `demoted` write, and the Firestore codec keeping both fields as the plain strings the
-rollback tag ignores."""
+`triaged`, `indexed` and `demoted` write, and the Firestore codec writing both fields and reading them back (their
+stored form and a record stored before them are in the every-field case,
+tests/unit/adapters/test_firestore_drive_index_repo_serialization.py)."""
 from datetime import datetime, timezone
 
-from src.adapters.firestore_drive_index_repo import RECORD_FIELDS, record_from_doc, record_to_doc
+from src.adapters.firestore_drive_index_repo import record_from_doc, record_to_doc
 from src.domain.drive_capture import CaptureSignals, file_capture
 from src.domain.drive_extraction import ExtractionOutcome, TriageResult
 from src.domain.document_extraction import ExtractionStatus
@@ -79,16 +80,6 @@ class TestPlanner:
 
 
 class TestCodec:
-    def test_both_fields_are_stored_as_plain_strings(self):
-        doc = record_to_doc(rec(capture="scan", capture_source="detected"))
-        assert doc["capture"] == "scan" and doc["capture_source"] == "detected"
-        assert {"capture", "capture_source"} <= set(RECORD_FIELDS)
-
     def test_round_trip(self):
         original = rec(capture="document_photo", capture_source="automatic")
         assert record_from_doc(record_to_doc(original)) == original
-
-    def test_a_record_stored_before_capture_reads_as_none(self):
-        doc = {k: v for k, v in record_to_doc(rec()).items() if k not in ("capture", "capture_source")}
-        out = record_from_doc(doc)
-        assert (out.capture, out.capture_source) == ("", "")

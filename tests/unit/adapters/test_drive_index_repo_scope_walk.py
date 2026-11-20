@@ -1,10 +1,10 @@
 """The drive index repository for the scope walk (DRIVE_SCOPE_WALK_RFC §5.2, §5.9; plan §6 U-1 core), on both adapters
 (the Firestore one over the evaluating fake): `has_pending_listing` (a walk is running) and `scope_ancestor_records`
 (the skeletons re-derivation reads), each an equality query with a limit and no ordering, so no composite index; and
-the new sync-state fields, which Firestore hands back as lists, read back as tuples."""
+both repositories keep the new sync-state fields (their codec round trip, lists back to tuples, is in the every-field
+case, test_firestore_drive_index_repo_serialization.py)."""
 import pytest
 
-from src.adapters.firestore_drive_index_repo import state_from_doc, state_to_doc
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState
@@ -86,21 +86,6 @@ WALK_STATE = dict(applied_whole=False, applied_roots=("f-rd", "f-coimbra"), remo
 
 
 class TestStateFields:
-    def test_the_document_round_trip_gives_tuples(self):
-        doc = state_to_doc(DriveSyncState(user_id="usr-1", connection_id="conn-1", **WALK_STATE))
-        assert doc["applied_roots"] == ["f-rd", "f-coimbra"] and doc["removing_roots"] == ["f-springfield"]
-        back = state_from_doc("usr-1", doc)
-        assert {name: getattr(back, name) for name in WALK_STATE} == WALK_STATE
-        assert isinstance(back.applied_roots, tuple) and isinstance(back.removing_roots, tuple)
-
-    def test_a_document_without_them_reads_the_defaults(self):
-        doc = state_to_doc(DriveSyncState(user_id="usr-1", connection_id="conn-1", **WALK_STATE))
-        for name in WALK_STATE:
-            del doc[name]
-        back = state_from_doc("usr-1", doc)
-        assert (back.applied_whole, back.applied_roots, back.removing_roots, back.ancestry_dirty, back.walking,
-                back.walk_listed, back.walk_blocked) == (False, (), (), False, False, 0, 0)
-
     async def test_both_repositories_keep_them(self, adapter):
         repo, db = adapter
         await repo.save_sync_state(DriveSyncState(user_id="usr-1", connection_id="conn-1", **WALK_STATE))
