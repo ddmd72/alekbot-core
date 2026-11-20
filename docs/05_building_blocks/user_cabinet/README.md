@@ -1,479 +1,165 @@
+<!-- living-doc
+covers:
+  src/web/user_cabinet_app.py
+  src/web/cabinet_auth.py
+  src/web/static/cabinet.html
+-->
 # User Cabinet
 
-**Status:** ✅ Production Ready (2026-03-24)
-
-**Purpose:** Web-based self-service portal for authenticated users. Allows platform linking (Slack, Telegram), browsing and semantically searching personal memory (facts), fact management (remove/correct), managing team invites, and configuring language settings.
-
-**Code:** `src/web/user_cabinet_app.py`, `src/web/static/cabinet.html`
-
----
-
-## Overview
-
-User Cabinet is a single-page application served at `/cabinet`. It authenticates users via JWT (HttpOnly cookie, same as OAuth Web API) and exposes a REST API consumed by the frontend.
-
-### Key Features
-
-- ✅ **Platform Linking** — Link/unlink Slack and Telegram identities; shows current linked state
-- ✅ **Facts Browser** — Cursor-based paginated view of personal facts (100/page, filter by profile domain, labels from `GET /api/user/fact-domains`)
-- ✅ **Semantic Search** — Vector-based search over personal facts via `POST /api/user/facts/search`
-- ✅ **Fact Removal** — Direct invalidation via `POST /api/user/facts/{id}/invalidate`; immediate effect, no LLM required
-- ✅ **Fact Correction** — UI generates a pre-formatted message for the user to paste into chat; ConsolidationAgent handles the update
-- ✅ **Team Invites** — Owner-only invite code generation and management
-- ✅ **Language Settings** — UI language + bot response language, per user
-- ✅ **Hexagonal Architecture** — Web layer depends only on `FactRepository` and `EmbeddingService` ports
-
----
-
-## Architecture Position
-
-```
-┌─────────────────────────────────────┐
-│         Web Browser (SPA)           │
-│  cabinet.html  (Tailwind + vanilla) │
-└────────────────┬────────────────────┘
-                 │  HTTP / JWT cookie
-                 ▼
-┌─────────────────────────────────────┐
-│     User Cabinet Blueprint          │  ← Adapter Layer
-│  (user_cabinet_app.py / Quart)      │
-│  @auth_required  ←  SessionService  │
-└────────────────┬────────────────────┘
-                 │
-        ┌────────┴─────────┐
-        ▼                  ▼
-┌──────────────┐  ┌───────────────────┐
-│FactRepository│  │ EmbeddingService  │  ← Ports (ABC)
-│    (port)    │  │    (port)         │
-└──────┬───────┘  └────────┬──────────┘
-       ▼                   ▼
-┌──────────────┐  ┌────────────────────┐
-│ Firestore    │  │ GeminiEmbedding    │  ← Adapters
-│ FactRepo     │  │ Adapter            │
-└──────────────┘  └────────────────────┘
-```
-
-**Composition root:** `build_application_graph` (`src/composition/application_graph.py`) injects adapters — `FirestoreFactRepository` and `GeminiEmbeddingAdapter` — typed as ports.
-
----
-
-## API Contract
-
-All endpoints require a valid JWT access token (HttpOnly cookie `access_token` or `Authorization: Bearer <token>` header). Invalid/expired token → `401`.
-
-### Platform State
-
-#### `GET /api/user/platforms`
-
-Returns current platform link state for the authenticated user.
-
-**Response:**
-```json
-{
-  "platforms": {
-    "slack": "U0123456789",
-    "telegram": "123456789"
-  }
-}
-```
-Unlinked platforms are absent from the map.
-
-#### `POST /api/user/link-platform`
-
-**Body:** `{ "platform": "slack", "platform_user_id": "U0123456789" }`
-
-#### `DELETE /api/user/link-platform?platform=slack`
-
-#### `POST /api/user/link-telegram`
-
-**Body:** `{ "telegram_user_id": "123456789" }`
-
----
-
-### Facts Browser (Browse mode)
-
-#### `GET /api/user/facts/browse`
-
-Cursor-based paginated retrieval ordered by `created_at DESC`.
-
-**Query params:**
-
-| Param | Default | Description |
-|-------|---------|-------------|
-| `limit` | 100 | Page size (max 500) |
-| `cursor` | — | Doc ID of last item from previous page |
-| `domain` | — | One registry key (`src/domain/fact_domains.py`, as listed by `GET /api/user/fact-domains`): only facts whose profile `domain_keys` hold it; a fact not yet profiled is in no domain. Any other value → `400` |
-
-**Response:**
-```json
-{
-  "facts": [
-    {
-      "id": "doc_id",
-      "text": "User lives in Springfield.",
-      "primary_domain": "biography",
-      "type": "fact",
-      "created_at": "2026-02-17T10:32:00"
-    }
-  ],
-  "next_cursor": "abc123def"
-}
-```
-`next_cursor` is `null` when there are no more pages. `primary_domain` is the profile's registry key (`null` until the
-fact is profiled). Every fact list of the Cabinet (browse, search, all facts, recently closed) carries it, and so does each
-entry of the review queue.
-
-#### `GET /api/user/fact-domains`
-
-The life areas of the fact registry for the page's filter chips and badges. Behind the same session gate as the other
-Cabinet routes (`401` without one).
-
-**Query params:** `lang` — the page's UI language (`en`, `uk`, `fr`, `es`); English when absent or without labels.
-
-**Response:** every registry key once, in Cabinet order:
-```json
-{ "domains": [ { "key": "biography", "label": "Biography", "order": 1 }, ... ] }
-```
-
-**Pagination pattern (client):**
-```js
-// First page
-GET /api/user/facts/browse?limit=100
-
-// Next page
-GET /api/user/facts/browse?limit=100&cursor=<next_cursor from previous response>
-```
-
----
-
-### Facts Search (Semantic mode)
-
-#### `POST /api/user/facts/search`
-
-Vector-based semantic search. Embeds the query text, runs `find_nearest` on Firestore, returns top-50 results ranked by cosine similarity.
-
-**Body:**
-```json
-{ "query": "travel plans to Poland" }
-```
-
-**Response:**
-```json
-{
-  "facts": [ ... ],
-  "query": "travel plans to Poland"
-}
-```
-
-**Latency note:** +200–500ms vs browse (embedding generation via Gemini API).
-
-**Use case:** Free-text semantic queries — finds conceptually related facts even when exact words don't match ("Poland" finds facts about "Kraków").
-
----
-
-### Fact Management
-
-#### `POST /api/user/facts/{fact_id}/invalidate`
-
-Directly marks a fact as `state = "invalidated"` in Firestore. Immediate effect — no LLM, no embedding, no ConsolidationAgent.
-
-**Security:** `account_id` from the JWT is verified against the document's `account_id` server-side. Returns `403` if they don't match, `404` if fact doesn't exist.
-
-**Effect on downstream systems:**
-
-| System | Impact |
-|--------|--------|
-| Browse (`GET /browse`) | Fact disappears immediately (filtered by `state == "current"`) |
-| Memory search (`search_facts`) | Fact excluded immediately |
-| Biographical context **cache** | ⚠️ Cache stale until next consolidation refreshes it |
-
-The biographical cache risk is limited in practice: the cache contains only CRITICAL/HIGH priority biographical facts. Most user-invalidated facts are health metrics, location, possession — not cached.
-
-**Frontend behaviour:** On success, the fact row is removed from the DOM immediately without page reload (`allFacts.filter(f => f.id !== id)` → `renderFacts()`).
-
-#### Fact Correction (UI-only, no write API)
-
-For corrections, the cabinet generates a pre-formatted English message and copies it to clipboard:
-
-```
-I found this fact in my memory database and it needs correction.
-Current (incorrect): "{old_text}"
-Correct version: "{new_text}"
-Please update it accordingly.
-```
-
-The user pastes this into chat with Alek. ConsolidationAgent processes it via negation/correction pattern detection → marks old fact `SUPERSEDED`, creates new fact with correct embedding and full SCD2 lineage.
-
-**Why not a direct write for corrections:** corrections require re-embedding + lineage management — ConsolidationAgent is the right owner of this logic.
-
-**UX note:** The cabinet describes that the old version remains visible until the next memory sync — expected and documented to the user.
-
----
-
-### Team Invites (owner-only)
-
-#### `GET /api/user/invite-codes` — list active codes
-#### `POST /api/user/invite-codes` — generate new code
-#### `POST /api/user/join-team` — consume invite code
-
----
-
-## Domain Model
-
-Facts in the cabinet have two write operations:
-1. **Read path** (browse + search) — always `state == "current"` filtered
-2. **Invalidate path** — direct `state = "invalidated"` write, bypassing ConsolidationAgent
-
-All fact *creation* and *correction* goes through the ConsolidationAgent pipeline.
-
-```
-FactEntity
-  - id: str                        ← used as pagination cursor + invalidate target
-  - text: str
-  - primary_domain: str            ← registry key: the badge (none until the fact is profiled)
-  - domain_keys: list[str]         ← registry keys: the domain filter
-  - type: FactType (enum)
-  - state: str                     ← "current" (read), "invalidated" (after Remove)
-  - created_at: datetime
-  - account_id: str                ← security: always == g.account_id from JWT
-```
-
----
-
-## Security Model
-
-### Authentication
-`@auth_required` decorator wraps every endpoint:
-1. Extracts Bearer token from cookie or `Authorization` header
-2. Calls `session_service.verify_access_token(token)` — validates HS256 signature + expiry
-3. Sets `g.user_id`, `g.account_id`, `g.role` from verified JWT payload
-
-### Data Isolation
-`g.account_id` comes from the verified JWT — not from user input. All Firestore queries and writes are scoped to `account_id == g.account_id`.
-
-```python
-# Read: account_id from JWT, not from request
-facts = await fact_repo.search_facts(
-    query_vector=vector,
-    account_id=g.account_id,
-    user_id=g.user_id,
-)
-
-# Write: account_id verified server-side in CabinetFactService
-await cabinet_facts.invalidate(
-    fact_id=fact_id,
-    account_id=g.account_id,  # ← the service checks the stored fact's account_id == this
-)
-```
-
----
-
-## Frontend Architecture
-
-**Stack:** Single HTML file (`cabinet.html`), Tailwind CSS (CDN), vanilla JS.
-
-### Two Facts Modes
-
-```
-Browse mode (default):
-  → GET /api/user/facts/browse
-  → Domain chips: every registry domain from GET /api/user/fact-domains?lang=<UI language>; filter server-side on domain_keys (new request per chip)
-  → "Load more" button loads next cursor page
-  → max-height: 520px, overflow-y: auto
-
-Search mode (on "Search" button or Enter):
-  → POST /api/user/facts/search
-  → Returns top-50 semantic results
-  → Mode bar shows query and result count
-  → "← Browse" resets to browse mode
-```
-
-### Fact Action Buttons
-
-Each fact row has two action buttons (subtle, muted until hover):
-
-| Button | Hover colour | Action |
-|--------|-------------|--------|
-| **Edit** | indigo | Opens "Correct this fact" modal — copies pre-formatted message to clipboard |
-| **Invalid** | red | Opens "Remove this fact" modal — direct API call on confirm |
-
-**Remove modal flow:**
-1. User clicks "Invalid" → modal shows fact text
-2. User clicks "Remove" → `POST /api/user/facts/{id}/invalidate`
-3. On success: fact removed from DOM immediately, toast shown
-
-**Correct modal flow:**
-1. User clicks "Edit" → modal shows old fact (read-only) + textarea for new version
-2. User types correction, clicks "Copy message" (or ⌘↵)
-3. Clipboard contains structured English message; user pastes into Slack/Telegram
-4. ConsolidationAgent processes via correction detection → SUPERSEDED + new fact created
-5. Old fact remains visible in cabinet until next consolidation (documented to user)
-
-### Design
-- Background: warm cream `#f0ece6`
-- Header: dark brown `#2c2420`
-- Cards: `#faf8f5` + warm border `#e8e2d9` + soft box-shadow
-- Domain badge: the registry label of the fact's `primary_domain` in the UI language; none while the fact has no profile
-
----
-
----
-
-## Tasks Management (Microsoft To Do)
-
-Tasks management is available after connecting Microsoft To Do via `/auth/connect/microsoft_todo`.
-
-### `GET /api/tasks/microsoft/status`
-
-Returns integration status.
-
-**Response:**
-```json
-{
-  "connected": true,
-  "subscriptions": [
-    { "list_id": "AAMkAGI2...", "expires_at": "2026-03-22T10:00:00Z" }
-  ]
-}
-```
-`connected: false` when no OAuth credentials are stored. `subscriptions: []` when no Graph subscriptions are active.
-
-### `POST /api/tasks/microsoft/reindex`
-
-Triggers full reindex of all user task lists (enqueues `reindex_task_list` Cloud Task per list). Repairs expired subscriptions before reindexing.
-
-**Response:** `{ "status": "reindex_enqueued" }`
-
-### `GET /api/tasks/microsoft/lists`
-
-Returns all MS To Do task lists for the user. Proxies Graph API — no Firestore read.
-
-**Response:**
-```json
-{
-  "lists": [
-    { "list_id": "AAMkAGI2...", "name": "Alek Bot Tasks", "is_owner": true, "is_shared": false }
-  ]
-}
-```
-
-### `DELETE /api/tasks/microsoft/disconnect`
-
-Deletes all Graph subscriptions, revokes OAuth tokens, clears `task_search_index` and `task_config` for the user.
-
-**Response:** `{ "status": "disconnected" }`
-
----
-
-## Language Settings
-
-Controls two independent concerns: UI language (status phrases in Slack/Telegram) and
-bot response language (what language the LLM uses in replies).
-
-See full documentation: [../localization_system/README.md](../localization_system/README.md)
-
-### `GET /api/user/language`
-
-Returns current preference.
-
-```json
-{ "preferred_language": "en", "agent_mirror": false }
-```
-
-`preferred_language` is `null` when not set (system default applies).
-
-### `POST /api/user/language`
-
-```json
-{ "preferred_language": "en", "agent_mirror": false }
-```
-
-| Field | Values | Meaning |
-|-------|--------|---------|
-| `preferred_language` | `"uk"`, `"en"`, `"fr"`, `"es"`, `null` | UI language + fixed bot language |
-| `agent_mirror` | `true` / `false` | `true` = bot mirrors input; `false` = fixed language |
-
-**Side effects on save:**
-1. `UserBotConfig.preferred_language` + `agent_mirror` written to Firestore
-2. USER-level LANG_* token override written to `domain_prompt_overrides_v3`
-3. Prompt assembly cache invalidated (24h TTL reset)
-4. Language change alert sent to bot via QuickAgent → saved to main session history
-
-**UI layout (Cabinet settings card):**
-```
-Bot Language
-
-UI Language:
-[ System default ]  [ UK ][ EN ]
-                    [ FR ][ ES ]
-
-Bot responds:
-[ Mirror my language ]  [ Fixed (UI language) ]
-```
-
-"Fixed" uses whichever UI language is selected — not a separate dropdown.
-"Mirror" clears the LANG_* override; bot follows input language dynamically.
-
----
-
-## Bot Reminders (Settings tab)
-
-CRUD management of orchestrator self-reminders directly from Cabinet UI.
-
-**API Endpoints:**
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/api/user/reminders` | List all reminders for user (due times in user's timezone) |
-| POST | `/api/user/reminders` | Create reminder (body: `{text, instruction, due, recurrence?}`) |
-| PUT | `/api/user/reminders/<note_id>` | Update reminder (PATCH: any subset of fields) |
-| DELETE | `/api/user/reminders/<note_id>` | Delete reminder |
-
-**DI:** `AgentNotePort` injected into cabinet blueprint from `ServiceContainer.notes_adapter`.
-
-**Timezone handling:** `due` stored as UTC in Firestore. API returns ISO-8601 in user's timezone.
-Create/update: naive datetime interpreted as user's local time, converted to UTC before storage.
-
-**UI:** Card in Settings section with:
-- Reminders list: label, instruction (with newline rendering), due date, recurrence badge
-- Edit/Delete buttons per reminder
-- Create form: label input, instruction textarea, datetime-local picker, recurrence dropdown
-- i18n: en, uk, fr, es
-
----
-
-## Dependencies
-
-| Dependency | Type | Purpose |
-|------------|------|---------|
-| `FactRepository` | Port | Facts read (browse + search) + invalidate write |
-| `EmbeddingService` | Port | Query vectorization for semantic search |
-| `UserRepository` | Port | Platform identities read/write |
-| `SessionService` | Service | JWT verification |
-| `InviteCodeService` | Service | Invite code generation and consumption |
-
----
-
-## Firestore Indexes Required
-
-| Collection | Fields | Purpose |
-|------------|--------|---------|
-| `domain_facts_v2` | `account_id` ASC, `state` ASC, `created_at` DESC | Browse all facts |
-| `domain_facts_v2` | `account_id` ASC, `state` ASC, `domain_keys` CONTAINS, `created_at` DESC, `__name__` DESC | Browse with the domain filter |
-| `domain_facts_v2` | `account_id` ASC, `state` ASC, `vector` VECTOR 768 | Semantic search (existing) |
-
-Vector index was already present. Pagination indexes added in `config/firestore.indexes.json` (2026-02-18).
-
----
-
-## Cross-References
-
-- **Authentication:** [OAuth Web API](../oauth_web_api/README.md) — JWT structure, session tokens
-- **Facts data model:** [Database Schema](../../08_concepts/DATABASE_SCHEMA.md) — `domain_facts_v2` collection
-- **Semantic search infrastructure:** [Search Enrichment](../search_enrichment/README.md) — `find_nearest`, RRF
-- **Embedding generation:** [Embedding System](../embedding_system/README.md)
-- **User identity:** [User Management System](../user_management_system/README.md)
-
----
-
-**Last Updated:** 2026-02-18 (fact management added)
-**Status:** ✅ Production Ready
+## Purpose
+
+The Cabinet is the owner's web page for what chat is a poor place for: seeing and pruning what the bot remembers,
+connecting and disconnecting integrations (Gmail, drives, Microsoft To Do), and setting personal preferences (language,
+timezone, schedules, reminders, team invites). It is one HTML page (`src/web/static/cabinet.html`, vanilla JS, four
+sections: Memory, Integrations, Team, Settings) served at `/cabinet`, and one Quart blueprint of JSON routes behind the
+JWT session that the OAuth sign-in set.
+
+What it is not: it is not a second way to write memory (a correction is a message the user sends in chat, see Flows),
+it holds no business rules of its own (each route calls a service or a repository through a port), and it does not own
+the voice call page (`/cabinet/call` is `src/web/voice_web_call_app.py`, which reuses only the session gate).
+
+## Owned data
+
+The Cabinet owns no collection. Each route reads or writes data that another block owns, through the port named here.
+
+| What the route changes | Owner of the data |
+|---|---|
+| Platform ids (`platform_identities`: Slack, Telegram, phone) | `UserRepository`; users and accounts: [oauth_multi_tenant](../oauth_multi_tenant/README.md) |
+| Timezone, location, spoken languages, Gmail schedules, deep-research switches, `preferred_language`, `agent_mirror` | `UserBotConfig` of the user, through `UserRepository` |
+| Invite codes and team membership | `InviteCodeService` |
+| Fact state `invalidated`; answers to review questions | `CabinetFactService`, `FactAnswerService`; model in [memory](../memory/README.md) |
+| Reminders | `AgentNotePort` (agent notes) |
+| Gmail jobs, indexed mail, credentials | [gmail_email_indexing](../gmail_email_indexing/README.md); credentials through `OAuthCredentialsPort` and `CredentialRevocationService` |
+| Drive connections, scope, notes, indexing switch | `DriveConnectionService`, `DriveDisconnectService`, `DriveNoteService`; [user_drive](../user_drive/README.md) |
+| Microsoft To Do link and index | `TaskSetupService`; [tasks_integration](../tasks_integration/README.md) |
+
+## Flows
+
+### Page load and session
+
+1. `src/web/user_cabinet_app.py::create_user_cabinet_blueprint` serves `/cabinet` with `Cache-Control: no-cache` (a
+   cached page outlived deploys). The page itself needs no session; every `/api/...` call does.
+2. Every API route is wrapped by `src/web/cabinet_auth.py::make_auth_required`: a Bearer header or the `access_token`
+   cookie goes to `SessionService.verify_access_token`; `g.user_id`, `g.account_id` and `g.role` come only from the
+   verified token. A bad or missing token is `401`. Token lifetime and refresh: `decisions/cabinet_session_24h_cap.md`.
+3. Sign-in itself, including the email whitelist that refuses unlisted users, is the OAuth block
+   (`decisions/cabinet_oauth_whitelist_gate.md`); the Cabinet only consumes the session.
+
+### Browse and search facts
+
+1. `GET /api/user/facts/browse` (`browse_facts`) returns one page of the account's facts, newest first, with an opaque
+   cursor. `state` is `current` (default) or `stale`, parsed by `src/domain/fact_review_overview.py::listable_state`;
+   `domain` is one key of `src/domain/fact_domains.py` (any other value is `400`); `limit` is capped at 500.
+   Query: `FirestoreFactRepository.get_paginated_facts` in `src/adapters/firestore_repo.py`.
+2. `GET /api/user/fact-domains` gives the filter chips and badge labels in the page's UI language. A fact that has no
+   profile yet has `primary_domain: null` and is in no domain filter.
+3. `POST /api/user/facts/search` embeds the query (`EmbeddingService`, inside `billed_scope`, so the cost is billed to the
+   account) and runs `FactRepository.search_facts` with a limit of 50, scoped by the JWT's `account_id` and `user_id`.
+4. `GET /api/user/facts/recently-closed` lists facts archived or invalidated within `SET_ASIDE_WINDOW`
+   (`fact_review_overview.py`), each with the actor of its last lifecycle entry.
+
+### Delete a fact
+
+1. The page calls `POST /api/user/facts/<id>/invalidate` (`invalidate_fact`), which calls
+   `src/services/cabinet_fact_service.py::CabinetFactService.invalidate` with the JWT's `account_id`.
+2. The service refuses a fact of another account (`PermissionError`, `403`), follows a superseded id to its current
+   version (`CABINET_ACCEPTS` in `src/domain/fact_lifecycle.py`), and refuses to delete a version whose text differs from
+   what the page showed (`cabinet_invalidation`, `FactResolutionError`, `409`). The page reloads the list on `409`.
+3. It writes `state = invalidated` in place with a lifecycle entry (actor `cabinet`), then refreshes the biographical
+   context cache of the account, so the fact leaves the prompt at once.
+
+### Correct a fact (no write API)
+
+The page builds an English message ("current text / correct text / please update it") and copies it to the clipboard
+(`copyCorrectMessage` in `cabinet.html`); the user pastes it into chat. The correction then goes through the normal
+consolidation path, which owns re-embedding and lineage. There is deliberately no Cabinet route that rewrites a fact.
+
+### Memory-review questions
+
+`GET /api/user/facts/review-queue` lists the open questions of this user (`FactAnswerService.review_queue`) with the
+answer options each allows. `POST /api/user/facts/review-answers` takes 1 to `MAX_BULK_ANSWERS` answers and applies each
+through `FactAnswerService.apply` (the same path as a chat or button answer, source `cabinet`). The response is
+per question; one failure shows as `"error"` for that question and does not stop the others. Rules of the review:
+`decisions/fact_review_and_owner_questions.md`.
+
+### Integrations
+
+1. `GET /api/connectors` tells the page which connect buttons to draw; the connect link is `/auth/connect/<kind>`
+   (OAuth block). The Cabinet holds no list of kinds.
+2. Gmail: `/api/gmail/status` reports the connection, the index frontiers and the running job. `/api/gmail/index`
+   persists the job, then enqueues it (persist first, or the worker can find no job). A sync fallback runs when no task
+   queue is wired. `mode` is `incremental` or `backfill`; `reindex` is refused with `400` because it would erase the
+   cards. Schedules (`/api/gmail/auto-index`, `/api/gmail/daily-review`) write `UserBotConfig` only; the hourly jobs read it.
+3. Disconnect (`DELETE /api/gmail/disconnect`) first marks "disconnected by user" through `IntegrationReconnectService`,
+   then removes the credentials; indexed mail stays. `DELETE /api/gmail/data` deletes the indexed mail.
+   Reconnect notices: `decisions/reconnect_notice_r1.md`.
+4. Microsoft To Do: `/api/tasks/microsoft/{status,reindex,lists,disconnect}` call `TaskSetupService` and the To Do
+   provider. Google Tasks has `/api/tasks/status` and `/api/tasks/disconnect`.
+5. Drive card: `/api/drive/connections...` (list, rename, scope and its preview, write folder, connector access,
+   searched-by-default, indexing, primary, folder picker, disconnect). Each route resolves the connection through the
+   caller's own user id first, so another user's id answers `404`. Scope and indexing changes enqueue a `drive_sync` task
+   so the indexer acts at once; with no drive queue the change is saved, a warning is logged and `queued` is false.
+   A disconnect that leaves no primary drive turns the deep-research drive copy off.
+
+### Settings
+
+- Language (`/api/user/language`): `LanguagePreferenceService.set_preference` writes the config, swaps the user's
+  `LANG_*` prompt-override token, invalidates the prompt cache and notifies the bot, so the change is seen in chat.
+  Details: [localization_system](../localization_system/README.md). A POST without `agent_mirror` means mirror.
+- Timezone, location, voice languages, deep-research second pass: plain `UserBotConfig` writes. Timezone is validated as
+  an IANA name.
+- Reminders (`/api/user/reminders`): a `due` without an offset is a wall time in the user's timezone
+  (`src/domain/local_time.py::wall_time_instant`) and is stored as UTC; the list answers in the user's timezone. A
+  recurrence rule is normalized and phrased by `RecurrencePort`, so the page never parses a rule. An explicit empty
+  `recurrence` on update stops the repeat; an absent one leaves it unchanged.
+
+### Platforms, invites, team
+
+- `POST /api/user/link-platform` binds Slack only (`_LINK_PLATFORM_ALLOWED`); Telegram has its own numeric-id route; a
+  phone is linked only after a Twilio Verify code (`request-phone-otp`, `verify-phone-otp`, E.164 by `_E164_PATTERN`).
+  Without a verify client these answer `501`.
+- Invites: only a token with role `owner` may create a code (`403` otherwise). The code is returned once; later lists
+  carry the hint only. `POST /api/user/join-team` and the `/join?code=` deep link both end in
+  `InviteCodeService.consume_team_invite`; `/join` sends an unauthenticated visitor to login and back.
+
+## Invariants and traps
+
+- **No route skips the gate.** `tests/unit/web/test_every_route_refuses_anonymous.py` probes every route; only `/health`
+  and the `/cabinet` shell are listed public. A new route is also pinned in `tests/unit/main_boots_offline_url_map.txt`
+  (`src/web/CLAUDE.md`).
+- **Tenancy comes from the token, never from the request.** Fact, job, reminder and drive routes filter by the JWT's
+  `account_id` / `user_id`; `tests/unit/web/test_cabinet_owner_and_tenant_refusals.py` shows each refusal on stored data.
+- **Every collaborator is optional in the factory,** so a deployment that lacks one answers `501` (or `503` for fact
+  delete) instead of failing to boot. A new feature route must do the same, and `main.py` must pass the new argument.
+- **Drive settings are changed only here.** The writers (`rename`, `set_scope`, `set_indexing`, `disconnect`, ...) are
+  called only from `user_cabinet_app.py` and `drive_disconnect_service.py`, so the bot cannot change them in chat
+  (`tests/unit/test_req_arch_34_drive_settings_cabinet_only.py`). Files the index could not read are likewise shown in
+  the Cabinet only (`decisions/drive_unreadable_files_cabinet_only.md`).
+- **The `/cabinet/docs` routes are owner-only and answer `404`, not `401`,** to anyone else, and are off when
+  `DOCS_OWNER_USER_ID` is unset.
+- **A delete never removes text the owner did not see** (the `409` above, `cabinet_invalidation`). The Cabinet never
+  writes a fact's text.
+- **Composite indexes before deploy.** Browse needs the `account_id, state, created_at` index and the variant with
+  `domain_keys` in `config/firestore.indexes.json`; a missing one fails at query time.
+- **Cancelling a Gmail job writes its status directly** (`gmail_cancel_job`); the worker stops chaining on the next task,
+  so a running page can finish one more step.
+- **The page escapes everything it renders** (`escapeHtml`); fact and drive text is untrusted.
+
+## Links
+
+- [oauth_web_api](../oauth_web_api/README.md) (sign-in, JWT), [oauth_multi_tenant](../oauth_multi_tenant/README.md)
+  (users, accounts, roles)
+- `decisions/cabinet_oauth_whitelist_gate.md`, `decisions/cabinet_session_24h_cap.md`,
+  `decisions/fact_review_and_owner_questions.md`, `decisions/reconnect_notice_r1.md`,
+  `decisions/drive_unreadable_files_cabinet_only.md`, `decisions/deep_research_drive_copy.md`
+- `docs/10_rfcs/FACT_LIFECYCLE_RFC.md`, `FACT_PROFILE_RFC.md`, `MULTI_DRIVE_RFC.md`, `DRIVE_MCP_CONNECTOR_RFC.md`
+- [Database schema](../../08_concepts/DATABASE_SCHEMA.md) (facts), [embedding_system](../embedding_system/README.md)
+
+## Where to start reading
+
+- `src/web/user_cabinet_app.py::create_user_cabinet_blueprint` (all routes, one closure)
+- `src/web/cabinet_auth.py::make_auth_required`
+- `src/services/cabinet_fact_service.py::CabinetFactService.invalidate`
+- `src/adapters/firestore_repo.py::FirestoreFactRepository.get_paginated_facts`
+- `src/services/language_preference_service.py::LanguagePreferenceService.set_preference`
+- `src/web/static/cabinet.html` (`invalidateFactDirect`, `copyCorrectMessage`, the `section-*` blocks)
