@@ -280,7 +280,7 @@ test-timing: ## Wall-clock/CPU-time tests only, serial (CI runs it after a merge
 
 # Coverage flags shared by test-coverage and ci. A bare `--cov` takes its sources from .coveragerc (src + the root *_main.py
 # entry points, branch coverage on); a `--cov=src` here would replace that list. Gates: the global floor below, the per-file
-# table (RFC §8.4) and the per-layer floors (P2).
+# table (RFC §8.4), the per-layer floors (P2) and the never-run check (a measured file no test runs a line of).
 COVERAGE_FLAGS = --cov --cov-report=term-missing:skip-covered --cov-report=json --cov-fail-under=70
 
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)

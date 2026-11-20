@@ -19,7 +19,11 @@ lowering in the diff (it is never silent). Each floor is the lowest value observ
 decimal (run-to-run coverage noise is ~0.1 pp). When measured − NOISE_PP is 0.5 points or more above a floor the
 script prints "floor can rise to X": raise it in the same change that earned it.
 
-Exit codes: 0 — all floors met; 1 — a floor missed, or coverage.json missing.
+It also fails on a never-run file: a measured file (src or a root entry point) with statements and no covered line.
+A file no test executes is the gap a layer floor's headroom hides; a zero-statement file (an empty ``__init__``) never
+counts.
+
+Exit codes: 0 — all floors met and no never-run file; 1 — a floor missed, a never-run file, or coverage.json missing.
 """
 from __future__ import annotations
 
@@ -152,6 +156,16 @@ def missing_entry_points(files: Dict[str, dict], names: Iterable[str] = ROOT_ENT
     return [n for n in names if n not in measured and os.path.isfile(n)]
 
 
+def never_run(files: Dict[str, dict]) -> List[str]:
+    """Measured files with statements of which no test ran a single line; a zero-statement file never counts."""
+    out = []
+    for raw_path, data in files.items():
+        path, totals = _normalise_path(raw_path), totals_of(data.get("summary", {}))
+        if layer_of(path) is not None and totals.statements > 0 and totals.covered_lines == 0:
+            out.append(path)
+    return sorted(out)
+
+
 def check(layers: Dict[str, LayerTotals], floors: Dict[str, float]) -> Tuple[List[str], List[str], List[str]]:
     """(violations, rises, unfloored) as printable lines."""
     violations, rises, unfloored = [], [], []
@@ -194,14 +208,20 @@ def load_files() -> Dict[str, dict]:
 def main() -> int:
     files = load_files()
     layers = aggregate(files)
+    unrun = never_run(files)
     for name in missing_entry_points(files):
-        layers[layer_of(name) or "root entry points"].add(static_zero_totals(name))
+        zero = static_zero_totals(name)
+        layers[layer_of(name) or "root entry points"].add(zero)
         print(f"ℹ️  {name} is imported by no test: counted as 0 % from its source.")
+        if zero.statements:
+            unrun.append(name)
     print(table(layers, FLOORS))
     violations, rises, unfloored = check(layers, FLOORS)
     for line in rises:
         print(f"⬆️  {line}")
-    if violations or unfloored:
+    for path in unrun:
+        print(f"❌ {path}: no test runs a single line of it (test it, or delete it if it is dead)", file=sys.stderr)
+    if violations or unfloored or unrun:
         for line in violations:
             print(f"❌ {line}", file=sys.stderr)
         for line in unfloored:

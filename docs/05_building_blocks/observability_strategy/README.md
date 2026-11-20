@@ -34,7 +34,6 @@ Structured JSON fields allow filtering:
 - `src/utils/logger.py`
 - `src/utils/telemetry.py`
 - `src/utils/logging_context.py`
-- `src/utils/performance_logger.py`
 - `src/adapters/firestore_dedup_store.py`
 - `src/adapters/slack/http_adapter.py`
 

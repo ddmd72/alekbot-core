@@ -45,7 +45,8 @@ exclude_lines =
     ^\s*\.\.\.\s*$
 
 # Without this, coverage.py lists only the src/ subpackages that carry an __init__.py, and a file nobody imported is
-# absent from the report instead of showing 0 % (src/ and most of its subdirectories are namespace packages).
+# absent from the report instead of showing 0 % (src/ and most of its subdirectories are namespace packages), and
+# scripts/check_coverage_layers.py fails on such a never-run file.
 include_namespace_packages = True
 
 [json]

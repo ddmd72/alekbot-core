@@ -69,8 +69,8 @@ Inside adapters and web, the low end is the stores and surfaces the product depe
 | `firestore_consolidation_queue.py`, `firestore_user_repo.py`, `gcp_task_queue.py` | 62–65% | queues, users |
 
 Seventeen source files that existed then are absent from the coverage data (`telemetry.py` and `server.py` are
-omitted by `.coveragerc`). Coverage cannot tell "never imported" from "imported at collection only", so P2 replaces it
-with a static check.
+omitted by `.coveragerc`). P2 measures every `src/` file and the root entry points, so a file no test executes reads
+0 %; `scripts/check_coverage_layers.py` fails the gate on any measured file with statements and no covered line.
 
 The store that works shows the method: `firestore_drive_index_repo.py` 99.9% on an evaluating Firestore fake
 (`tests/unit/adapters/firestore_drive_eval_fakes.py`), a parity suite against the in-memory repository
@@ -519,7 +519,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | # | Package | Gate | Effort | What it catches | Tranche |
 |---|---|---|---|---|---|
 | P1 | **Test-time budget** (§4b): `make test-affected` (testmon) with worktree seeding; the `fcntl` lock hook; `slow` marker; `make ci` and the PR job switched to it; advisory durations report | check / ci | 1–1.5 | a local loop that grows past 3 min; five parallel full suites | 1 |
-| P2 | **Rules and gates**: H3 network guard + gRPC tripwire; `tests/CLAUDE.md` rewritten (fakes with semantics over call assertions; adapters need behind-port tests; no real LLM; MagicMock coverage does not count); coverage per layer with `branch = True`, floor at the re-measured values, only rising; root `*_main.py` into `[run] source`; subprocess coverage configured (`[run] patch = subprocess`) or omitted with a reason; a static "no test imports module X" check with an allowlist that only shrinks; the semantic-mutation plugin | check / ci | 1.5–2 | the convention itself; unmeasured entry points | 1 |
+| P2 | **Rules and gates**: H3 network guard + gRPC tripwire; `tests/CLAUDE.md` rewritten (fakes with semantics over call assertions; adapters need behind-port tests; no real LLM; MagicMock coverage does not count); coverage per layer with `branch = True`, floor at the re-measured values, only rising; root `*_main.py` into `[run] source`; subprocess coverage configured (`[run] patch = subprocess`) or omitted with a reason; a never-run check (the layer script fails on a measured file with statements and no covered line); the semantic-mutation plugin | check / ci | 1.5–2 | the convention itself; unmeasured entry points | 1 |
 | P3 | **Emulator spike** (§4): which of our queries, vector included, the emulator runs | — | 1 h | decides how much of P5 runs offline | 1 |
 | P4 | **H1 fake** (the full add-list, index refusal, raw-dict seeding, one transaction patch) **+ the fact store kit** (S1's round-trip suite folded in; semantics inventory for the fact ports) | check | 2.5–3.5 | the fact defect class; missing indexes offline | 1 |
 | P5 | **Fake-vs-real parity slice** (before any other kit is built on H1): mixed-type ordering; missing-field filters and orderings; `!=`/`in`/range + kNN pre-filters; dotted paths; `Increment`/`ArrayUnion`/`SERVER_TIMESTAMP` results; projection + `distance_result_field`; `create()` on an existing document — run on H1 and on the test database (P3 result: vector search runs on the emulator too; the test database is needed for index refusals and the three undocumented points) | check + cloud | 1 + owner infra step | a wrong fake rule spreading into every later kit | 1 |
@@ -568,6 +568,10 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
   observation writes): P4's backlog.
 - **`doc-drop` is the dict-literal case of "drop one field"** (a key of a dict written to a store).
 - **coverage.py cannot tell MagicMock coverage apart:** the floor counts it; a reviewer does not accept it as the adapter's test (§2.7).
+
+**Replaced (2026-11-20): the untested-module check.** The static import guard and its allowlist were replaced by the
+never-run check in `scripts/check_coverage_layers.py` (a measured file with statements and no covered line fails the gate):
+the guard flagged only modules the suite already ran and produced shape-only tests.
 
 **Built (P4, 2026-10-22).** H1 (`tests/support/firestore_eval.py`) and the fact store kit. Deviations from the text above:
 - **H1 is standalone.** It imports nothing from the drive fake. The drive suites keep `tests/unit/adapters/firestore_drive_eval_fakes.py`; moving them onto H1 is not done.
@@ -1256,7 +1260,8 @@ Package names in brackets map rev 1's numbers to this revision.
 2. **Network guard in `make check` (H3): yes.**
 3. **Coverage floor in CI (WP0 → P2): yes** — per layer at today's values, only rising; a source file no test imports
    fails. (Rev 2 implements the second half as a static check with a shrinking allowlist, since coverage cannot detect
-   it and a hard failure on day one would turn CI red.)
+   it and a hard failure on day one would turn CI red; replaced by the never-run check on 2026-11-20, see "Replaced
+   (2026-11-20)" after Built (P2).)
 4. **Order: yes** — WP12 + WP0–WP3 first (P1, P2, P4, P6, P8), then WP4–WP7, then the rest. Work starts the week of
    2026-10-26. (Rev 2 inserts the spike, the parity slice, the inbound gates and reachability into the first tranche;
    see Owner confirmations 1.)

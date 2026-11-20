@@ -189,7 +189,7 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
     `RUN_CLOUD_TESTS=1 python -m pytest tests/cloud/test_kits_cloud.py -k <kit stem> -p no:randomly` (never `-p no:logging`: it
     removes `caplog`, which kits use; `--show-capture=no` trims a failure's captured gRPC debug log instead).
 
-## Coverage floors and the untested-module list
+## Coverage floors and never-run files
 
 - `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; CI fails under the global
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
@@ -199,10 +199,9 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   a refusal line no test runs fails the CI coverage gate.
 - `tests/unit/web/test_every_route_refuses_anonymous.py` probes every route of every deployed blueprint with an anonymous request: a new
   route or blueprint must be refused (nothing touched or written) or listed in its `PUBLIC` with a reason.
-- `tests/unit/test_every_src_module_is_imported_by_a_test.py`: every module under `src/` and every root `*_main.py` is
-  imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
-  test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported. The check is `slow`,
-  so it fails only in CI (or with `RUN_SLOW_TESTS=1`).
+- **Never-run files:** the layer script also fails on any measured file (`src/` or a root `*_main.py`) with statements and
+  no covered line, naming it. A new module needs a test that runs it (or it is dead code: delete it); there is no allowlist.
+  A zero-statement file (an empty `__init__.py`) never trips it.
 
 ## The production graph: wiring and reachability (P9)
 
