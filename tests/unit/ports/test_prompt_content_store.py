@@ -1,30 +1,11 @@
 """
-Contract test for the PromptContentStore port.
-
-The port is an ABC with a single abstract method, ``record_turn`` — a best-effort,
-non-blocking hot-path capture. The adapter owns record building, so the port
-takes the agent's native LLM objects + identity, not a pre-built record.
+Contract test for the PromptContentStore port: ``record_turn`` is a best-effort, non-blocking hot-path capture.
+The adapter owns record building, so the port takes the agent's native LLM objects + identity, not a pre-built record.
 """
 
-import inspect
-
-import pytest
 
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
 from src.ports.prompt_content_store import PromptContentStore
-
-
-def test_port_cannot_be_instantiated():
-    with pytest.raises(TypeError):
-        PromptContentStore()  # type: ignore[abstract]
-
-
-def test_abstract_methods():
-    assert PromptContentStore.__abstractmethods__ == frozenset({"record_turn", "record_dr_result"})
-
-
-def test_record_turn_is_coroutine():
-    assert inspect.iscoroutinefunction(PromptContentStore.record_turn)
 
 
 async def test_concrete_subclass_satisfies_contract():

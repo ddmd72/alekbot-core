@@ -1,6 +1,4 @@
 """Port contract tests for HtmlRendererPort."""
-import pytest
-from unittest.mock import AsyncMock
 
 from src.ports.html_renderer_port import HtmlRendererPort, HtmlRenderError
 
@@ -16,16 +14,6 @@ class _ConcreteRenderer(HtmlRendererPort):
 
     async def stop(self) -> None:
         pass
-
-
-def test_html_renderer_port_is_abstract():
-    with pytest.raises(TypeError):
-        HtmlRendererPort()  # type: ignore[abstract]
-
-
-def test_concrete_renderer_satisfies_contract():
-    renderer = _ConcreteRenderer()
-    assert isinstance(renderer, HtmlRendererPort)
 
 
 async def test_render_returns_bytes():

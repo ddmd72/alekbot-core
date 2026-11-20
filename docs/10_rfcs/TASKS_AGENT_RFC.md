@@ -90,7 +90,6 @@ GoogleTasksAdapter(TasksProviderPort)
 | `src/adapters/google_tasks_adapter.py` | ~280 |
 | `src/agents/tasks_agent.py` | ~270 |
 | `tests/unit/agents/test_tasks_agent.py` | ~200 |
-| `tests/unit/ports/test_tasks_provider_port.py` | ~50 |
 | `firestore_utils/uploads/COGNITIVE_PROCESS_TASKS.groovy` | ~80 |
 | `firestore_utils/uploads/tasks_agent_v1.json` | ~20 |
 | `firestore_utils/uploads/tasks.json` | ~20 |
@@ -1283,42 +1282,9 @@ class TestTasksAgentSearchTasks:
 
 ---
 
-### 4.6 `tests/unit/ports/test_tasks_provider_port.py`
+### 4.6 `TasksProviderPort` shape
 
-```python
-"""Contract test: TasksProviderPort defines the correct abstract interface."""
-
-import inspect
-
-import pytest
-
-from src.ports.tasks_provider_port import TasksProviderPort
-
-
-def test_port_is_abstract():
-    assert not inspect.isabstract(TasksProviderPort) is False  # has abstractmethods
-    assert len(TasksProviderPort.__abstractmethods__) == 5
-
-
-def test_port_has_list_tasks():
-    assert "list_tasks" in TasksProviderPort.__abstractmethods__
-
-
-def test_port_has_create_task():
-    assert "create_task" in TasksProviderPort.__abstractmethods__
-
-
-def test_port_has_update_task():
-    assert "update_task" in TasksProviderPort.__abstractmethods__
-
-
-def test_port_has_delete_task():
-    assert "delete_task" in TasksProviderPort.__abstractmethods__
-
-
-def test_port_has_search_tasks():
-    assert "search_tasks" in TasksProviderPort.__abstractmethods__
-```
+The port's shape is enforced by `mypy --strict` on `src/ports` and has no test of its own.
 
 ---
 
@@ -1862,7 +1828,7 @@ Step 11. Modify src/web/oauth_app.py (+2 endpoints, +signature param)
 Step 12. Modify src/config/auth.py (+google_tasks_oauth_redirect_uri)
 Step 13. Modify main.py (+google_tasks_oauth_service instantiation + pass to blueprint)
 Step 14. Create tests/unit/agents/test_tasks_agent.py
-Step 15. Create tests/unit/ports/test_tasks_provider_port.py
+Step 15. `TasksProviderPort` shape: enforced by `mypy --strict` on `src/ports`, no test of its own
 Step 16. make test-unit  (must pass)
 Step 17. Create firestore_utils/uploads/COGNITIVE_PROCESS_TASKS.groovy
 Step 18. Create firestore_utils/uploads/tasks_agent_v1.json

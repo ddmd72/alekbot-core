@@ -1,6 +1,3 @@
-import inspect
-import pytest
-from unittest.mock import AsyncMock
 
 from src.ports.llm_port import (
     LLMPort,
@@ -9,7 +6,6 @@ from src.ports.llm_port import (
     LLMResponse,
     Message,
     MessagePart,
-    PromptCacheConfig,
 )
 
 
@@ -41,14 +37,6 @@ class _ConcreteService(LLMPort):
 
     def get_model_for_tier(self, tier) -> str:
         return "test-model"
-
-
-def test_generate_content_abc_is_request_only():
-    """ABC signature declares request as the sole required parameter."""
-    sig = inspect.signature(LLMPort.generate_content)
-    params = list(sig.parameters.keys())
-    assert params == ["self", "request"]
-    assert sig.parameters["request"].default is inspect.Parameter.empty
 
 
 async def test_generate_content_request_path_accepted():
