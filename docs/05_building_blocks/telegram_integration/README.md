@@ -91,6 +91,7 @@ Telegram has a strict 4096-character limit per message.
 
 - **Safety Margin:** Text is truncated at **70%** of the limit (2867 chars) _before_ formatting.
 - **Rationale:** Escaping special characters can increase message length by up to 30%.
+- **Send rate:** Telegram allows about 30 messages per second across a bot (one chat: about one per second), so no throttling is needed.
 - **Final Net:** A second check is performed after formatting to ensure the final payload is < 4096 chars.
 
 ### 4.3 Markdown Fallback (Production Hardening)

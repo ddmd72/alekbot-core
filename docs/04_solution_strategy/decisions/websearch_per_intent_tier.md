@@ -91,3 +91,19 @@ Three properties this shape buys:
 port with the declared tier, the resolved model reaches `LLMRequest.model_name`, the two
 intents do not share a model, `None` disables the downgrade, and an unsupported tier
 degrades to the agent's model instead of raising.
+
+## Why web search is a specialist at all (formerly ADR-004)
+
+Grounded search is a provider-native tool (Gemini Google Search, OpenAI `web_search`, Claude `web_search` + `web_fetch`).
+When this was decided (2026-01-23) the Gemini API refused a call that combined its grounding tool with custom function
+declarations (`400 INVALID_ARGUMENT`), and the orchestrator needs its custom tools on every call. So search is an agent the
+orchestrator delegates to, not a tool on its own call: `WebSearchAgent` sends one request with `use_grounding=True` and no
+custom tools, and each adapter injects its native search tool.
+
+- **Rejected:** a custom search engine as a tool (thin snippets, no synthesis); intent pre-routing (an extra sequential
+  step on every search turn, and the decision leaves the orchestrator); grounding on the orchestrator's call (blocked by
+  the provider constraint).
+- **Cost accepted:** one extra LLM call per search, paid for a specialist with its own model, tier and prompt. Smart can
+  fan out a search and a memory lookup in one tool batch; `WebSearchLightAgent` reuses the pattern for Lelik.
+- **Revisit when:** every orchestrator provider accepts native search beside function declarations and the extra call
+  shows up as a cost or latency problem.

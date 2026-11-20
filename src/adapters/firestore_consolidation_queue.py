@@ -32,7 +32,7 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
     def __init__(self, db_client: firestore.AsyncClient, env_config: EnvironmentConfig):
         self.db = db_client
         self.env_config = env_config
-        # ADR-006: Use semantic collection name
+        # Semantic collection name (decisions/collection_prefix_retained.md)
         self.collection_name = env_config.consolidation_queue_collection
         self.collection = self.db.collection(self.collection_name)
         logger.info(f"📂 FirestoreConsolidationQueue initialized with collection: {self.collection_name}")

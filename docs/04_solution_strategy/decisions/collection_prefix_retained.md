@@ -33,3 +33,19 @@ would read cleaner as unprefixed (`domain_facts_v2` rather than `development_dom
 **Trigger to revisit:** standing up a genuinely separate production environment (own Firestore
 database). At that point the new env gets unprefixed names natively and this prefix stays on the
 dev/lab database — which is X.1's full target shape, deferred until there is a reason to build it.
+
+## Collection naming scheme (formerly ADR-006)
+
+Decided 2026-02-05, after names had drifted (an `_oauth` suffix on core collections, none on infrastructure ones, a
+hardcoded `dev_` prefix on prompt collections beside the configured `development_` one). Format
+`{prefix}{category}{name}[_vN]`, every name built in `EnvironmentConfig` (`src/config/environment.py`), no adapter
+hardcodes a name or prefix:
+
+- **Domain** collections (business entities) carry `domain_` and a schema version `_vN`; the version is bumped on a
+  breaking schema change so old and new can live side by side and a migration is a copy into `_vN+1`.
+- **Infrastructure** collections (technical state) have no category and no version.
+- Collections added later for feature subsystems use the plain `{prefix}{name}` form.
+
+Why: business data and technical state are told apart by name. Cost: Firestore has no rename, so changing any name is a
+copy-all-documents migration plus re-creating its indexes (the reason for this record's decision). The list of collections:
+`docs/08_concepts/DATABASE_SCHEMA.md`.
