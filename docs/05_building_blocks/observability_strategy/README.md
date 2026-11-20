@@ -61,7 +61,7 @@ Firestore TTL field). Two live users: Telegram inline updates (`event_dedup` col
 
 ### Logs
 
-1. `src/utils/logger.py::setup_logger` runs on import. With `K_SERVICE` set (Cloud Run) it installs a
+1. `src/utils/logger.py::setup_logger` runs on import. On Cloud Run (a service's `K_SERVICE` or a job's `CLOUD_RUN_JOB`, `src/utils/cloud_run.py::on_cloud_run`) it installs a
    `StructuredLogHandler` (JSON to stdout) with `_CloudContextFilter`, which attaches `user_id`, `session_id`,
    `event_id`, `trace_id` as Cloud Logging labels (`labels.user_id=...` is how a request is found). Locally it writes a
    console line and `alek_debug.log` (DEBUG, overwritten each start).
