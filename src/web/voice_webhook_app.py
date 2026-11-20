@@ -172,7 +172,8 @@ def create_voice_webhook_blueprint(
 
         Passes the EXTERNAL URL (including query string) — see `_external_url`
         — because that is what Twilio computed its HMAC over, and because the
-        call ticket now rides in that query string.
+        encrypted callback reference (`?ref=`) rides in that query string: it is
+        opened only after this check passes.
         """
         signature = request.headers.get("X-Twilio-Signature", "")
         if await signature_verifier(_external_url(), dict(form), signature):
@@ -357,16 +358,17 @@ def create_voice_webhook_blueprint(
            redeemed, expired, or forged) gets rejected outright - never open
            a session without a known user_id/account_id.
 
-           **The ticket arrives in the QUERY STRING, not the form body.**
+           **The reference arrives in the QUERY STRING, not the form body.**
            `LelikAgent.execute` builds the callback URL as
-           `f"{answer_url}?{urlencode({'ticket': ticket})}"`, and Twilio's
-           callback POST carries only its OWN fields (`CallSid`, `AnsweredBy`,
-           ...) in the body while leaving the configured URL's query string
-           untouched. Reading it from `await request.form` therefore always
-           produced an empty ticket and rejected EVERY real call - the seam
-           neither `test_lelik_agent.py` (producer) nor
-           `test_voice_webhook_app.py` (consumer, against a mocked form dict)
-           crossed. `request.args` is a synchronous Quart property parsed from
+           `f"{answer_url}?{urlencode({'ref': callback_ref})}"`, where `ref` is
+           the ticket sealed under `CALLBACK_REF_AAD` (the raw ticket never
+           appears in a URL, so request logs reveal nothing). Twilio's callback
+           POST carries only its OWN fields (`CallSid`, `AnsweredBy`, ...) in
+           the body while leaving the configured URL's query string untouched,
+           so reading it from `await request.form` would reject EVERY real call.
+           The `ref` is opened (`_ticket_from_callback`) only after the
+           signature check; an unreadable one is rejected like a missing ticket.
+           `request.args` is a synchronous Quart property parsed from
            the URL; only `request.form` needs awaiting.
         2. AMD gate: if Twilio's `AnsweredBy` machine detection says a
            machine/voicemail picked up, hang up immediately without assembling
@@ -522,7 +524,7 @@ def _external_url() -> str:
     own scheme/host for local dev.
 
     The query string is included deliberately: it carries the callback reference, and
-    Twilio's HMAC covers the full URL, so a swapped ticket invalidates the
+    Twilio's HMAC covers the full URL, so a swapped `ref` invalidates the
     signature.
     """
     proto = (request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
