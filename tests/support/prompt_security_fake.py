@@ -1,8 +1,4 @@
-"""The pass-through `MockSecurityPort` that `test_firestore_token_repository_written_document_b.py` imports.
-
-The repository tests that lived here ran the three prompt stores over a mock client; the kits
-(`test_prompt_token_store_kit.py`, `test_prompt_blueprint_store_kit.py`, `test_prompt_profile_store_kit.py`) cover them.
-"""
+"""A pass-through `SecurityPort` fake: every text is returned unchanged and rated safe."""
 
 from src.ports.security_port import SecurityPort, ValidationResult, RiskLevel, TrustZone
 
