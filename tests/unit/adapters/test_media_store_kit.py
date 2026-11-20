@@ -171,3 +171,60 @@ async def test_fetch_of_a_missing_key_is_file_not_found(store):
         err = exc
     require(err is not None, "fetch of a missing key raised")
     assert isinstance(err, FileNotFoundError)
+
+
+class _UnresolvedRuntimeCredentials(_RuntimeCredentials):
+    """Compute credentials before their first refresh: the email is the "default" placeholder until refresh resolves it."""
+
+    def __init__(self, resolved_email):
+        super().__init__("default")
+        self._resolved_email = resolved_email
+
+    def refresh(self, request):
+        self.service_account_email = self._resolved_email
+
+
+def _no_ambient_credentials(*args, **kwargs):
+    raise google.auth.exceptions.DefaultCredentialsError("none")
+
+
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
+@pytest.mark.parametrize("default", [lambda *a, **k: (_KeyCredentials(), "proj"), _no_ambient_credentials],
+                         ids=["local-signer", "no-ambient-credentials"])
+async def test_signed_url_is_the_url_the_client_minted(monkeypatch, fake, store, default):
+    monkeypatch.setattr(google.auth, "default", default)
+    url = await store.generate_signed_url(KEY, 300)
+    assert url == fake.client().bucket(BUCKET).blob(KEY).generate_signed_url(
+        timedelta(seconds=300), method="GET", version="v4")
+
+
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
+@pytest.mark.parametrize("override", ["other-sa@example.com", "runtime-sa@example.com"])
+async def test_signed_url_with_an_explicit_signer_signs_as_it(monkeypatch, fake, override):
+    store = _adapter(monkeypatch, fake, service_account_email=override)
+    monkeypatch.setattr(google.auth, "default", lambda *a, **k: (_RuntimeCredentials("runtime-sa@example.com"), "p"))
+    await store.generate_signed_url(KEY, 60)
+    [request] = fake.signed_urls
+    assert (request["service_account_email"], request["access_token"]) == (override, "access-token")
+
+
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
+async def test_signed_url_signs_as_the_identity_the_refresh_resolves(monkeypatch, fake, store):
+    monkeypatch.setattr(google.auth, "default",
+                        lambda *a, **k: (_UnresolvedRuntimeCredentials("runtime-sa@example.com"), "p"))
+    await store.generate_signed_url(KEY, 60)
+    [request] = fake.signed_urls
+    assert request["service_account_email"] == "runtime-sa@example.com"
+
+
+@pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
+                           "real signing needs a real credential")
+@pytest.mark.parametrize("email", [None, ""])
+async def test_signed_url_with_no_runtime_email_is_a_runtime_error(monkeypatch, fake, store, email):
+    monkeypatch.setattr(google.auth, "default", lambda *a, **k: (_RuntimeCredentials(email), "proj"))
+    with pytest.raises(RuntimeError):
+        await store.generate_signed_url(KEY, 60)
+    assert fake.signed_urls == []
