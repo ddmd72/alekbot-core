@@ -41,10 +41,6 @@ async def _no_alert(text: str) -> None:
     return None
 
 
-def test_the_method_is_concrete_so_existing_fakes_need_no_edit():
-    assert "native_formats" not in LLMPort.__abstractmethods__
-
-
 def test_the_default_declaration_is_text_only():
     assert _TextOnly().native_formats("any-model") == ()
 

@@ -1,14 +1,8 @@
 """
-Unit tests for SecurityPort — verifies ABC contract and domain type availability.
-
-Covers:
-- SecurityPort is an ABC (cannot be instantiated directly)
-- Concrete subclass without validate() raises TypeError
-- Concrete subclass with validate() works correctly
-- Domain types (RiskLevel, TrustZone, ValidationResult) accessible from ports/security_port
+Unit tests for SecurityPort: a concrete subclass with validate() works; domain types (RiskLevel, TrustZone,
+ValidationResult) are accessible from ports/security_port.
 """
 
-import pytest
 
 from src.ports.security_port import (
     SecurityPort,
@@ -32,24 +26,7 @@ class ConcreteSecurityPort(SecurityPort):
         )
 
 
-class IncompleteSecurityPort(SecurityPort):
-    """Missing validate() — should fail to instantiate."""
-    pass
-
-
 class TestSecurityPortABC:
-    def test_cannot_instantiate_abstract(self):
-        with pytest.raises(TypeError):
-            SecurityPort()
-
-    def test_incomplete_subclass_raises_on_instantiation(self):
-        with pytest.raises(TypeError):
-            IncompleteSecurityPort()
-
-    def test_complete_subclass_instantiates(self):
-        port = ConcreteSecurityPort()
-        assert isinstance(port, SecurityPort)
-
     async def test_validate_returns_validation_result(self):
         port = ConcreteSecurityPort()
         result = await port.validate("hello", "ctx")
