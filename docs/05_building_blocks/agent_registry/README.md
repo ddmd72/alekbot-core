@@ -31,7 +31,7 @@ It also owns what every agent shares: the message and response contract (`AgentM
 the fallback chain that guarantees a displayable answer.
 
 Not here: the multi-turn tool loop itself (`DelegationEngine`, see [hybrid_router](../hybrid_router/README.md) and
-[quick_agent_delegation](../quick_agent_delegation/README.md)), per-agent behaviour (each specialist's own block or
+[hybrid_router](../hybrid_router/README.md)), per-agent behaviour (each specialist's own block or
 `src/agents/CLAUDE.md`), provider failover (see [provider_resolution](../provider_resolution/README.md)), and the
 step list for adding an agent ([`NEW_AGENT_PLAYBOOK.md`](../../how_to/NEW_AGENT_PLAYBOOK.md)).
 
@@ -196,7 +196,7 @@ The service is built in `build_application_graph`; without it the turn returns t
 - Decisions: `decisions/allowlist_names_internal_intent.md`, `delegation_cycle_guard.md`, `delegate_mode_parameter_removed.md`,
   `delegate_tool_contract_and_strict.md`, `typed_retry_policy.md`, `transcript_integrity_one_provider.md`,
   `long_running_turns.md` (all under `docs/04_solution_strategy/decisions/`).
-- [hybrid_router](../hybrid_router/README.md), [quick_agent_delegation](../quick_agent_delegation/README.md),
+- [hybrid_router](../hybrid_router/README.md),
   [agent_logging](../agent_logging/README.md), [document_generation](../document_generation/README.md).
 - Adding an agent: [`NEW_AGENT_PLAYBOOK.md`](../../how_to/NEW_AGENT_PLAYBOOK.md); the roster and per-agent traps:
   `src/agents/CLAUDE.md`.

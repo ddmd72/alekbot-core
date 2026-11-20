@@ -26,7 +26,7 @@ not by Quick or Smart.
 
 What it is not: it does not choose specialists (the orchestrating LLM does, through the registry, see
 [agent_registry](../agent_registry/README.md)), it does not own the specialists' behaviour
-([multi_agent_system](../multi_agent_system/README.md)), and it does not own provider and model tables
+and it does not own provider and model tables
 ([provider_resolution](../provider_resolution/README.md)).
 
 ## Owned data
@@ -188,7 +188,7 @@ that does (`src/infrastructure/agent_manifest.py::LELIK`).
   `FACT_PROFILE_RFC.md` §5.4 (the prefetch), `VOICE_COMPANION_RFC.md` §4.15 (web search light).
 - Decisions (`docs/04_solution_strategy/decisions/`): `per_call_execution_context.md`, `two_layer_provider_override.md`,
   `cross_provider_execution_retry.md`, `quick_agent_deferred_deletion.md`, `terminal_tool_co_emitted_calls.md`.
-- Neighbours: [agent_registry](../agent_registry/README.md), [multi_agent_system](../multi_agent_system/README.md),
+- Neighbours: [agent_registry](../agent_registry/README.md),
   [provider_resolution](../provider_resolution/README.md), [search_enrichment](../search_enrichment/README.md),
   [prompt_design_system_v3](../prompt_design_system_v3/README.md).
 
