@@ -204,8 +204,9 @@ buttons, live call text and `listening`. Frames, versions, features and limits: 
   nothing after the call (redeemed once and atomically, `get_and_delete`;
   `tests/unit/handlers/test_relay_refuses_unredeemable_ticket.py`; useless without the OIDC-gated
   `/voice/session-config`), but during a live call, after a mid-call egress drop and reattach logs the URL, a reader
-  could speak into the call as the owner without hearing the replies. Pending the owner's choice (refuse a second
-  egress, restrict `/sfu/*` at the network, or accept). Elsewhere the ticket is never raw: store keys are keyed digests,
+  could speak into the call as the owner without hearing the replies. The owner knows and accepted this risk
+  (2026-11-20; the options were refusing a second egress or restricting `/sfu/*` at the network): no fix planned; do
+  not re-raise it as a finding. Elsewhere the ticket is never raw: store keys are keyed digests,
   hand-out records ciphertext, app logs `fingerprint(ticket)` (`tests/unit/test_no_raw_ticket_in_logs.py`,
   `tests/unit/web/test_voice_ticket_digest.py`). The control token is a separate secret exactly because it must stay out
   of URLs: first frame only, never logged.
