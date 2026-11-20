@@ -25,8 +25,7 @@ def ops(monkeypatch):
     monkeypatch.delenv("BILLING_SLACK_WEBHOOK_URL", raising=False)
 
     def build(config=None, *, development=True):
-        env = SimpleNamespace(is_development=development)
-        return build_operations(config or {}, env, topology=TOPOLOGY, account_repo="ACCOUNTS")  # type: ignore[arg-type]
+        return build_operations(config or {}, topology=TOPOLOGY, account_repo="ACCOUNTS")  # type: ignore[arg-type]
     return build
 
 
