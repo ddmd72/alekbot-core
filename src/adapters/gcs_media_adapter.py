@@ -7,22 +7,32 @@ User-facing links are minted by FileLinkService; agents re-read via fetch().
 Configured via GCS_MEDIA_BUCKET env variable (passed in constructor).
 """
 import asyncio
+import re
 from functools import partial
 
 from ..ports.media_storage_port import MediaStoragePort
 from ..utils.logger import logger
 
 
+_ROBOTS_META = b'<meta name="robots" content="noindex, nofollow">'
+_HEAD_OPEN = re.compile(rb"<head(?:\s[^>]*)?>", re.IGNORECASE)  # <head>, <head lang=..>; never <header>
+_HTML_OPEN = re.compile(rb"<html(?:\s[^>]*)?>", re.IGNORECASE)
+_DOCTYPE = re.compile(rb"\A\s*<!doctype[^>]*>", re.IGNORECASE)
+
+
 def _inject_noindex(data: bytes) -> bytes:
-    """Inject <meta name="robots" content="noindex, nofollow"> after <head> tag."""
-    html = data.decode("utf-8")
-    lower = html.lower()
-    head_idx = lower.find("<head>")
-    if head_idx != -1:
-        insert_at = head_idx + len("<head>")
-        html = html[:insert_at] + '\n    <meta name="robots" content="noindex, nofollow">' + html[insert_at:]
-        return html.encode("utf-8")
-    return data
+    """Insert the robots `noindex, nofollow` meta into an HTML page, working on bytes (no decoding).
+
+    A model writes the page, so its head can look any way: the meta must hold for every shape. It goes right after
+    the first `<head ...>` tag, else after the first `<html ...>` tag, else after the doctype (a meta before the
+    doctype would switch the page to quirks mode); a fragment with none of them gets it first.
+    """
+    for pattern in (_HEAD_OPEN, _HTML_OPEN, _DOCTYPE):
+        match = pattern.search(data)
+        if match:
+            at = match.end()
+            return data[:at] + b"\n    " + _ROBOTS_META + data[at:]
+    return _ROBOTS_META + b"\n" + data
 
 
 class GcsMediaAdapter(MediaStoragePort):
