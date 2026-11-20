@@ -28,18 +28,22 @@ does not touch the README.
 
 ```
 <!-- block
+audited: 2026-01-05
 covers:
   src/services/example/
   src/agents/example_agent.py
 -->
 ```
 
+`audited:` is the date of the last scheduled audit; the audit sets it, so a block without it is audited first.
+
 **How it stays current.**
 - `tests/unit/test_building_block_references.py` fails when a path or `path::Symbol` the README names does not exist,
   or a `covers:` line matches no tracked file.
 - A pull request that changes covered code says in its description, per block, "README updated" or "not affected"
   with the reason.
-- A scheduled audit compares two blocks every two weeks with their code and opens a pull request with the fixes.
+- A scheduled audit compares two blocks every two weeks with their code (the oldest `audited:` first) and opens a pull
+  request with the fixes and the new date.
 
 Blocks without the header are in the old format and are not checked yet.
 
