@@ -76,7 +76,6 @@ class TestTaskSearchIndexContract:
         assert "vectors" in params
         assert "limit" in params
         assert "show_completed" in params
-        assert "list_id" in params
 
     def test_upsert_signature(self):
         sig = inspect.signature(TaskSearchIndex.upsert)
@@ -117,15 +116,6 @@ class TestTaskSearchIndexMockImplementation:
             show_completed=False,
         )
         assert len(result) == 2
-
-    async def test_find_nearest_with_list_id_filter(self, mock_index):
-        mock_index.find_nearest.return_value = [_make_entry()]
-        result = await mock_index.find_nearest(
-            user_id="u1",
-            vectors={"content": [0.1]},
-            list_id="list-1",
-        )
-        assert result[0].list_id == "list-1"
 
     async def test_delete_all_for_user_called(self, mock_index):
         mock_index.delete_all_for_user.return_value = None

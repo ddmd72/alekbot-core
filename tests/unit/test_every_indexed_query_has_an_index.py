@@ -64,9 +64,6 @@ UNRESOLVED_SITES: Dict[Tuple[str, str], str] = {
 # (file, function, filter field) -> the doc line that says the queries filtering on that field have no index on purpose;
 # they must still be unindexed.
 DOCUMENTED_UNINDEXED: Dict[Tuple[str, str, str], str] = {
-    ("src/adapters/firestore_task_search_index.py", "FirestoreTaskSearchIndex.find_nearest._query_one", "list_id"):
-        "src/adapters/firestore_task_search_index.py:36-39 ('none serves list_id, so a query with it is refused as a "
-        "missing index (the field query then fails and is logged)')",
 }
 
 # (file, constructor argument) -> the value the composition passes, where the collection name is an argument.
