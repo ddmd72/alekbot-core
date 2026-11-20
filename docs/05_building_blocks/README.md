@@ -2,10 +2,9 @@
 
 ## Contract
 
-A block README tells a developer, a reviewer or the owner how one subsystem works **now**, before they open a file. A
-pull request and its RFC say what one change did, a decision record says why; the block README is the only place that
-says how the whole subsystem works today. Why the contract is shaped this way:
-[`building_block_docs_contract.md`](../04_solution_strategy/decisions/building_block_docs_contract.md).
+A block README tells a developer, a reviewer or the owner how one subsystem works **now**, before they open a file. Why
+the contract is shaped this way:
+[`living_docs_contract.md`](../04_solution_strategy/decisions/living_docs_contract.md).
 
 **Which subsystem gets a README.** One that owns stored data (a collection, a bucket, an index), sits on an external
 boundary (a provider, a mail or chat platform, OAuth, MCP), or runs a flow across three or more layers or processes.
@@ -20,32 +19,8 @@ Anything smaller is described by its code and docstrings.
 5. **Links** — the RFCs and decision records behind the block.
 6. **Where to start reading** — three to seven `path::Symbol` entry points.
 
-**What it never holds:** lists of methods or parameters, constant values (name the constant instead), file inventories,
-status or history (decision records hold history). A change of implementation that keeps the flows and the invariants
-does not touch the README.
-
-**Header.** The README starts with a comment naming the code it describes, one repository path or glob per line:
-
-```
-<!-- block
-audited: 2026-01-05
-covers:
-  src/services/example/
-  src/agents/example_agent.py
--->
-```
-
-`audited:` is the date of the last scheduled audit; the audit sets it, so a block without it is audited first.
-
-**How it stays current.**
-- `tests/unit/test_building_block_references.py` fails when a path or `path::Symbol` the README names does not exist,
-  or a `covers:` line matches no tracked file.
-- A pull request that changes covered code says in its description, per block, "README updated" or "not affected"
-  with the reason.
-- A scheduled audit compares two blocks every two weeks with their code (the oldest `audited:` first) and opens a pull
-  request with the fixes and the new date.
-
-Blocks without the header are in the old format and are not checked yet.
+Everything general (the `<!-- living-doc` header and `covers:` ownership, what a living doc never holds, how it stays
+current) is in [`../README.md`](../README.md#living-docs).
 
 ## 📂 Contents
 
