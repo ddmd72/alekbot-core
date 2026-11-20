@@ -548,7 +548,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 **Built (P2, 2026-10-22).** H3 (`tests/unit/conftest.py` + `tests/support/network_guard.py`; the offline G2 run gets the same guard
 from `-p tests.plugins.network_guard` in `make test-g2-offline`, so no file under `tests/integration/` changed), the per-layer
 floors (`scripts/check_coverage_layers.py`, `.coveragerc` with `branch = True`, the root `*_main.py` and `patch = subprocess`),
-the never-run check of the layer script (§1.2), the
+the untested-module check (`tests/unit/test_every_src_module_is_imported_by_a_test.py` + `untested_modules_allowlist.txt`), the
 semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the rewritten `tests/CLAUDE.md`. Deviations from the text above:
 - **A bare `--cov` replaces `--cov=src`.** A `--cov=src` on the command line overrides `[run] source`, so the Makefile passes a bare
   `--cov` and `.coveragerc` lists `src` plus the five root modules. A root module no test imports (`main.py`) is not in the data at
@@ -568,6 +568,10 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
   observation writes): P4's backlog.
 - **`doc-drop` is the dict-literal case of "drop one field"** (a key of a dict written to a store).
 - **coverage.py cannot tell MagicMock coverage apart:** the floor counts it; a reviewer does not accept it as the adapter's test (§2.7).
+
+**Replaced (2026-11-20): the untested-module check.** The static import guard and its allowlist were replaced by the
+never-run check in `scripts/check_coverage_layers.py` (a measured file with statements and no covered line fails the gate):
+the guard flagged only modules the suite already ran and produced shape-only tests.
 
 **Built (P4, 2026-10-22).** H1 (`tests/support/firestore_eval.py`) and the fact store kit. Deviations from the text above:
 - **H1 is standalone.** It imports nothing from the drive fake. The drive suites keep `tests/unit/adapters/firestore_drive_eval_fakes.py`; moving them onto H1 is not done.
@@ -865,6 +869,7 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   infrastructure 96.70, agents 95.34, services 92.26, handlers 93.59, adapters 86.77, web 77.61, composition 94.55, src (other) 76.18, root entry
   points 76.63; against floors of 92.7 (handlers) and 85.7 (adapters), so the script offers 93.2 and 86.4. The floors are raised in this PR, after the CI "Coverage per layer" notice, by the rule min(local, CI) - 0.3
   (handlers at most 93.2, adapters at most 86.4). The package adds 10 of the suite's 106 strict xfails (D1 four, D3, D5 two, D6, D11, D12); the full run takes about 6 min 15 s.
+  The `firestore_notification_state_adapter` allowlist line of `untested_modules_allowlist.txt` is deleted: the redelivery world imports it.
 - **Found while building, not carded** (no defect id; each needs an arbiter decision):
   1. A reminder is posted again if writing its delivered stamp fails right after the post: `mark_fire_delivered` raising
      (`src/handlers/worker_handler.py:1043`) releases the claim, and the retry finds no stamp.
@@ -1255,7 +1260,8 @@ Package names in brackets map rev 1's numbers to this revision.
 2. **Network guard in `make check` (H3): yes.**
 3. **Coverage floor in CI (WP0 → P2): yes** — per layer at today's values, only rising; a source file no test imports
    fails. (Rev 2 implements the second half as a static check with a shrinking allowlist, since coverage cannot detect
-   it and a hard failure on day one would turn CI red.)
+   it and a hard failure on day one would turn CI red; replaced by the never-run check on 2026-11-20, see "Replaced
+   (2026-11-20)" after Built (P2).)
 4. **Order: yes** — WP12 + WP0–WP3 first (P1, P2, P4, P6, P8), then WP4–WP7, then the rest. Work starts the week of
    2026-10-26. (Rev 2 inserts the spike, the parity slice, the inbound gates and reachability into the first tranche;
    see Owner confirmations 1.)

@@ -2427,7 +2427,7 @@ class ConsolidationAgent(BaseAgent):
 
     def _prepare_structured_conversation(self, messages: List[Dict], timezone: str) -> List[Dict]:
         """
-        Prepare structured conversation for VariableFormatter.
+        Prepare the structured conversation the consolidation prompt receives.
 
         Returns list of dicts with normalized structure; the stamp is Smart's (`local_stamp`) in the owner's zone,
         read from the same time the batch span uses, and "" when that time is unreadable:
