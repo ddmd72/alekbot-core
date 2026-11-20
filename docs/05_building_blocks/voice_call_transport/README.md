@@ -44,7 +44,7 @@ many at once (the **ticket** and the **one-call marker**), the two ways audio ar
 Cabinet web call over Cloudflare's Realtime SFU), the **relay** service that terminates both and bridges them to the
 provider session, the page-to-relay **control channel**, and the relay-to-main **control plane** (config in; transcript
 and delegations out). The conversation itself (persona, barge-in, silence, the summary, provider sessions, resumption)
-is `VoiceSessionService` and Lelik's docs; this block hands that service a ticket, an inbound audio stream and a way to
+is `VoiceSessionService` and [Voice Companion](../voice_companion/README.md); this block hands that service a ticket, an inbound audio stream and a way to
 send audio back. `MediaStreamHandler` and `SfuStreamHandler` both drive `handle_call` through the same callback bundle;
 making it a port was deferred until a third transport (decision `voice_web_transport_cloudflare_sfu.md`).
 

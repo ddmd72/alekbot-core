@@ -47,7 +47,7 @@ and goes to Alek, the text system, only for what the prompt does not hold: mail,
 This block is the call itself: the session loop that sits between the audio and a realtime provider, the two providers
 behind one port, what a call is given and may do, its modes, and what it leaves behind.
 
-What it is not. The audio transport (call admission, Twilio, the SFU, the control channel) is not described here. Lelik is
+What it is not. The audio transport (call admission, Twilio, the SFU, the control channel) is not described here (see [Voice Call Transport](../voice_call_transport/README.md)). Lelik is
 not a text agent and not a delegation target: he is `internal` in the manifest and never offered to Smart.
 
 Two processes carry the block. The **relay** (`relay_main.py`, its own Cloud Run service) runs
