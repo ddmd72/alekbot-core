@@ -1,673 +1,157 @@
+<!-- living-doc
+covers:
+  src/web/oauth_app.py
+  src/services/session_service.py
+  src/services/auth_provider_registry.py
+  src/config/auth.py
+  src/adapters/firebase_auth_adapter.py
+  src/ports/auth_port.py
+  src/domain/auth.py
+-->
 # OAuth Web API
 
-**Status:** ✅ Implemented (Session 5 - 2026-01-31)
-
-**Purpose:** Web-based OAuth authentication API for Google sign-in, JWT session management, and user registration.
-
-**Related:** [OAuth Multi-Tenant building block](../oauth_multi_tenant/README.md)
-
----
-
-## Overview
-
-OAuth Web API provides HTTP endpoints for authenticating users via Google OAuth (Firebase), managing JWT sessions, and linking OAuth identities to existing users. This is the **web UI authentication layer** that complements Slack/Telegram authentication.
-
-### Key Features
-
-- ✅ **Google OAuth Flow** - Full OAuth 2.0 / OIDC flow with Firebase
-- ✅ **JWT Session Management** - Stateless access/refresh tokens
-- ✅ **CSRF Protection** - State parameter validation
-- ✅ **HttpOnly Cookies** - XSS attack prevention
-- ✅ **Master Account First** - Creates BillingAccount before UserProfile
-- ✅ **Identity Linking** - Link OAuth to existing Slack/Telegram users
-- ✅ **CORS Support** - Web UI integration ready
-
----
-
-## Architecture Position
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Clients                                  │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐      │
-│  │   Web UI      │  │   Slack Bot   │  │ Telegram Bot  │      │
-│  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘      │
-└──────────┼──────────────────┼──────────────────┼──────────────┘
-           │                  │                  │
-           ▼                  ▼                  ▼
-    ┌──────────────┐   ┌──────────────────────────────┐
-    │ OAuth Web API│   │   Slack/Telegram Adapters    │  ← Adapter Layer
-    │ (Quart/Flask)│   │   (HTTP Events API)          │
-    └──────┬───────┘   └──────────┬───────────────────┘
-           │                      │
-           ▼                      ▼
-    ┌─────────────────────────────────────────────┐
-    │       AuthenticationService                 │  ← Application Layer
-    │  (Orchestration - auth flows)               │
-    └──────────────────┬──────────────────────────┘
-                       │
-                       ▼
-    ┌─────────────────────────────────────────────┐
-    │       AuthProviderRegistry                  │  ← Application Layer
-    │  - FirebaseAuthAdapter                      │  ← Adapter Layer
-    │  - (Future: Other OAuth providers)          │
-    └──────────────────┬──────────────────────────┘
-                       │
-                       ▼
-    ┌─────────────────────────────────────────────┐
-    │  Domain Entities: UserProfile,              │  ← Domain Layer
-    │  BillingAccount, AccountTier                │
-    └─────────────────────────────────────────────┘
-```
-
-**Layer:** Adapter / Web Interface
-**Pattern:** REST API (Quart/Flask async)
-**Integration:** Uses `AuthenticationService` (application layer) + `SessionService` (JWT)
-
-### Hexagonal Architecture Position
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      ADAPTER LAYER (Ports)                      │
-│                                                                 │
-│  ┌─────────────────┐                    ┌──────────────────┐   │
-│  │ OAuth Web API   │                    │ FirebaseAdapter  │   │
-│  │ (HTTP/REST)     │                    │ (Google OAuth)   │   │
-│  └────────┬────────┘                    └────────┬─────────┘   │
-└───────────┼──────────────────────────────────────┼─────────────┘
-            │                                      │
-            ▼                                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   APPLICATION LAYER (Services)                  │
-│                                                                 │
-│  ┌──────────────────────────┐    ┌────────────────────────┐    │
-│  │ AuthenticationService    │◄───┤ SessionService (JWT)   │    │
-│  │ - OAuth flow logic       │    │ - Token generation     │    │
-│  │ - User registration      │    │ - Token validation     │    │
-│  └──────────┬───────────────┘    └────────────────────────┘    │
-└─────────────┼───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      DOMAIN LAYER (Entities)                    │
-│                                                                 │
-│  ┌──────────────┐  ┌─────────────────┐  ┌─────────────────┐   │
-│  │ UserProfile  │  │ BillingAccount  │  │   AccountTier   │   │
-│  │ - user_id    │  │ - account_id    │  │   (enum)        │   │
-│  │ - email      │  │ - tier          │  └─────────────────┘   │
-│  │ - account_id │  │ - is_active     │                        │
-│  └──────────────┘  └─────────────────┘                        │
-└─────────────────────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                 INFRASTRUCTURE LAYER (Ports)                    │
-│                                                                 │
-│  ┌──────────────────┐         ┌────────────────────────────┐   │
-│  │ UserRepository   │         │ AccountRepository          │   │
-│  │ (Firestore)      │         │ (Firestore)                │   │
-│  └──────────────────┘         └────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Key Points:**
-- OAuth Web API = **Primary Adapter** (inbound - receives HTTP requests)
-- FirebaseAuthAdapter = **Secondary Adapter** (outbound - calls Google OAuth)
-- AuthenticationService = **Application Service** (orchestrates OAuth flow)
-- Domain entities = **Pure business objects** (no dependencies)
-
----
-
-## API Contracts
-
-### 1. `GET /auth/login`
-
-**Purpose:** Initiate OAuth flow by redirecting to Google OAuth consent screen.
-
-**Query Parameters:**
-- `provider` (optional, string) - OAuth provider name (default: from config)
-
-**Response:**
-- **Status:** `302 Found`
-- **Headers:** `Location: https://accounts.google.com/o/oauth2/v2/auth?...`
-- **Cookies:**
-  - `oauth_state` (HttpOnly, 10 min TTL) - CSRF protection token
-
-**Example:**
-```bash
-curl -i "http://localhost:5001/auth/login?provider=firebase"
-
-HTTP/1.1 302 Found
-Location: https://accounts.google.com/o/oauth2/v2/auth?client_id=...&state=...
-Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
-```
-
-**Implementation:**
-- File: [src/web/oauth_app.py:64-110](../../../src/web/oauth_app.py#L64)
-- Generates CSRF state token using `secrets.token_urlsafe(32)`
-- Calls `auth_provider.get_authorization_url()` to build OAuth URL
-- Stores state in `oauth_state` cookie for validation in callback
-
----
-
-### 2. `GET /auth/callback`
-
-**Purpose:** Handle OAuth callback after user authorization.
-
-**Query Parameters:**
-- `code` (required, string) - Authorization code from OAuth provider
-- `state` (required, string) - CSRF protection token (must match cookie)
-
-**Response:**
-- **Status:** `200 OK`
-- **Body:**
-```json
-{
-  "success": true,
-  "user": {
-    "user_id": "00000000-0000-0000-0000-000000000001",
-    "email": "user@example.com",
-    "display_name": "Alex Doe"
-  },
-  "account": {
-    "account_id": "00000000-0000-0000-0000-000000000002",
-    "tier": "free"
-  },
-  "access_token": "eyJhbGci..."
-}
-```
-
-**Cookies Set:**
-- `access_token` (HttpOnly, 1 hour TTL) - JWT access token
-- `refresh_token` (HttpOnly, 24 hours TTL; a refresh does not rotate it, so a session lasts at most ~48 h) - JWT refresh token
-
-**Cookies Cleared:**
-- `oauth_state` (CSRF token no longer needed)
-
-**Error Codes:**
-- `400` - Missing code or invalid state (CSRF validation failed)
-- `500` - OAuth flow failed (token exchange error)
-
-**Implementation:**
-- File: [src/web/oauth_app.py:115-205](../../../src/web/oauth_app.py#L115)
-- **Step 1:** Verify CSRF state token (must match `oauth_state` cookie)
-- **Step 2:** Call `auth_service.handle_oauth_callback(code, redirect_uri)`
-  - Exchanges code for OAuth tokens
-  - Registers new user or authenticates existing user
-  - Returns `(UserProfile, BillingAccount, oauth_tokens)`
-- **Step 3:** Create JWT session tokens via `session_service`
-  - `create_access_token(user, account)` - 1 hour TTL
-  - `create_refresh_token(user, account)` - 24 hours TTL (`REFRESH_TOKEN_TTL`, 86400 s)
-- **Step 4:** Set HttpOnly cookies and return JSON response
-
----
-
-### 3. `POST /auth/refresh`
-
-**Purpose:** Refresh expired access token using refresh token.
-
-**Headers or Cookies:**
-- `refresh_token` (cookie or `Authorization: Bearer <token>`)
-
-**Response:**
-- **Status:** `200 OK`
-- **Body:**
-```json
-{
-  "success": true,
-  "access_token": "eyJhbGci..."
-}
-```
-
-**Cookies Updated:**
-- `access_token` - New JWT access token (`ACCESS_TOKEN_TTL`, 24 hours by default)
-
-**Error Codes:**
-- `401` - Missing, expired, or invalid refresh token, or an access token sent as one
-- `401` - The user is absent or inactive, or their account is absent (`{"error": "Session no longer valid"}`)
-- `500` - A store error while loading the user or account (no detail in the body)
-
-**Implementation:**
-- File: [src/web/oauth_app.py](../../../src/web/oauth_app.py) (`refresh_token_endpoint`)
-- **Step 1:** Extract refresh token from cookie or `Authorization` header
-- **Step 2:** Verify refresh token via `session_service.verify_refresh_token()`
-- **Step 3:** Load the stored user (the token's `sub`) and the user's stored account via
-  `AuthenticationService.resume_session()`; the token's `account_id` is not used
-- **Step 4:** Create new access token from them: role from the account's `iam_policy`, tier from the account, as at sign-in
-- **Step 5:** Update `access_token` cookie
-
----
-
-### 4. `POST /auth/logout`
-
-**Purpose:** Logout user by clearing session cookies.
-
-**Response:**
-- **Status:** `200 OK`
-- **Body:**
-```json
-{
-  "success": true,
-  "message": "Logged out"
-}
-```
-
-**Cookies Cleared:**
-- `access_token`
-- `refresh_token`
-
-**Implementation:**
-- File: [src/web/oauth_app.py:289-306](../../../src/web/oauth_app.py#L289)
-- Clears session cookies
-- **Note:** JWT tokens remain valid until expiration (stateless logout)
-- For immediate revocation, implement token blacklist (future enhancement)
-
----
-
-### 5. `GET /auth/me`
-
-**Purpose:** Get current authenticated user information.
-
-**Headers or Cookies:**
-- `access_token` (cookie or `Authorization: Bearer <token>`)
-
-**Response:**
-- **Status:** `200 OK`
-- **Body:**
-```json
-{
-  "user": {
-    "user_id": "00000000-0000-0000-0000-000000000001",
-    "email": "user@example.com",
-    "external_user_id": "firebase|OAUTH_USER_ID_PLACEHOLDER"
-  },
-  "account": {
-    "account_id": "00000000-0000-0000-0000-000000000002",
-    "tier": "free",
-    "role": "owner"
-  }
-}
-```
-
-**Error Codes:**
-- `401` - Not authenticated or token expired
-
-**Implementation:**
-- File: [src/web/oauth_app.py:311-358](../../../src/web/oauth_app.py#L311)
-- **Step 1:** Extract access token from cookie or `Authorization` header
-- **Step 2:** Verify access token via `session_service.verify_access_token()`
-- **Step 3:** Return user/account info from JWT payload
-
----
-
-### 6. `POST /auth/link-oauth`
-
-**Purpose:** Link Google OAuth identity to existing user.
-
-**Use Case:** User already logged in via Slack/Telegram, wants to add Google OAuth for web UI access.
-
-**Headers or Cookies:**
-- `access_token` (cookie or `Authorization: Bearer <token>`) - Current user session
-
-**Request Body:**
-```json
-{
-  "code": "4/0AanRO...",
-  "state": "csrf_token_here"
-}
-```
-
-**Response:**
-- **Status:** `200 OK`
-- **Body:**
-```json
-{
-  "success": true,
-  "message": "Google OAuth linked successfully",
-  "user": {
-    "user_id": "{{user_id}}",
-    "external_user_id": "firebase|OAUTH_USER_ID_PLACEHOLDER",
-    "email": "user@example.com"
-  }
-}
-```
-
-**Cookies Cleared:**
-- `oauth_state` (CSRF token no longer needed)
-
-**Error Codes:**
-- `400` - Missing code or invalid state
-- `401` - Not authenticated (missing or expired access token)
-- `409` - OAuth identity already linked to another user
-- `500` - Server error
-
-**Implementation:**
-- File: [src/web/oauth_app.py:363-461](../../../src/web/oauth_app.py#L363)
-- **Step 1:** Verify access token → get current `user_id`
-- **Step 2:** Verify CSRF state token
-- **Step 3:** Call `auth_service.link_oauth_identity(user_id, code, redirect_uri)`
-  - Exchanges code for OAuth tokens
-  - Extracts `external_user_id` (e.g., `firebase|OAUTH_USER_ID_PLACEHOLDER`)
-  - Checks if `external_user_id` already linked to another user (409 error if yes)
-  - Links `external_user_id` to current user
-- **Step 4:** Return success response
-
----
-
-### 7. `GET /auth/connect/<kind>`
-
-**Purpose:** Start an integration connect. `kind` is `gmail`, `google_tasks`, `microsoft_todo` or `microsoft_onedrive`; with `?credential=<id>` it starts the reconnect of that stored credential.
-
-**Authentication:** Cabinet session (anonymous requests are sent to the sign-in).
-
-**Flow:** `OAuthConnectService.start()` stores the flow server-side (only the digest of the state, PKCE) and the route redirects to the provider's consent screen. No cookie is set.
-
-**Response:**
-- `302 Found` → provider consent URL.
-- `302` → Cabinet with `?connect_error=state` for a reconnect of a credential the user does not hold.
-- `404` — Unknown kind.
-- `501` — The kind's realm has no OAuth client on this deployment.
-
-**Implementation:** `src/web/oauth_app.py` — `connect_start()`
-
----
-
-### 8. `GET /auth/connect/callback`
-
-**Purpose:** The one callback of every integration connect (Google and Microsoft): exchange the code, persist the credential, run the integration's activation.
-
-**Authentication:** The stored flow (single use) checked against the Cabinet session.
-
-**Flow:**
-1. A provider refusal returns `?connect_error=denied`; a missing state or code returns `state` / `no_code`.
-2. `OAuthConnectService.complete()` consumes the flow, exchanges the code through the realm's `OAuthProviderPort`, reads the account identity and checks the granted scopes; a failed identity read or a missing scope stores nothing.
-3. The credential is saved to the credential store; the integration's activation runs (mail and drive clear the deliberate-disconnect mark and the notice flag, the drive also stores its drive id; To Do also enqueues `setup_microsoft_todo`; Google Tasks does nothing).
-4. The user returns to the flow's return path with `?connected=<kind>` or `?connect_error=<status>&kind=<kind>`.
-
-**Response:**
-- `302 Found` → Cabinet UI URL.
-- `501` — Integrations not configured.
-
-**Implementation:** `src/web/oauth_app.py` — `connect_callback()`
-
----
-
-## Technology Stack
-
-### Framework
-- **Quart** - Async Python web framework (Flask-like API)
-- **asyncio** - Async I/O for non-blocking operations
-- **CORS Middleware** - Cross-origin requests support
-
-### Authentication
-- **JWT (PyJWT)** - Stateless session tokens
-  - Access token: 1 hour TTL (short-lived)
-  - Refresh token: 24 hours TTL (not rotated on refresh)
-- **HMAC-SHA256** - Token signing algorithm
-- **HttpOnly Cookies** - XSS protection
-- **CSRF State Tokens** - CSRF protection (`secrets.token_urlsafe`)
-
-### Services Used (Application Layer)
-
-1. **AuthenticationService** ([src/services/authentication_service.py](../../../src/services/authentication_service.py))
-   - **Layer:** Application (orchestration)
-   - `handle_oauth_callback(code, redirect_uri)` - OAuth flow handler
-   - `link_oauth_identity(user_id, code, redirect_uri)` - Link OAuth to existing user
-   - Uses: AuthProviderRegistry, UserRepository, AccountRepository
-
-2. **SessionService** ([src/services/session_service.py](../../../src/services/session_service.py))
-   - **Layer:** Application (JWT management)
-   - `create_access_token(user, account)` - Generate JWT access token
-   - `create_refresh_token(user, account)` - Generate JWT refresh token
-   - `verify_access_token(token)` - Verify and decode access token
-   - `verify_refresh_token(token)` - Verify and decode refresh token
-
-3. **AuthProviderRegistry** ([src/services/auth_provider_registry.py](../../../src/services/auth_provider_registry.py))
-   - **Layer:** Application (provider registry)
-   - `get_provider(name)` - Get OAuth provider adapter
-   - Manages: `FirebaseAuthAdapter` (Google OAuth - Adapter layer)
-
-4. **AuthConfig** ([src/config/auth.py](../../../src/config/auth.py))
-   - **Layer:** Infrastructure (configuration)
-   - `oauth_redirect_uri` - OAuth callback URL
-   - `access_token_ttl` - Access token TTL (3600s)
-   - `refresh_token_ttl` - Refresh token TTL (86400s = 24 hours)
-   - `oauth_session_secret` - JWT signing key
-
----
-
-## Security Features
-
-### 1. CSRF Protection
-**Mechanism:** State parameter + HttpOnly cookie
-
-```python
-# /auth/login
-state = secrets.token_urlsafe(32)  # Random CSRF token
-response.set_cookie("oauth_state", state, httponly=True, max_age=600)
-redirect_to_oauth_provider(state)
-
-# /auth/callback
-stored_state = request.cookies.get("oauth_state")
-if stored_state != request.args.get("state"):
-    return 400  # CSRF validation failed
-```
-
-### 2. XSS Protection
-**Mechanism:** HttpOnly cookies (not accessible via JavaScript)
-
-```python
-response.set_cookie(
-    "access_token",
-    token,
-    httponly=True,  # ✅ JavaScript can't read this
-    secure=True,    # ✅ HTTPS only in production
-    samesite="lax", # ✅ CSRF protection
-)
-```
-
-### 3. JWT Token Structure
-
-**Access Token (1 hour):**
-```json
-{
-  "sub": "user_id",
-  "iat": 1769890991,
-  "exp": 1769894591,
-  "account_id": "00000000-0000-0000-0000-000000000002",
-  "external_user_id": "firebase|OAUTH_USER_ID_PLACEHOLDER",
-  "role": "owner",
-  "tier": "free",
-  "email": "user@example.com",
-  "type": "access"
-}
-```
-
-**Refresh Token (24 hours):**
-```json
-{
-  "sub": "user_id",
-  "iat": 1769890991,
-  "exp": 1772482991,
-  "account_id": "00000000-0000-0000-0000-000000000002",
-  "type": "refresh"
-}
-```
-
-**Signing:**
-- Algorithm: HMAC-SHA256
-- Secret: `OAUTH_SESSION_SECRET` from `.env`
-- Library: PyJWT
-
-### 4. CORS Configuration
-**Current:** Open CORS (`Access-Control-Allow-Origin: *`)
-**Production TODO:** Restrict to specific origins
-
-```python
-@app.after_request
-async def add_cors_headers(response):
-    # TODO: Restrict to specific origins in production
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
-```
-
----
-
-## Integration with Main Application
-
-### Startup Sequence
-
-`build_application_graph` (`src/composition/application_graph.py`) builds `AuthenticationService`, `SessionService`,
-`AuthProviderRegistry`, `AuthConfig` and the invite and connect-flow services, and returns them as typed fields of
-`ApplicationGraph`. `main()` (`main.py`) passes them to `create_oauth_blueprint(...)` and registers the blueprint on the
-Quart app next to the Slack, Cabinet, webhook and voice blueprints.
-
-### Dependency Graph
-
-```
-main.py (main)
-  └─> create_oauth_blueprint()   (fed by build_application_graph)
-       ├─> AuthenticationService (domain logic)
-       │    ├─> AuthProviderRegistry
-       │    │    └─> FirebaseAuthAdapter
-       │    ├─> UserRepository (Firestore)
-       │    └─> AccountRepository (Firestore)
-       │
-       ├─> SessionService (JWT management)
-       │    └─> AuthConfig (TTL, secret)
-       │
-       └─> AuthConfig (.env configuration)
-```
-
----
-
-## Environment Configuration
-
-### Required `.env` Variables
-
-```bash
-# --- FIREBASE / OAUTH CONFIG ---
-USE_OAUTH_COLLECTIONS=true
-FIREBASE_PROJECT_ID=YOUR_GCP_PROJECT_ID
-FIREBASE_WEB_API_KEY=YOUR_FIREBASE_WEB_API_KEY
-# No GOOGLE_APPLICATION_CREDENTIALS: Firebase Admin runs on ADC (BOOTSTRAP.md §1)
-OAUTH_REDIRECT_URI=http://localhost:5001/auth/callback
-OAUTH_SESSION_SECRET=YOUR_RANDOM_SESSION_SECRET
-
-# --- GOOGLE OAUTH CONFIG ---
-GOOGLE_OAUTH_CLIENT_ID=YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=YOUR_OAUTH_CLIENT_SECRET
-```
-
-### OAuth Client Configuration (GCP Console)
-
-**Authorized JavaScript Origins:**
-- `http://localhost:5001` (local dev)
-- `http://127.0.0.1:5001` (local dev)
-- `https://your-domain.com` (production)
-
-**Authorized Redirect URIs:**
-- `http://localhost:5001/auth/callback` (local dev)
-- `https://your-cloud-run-url.run.app/auth/callback` (Cloud Run)
-- `https://your-domain.com/auth/callback` (production)
-
----
-
-## Testing
-
-### Manual Testing Flow
-
-```bash
-# 1. Start bot
-python main.py
-
-# 2. Open OAuth login in browser
-open "http://localhost:5001/auth/login"
-
-# 3. Sign in with Google account
-
-# 4. Verify callback response (JSON)
-{
-  "success": true,
-  "user": { "user_id": "...", "email": "...", "display_name": "..." },
-  "account": { "account_id": "...", "tier": "free" },
-  "access_token": "eyJhbGci..."
-}
-
-# 5. Test /auth/me endpoint
-curl -b cookies.txt "http://localhost:5001/auth/me"
-
-# 6. Test token refresh
-curl -X POST -b cookies.txt "http://localhost:5001/auth/refresh"
-
-# 7. Test logout
-curl -X POST -b cookies.txt "http://localhost:5001/auth/logout"
-```
-
-### Verification Script
-
-```bash
-python verify_oauth_user.py (script removed 2026-10-22, S1b)
-```
-
-**Checks:**
-- ✅ UserProfile created in `development_users_oauth`
-- ✅ BillingAccount created in `development_accounts_oauth`
-- ✅ JWT token structure matches RFC
-- ✅ `external_user_id` format: `firebase|<uid>`
-- ✅ Master Account First (account created before user)
-
----
-
-## Future Enhancements
-
-### 1. Token Blacklist (Immediate Logout)
-**Problem:** JWT tokens remain valid until expiration (stateless).
-**Solution:** Implement Redis-based token blacklist for `/auth/logout`.
-
-### 2. Refresh Token Rotation
-**Problem:** Long-lived refresh tokens pose security risk.
-**Solution:** Issue new refresh token on each `/auth/refresh` call.
-
-### 3. Multi-Provider Support
-**Current:** Only Firebase/Google OAuth.
-**Future:** Add GitHub, Microsoft, Apple OAuth adapters.
-
-### 4. Rate Limiting
-**Problem:** No rate limiting on OAuth endpoints.
-**Solution:** Add Flask-Limiter or similar middleware.
-
-### 5. Audit Logging
-**Problem:** No audit trail for OAuth events.
-**Solution:** Log all authentication events to Firestore/CloudLogging.
-
----
-
-## When to Update This Document
-
-Update this document when:
-- ✅ New OAuth endpoint added
-- ✅ JWT token structure changed
-- ✅ Security mechanism modified (CSRF, cookies, etc.)
-- ✅ OAuth provider added/removed
-- ✅ Service dependencies changed
-- ✅ Configuration requirements changed
-
----
-
-## References
-
-- [OAuth Multi-Tenant building block](../oauth_multi_tenant/README.md) - Full OAuth architecture
-- [src/web/oauth_app.py](../../../src/web/oauth_app.py) - Implementation
-- [src/services/authentication_service.py](../../../src/services/authentication_service.py) - Auth logic
-- [src/services/session_service.py](../../../src/services/session_service.py) - JWT management
-
----
-
-**See also:** [User Cabinet](../user_cabinet/README.md) — authenticated self-service portal (platform linking, facts browser, semantic search). Uses the same JWT mechanism but lives in a separate blueprint (`user_cabinet_app.py`).
-
----
-
-**Last Updated:** 2026-03-02
-**Status:** ✅ Implemented and verified
+## Purpose
+
+This block is how a person signs in to the web side of the system (the Cabinet, the voice call page, the MCP consent
+page) and how that sign-in is kept. It does four things: it runs the Google sign-in through the `/auth/*` routes, it
+turns a successful sign-in into a pair of signed session cookies, it renews the session on request, and it starts and
+finishes the connect of integrations (mail, tasks, drive) under the signed-in session.
+
+It is the web counterpart of the Slack and Telegram adapters: those identify a person by platform id, this one by a
+Google identity, and both land on the same `UserProfile` and `BillingAccount`. A new Google identity gets a new account
+with the person as owner ("Master Account First": the account is created before the user). Who may sign in at all is
+decided by the access whitelist, not by Google.
+
+What it is not: it holds no per-session server state (the session is two stateless JWTs), it does not guard the
+Cabinet routes (`src/web/cabinet_auth.py::make_auth_required` does, by verifying the same access cookie), and the
+credential store and token refresh of the connected integrations belong to the integration blocks. The multi-tenant
+data model behind the user and account is in [oauth_multi_tenant](../oauth_multi_tenant/README.md).
+
+## Owned data
+
+The block owns no Firestore collection of its own. What it writes and holds:
+
+- **Session cookies**, set by `/auth/callback` and `/auth/refresh`: `access_token` and `refresh_token`, both HttpOnly,
+  Secure, SameSite=Lax. Their lifetimes are `AuthConfig.access_token_ttl` and `AuthConfig.refresh_token_ttl`
+  (`ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, both 86400 s by default).
+- **Sign-in cookies**, set by `/auth/login`, 10 minutes: `oauth_state` (the CSRF value), `auth_next` (where to return)
+  and `invite_code` (a team invite to consume after sign-in). The callback deletes only `oauth_state`; the other two
+  expire by themselves.
+- **Access token claims** (`SessionService.create_access_token`): `sub` (user id), `account_id`, `external_user_id`,
+  `role` (from the account's `iam_policy`, `viewer` if absent), `tier`, `email`, `iat`, `exp`, `type: "access"`.
+  **Refresh token claims** (`create_refresh_token`): `sub`, `account_id`, `iat`, `exp`, `type: "refresh"`. Both are
+  HS256, signed with `AuthConfig.oauth_session_secret` (`OAUTH_SESSION_SECRET`).
+- **Written on the user and account** through `AuthenticationService`: a sign-in rewrites `auth_metadata` of the user
+  (`update_user_fields(user, ("auth_metadata",))`, so a concurrent change of another field survives); a first sign-in
+  creates a `BillingAccount` (tier FREE, the person as `owner` in `iam_policy`) and then the `UserProfile`;
+  `external_user_id` is `"{provider}|{sub}"`. `AuthenticationService.resume_session` writes nothing.
+- **The connect flow record** (`oauth_flow:<digest>`, ten minutes) is written by
+  `src/services/oauth_connect_service.py::OAuthConnectService.start` and consumed by `complete`; the credential it ends
+  in is described in [`credential_store_cutover.md`](../../04_solution_strategy/decisions/credential_store_cutover.md).
+
+## Flows
+
+### Sign in
+
+1. `GET /auth/login` (`src/web/oauth_app.py::create_oauth_blueprint`, route `oauth_login`) takes `provider`, `next`
+   and `code`. `next` goes through `src/domain/safe_redirect.py::safe_return_path` (same-site relative path only, else
+   `/cabinet`). It generates the state, builds Google's consent URL with
+   `AuthPort.get_authorization_url` (`FirebaseAuthAdapter`, scope `openid email profile`), sets the three cookies and
+   redirects. An unknown provider or any failure is a 500.
+2. Google returns to `GET /auth/callback` (`oauth_callback`). A missing `code` is 400; a state that does not equal the
+   `oauth_state` cookie is 400.
+3. `AuthenticationService.handle_oauth_callback` exchanges the code, verifies the ID token
+   (`FirebaseAuthAdapter.verify_token`: the Firebase Admin check first, then Google's OIDC keys with the OAuth client as
+   audience), and runs the whitelist gate `_require_allowed_email` before any user is read or written. It then finds the
+   user by `external_user_id`, else by email (the existing user gets the Google identity attached), else registers a new
+   user and account (`register_new_user`).
+4. A pending `invite_code` cookie is consumed with `InviteCodeService.consume_team_invite`; a failure is logged and does
+   not stop the sign-in.
+5. The route creates both tokens, sets the two cookies, deletes `oauth_state` and **redirects** to `auth_next` (validated
+   again with `safe_return_path`). The response is a redirect, not JSON.
+6. A rejected identity (`AccessDeniedError`) returns a fixed 403 HTML page and sets no session cookie. Any other failure
+   is a 500 with a generic body; the detail goes to the log only.
+
+### Renew
+
+`POST /auth/refresh` (`refresh_token_endpoint`) reads the refresh token from the cookie or an `Authorization: Bearer`
+header. `SessionService.verify_refresh_token` refuses a bad signature, a wrong type (an access token sent as a refresh
+token) and an expired one, all 401. `AuthenticationService.resume_session` then loads the stored user and account and
+checks the whitelist again; the new access token is built from stored data, never from the old token's claims. An absent
+or inactive user, a missing or de-listed email or an absent account is 401 `Session no longer valid`; a store error is
+500. The new access token gets a full `access_token_ttl` and the access cookie is rewritten; the refresh token is not
+rotated. A session therefore lasts at most `REFRESH_TOKEN_TTL + ACCESS_TOKEN_TTL` from login (48 h by default), see
+[`cabinet_session_24h_cap.md`](../../04_solution_strategy/decisions/cabinet_session_24h_cap.md).
+
+### Identity and sign-out
+
+- `GET /auth/me` returns user and account fields read from the access token payload, with no store read (token from the
+  cookie or a Bearer header). `POST /auth/logout` only deletes the two cookies; tokens already issued stay valid until
+  they expire.
+- `POST /auth/link-oauth` (`link_oauth_to_existing_user`) attaches a Google identity to the signed-in user: it needs the
+  access token, a JSON `code` and a `state` equal to the `oauth_state` cookie, then calls
+  `AuthenticationService.link_oauth_identity`, which runs the same whitelist gate on the identity being linked. Errors:
+  401 without or with a bad token, 403 for a rejected identity, 400 for a state or code problem **and for an identity
+  already linked to another user** (a `ValueError`), 500 otherwise.
+
+### Connect an integration
+
+1. `GET /auth/connect/<kind>` (`connect_start`) needs the Cabinet session cookie (none: redirect to
+   `/auth/login?next=/cabinet`). An unknown or not offered kind is 404; a kind whose realm has no OAuth client on this
+   deployment is 501; the service not wired is 501. `?credential=<id>` starts a reconnect, `?intent=add` an added
+   account. `OAuthConnectService.start` stores the flow (only a keyed digest of the state, the PKCE verifier sealed) and
+   the route redirects to the provider. A reconnect of a credential the user does not hold goes back to the Cabinet with
+   `connect_error=state`.
+2. `GET /auth/connect/callback` (`connect_callback`) is the one callback of every integration and realm
+   (`AuthConfig.oauth_connect_redirect_uri`). A provider refusal, a missing state or a missing code return to the Cabinet
+   with `connect_error` set to `denied`, `state` or `no_code`. No session, or one without an `account_id`, goes to the
+   sign-in. `OAuthConnectService.complete` consumes the flow, exchanges the code, checks scopes and the account, stores
+   the credential and runs the integration's activation. The user returns to the flow's return path with
+   `?connected=<kind>` or `?connect_error=<status>&kind=<kind>`.
+
+## Invariants and traps
+
+- **The whitelist gates every sign-in, link and renewal.** `AuthenticationService._require_allowed_email` takes the email
+  from the verified ID token (never userinfo), requires `email_verified is True`, and runs before any user lookup.
+  `resume_session` re-checks the last signed-in email (`auth_metadata["email"]`), so removing an address stops renewal;
+  the access token already issued lives out its TTL. The rejection log line text is matched by an alert policy; keep it.
+  Tests: `tests/unit/web/test_oauth_app_access_denied.py`, `test_oauth_app_refresh_whitelist.py`. Why:
+  [`cabinet_oauth_whitelist_gate.md`](../../04_solution_strategy/decisions/cabinet_oauth_whitelist_gate.md).
+- **Redirect targets are always checked.** `safe_return_path` is applied at `/auth/login`, at the callback and on the
+  connect return path; the cookies a pre-fix deployment issued may hold anything, so the callback does not trust them
+  (`tests/unit/web/test_oauth_app_redirect_target.py`).
+- **Refresh age is capped by the current TTL.** `verify_refresh_token` also rejects a token whose `iat` is older than
+  `refresh_token_ttl`, whatever its own `exp`; lowering the TTL kills older tokens at once.
+- **Role and tier come from the stored account**, at sign-in and at refresh. The refresh token only names the user
+  (`tests/unit/web/test_oauth_app_refresh_stored_identity.py`).
+- **No server-side revocation.** Tokens are stateless; logout and a whitelist removal do not invalidate an issued
+  access token.
+- **The CSRF check is a cookie equal to the query value**, nothing stored server-side; the connect flow, by contrast, is
+  keyed and single use.
+- **Startup refuses unsafe configuration.** `AuthConfig.validate` (called from `src/composition/boot_setup.py`) rejects a
+  session secret shorter than 32 characters, the public dev placeholder when `K_SERVICE` is set, and a localhost
+  `OAUTH_REDIRECT_URI` on Cloud Run.  The deploy-side key for the redirect URI: `docs/07_deployment/README.md`.
+- **Both callbacks must be registered at the provider.** `OAUTH_REDIRECT_URI` (sign-in) and
+  `OAUTH_CONNECT_REDIRECT_URI` (connect) are separate callbacks and both must match the Google OAuth client (the
+  connect one also the Microsoft app registration); a mismatch fails at the provider, not here.
+- **`/auth/connect/*` reads only the cookie**, not a Bearer header, and needs an `account_id` in it: a credential is
+  never saved under a guessed tenant.
+- **This blueprint sets no CORS headers**; nothing in `src/` adds them for these routes.
+- **Every route has a refusal test**: `tests/unit/web/test_every_route_refuses_anonymous.py` lists each route of this
+  blueprint and why it may answer an anonymous caller.
+
+## Links
+
+- [oauth_multi_tenant](../oauth_multi_tenant/README.md): user, account and IAM model; [user_cabinet](../user_cabinet/README.md): the portal behind the session.
+- [`cabinet_oauth_whitelist_gate.md`](../../04_solution_strategy/decisions/cabinet_oauth_whitelist_gate.md),
+  [`cabinet_session_24h_cap.md`](../../04_solution_strategy/decisions/cabinet_session_24h_cap.md).
+- [`MULTI_DRIVE_RFC.md`](../../10_rfcs/MULTI_DRIVE_RFC.md): the connect flow and its one callback.
+
+## Where to start reading
+
+- `src/web/oauth_app.py::create_oauth_blueprint`: all routes.
+- `src/services/authentication_service.py::AuthenticationService.handle_oauth_callback`, `resume_session`.
+- `src/services/session_service.py::SessionService`: token claims and verification.
+- `src/adapters/firebase_auth_adapter.py::FirebaseAuthAdapter`: Google code exchange and ID-token verification.
+- `src/services/oauth_connect_service.py::OAuthConnectService`: the connect flow.
+- `src/config/auth.py::AuthConfig`: TTLs, redirect URIs and the startup checks.
