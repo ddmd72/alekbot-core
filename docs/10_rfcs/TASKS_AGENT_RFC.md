@@ -1282,6 +1282,12 @@ class TestTasksAgentSearchTasks:
 
 ---
 
+### 4.6 `TasksProviderPort` shape
+
+The port's shape is enforced by `mypy --strict` on `src/ports` and has no test of its own.
+
+---
+
 ### 4.7 `firestore_utils/uploads/COGNITIVE_PROCESS_TASKS.groovy`
 
 ```groovy
@@ -1822,6 +1828,7 @@ Step 11. Modify src/web/oauth_app.py (+2 endpoints, +signature param)
 Step 12. Modify src/config/auth.py (+google_tasks_oauth_redirect_uri)
 Step 13. Modify main.py (+google_tasks_oauth_service instantiation + pass to blueprint)
 Step 14. Create tests/unit/agents/test_tasks_agent.py
+Step 15. `TasksProviderPort` shape: enforced by `mypy --strict` on `src/ports`, no test of its own
 Step 16. make test-unit  (must pass)
 Step 17. Create firestore_utils/uploads/COGNITIVE_PROCESS_TASKS.groovy
 Step 18. Create firestore_utils/uploads/tasks_agent_v1.json
