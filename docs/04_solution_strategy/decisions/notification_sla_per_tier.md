@@ -80,6 +80,7 @@ uses — single source of truth for the complexity → tier mapping.
   ``tier=`` and propagates to ``AgentMessage.timeout_ms``.
 - ``tests/unit/handlers/test_worker_handler.py`` —
   ``test_tier_forwarded_per_complexity`` parametrized over all four
-  ``TaskComplexity`` values; ``test_tier_is_none_when_complexity_absent``.
+  ``TaskComplexity`` values; ``tests/unit/services/test_execute_reminder_task.py``
+  — ``tier=None`` for a note without a complexity, and the user's override.
 - Coverage gate (``make test-coverage``) keeps the 100% floor on
   ``user_notification_service.py`` and ``reminders_service.py``.
