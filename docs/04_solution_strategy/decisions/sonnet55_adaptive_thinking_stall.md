@@ -8,6 +8,11 @@ turn-limit alert is permanent.
 > our adapter" stance no longer holds for structured tool loops (schema + client tools), which end through
 > a synthesized string `deliver_response` tool. The consolidation monitoring below is unchanged; whether
 > Sonnet returns to Smart is the owner's call after deploy.
+>
+> **2026-11-20 — the model is encoded:** `ConsolidationAgentConfig.claude_model` pins Sonnet 5.5 whenever
+> consolidation runs on Claude (`src/composition/consolidation_model_setup.py`); the PERFORMANCE tier and
+> `CLAUDE_PERFORMANCE_MODEL` no longer decide it; a user's `model_overrides["consolidation"]` still wins and is the
+> live lever without a deploy.
 
 ## Decision
 

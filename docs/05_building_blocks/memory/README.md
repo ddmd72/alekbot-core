@@ -59,6 +59,7 @@ covers:
   src/agents/fact_profiler_agent.py
   src/agents/fact_query_slots_agent.py
   src/composition/fact_*.py
+  src/composition/consolidation_model_setup.py
   src/composition/memory_search_setup.py
   src/composition/memory_setup.py
   src/composition/session_routing_setup.py
@@ -510,9 +511,9 @@ with one ERROR line and writes nothing.
   (`src/services/agent_context_builder.py`, owner ruling: a memory write never moves to another provider on an outage; the
   Claude adapter alone retries once on the next model down on a 5xx or 529, `src/adapters/claude_adapter.py`;
   the transcript is locked to one provider after the first tool call anyway, `src/agents/CLAUDE.md`), tier PERFORMANCE
-  (`src/domain/user.py::_DEFAULT_AGENT_TIERS`), which on Claude is `claude-opus-5-5` unless the live env var
-  `CLAUDE_PERFORMANCE_MODEL` pins another model (`src/adapters/claude_adapter.py`; `make claude-model` shows the live
-  value). A user's `agent_providers` / `agent_tiers` can override. Thinking, output tokens, turns per pass and the agent
+  (`src/domain/user.py::_DEFAULT_AGENT_TIERS`), but on Claude the model is pinned to
+  `ConsolidationAgentConfig.claude_model` (`src/composition/consolidation_model_setup.py::consolidation_context`); a
+  user's `model_overrides`, `agent_providers` and `agent_tiers` can still override. Thinking, output tokens, turns per pass and the agent
   timeout are `src/infrastructure/agent_config.py::ConsolidationAgentConfig` and `CONSOLIDATION_CFG`; the service passes
   the run only what is left of its lease, so a run ends before its lease does.
 - **Prompt:** one system prompt per pass, built by `PromptBuilder.build_for_agent(agent_type="consolidation",
@@ -1267,13 +1268,12 @@ may rewrite, merge or demote it. It is in `standing_directives` from the next me
 
 ## 8. Costs
 
-**Which model.** Consolidation's tier is PERFORMANCE (`src/domain/user.py::_DEFAULT_AGENT_TIERS`) on provider Claude, whose
-code default is `claude-opus-5-5` (`src/adapters/claude_adapter.py`, `MODEL_TIERS`). The only override is the env var
-`CLAUDE_PERFORMANCE_MODEL`, read in the adapter's constructor. `cloudbuild-dev.yaml` deploys with `--set-env-vars`, which
-replaces every variable and carries no pin, so every deploy returns consolidation to Opus 5.5; `make claude-forward`
-(`Makefile`) pins Sonnet 5.5 live only until the next deploy, and `make claude-model` shows which holds. The 📊 line names
-the model that ran. The decision `docs/04_solution_strategy/decisions/sonnet55_adaptive_thinking_stall.md` records a
-point-in-time choice of Sonnet 5.5 that no code or deploy config encodes. Measured per-batch figures are in
+**Which model.** On provider Claude consolidation runs on `ConsolidationAgentConfig.claude_model` (`claude-sonnet-5-5`),
+pinned in code by `src/composition/consolidation_model_setup.py::consolidation_context`; its tier stays PERFORMANCE, but
+neither a deploy nor the env var `CLAUDE_PERFORMANCE_MODEL` moves it (they still move every other PERFORMANCE agent). A
+user's `model_overrides["consolidation"]` wins and is the live lever without a deploy; a user who moved consolidation to
+another provider gets that provider's tier model. The 📊 line names the model that ran. The decision
+`docs/04_solution_strategy/decisions/sonnet55_adaptive_thinking_stall.md` records the choice. Measured per-batch figures are in
 `docs/04_solution_strategy/decisions/model_refresh_2026_10.md` and `consolidation_provider_model_eval.md`.
 
 **What drives it.** Turns × prompt (every turn resends the system prompt and the growing tool history; Claude caches the
