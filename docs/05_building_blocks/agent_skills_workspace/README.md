@@ -191,8 +191,8 @@ does nothing.
 - **Trap: the skill-save note is written in the system's voice as a user-role message.** `skill_saved_note`
   (`src/domain/skill.py:320`) builds a `[System: ...]` line that `ConversationHandler._handle_skill_save`
   (`src/handlers/conversation_handler.py:2066-2073`) appends as `role="user"`. The repo rules forbid both: the
-  consolidator reads user-role text as the owner's words, and code text must not claim the system's voice. A code fix
-  may follow.
+  consolidator reads user-role text as the owner's words, and code text must not claim the system's voice. The owner
+  knows and accepted it (2026-11-20): no fix planned; do not re-raise it as a finding.
 - **Code-written text in a tool result is a `Tool note:`** (`src/infrastructure/skill_tools.py`,
   `src/services/workspace_service.py`).
 - **The catalog is not cached.** Every Smart request reads all of the user's index documents, each holding a full body
