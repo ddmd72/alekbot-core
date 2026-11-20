@@ -12,6 +12,8 @@ covers:
   src/adapters/sandbox_client/sandbox_puppeteer_runner.py
   src/services/document_delivery_service.py
   src/domain/docx_script_prelude.py
+  docx_generator/package.json
+  docx_generator/package-lock.json
 -->
 # Document Generation
 

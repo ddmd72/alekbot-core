@@ -74,6 +74,7 @@ covers:
   scripts/cleanup_consolidation_queue_dev.py
   scripts/validation/inspect_consolidation.py
   scripts/admin/fix_broken_vector_facts.py
+  src/domain/lease.py
 -->
 # Memory
 
