@@ -20,7 +20,7 @@ example_1_update_weight: {
     - Candidate: "User's weight is 64 kg (Oct 21, 2026)"
 
     STEP 2 - CLASSIFY:
-    - Domain: HEALTH
+    - Directive: false
     - Temporal: DYNAMIC (weight changes regularly)
     - State: CURRENT
     - Expiry: {kind: horizon, days: 90} (weight keeps changing; review if not said again)
@@ -29,7 +29,6 @@ example_1_update_weight: {
 
     STEP 3 - SEARCH:
     Query: "user weight kg biometrics"
-    Domain: HEALTH
     Results: [
         {
             fact_id: "weight-123",
@@ -93,7 +92,7 @@ example_2_create_new_habit: {
     - Candidate: "User started evening swimming practice (45 min daily)"
 
     STEP 2 - CLASSIFY:
-    - Domain: HEALTH
+    - Directive: false
     - Temporal: DYNAMIC (new habit, may change)
     - State: CURRENT
     - Expiry: {kind: horizon, days: 90} (a new habit may change; review if not said again)
@@ -103,7 +102,6 @@ example_2_create_new_habit: {
 
     STEP 3 - SEARCH:
     Query: "user swimming evening practice habit"
-    Domain: HEALTH
     Results: [] (no matches)
 
     STEP 4 - ANALYZE:
@@ -119,7 +117,7 @@ example_2_create_new_habit: {
     create_fact(
         content="User started evening swimming practice (45 min daily) in Q1 2026",
         fact_attributes={
-            "domain": "HEALTH",
+            "directive": false,
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
@@ -167,13 +165,12 @@ example_3_discard_echo: {
     - Candidate: "User confirms weight is 67kg"
 
     STEP 2 - CLASSIFY:
-    - Domain: HEALTH
+    - Directive: false
     - Temporal: DYNAMIC
     - State: CURRENT
 
     STEP 3 - SEARCH:
     Query: "user weight 67kg"
-    Domain: HEALTH
     Results: [
         {
             fact_id: "weight-123",
@@ -236,7 +233,7 @@ example_3b_memory_review_reply: {
         - Candidate: "User trains at the Iron Temple gym"
 
         STEP 2 - CLASSIFY:
-        - Domain: HEALTH
+        - Directive: false
         - Temporal: DYNAMIC
         - Expiry: {kind: horizon, days: 180} (a current activity)
 
@@ -262,7 +259,7 @@ example_3b_memory_review_reply: {
         create_fact(
             content="User trains at the Iron Temple gym",
             fact_attributes={
-                "domain": "HEALTH",
+                "directive": false,
                 "temporal_class": "DYNAMIC",
                 "state": "CURRENT",
                 "context_priority": "LOW",
@@ -361,7 +358,7 @@ example_4_merge_car_details: {
     - Candidate: "User's car has tinted windows"
 
     STEP 2 - CLASSIFY:
-    - Domain: POSSESSION
+    - Directive: false
     - Temporal: STABLE (car features don't change often)
     - State: CURRENT
     - Expiry: {kind: none} (stable ownership, changes only by an explicit update)
@@ -369,7 +366,6 @@ example_4_merge_car_details: {
 
     STEP 3 - SEARCH:
     Query: "user car skoda fabia features"
-    Domain: POSSESSION
     Results: [
         {
             fact_id: "car-1",
@@ -405,7 +401,7 @@ example_4_merge_car_details: {
         fact_ids=["car-1", "car-2", "car-3"],
         merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
         fact_attributes={
-            "domain": "POSSESSION",
+            "directive": false,
             "temporal_class": "STABLE",
             "state": "CURRENT",
             "context_priority": "MEDIUM",

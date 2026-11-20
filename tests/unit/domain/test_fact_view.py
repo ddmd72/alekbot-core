@@ -15,6 +15,7 @@ from src.adapters.firestore_repo import _expiry_kind
 from src.adapters.gcp_task_queue import _DomainEncoder
 from src.agents.consolidation_agent import ConsolidationAgent, _session_time
 from src.domain.entities import ExpiryKind, FactEntity, FactType
+from src.domain.fact_domains import Domain
 from src.domain.fact_expiry import expiry_view
 from src.domain.fact_write_context import as_utc
 from src.domain.search import EnrichedContext, EnrichedFact, consolidation_hit, fact_view
@@ -119,9 +120,22 @@ def test_the_cluster_entry_is_the_old_entry_plus_the_reported_day(name):
     }
 
 
+# Reviewer edit (fact profile PR 13, task item 4): the hit no longer carries the old `domain`; it carries the profile's
+# `primary_domain` and the `directive` flag (none of the three facts is profiled or a directive). The next test pins
+# both with set values.
 @pytest.mark.parametrize("name", FACTS)
 def test_the_search_hit_is_the_old_hit_plus_the_reported_day(name):
-    assert consolidation_hit(hit(FACTS[name]), LISBON) == {**OLD_SEARCH_HIT[name], "reported": OLD_REPORTED_DAY[name]}
+    old = {k: v for k, v in OLD_SEARCH_HIT[name].items() if k != "domain"}
+    assert consolidation_hit(hit(FACTS[name]), LISBON) == {
+        **old, "primary_domain": None, "directive": False, "reported": OLD_REPORTED_DAY[name],
+    }
+
+
+def test_the_search_hit_carries_the_profile_domain_and_the_directive_flag():
+    fact = stored("f4", "suggest only vegetarian recipes", FactType.PRINCIPLE, datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+                  primary_domain=Domain.FOOD, directive=True)
+    got = consolidation_hit(hit(fact), LISBON)
+    assert (got["primary_domain"], got["directive"]) == (Domain.FOOD, True) and "domain" not in got
 
 
 @pytest.mark.parametrize("name", FACTS)

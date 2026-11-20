@@ -131,7 +131,7 @@ async def fetch_long_facts(repository, account_id: str, min_words: int, limit: i
                 "fact_id": f.id,
                 "content": f.text,
                 "word_count": wc,
-                "domain": f.domain.value if f.domain else None,
+                "primary_domain": f.primary_domain,
                 "tags": f.tags or [],
             })
     candidates.sort(key=lambda x: x["word_count"], reverse=True)
@@ -149,7 +149,7 @@ async def prefetch_cluster(
     results = await fact_management_port.search_existing_facts(
         keywords=anchor["tags"][:10],
         primary_query=anchor["content"][:300],
-        alternative_query=f"{anchor['domain']} {' '.join(anchor['tags'][:5])}",
+        alternative_query=f"{anchor['primary_domain'] or ''} {' '.join(anchor['tags'][:5])}".strip(),
         limit=cluster_size + 1,  # +1 to account for possible self-inclusion
         timezone="UTC",
     )

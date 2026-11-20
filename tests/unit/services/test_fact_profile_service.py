@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from src.adapters.firestore_repo import FirestoreFactRepository
-from src.domain.entities import FactDomain, FactState
+from src.domain.entities import FactState
 from src.domain.fact_profile_answer import ProfileAnswer
 from src.domain.fact_profile_fingerprint import (
     ABANDON_AFTER_FAILURES, profile_derivation, profile_fingerprint, registry_digest,
@@ -242,7 +242,7 @@ async def test_a_stale_derivation_is_rederived_from_its_stored_answer_without_a_
 
 
 async def test_a_directive_gets_its_fixed_profile_without_a_call(world):
-    await world.seed(DIRECTIVE, domain=FactDomain.AGENT_DIRECTIVE)
+    await world.seed(DIRECTIVE, directive=True)
 
     run = await world.run()
 
@@ -255,7 +255,7 @@ async def test_a_directive_gets_its_fixed_profile_without_a_call(world):
 
 
 async def test_a_directive_is_fresh_the_second_time(world):
-    await world.seed(DIRECTIVE, domain=FactDomain.AGENT_DIRECTIVE)
+    await world.seed(DIRECTIVE, directive=True)
     await world.run()
 
     run = await world.run()
@@ -264,7 +264,7 @@ async def test_a_directive_is_fresh_the_second_time(world):
 
 
 async def test_a_stale_directive_derivation_writes_the_rederivation_fields_only(world):
-    await world.seed(DIRECTIVE, domain=FactDomain.AGENT_DIRECTIVE)
+    await world.seed(DIRECTIVE, directive=True)
     await world.run()
     world.docs[fid(DIRECTIVE)]["profile_derivation"] = "old"
     world.docs[fid(DIRECTIVE)]["profiled_at"] = None
@@ -277,9 +277,9 @@ async def test_a_stale_directive_derivation_writes_the_rederivation_fields_only(
 
 
 async def test_a_former_directive_with_no_stored_answer_is_called(world):
-    await world.seed(DIRECTIVE, domain=FactDomain.AGENT_DIRECTIVE)
+    await world.seed(DIRECTIVE, directive=True)
     await world.run()
-    world.docs[fid(DIRECTIVE)]["domain"] = FactDomain.HEALTH.value
+    world.docs[fid(DIRECTIVE)]["directive"] = False
 
     run = await world.run()
 
@@ -522,7 +522,7 @@ async def test_a_rederivation_writes_exactly_its_fields_under_the_stored_fingerp
 
 async def test_a_directive_success_and_a_failure_write_their_exact_sets(world):
     spy = Spy(world)
-    await world.seed(DIRECTIVE, domain=FactDomain.AGENT_DIRECTIVE)
+    await world.seed(DIRECTIVE, directive=True)
     await world.seed(CAR)
     world.profiler.replies[CAR] = status_reply(ProfilerStatus.REFUSED)
 
@@ -704,7 +704,7 @@ async def test_a_raising_profiler_is_an_outage_not_a_crash(world):
 
 async def test_the_logs_carry_ids_and_counts_but_never_fact_text(world, caplog):
     await world.seed(CAR)
-    await world.seed(DIRECTIVE, domain=FactDomain.AGENT_DIRECTIVE)
+    await world.seed(DIRECTIVE, directive=True)
     await world.seed(TRIP)
     world.profiler.replies[TRIP] = status_reply(ProfilerStatus.INVALID)
 

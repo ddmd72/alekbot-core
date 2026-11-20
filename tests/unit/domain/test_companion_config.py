@@ -3,7 +3,6 @@ import dataclasses
 import pytest
 
 from src.domain.companion_config import CompanionConfig, CompanionTextMode
-from src.domain.entities import FactDomain
 
 
 def test_minimal_construction_defaults():
@@ -23,13 +22,13 @@ def test_full_construction():
         batch_size=50,
         text_mode=CompanionTextMode.FULL,
         include_biographical=True,
-        session_domains=[FactDomain.EDUCATION, FactDomain.SKILL],
+        session_domains=["education", "skill"],
         include_standing_directives=True,
         include_own_records=False,
     )
     assert config.text_mode == CompanionTextMode.FULL
     assert config.include_biographical is True
-    assert config.session_domains == [FactDomain.EDUCATION, FactDomain.SKILL]
+    assert config.session_domains == ["education", "skill"]
     assert config.include_standing_directives is True
     assert config.include_own_records is False
 

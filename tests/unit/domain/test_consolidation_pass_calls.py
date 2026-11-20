@@ -11,7 +11,6 @@ from src.domain.consolidation_pass_stats import (
     PassCall,
     PassTool,
 )
-from src.domain.entities import FactDomain
 from src.domain.pass_actor import PassActor
 
 
@@ -28,8 +27,8 @@ def search(fp="s"):
     return PassCall(PassTool.SEARCH, fp)
 
 
-def create(text, *, sources=frozenset(), domain=FactDomain.LOCATION, fp=None):
-    return PassCall.with_text(PassTool.CREATE, fp or "c", text, sources=frozenset(sources), domain=domain)
+def create(text, *, sources=frozenset(), directive=False, fp=None):
+    return PassCall.with_text(PassTool.CREATE, fp or "c", text, sources=frozenset(sources), directive=directive)
 
 
 def merge(text, sources=("a", "b")):
@@ -132,10 +131,11 @@ def test_a_born_due_refusal_on_a_cleanup_pass_is_answered_by_its_rewrite_or_aban
     turn(other_source, [create("User took a trip to Lisbon on 2026-10-10", sources={"f2"})])
     assert other_source.abandoned == 1
 
-    other_domain = stats(actor)
-    turn(other_domain, [create("User plans a trip to Lisbon on 2026-10-10")], [OUTCOME_BORN_DUE])
-    turn(other_domain, [create("User took a trip to Lisbon on 2026-10-10", domain=FactDomain.WORK)])
-    assert other_domain.abandoned == 1
+    # Reviewer edit (fact profile PR 13, RFC §6 row 16): the rewrite must keep the directive decision, not the old domain.
+    other_decision = stats(actor)
+    turn(other_decision, [create("User plans a trip to Lisbon on 2026-10-10")], [OUTCOME_BORN_DUE])
+    turn(other_decision, [create("User took a trip to Lisbon on 2026-10-10", directive=True)])
+    assert other_decision.abandoned == 1
 
     merged = stats(actor)
     turn(merged, [merge("Will visit Lisbon", ("a", "b"))], [OUTCOME_BORN_DUE])

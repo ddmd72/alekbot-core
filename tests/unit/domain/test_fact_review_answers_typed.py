@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
+from src.domain.entities import ExpiryKind, FactState, FactType
 from src.domain.fact_expiry import EXPIRY_NONE, Expiry, expiry_view, parse_expiry, stored_expiry
 from src.domain.fact_lifecycle import compute_expiry
 from src.domain.fact_review_answer_change import AnswerChange
@@ -25,7 +25,7 @@ ENDS_28_OCT = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 28)), NOW
 # ------------------------------------------------------------------------------------------------ answer_updates
 
 def test_still_true_on_a_pinned_fact_is_a_current_update_with_expiry_none():
-    change = answer_updates(AnswerKind.STILL_TRUE, fact(domain=FactDomain.AGENT_DIRECTIVE), question(), NOW, MADRID, "digit")
+    change = answer_updates(AnswerKind.STILL_TRUE, fact(directive=True), question(), NOW, MADRID, "digit")
 
     assert change.update == ParsedFactUpdate(state=FactState.CURRENT, expiry=EXPIRY_NONE)
     assert isinstance(change.update.expiry, Expiry) and change.update.expiry.kind is ExpiryKind.NONE
@@ -102,7 +102,7 @@ def test_stored_expiry_is_the_decision_the_model_view_shows(kind, ttl, at, tz, e
 
 
 @pytest.mark.parametrize("make", [
-    lambda: fact(domain=FactDomain.AGENT_DIRECTIVE),
+    lambda: fact(directive=True),
     lambda: fact(type=FactType.PRINCIPLE),
     lambda: fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None),
     lambda: fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=ENDS_28_OCT),

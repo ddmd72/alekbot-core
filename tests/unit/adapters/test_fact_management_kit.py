@@ -30,7 +30,7 @@ def store(kit_db):
 
 def meta(**over):
     base = {
-        "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
+        "account_id": ACC, "user_id": USER, "directive": False, "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"}, "type": "event",
         "expiry": EXPIRY_NONE,
     }
@@ -64,8 +64,8 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     # so none is sent: a sent one would add a `note` to the exact key set below.
     attributes = meta(
         tags=["family"], metadata={"name": "Maria"}, context="said at lunch", ttl_days=30, type="STATE",
-        domain="BIOGRAPHICAL", temporal_class="STABLE", context_priority="HIGH", state="ARCHIVED",
-        reported_date="2026-03-04T10:00:00Z")
+        directive=True, temporal_class="STABLE", context_priority="HIGH", state="ARCHIVED",
+        reported_date="2026-03-04T10:00:00Z", domain="BIOGRAPHICAL")
     attributes.pop("expiry", None)
     res = await store.adapter.create_fact("mother is Maria", attributes, context=ctx())
     assert set(res) == {"fact_id", "status", "message"} and res["status"] == "created"
@@ -74,8 +74,11 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     assert len(store.docs) == 2 and store.docs[other] == other_before
     assert (doc["account_id"], doc["created_by_user_id"], doc["text"]) == (ACC, USER, "mother is Maria")
     assert doc["tags"] == ["family", "consolidated"] and doc["metadata"] == {"name": "Maria"}
-    assert (doc["domain"], doc["temporal_class"], doc["context_priority"], doc["state"], doc["type"]) == (
-        "biographical", "stable", "high", "archived", "state")
+    # Reviewer edit (fact profile PR 13, RFC §6 row 14): the consolidator's decision is the `directive` flag, stored as
+    # sent; the old `domain` is an unknown key now and is not stored.
+    assert (doc["directive"], doc["temporal_class"], doc["context_priority"], doc["state"], doc["type"]) == (
+        True, "stable", "high", "archived", "state")
+    assert "domain" not in doc
     assert (doc["context"], doc["ttl_days"], doc["version"]) == ("said at lunch", None, 1)
     assert (doc["expiry_kind"], doc["expires_at"]) == (None, None)
     assert doc["reported_date"] == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
@@ -87,7 +90,9 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
 
 async def test_create_fact_defaults_type_event_state_current_and_reported_date_now(store):
     started = datetime.now(timezone.utc)
-    required = {k: v for k, v in meta().items() if k in ("account_id", "user_id", "domain", "temporal_class",
+    # Reviewer edit (fact profile PR 13): `domain` left the required keys and `directive` is not one; a create without
+    # it stores a fact that is not a directive (asserted below).
+    required = {k: v for k, v in meta().items() if k in ("account_id", "user_id", "temporal_class",
                                                           "context_priority")}
     # Reviewer edit (facts S3, T4a): a current fact needs `expiry` (D1, plan §3.4), so it joins the minimum set. The
     # context has no span, so the date default is still now (plan §3.5).
@@ -98,6 +103,7 @@ async def test_create_fact_defaults_type_event_state_current_and_reported_date_n
     assert doc["type"] == "event" and doc["state"] == "current"
     assert started <= doc["reported_date"] <= datetime.now(timezone.utc)
     assert doc["tags"] == ["consolidated"] and doc["metadata"] == {}
+    assert doc["directive"] is False
 
 
 async def test_create_fact_with_an_unknown_type_is_an_event(store):
@@ -126,7 +132,9 @@ async def test_create_fact_twice_creates_two_facts_with_new_lineages(store):
     assert store.docs[first]["lineage_id"] != store.docs[second]["lineage_id"]
 
 
-@pytest.mark.parametrize("key", ["account_id", "user_id", "domain", "temporal_class", "context_priority"])
+# Reviewer edit (fact profile PR 13): the [domain] case is gone with the old domain (a create no longer requires it);
+# a create without `directive` is pinned in test_create_fact_defaults_type_event_state_current_and_reported_date_now.
+@pytest.mark.parametrize("key", ["account_id", "user_id", "temporal_class", "context_priority"])
 async def test_create_fact_without_a_required_key_fails_and_writes_nothing(store, key):
     put_raw(store, "foreign", "foreign", account_id=OTHER)
     before = snapshot(store)
@@ -137,7 +145,9 @@ async def test_create_fact_without_a_required_key_fails_and_writes_nothing(store
     assert store.docs == before
 
 
-@pytest.mark.parametrize("bad", [{"domain": "astrology"}, {"temporal_class": "sometimes"}, {"state": "zombie"},
+# Reviewer edit (fact profile PR 13): a bad `domain` is no longer a refusal (the key is unknown now); its row is a
+# `directive` that is not a bool, which the create refuses.
+@pytest.mark.parametrize("bad", [{"directive": "yes"}, {"temporal_class": "sometimes"}, {"state": "zombie"},
                                  {"context_priority": "urgent"}])
 async def test_create_fact_with_an_invalid_enum_value_fails_and_writes_nothing(store, bad):
     res = await store.adapter.create_fact("mother is Maria", meta(**bad), context=ctx())
@@ -146,8 +156,9 @@ async def test_create_fact_with_an_invalid_enum_value_fails_and_writes_nothing(s
 
 
 async def test_create_fact_with_a_required_key_set_to_none_passes_the_check(store):
-    res = await store.adapter.create_fact("mother is Maria", meta(domain=None), context=ctx())
-    assert res["status"] == "created" and store.docs[res["fact_id"]]["domain"] is None
+    # Reviewer edit (fact profile PR 13): `domain` is no longer a required key; the same check on `temporal_class`.
+    res = await store.adapter.create_fact("mother is Maria", meta(temporal_class=None), context=ctx())
+    assert res["status"] == "created" and store.docs[res["fact_id"]]["temporal_class"] is None
 
 
 async def test_create_fact_never_raises_on_an_embedding_failure(store):
@@ -342,7 +353,7 @@ async def test_merge_returns_the_result_dict_and_creates_one_fact_with_a_new_lin
     b = await create(store, "likes green tea")
     lineages = {store.docs[a]["lineage_id"], store.docs[b]["lineage_id"]}
     res = await store.adapter.merge_facts(
-        [b, a], "likes green tea daily", meta(tags=["drinks"], metadata={"k": "v"}), context=ctx())
+        [b, a], "likes green tea daily", meta(tags=["drinks"], metadata={"k": "v"}, directive=True), context=ctx())
     assert set(res) == {"new_fact_id", "old_fact_ids", "old_facts_state", "status", "message"}
     assert (res["status"], res["old_fact_ids"], res["old_facts_state"]) == ("merged", [b, a], "SUPERSEDED")
     json.dumps(res)
@@ -350,7 +361,8 @@ async def test_merge_returns_the_result_dict_and_creates_one_fact_with_a_new_lin
     assert len(store.docs) == 3 and new["lineage_id"] not in lineages
     assert (new["account_id"], new["created_by_user_id"], new["text"]) == (ACC, USER, "likes green tea daily")
     assert new["tags"] == ["drinks", "consolidated"] and new["metadata"] == {"k": "v"}
-    assert (new["domain"], new["state"], new["is_current"], new["valid_to"]) == ("biographical", "current", True, None)
+    # Reviewer edit (fact profile PR 13): the merged fact carries the sent `directive` flag in place of the old domain.
+    assert (new["directive"], new["state"], new["is_current"], new["valid_to"]) == (True, "current", True, None)
     for field, text in zip(("vector", "tags_vector", "metadata_vector"),
                            fact_embedding_texts("likes green tea daily", ["drinks"], {"k": "v"})):
         assert stored_vector(new[field]) == pytest.approx(embed(text))
@@ -425,7 +437,8 @@ async def test_merge_needs_only_account_and_user_in_the_metadata(store):
                                                                     "expiry": EXPIRY_NONE}, context=ctx())
     assert res["status"] == "merged"
     new = store.docs[res["new_fact_id"]]
-    assert new["domain"] is None and new["temporal_class"] is None and new["context_priority"] == "medium"
+    # Reviewer edit (fact profile PR 13): a missing `directive` reads as not a directive (was: domain None).
+    assert new["directive"] is False and new["temporal_class"] is None and new["context_priority"] == "medium"
 
 
 async def test_merge_twice_fails_the_second_time_naming_the_first_merged_fact(store):
@@ -468,7 +481,8 @@ async def test_search_account_is_the_context_account_else_the_user_id(store):
 
 
 async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
-    fid = await create(store, "mother is Maria", reported_date="2026-03-04T10:00:00+00:00")
+    fid = await create(store, "mother is Maria", reported_date="2026-03-04T10:00:00+00:00", directive=True)
+    store.docs[fid] = {**store.docs[fid], "primary_domain": "family"}   # as the profiler stores it
     with RequestContext(user_id=USER, account_id=ACC):
         (got,) = await _searching(store).search_existing_facts(["family"], "mother is Maria", timezone="UTC")
     # Reviewer edit (facts S3, T5; plan §3.3, §6 E): the model-facing dict gains `expiry` (the stored decision in the
@@ -476,12 +490,16 @@ async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
     # {kind: none}, so the decision shows as none with no due day.
     # Reviewer edit (Facts S4 T6c, M6): the hit is built on `fact_view`, so it also carries `reported`, the owner's
     # calendar day of `reported_date` (what the Stage 2a cluster message shows without re-parsing).
-    assert set(got) == {"fact_id", "content", "similarity", "source", "type", "domain", "temporal_class", "state",
-                        "context_priority", "tags", "metadata", "reported_date", "reported", "version", "expiry", "due"}
+    # Reviewer edit (fact profile PR 13, card item 4): the hit drops `domain` and carries `primary_domain` (the profile's
+    # registry key, None while unprofiled) and the `directive` flag; both are read from the stored fact.
+    assert set(got) == {"fact_id", "content", "similarity", "source", "type", "primary_domain", "directive",
+                        "temporal_class", "state", "context_priority", "tags", "metadata", "reported_date", "reported",
+                        "version", "expiry", "due"}
     assert got["reported"] == "2026-03-04"
     assert got["expiry"] == {"kind": "none"} and got["due"] is None
-    assert (got["fact_id"], got["content"], got["type"], got["domain"], got["temporal_class"]) == (
-        fid, "mother is Maria", "event", "biographical", "stable")
+    assert (got["fact_id"], got["content"], got["type"], got["directive"], got["temporal_class"]) == (
+        fid, "mother is Maria", "event", True, "stable")
+    assert got["primary_domain"] == "family"
     assert (got["state"], got["context_priority"], got["version"]) == ("current", "medium", 1)
     assert got["tags"] == ["family", "mother", "consolidated"] and got["metadata"] == {"name": "Maria"}
     assert got["reported_date"] == "2026-03-04T10:00:00+00:00" and got["similarity"] is None

@@ -6,15 +6,17 @@ from unittest.mock import AsyncMock
 
 from scripts.validation import drive_intent_text_scan as script
 from scripts.validation.drive_intent_text_scan_logic import STORES, scan
-from src.domain.entities import FactDomain
 
 NOW = datetime(2026, 10, 22, tzinfo=timezone.utc)
 
 
 def _facts():
-    by_domain = {FactDomain.AGENT_DIRECTIVE.value: [SimpleNamespace(id="d1", text="Be brief")],
-                 FactDomain.PREFERENCE.value: [SimpleNamespace(id="p1", text="When filing scans call save_file_to_drive")]}
-    return SimpleNamespace(get_active_facts_ordered=AsyncMock(side_effect=lambda account, domain: by_domain[domain]))
+    """Reviewer edit (fact profile PR 13): directives are the facts flagged `directive`; the preference store is every
+    other current fact (the domains are gone). The read of all current facts also returns the directive."""
+    directive = SimpleNamespace(id="d1", text="Be brief", directive=True)
+    preference = SimpleNamespace(id="p1", text="When filing scans call save_file_to_drive", directive=False)
+    return SimpleNamespace(get_active_facts_ordered=AsyncMock(
+        side_effect=lambda account, directive_only=False: [directive] if directive_only else [directive, preference]))
 
 
 async def test_preference_facts_are_scanned_beside_the_directives():

@@ -18,14 +18,9 @@ class RecordingRepository:
     def __init__(self, facts):
         self._facts = facts
         self.vector_calls = []
-        self.domain_calls = []
 
     async def search_facts(self, **kwargs):
         self.vector_calls.append(kwargs)
-        return self._facts
-
-    async def search_facts_by_domain(self, **kwargs):
-        self.domain_calls.append(kwargs)
         return self._facts
 
 
@@ -75,15 +70,6 @@ async def test_search_by_vector_field_forwards_field_and_limit():
     ]
     assert [f.fact_id for f in result] == ["fact-1"]
 
-
-@pytest.mark.asyncio
-async def test_search_by_domain_forwards_domains_and_limit():
-    repo = RecordingRepository([_fact("fact-1", "alpha")])
-    result = await _service(repo)._search_by_domain(
-        domains=["domain-a", "domain-b"], limit=7, source_label="domain_direct"
-    )
-    assert repo.domain_calls == [{"domains": ["domain-a", "domain-b"], "limit": 7}]
-    assert [f.fact_id for f in result] == ["fact-1"]
 
 
 def test_rrf_forwards_k():

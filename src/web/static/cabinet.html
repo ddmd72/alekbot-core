@@ -3156,10 +3156,9 @@
         return d ? factDomainLabels[d] || d.replace(/_/g, " ") : "Uncategorized";
       }
 
-      // The badge of a fact: its profile domain's label; the old domain value while the fact has no profile yet.
+      // The badge of a fact: its profile domain's label; none while the fact has no profile yet.
       function factBadge(f) {
-        if (f.primary_domain) return domainLabel(f.primary_domain);
-        return f.domain ? f.domain.replace(/_/g, " ") : "";
+        return f.primary_domain ? domainLabel(f.primary_domain) : "";
       }
 
       /* ── UI Helpers & Observers ──────────────────────── */
@@ -3778,8 +3777,8 @@
       }
 
       function reviewRow(q) {
-        const domain = q.domain
-          ? `<span class="fact-domain-badge">${escapeHtml(domainLabel(q.domain))}</span>`
+        const domain = q.primary_domain
+          ? `<span class="fact-domain-badge">${escapeHtml(domainLabel(q.primary_domain))}</span>`
           : "";
         const result = reviewResults[q.question_id]
           ? `<div style="color:var(--text-muted); font-size:13px; margin-top:8px;">${escapeHtml(t("questions.result_" + reviewResults[q.question_id]))}</div>`

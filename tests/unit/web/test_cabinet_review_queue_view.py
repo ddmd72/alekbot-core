@@ -1,7 +1,7 @@
 """Facts S4 · T11a: `GET /api/user/facts/review-queue` (plan §3.18), through the real route, repository and review store on the
 evaluating Firestore fake. The user's open questions come in the order they are dealt with (the question out now, those sent
 and unanswered, then the queue in its order), each with its fact in full as it stands now (the text the question quoted when the fact is gone or was rewritten to
-a text the owner was not asked about), its domain, `reported_date`,
+a text the owner was not asked about), its profile domain (`primary_domain`), `reported_date`,
 since when it waits and its status. Another account's and another user's questions are never listed; no store is a 501."""
 import copy
 from datetime import timedelta
@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 from quart import Quart
 
 from src.domain.entities import ExpiryKind
+from src.domain.fact_domains import Domain
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.language import LanguageCode
 from src.domain.owner_timezone import ResolvedOwnerZone
@@ -104,8 +105,10 @@ async def test_the_current_question_comes_first_then_the_unanswered_then_the_que
 
 
 async def test_each_entry_carries_the_full_current_text_domain_dates_and_waiting_since():
+    # Reviewer edit (fact profile PR 13): the entry carries the fact's profile domain under `primary_domain` (the old
+    # `domain` key is gone); the fact is profiled so the stored registry key is what the entry shows.
     world = ReviewWorld()
-    fact = await _stale(world, TEXT_TEA)
+    fact = await _stale(world, TEXT_TEA, primary_domain=Domain.FOOD)
     key = NOW - timedelta(days=12)
     await _ask(world, fact, "q1", queue_key=key)
 
@@ -113,7 +116,7 @@ async def test_each_entry_carries_the_full_current_text_domain_dates_and_waiting
 
     [entry] = body["questions"]
     assert entry["text"] == TEXT_TEA
-    assert entry["domain"] == world.docs[fact]["domain"]
+    assert entry["primary_domain"] == world.docs[fact]["primary_domain"] == Domain.FOOD and "domain" not in entry
     assert entry["reported_date"] == world.docs[fact]["reported_date"].isoformat()
     assert entry["waiting_since"] == key.isoformat()
     assert entry["asked_at"] is None
@@ -152,7 +155,8 @@ async def test_a_fact_that_is_gone_shows_the_text_the_question_quoted():
     status, body = await _queue(world)
 
     assert status == 200 and body["questions"][0]["text"] == TEXT_TEA
-    assert body["questions"][0]["domain"] is None and body["questions"][0]["reported_date"] is None
+    # Reviewer edit (fact profile PR 13): the domain is the profile's `primary_domain` (the old `domain` key is gone).
+    assert body["questions"][0]["primary_domain"] is None and body["questions"][0]["reported_date"] is None
 
 
 async def test_a_closed_question_is_not_listed():

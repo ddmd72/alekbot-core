@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.entities import (
-    ContextPriority, FactDomain, FactEntity, FactState, FactType, FactVisibility, TemporalClass)
+    ContextPriority, FactEntity, FactState, FactType, FactVisibility, TemporalClass)
 from src.domain.fact_embedding import fact_embedding_texts
 from src.domain.fact_lifecycle import IN_PLACE_FIELDS, lifecycle_fields
 from src.domain.fact_update import ParsedFactUpdate, parse_fact_update
@@ -20,8 +20,7 @@ VECTORS = {"vector": [0.1, 0.2], "tags_vector": [0.3, 0.4], "metadata_vector": [
 def current_fact(**overrides):
     base = dict(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="mother is Maria",
-        tags=["family", "mother", "consolidated"], type=FactType.PRINCIPLE, metadata={"name": "Maria"},
-        domain=FactDomain.NETWORK, temporal_class=TemporalClass.STABLE, context_priority=ContextPriority.HIGH,
+        tags=["family", "mother", "consolidated"], type=FactType.PRINCIPLE, metadata={"name": "Maria"}, temporal_class=TemporalClass.STABLE, context_priority=ContextPriority.HIGH,
         ttl_days=30, expires_at=CREATED + timedelta(days=30), version=3, replaces_fact_id="f0", context="at lunch",
         reported_date=CREATED, created_at=CREATED, valid_from=VALID_FROM, last_updated=VALID_FROM,
         visibility=FactVisibility.USER_PRIVATE, **VECTORS)
@@ -139,10 +138,13 @@ def test_the_version_entity_follows_the_design():
     assert version.reported_date == old.reported_date == CREATED
 
 
+# Reviewer edit (fact profile PR 13): the old `domain` is gone; the classification copied is the `directive` flag, set on
+# the old document so a copy that drops it shows.
 def test_the_version_copies_the_identity_and_classification_of_the_old_document():
-    old = current_fact()
+    old = current_fact(directive=True)
     version = plan({"content": "mother is Mariia"}, old).version_fact
-    for field in ("created_at", "lineage_id", "account_id", "created_by_user_id", "domain", "context_priority", "type",
+    assert old.directive is True
+    for field in ("created_at", "lineage_id", "account_id", "created_by_user_id", "directive", "context_priority", "type",
                   "context", "visibility", "ttl_days", "expires_at", "temporal_class"):
         assert getattr(version, field) == getattr(old, field), field
 

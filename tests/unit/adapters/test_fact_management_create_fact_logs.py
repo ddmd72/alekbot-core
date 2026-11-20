@@ -69,7 +69,7 @@ async def test_search_existing_facts_logs_no_query_keyword_or_fact_text(caplog):
     store = FactStore()
     fact = EnrichedFact(
         fact_id="fact-12345678", content="Maria lives at 12 Oak Street", relevance_score=0.9, source="text",
-        fact_type="event", domain="biographical", temporal_class="stable", state="current",
+        fact_type="event", temporal_class="stable", state="current",
         context_priority="medium", tags=[], metadata={}, reported_date=None, version=1,
     )
     store.adapter._search_enrichment.enrich_context.return_value = SimpleNamespace(facts=[fact])

@@ -23,7 +23,7 @@ import pytest
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents.core.router_agent import RouterAgent, create_router_agent
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
-from src.domain.entities import FactDomain, FactEntity
+from src.domain.entities import FactEntity
 from src.domain.fact_query import FactQuery
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig
@@ -230,7 +230,7 @@ async def test_a_chat_turn_s_enriched_fact_reaches_smart_after_the_cache_boundar
     the static facts moves it before the boundary; dropping `task_complexity` leaves `scripted-model`."""
     s = await seam(monkeypatch, envelope("Your blood type is A Rh+.", "Told the user their blood type."),
                    router_script=[triage("topic")])
-    await seed_fact(s.store.repo, FACT, account=ACCOUNT, created_by_user_id=USER, domain=FactDomain.HEALTH)
+    await seed_fact(s.store.repo, FACT, account=ACCOUNT, created_by_user_id=USER)
     chat = ChatChannel(*OTHER_SLACK)
 
     await s.world.chat_handler().handle_message(slack_turn(QUESTION), chat)
@@ -253,7 +253,7 @@ async def test_a_chat_turn_that_needs_no_search_carries_no_enriched_fact(monkeyp
     in Smart's prompt. Makes the enrichment test non-vacuous: the fact reaches the prompt only through enrichment."""
     s = await seam(monkeypatch, envelope("I do not know your blood type.", "Did not know the blood type."),
                    router_script=[triage("none")])
-    await seed_fact(s.store.repo, FACT, account=ACCOUNT, created_by_user_id=USER, domain=FactDomain.HEALTH)
+    await seed_fact(s.store.repo, FACT, account=ACCOUNT, created_by_user_id=USER)
     chat = ChatChannel(*OTHER_SLACK)
 
     await s.world.chat_handler().handle_message(slack_turn(QUESTION), chat)

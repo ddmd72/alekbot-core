@@ -68,15 +68,6 @@ async def test_vector_search_carries_the_decision_and_the_view_reads_it_back(sto
     assert decision(facts["undecided"], LISBON) == (None, None)
 
 
-async def test_the_domain_channel_alone_carries_the_decision_too(store, service):
-    await seed_decisions(store)
-    with RequestContext(user_id=USER, account_id=ACC):
-        context = await service.enrich_context([], "", "", relevant_domains=["health"], skip_semantic_dedup=True)
-    facts = {f.content: f for f in context.facts}
-    assert {f.source for f in facts.values()} == {"domain_direct"}
-    assert facts["dated"].expiry_kind is ExpiryKind.DATE and facts["dated"].expires_at == DATE_DUE
-    assert decision(facts["horizon"], LISBON) == ({"kind": "horizon", "days": 30}, "2026-01-31")
-
 
 async def test_expires_at_is_an_aware_utc_datetime(store, service):
     await seed_decisions(store)

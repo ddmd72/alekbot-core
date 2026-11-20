@@ -3,7 +3,7 @@
 from datetime import datetime, time, timedelta
 from typing import AbstractSet, Any, Callable, Dict, Final, List, Mapping, Optional, Protocol, Sequence, Tuple, assert_never
 
-from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
+from .entities import ExpiryKind, FactEntity, FactState, FactType
 from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError, InPlaceFieldRefused
 from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry
 from .local_time import local_date, local_moment, zone_or_utc
@@ -327,25 +327,16 @@ def _min_horizon_days(reported_date: datetime, now: datetime) -> int:
     return max(1, (now + 2 * _DAY - local_moment(reported_date, "UTC")) // _DAY + 1)
 
 
-# The stored marker of a standing directive (FACT_PROFILE_RFC §6 row 15): the consolidator's old `domain` value. A
-# repository read that selects directives filters on it; `is_directive` reads it from a fact. PR 13 moves both to the
-# consolidator's directive flag together.
-DIRECTIVE_DOMAIN: Final[str] = FactDomain.AGENT_DIRECTIVE.value
-
-
-def _directive_marker(domain: Any) -> bool:
-    return bool(domain == DIRECTIVE_DOMAIN)
-
-
 def is_directive(fact: FactEntity | Mapping[str, Any]) -> bool:
-    """A standing directive (the owner's order to the assistant). The one place that decides it; reads a fact or the
-    dict a fact is cached as (the biographical cache)."""
-    return _directive_marker(fact.get("domain") if isinstance(fact, Mapping) else fact.domain)
+    """A standing directive (the owner's order to the assistant): the consolidator's stored `directive` flag
+    (FACT_PROFILE_RFC §6 row 15). The one place that decides it; reads a fact or the dict a fact is cached as (the
+    biographical cache). A repository read of directives filters on the same flag (`directive_only`)."""
+    return (fact.get("directive") if isinstance(fact, Mapping) else fact.directive) is True
 
 
-def expiry_pinned(domain: Optional[FactDomain], type: FactType, tags: Sequence[str]) -> bool:
+def expiry_pinned(directive: bool, type: FactType, tags: Sequence[str]) -> bool:
     """Directives, principles and mindset facts take `none` only: their lifecycle stays with Stage 2b."""
-    return _directive_marker(domain) or type == FactType.PRINCIPLE or "mindset" in {t.lower() for t in tags}
+    return directive is True or type == FactType.PRINCIPLE or "mindset" in {t.lower() for t in tags}
 
 
 def check_pin(expiry: Optional[Expiry], pinned: bool) -> Expiry:

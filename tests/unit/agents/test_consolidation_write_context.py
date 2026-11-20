@@ -19,7 +19,6 @@ from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.email import IndexedEmail
 from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER, SETTLED_FOR_MEMORY
-from src.domain.entities import FactDomain
 from src.domain.fact_write_context import as_utc
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.request_context import RequestContext
@@ -228,7 +227,7 @@ async def test_stage2a_ignores_a_model_date_and_honours_derived_from(store):
 async def test_every_pass_writes_under_its_own_actor_and_the_backstop_says_why(store):
     cap = ConsolidationAgent.DIRECTIVE_HARD_CAP
     for i in range(cap + 3):                                    # two are archived by the passes, one is left over the cap
-        put_raw(store, f"d-{i:02d}", f"rule {i:02d}", entity={"domain": FactDomain.AGENT_DIRECTIVE})
+        put_raw(store, f"d-{i:02d}", f"rule {i:02d}", entity={"directive": True})
     put_raw(store, "plain", "plain fact")
     done: set = set()
 

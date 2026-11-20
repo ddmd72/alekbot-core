@@ -6,7 +6,7 @@ fake that records what it was asked; its own search is tested with the agent.
 
 import json
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -27,11 +27,12 @@ _RESOURCE_URI = "https://mcp.example.test/mcp"
 _NO_QUERIES = "No search phrases supplied. Pass one to four English phrases as queries, most important first."
 
 
-def _fact(content: str, *, domain: Optional[str] = None, primary: Optional[str] = None,
-          points: Optional[list] = None, account: str = "acc-1") -> FactEntity:
+def _fact(content: str, *, primary: Optional[str] = None, points: Optional[list] = None, account: str = "acc-1",
+          **stored: Any) -> FactEntity:
+    """`stored` holds extra keys of the stored document (e.g. the old `domain`), loaded as a stored document is."""
     return FactEntity(
         id=f"f-{abs(hash(content)) % 10_000}", account_id=account, created_by_user_id="user-1", lineage_id="l",
-        text=content, type=FactType.EVENT, domain=domain, primary_domain=primary, time_points=points,
+        text=content, type=FactType.EVENT, primary_domain=primary, time_points=points, **stored,
     )
 
 
@@ -193,12 +194,15 @@ class TestResult:
         )
         assert "## " not in out
 
-    async def test_a_fact_without_a_primary_domain_falls_back_to_its_old_domain_then_general(self):
+    async def test_a_fact_without_a_primary_domain_is_general_even_with_an_old_domain_stored(self):
+        # Reviewer edit (fact profile PR 13): was ..._falls_back_to_its_old_domain_then_general; the connector's fallback
+        # to the old domain is gone, so a fact still carrying one in its document shows as general like any unprofiled
+        # fact.
         facts = [_fact("Alex owns a 2015 Skoda Fabia", domain="possession"), _fact("Car service on 2026-11-05")]
         tool, _, _, _ = _setup(facts)
         out = await tool.run({"queries": ["car"]}, context=_ctx())
         blocks = out.split("\n\n", 1)[1].split("\n---\n")
-        assert [b.splitlines()[0].split(" | ")[0] for b in blocks] == ["possession", "general"]
+        assert [b.splitlines()[0].split(" | ")[0] for b in blocks] == ["general", "general"]
         assert [b.splitlines()[1] for b in blocks] == ["Alex owns a 2015 Skoda Fabia", "Car service on 2026-11-05"]
         assert "score" not in out
 

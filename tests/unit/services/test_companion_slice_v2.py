@@ -16,7 +16,7 @@ import pytest
 
 from src.composition.companion_setup import build_companions
 from src.config.environment import EnvironmentConfig
-from src.domain.entities import FactDomain, FactEntity, FactType
+from src.domain.entities import FactEntity, FactType
 from src.domain.fact_domains import Domain
 from src.domain.fact_lifecycle import is_directive
 from src.domain.fact_query import FactQuery
@@ -87,11 +87,11 @@ async def _slice(search: FactSearchPort, phrases: List[str], domains=None, limit
 async def test_directives_are_the_facts_the_predicate_accepts():
     _, repo, _ = make_fact_world()
     stored = [
-        make_fact("suggest only vegetarian recipes", domain=FactDomain.AGENT_DIRECTIVE),
-        make_fact("answer in English", domain=FactDomain.AGENT_DIRECTIVE, age_days=1),
-        make_fact("plays tennis on Sundays", domain=FactDomain.PREFERENCE, type=FactType.PRINCIPLE),
-        make_fact("morning yoga 30 min", domain=FactDomain.PREFERENCE, tags=["mindset"]),
-        make_fact("suggest only vegetarian recipes (another account)", domain=FactDomain.AGENT_DIRECTIVE, account=OTHER),
+        make_fact("suggest only vegetarian recipes", directive=True),
+        make_fact("answer in English", directive=True, age_days=1),
+        make_fact("plays tennis on Sundays", type=FactType.PRINCIPLE),
+        make_fact("morning yoga 30 min", tags=["mindset"]),
+        make_fact("suggest only vegetarian recipes (another account)", directive=True, account=OTHER),
     ]
     for fact in stored:
         await repo.add_fact(fact)
@@ -140,7 +140,7 @@ async def test_an_old_stored_session_domain_is_mapped_through_the_registry():
 async def test_an_old_enum_member_is_mapped_like_its_stored_value():
     search = FakeFactSearch([YOGA, BIRTH])
 
-    got = await _slice(search, ["who am I"], domains=[FactDomain.BIOGRAPHICAL])
+    got = await _slice(search, ["who am I"], domains=["biographical"])
 
     assert [f.text for f in got] == [BIRTH.text]
     assert search.queries[0].domains == (Domain.BIOGRAPHY,)

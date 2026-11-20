@@ -10,7 +10,7 @@ from .exceptions import FactExpiryError
 from .fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry
 from .fact_lifecycle import (
     archive_fields, check_pin, compute_expiry, expiry_pinned, lifecycle_event, lifecycle_fields, required_decision,
-    revival_fields, with_event,
+    is_directive, revival_fields, with_event,
 )
 from .fact_review_reasons import is_rewrite_reason, superseded_reason
 from .fact_review_rules import STAYS_STALE_REFUSAL, review_action
@@ -125,7 +125,7 @@ def _review_revive(
     reported: datetime, reason: str,
 ) -> Tuple[FactUpdatePlan, Optional[str]]:
     """Back to current in place, from stale or of a current fact waiting for an answer; the entry is written either way."""
-    pinned = expiry_pinned(current.domain, current.type, current.tags)
+    pinned = expiry_pinned(is_directive(current), current.type, current.tags)
     decision = required_decision(update.expiry, pinned, _missing_for_revive)
     expiry_fields, note = review_horizon(decision, reported, now, context)
     fields = dict(plan.fields)
@@ -151,7 +151,7 @@ def _review_version(
         raise ValueError(AS_HISTORY_SAME_TEXT)
     if not is_rewrite_reason(reason):
         raise ValueError(f"a rewrite's trail reason must be a rewrite reason, not {reason!r}")
-    pinned = expiry_pinned(version.domain, version.type, version.tags)
+    pinned = expiry_pinned(is_directive(version), version.type, version.tags)
     decision = required_decision(update.expiry, pinned, lambda: _missing_for_version(update))
     expiry_fields, note = review_horizon(decision, reported, now, context)
     entry = lifecycle_event(now, None, FactState.CURRENT, context.actor, reason)
@@ -177,7 +177,7 @@ def _finish_version(
     changes: Dict[str, Any] = {"reported_date": reported}
     note: Optional[str] = None
     if version.state is FactState.CURRENT:
-        pinned = expiry_pinned(version.domain, version.type, version.tags)
+        pinned = expiry_pinned(is_directive(version), version.type, version.tags)
         decision = required_decision(update.expiry, pinned, lambda: _missing_for_version(update))
         fields, note = decide_expiry(decision, reported, now, context)
         changes.update(fields)
@@ -201,7 +201,7 @@ def _finish_in_place(
         entry = lifecycle_event(now, current.state, update.state, context.actor, _closing_reason(update, context, reason))
         fields["lifecycle_events"] = with_event(current.lifecycle_events, entry)
     elif update.expiry is not None:
-        decision = check_pin(update.expiry, expiry_pinned(current.domain, current.type, current.tags))
+        decision = check_pin(update.expiry, expiry_pinned(is_directive(current), current.type, current.tags))
         decided, note = decide_expiry(decision, reported, now, context)
         fields.update(decided)
     elif reported != stored_reported:

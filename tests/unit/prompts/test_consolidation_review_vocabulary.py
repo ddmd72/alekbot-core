@@ -224,12 +224,16 @@ def _in_this_pass():
 def test_the_review_prompt_carries_taxonomys_conversation_rules_so_lifecycle_replaces_them():
     """B1: the review renders TAXONOMY, whose expiry lines are for the conversation passes; LIFECYCLE says what replaces
     them in this pass."""
+    # Reviewer edit (fact profile PR 13, owner decision 4): the date rule no longer discards a past plan for its date; a
+    # past plan that took place is an event, the rest is rewritten as history. LIFECYCLE names the rule it replaces so.
     for conversation_rule in ("N counts from reported_date", "A horizon counts from reported_date, not from Today",
-                              "DISCARD it if it no longer matters, or rewrite it as history"):
+                              "A past plan that took place is an event",
+                              "are rewritten as history (past tense, the outcome if known)"):
         assert conversation_rule in REVIEW_PROMPT, conversation_rule
+    assert "DISCARD it if it no longer matters" not in REVIEW_PROMPT
     line = _in_this_pass()
     assert line.startswith("In this pass two taxonomy lines are replaced: the horizon line that counts N from "
-                           "reported_date, and the date rule that discards a past plan or rewrites it as history. ")
+                           "reported_date, and the date rule for a plan or validity whose date has passed. ")
     assert "a horizon counts from now, not from reported_date" in line
     # P2 revised (P2-7 in_this_pass): a passed date is rewritten as history, never archived
     assert "a fact whose date has passed is rewritten as history (as_history), never archived or discarded" in line

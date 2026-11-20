@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.domain import fact_domains
-from src.domain.entities import FactDomain, FactEntity, FactState, FactType
+from src.domain.entities import FactEntity, FactState, FactType
 from src.domain.fact_profile_fingerprint import (
     ABANDON_AFTER_FAILURES, DERIVE_VERSION, ProfileStatus, build_profiler_user_message, classify_profile,
     failure_fields, metadata_lines, profile_derivation, profile_fingerprint, registry_digest,
@@ -100,7 +100,7 @@ def test_a_profile_of_the_current_text_and_derivation_is_fresh():
 
 
 def test_a_tags_lifecycle_or_old_domain_change_keeps_it_fresh():
-    changed = profiled().model_copy(update=dict(tags=["travel"], state=FactState.STALE, domain=FactDomain.LEGAL,
+    changed = profiled().model_copy(update=dict(tags=["travel"], state=FactState.STALE,
                                                 reported_date=datetime(2026, 1, 1, tzinfo=timezone.utc)))
     assert classify_profile(changed, DERIVATION) is ProfileStatus.FRESH
 

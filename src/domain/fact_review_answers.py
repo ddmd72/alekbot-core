@@ -133,7 +133,7 @@ def ended_text(content: str, at: datetime, tz: str) -> str:
 def history_fact(old: FactEntity, text: str, at: datetime, tz: str) -> NewFactAttributes:
     """The attributes of the history fact created beside the archive of `old` (S4-D27; `text` is `ended_text`'s or the
     review's sentence): `text` as content, expiry `none`, state current, `reported_date` `at` (when it was said),
-    temporal class stable, context priority archival, and `old`'s domain, type and tags. No metadata and no context:
+    temporal class stable, context priority archival, and `old`'s directive flag, type and tags. No metadata and no context:
     those described what `old` claimed while it held. Its lineage is new (the builder's); its trail entry is
     `history_trail`'s.
 
@@ -146,7 +146,7 @@ def history_fact(old: FactEntity, text: str, at: datetime, tz: str) -> NewFactAt
         tags=list(old.tags),
         type=old.type,
         metadata={},
-        domain=old.domain,
+        directive=old.directive,
         # S4-D27: a lasting record; archival keeps it out of the baseline cache, and it stays searchable.
         temporal_class=TemporalClass.STABLE,
         state=FactState.CURRENT,

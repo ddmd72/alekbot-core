@@ -6,16 +6,12 @@ from src.services.search_enrichment_service import SearchEnrichmentService
 
 
 class FakeRepository:
-    def __init__(self, results_map=None, domain_results=None):
+    def __init__(self, results_map=None):
         self._results_map = results_map or {}
-        self._domain_results = domain_results or []
 
     async def search_facts(self, query_vector, vector_field=None, limit=10, **kwargs):
         key = query_vector[0]
         return self._results_map.get(key, [])[:limit]
-
-    async def search_facts_by_domain(self, domains, limit=10, **kwargs):
-        return self._domain_results[:limit]
 
 
 class FakeEmbeddingService:
@@ -38,9 +34,9 @@ def _make_fact(fact_id: str, text: str) -> FactEntity:
     )
 
 
-def _make_service(results_map=None, domain_results=None):
+def _make_service(results_map=None):
     return SearchEnrichmentService(
-        repository=FakeRepository(results_map=results_map, domain_results=domain_results),
+        repository=FakeRepository(results_map=results_map),
         embedding_service=FakeEmbeddingService(),
         keyword_limit=10,
         phrase_one_limit=10,
@@ -146,20 +142,6 @@ class TestEnrichContextBranches:
         )
         assert ctx.facts == []
         assert ctx.total_sources == 0
-
-    async def test_relevant_domains_triggers_domain_search(self):
-        """relevant_domains parameter causes _search_by_domain to be called."""
-        domain_fact = _make_fact("d1", "domain fact")
-        svc = _make_service(domain_results=[domain_fact])
-        ctx = await svc.enrich_context(
-            keywords=[],
-            search_phrase_1="",
-            search_phrase_2="",
-            relevant_domains=["health"],
-            skip_semantic_dedup=True,
-        )
-        fact_ids = {f.fact_id for f in ctx.facts}
-        assert "d1" in fact_ids
 
     async def test_sequential_mode_produces_same_results(self):
         """sequential=True executes queries one-by-one, result identical to parallel."""
@@ -344,26 +326,3 @@ class TestSearchByVectorField:
         result = await svc._search_by_vector_field([1.0, 0.0], "vector", 5, "phrase1_text")
         assert result == []
 
-
-# ---------------------------------------------------------------------------
-# _search_by_domain()
-# ---------------------------------------------------------------------------
-
-class TestSearchByDomain:
-
-    async def test_success_returns_enriched_facts(self):
-        facts = [_make_fact("d1", "domain result")]
-        svc = _make_service(domain_results=facts)
-        result = await svc._search_by_domain(["health"], 10, "domain_direct")
-        assert len(result) == 1
-        assert result[0].fact_id == "d1"
-        assert result[0].source == "domain_direct"
-        assert result[0].relevance_score == 1.0
-
-    async def test_repo_exception_returns_empty(self):
-        """Repository failure → returns [] gracefully."""
-        from unittest.mock import AsyncMock
-        svc = _make_service()
-        svc._repo.search_facts_by_domain = AsyncMock(side_effect=Exception("domain search failed"))
-        result = await svc._search_by_domain(["health"], 10, "domain_direct")
-        assert result == []

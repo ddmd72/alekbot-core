@@ -22,7 +22,6 @@ class SearchEnrichmentPort(ABC):
         keywords: List[str],
         search_phrase_1: str,
         search_phrase_2: str,
-        relevant_domains: Optional[List[str]] = None,
         biographical_facts: Optional[List[Union[FactEntity, Dict[str, Any]]]] = None,
         limits: Optional[SearchLimits] = None,
         dedup_threshold: float = 0.98,

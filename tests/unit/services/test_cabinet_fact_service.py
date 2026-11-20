@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.adapters.firestore_repo import FirestoreFactRepository
-from src.domain.entities import ContextPriority, FactDomain, FactState
+from src.domain.entities import ContextPriority, FactState
 from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
@@ -38,7 +38,7 @@ def world():
 
 
 def _bio(name: str, **over):
-    return make_fact(name, domain=FactDomain.BIOGRAPHICAL, context_priority=ContextPriority.HIGH, **over)
+    return make_fact(name, context_priority=ContextPriority.HIGH, **over)
 
 
 async def _seed(repo, *facts):

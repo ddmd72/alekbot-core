@@ -15,7 +15,7 @@ S5's classify applied 2026-10-27; P2 revised, "a fact whose date passed becomes 
 
 | Question | Read |
 |---|---|
-| What is in memory; what a fact holds; what `domain`, `temporal_class`, `state`, `context_priority` mean | §2 |
+| What is in memory; what a fact holds; what `directive`, `temporal_class`, `state`, `context_priority` mean | §2 |
 | What a fact's retrieval profile fields are, who writes them, and where the domain registry lives | §2.1 |
 | What `is_current`, `valid_to`, `lineage_id`, `version`, `superseded_by` mean today; what an update or a merge does to them | §2.3, §2.4 |
 | Why an update gave the fact a new id; whether the old wording is kept and how to look at it; why an old id still works | §2.4, §9.3 |
@@ -144,10 +144,10 @@ like any other message.
 | `tags` | keywords; `mindset` makes the fact a principle (§4.1); `consolidated` is added to every fact, `anchor` to principles (`fact_write_service.py:53-56`); an update keeps both (§2.4) |
 | `type` | `state`, `event`, `principle`, `system`, `alert` (`entities.py:7-12`); the consolidator does not set it, so it defaults to `event` (`fact_management_adapter.py:207`) |
 | `metadata` | structured values (numbers, dates) |
-| `domain`, `temporal_class`, `state`, `context_priority` | the four axes (§2.2) |
+| `directive`, `temporal_class`, `state`, `context_priority` | the consolidator's directive decision and three axes (§2.2); a document written before `FACT_PROFILE_RFC.md` PR 13 also carries the old 16-value `domain`, which no code reads |
 | `context` | a short label for why it was recorded; shown by `search_memory` |
 | `reported_date` | when the owner last stated the fact; code owns it per pass (§2.7); shown by `search_memory` as `reported: YYYY-MM-DD`, and to the consolidator as an ISO time with the owner's offset |
-| `created_at` | ordering of the baseline and the domain channel; a version copies it from the document it replaces, so it is the fact's first mention |
+| `created_at` | ordering of the baseline and the Cabinet lists; a version copies it from the document it replaces, so it is the fact's first mention |
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
 | `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
@@ -157,21 +157,21 @@ like any other message.
 
 The profile is made by `FactProfilerAgent` (`src/agents/fact_profiler_agent.py`, `FACT_PROFILE_RFC.md` §4): one structured Claude call per fact, run through `FactProfilerPort` / `FactProfilerRunner`; `FactProfileService` runs it inside the two leased runs (§3 step 9b).
 
-The 27 domains live in one registry, `src/domain/fact_domains.py`, the single source of their keys, labels and renderers; the 16-value `domain` field of §2.2 stays until the last PR of the fact-profile series.
+The 27 domains live in one registry, `src/domain/fact_domains.py`, the single source of their keys, labels and renderers. The consolidator does not classify subjects: since `FACT_PROFILE_RFC.md` PR 13 it decides only whether a fact is a directive (§2.2).
 
 The adapter also stores `context_priority_rank` (critical 1 … archival 5) next to the entity for ordering
 (`firestore_repo.py:38-44`, written by `_to_document`, `:176-184`, for every new document).
 
-### 2.2 The four axes
+### 2.2 The directive decision and the three axes
 
 | Axis | Values (`entities.py`) | What code does with it |
 |---|---|---|
-| `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | standing directives (`agent_directive`, kept out of the baseline fill), Router domain channel. As the directive marker it is read in one place: `is_directive(fact)` and `DIRECTIVE_DOMAIN`, the condition of every read that selects directives, in `fact_lifecycle.py` (§4.2) |
+| `directive` | `true` or `false` (default `false`); the consolidator's one decision about what a fact is | a standing directive: in the rulebook, kept out of the baseline fill, its expiry pinned to `none`. Read in one place, `is_directive(fact)` in `fact_lifecycle.py`; every read that selects directives filters `directive == true` (`directive_only`) (§4.2) |
 | `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` (`:38-43`) | none; shown to the consolidator. Since S3 it is only a default for the expiry decision when no row of the kinds table applies (§2.7); no code reads it |
 | `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:232,286,400,471,661,899`). Only the janitor sets `stale` (§5.5); the model is refused it everywhere (§2.7). A fact whose question waits for the owner is `current` (§5.6) |
 | `context_priority` | `critical`, `high`, `medium`, `low`, `archival` (`:55-61`) | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`firestore_repo.py:479`) |
 
-The model writes these in upper case; `normalize_fact_taxonomy` lowercases them before the enums parse
+The model writes the three axes in upper case; `normalize_fact_taxonomy` lowercases them before the enums parse
 (`entities.py:91-104`) and reads the retired priority `historical` as `archival` (RFC D11; the S3 tokens say `ARCHIVAL`).
 A value outside the enum fails the tool call (§6). In the 30 days before 2026-10-21 none of 87 written priorities was
 `historical` (`decisions/fact_s1_defects.md`); the vocabulary tests are in §9.7.
@@ -209,8 +209,9 @@ the live one (a lineage whose last document was merged away has none). Two kinds
   (`fact_update_plan.py:88-98`, `firestore_repo.py:589-603`; only the keys of `IN_PLACE_FIELDS`,
   `fact_lifecycle.py:41-47`, can be written this way). Re-applying the stored state leaves `valid_to` alone. A state change
   together with a content change goes into the new version.
-- **`domain` and `context_priority` cannot be changed by an update**: the tool has no such fields. A different domain
-  means a new fact (Stage 2b demotes a directive by creating a `preference` fact and invalidating the directive).
+- **`directive` and `context_priority` cannot be changed by an update**: the tool has no such fields. A different
+  directive decision means a new fact (Stage 2b demotes a directive by creating a fact with `directive: false` and
+  invalidating the directive).
 - **Retiring a fact for another one needs the other one.** `state=SUPERSEDED` needs `superseded_by`, the id of the
   replacing fact (resolved forward like any id, and it must be a different fact). Without it, or together with a
   content key, the call is refused (`fact_update.py:32-71`).
@@ -559,13 +560,13 @@ The conversation sits in the system prompt as lines `User (2026-10-22 Thu 12:00 
 time is rendered in the **owner's zone** with year and weekday, by the formatter Smart's own message stamps use (§2.7), and an
 unreadable time renders empty. The user message is "Begin deliberate consolidation." plus the line
 `Today: <date> (<zone>, the owner's timezone).`, which every pass's user message carries (`consolidation_agent.py`,
-`_run_consolidation_loop`). The token's 8 steps: extract candidates → classify on the four axes → **search
+`_run_consolidation_loop`). The token's 8 steps: extract candidates → decide `directive` and classify on the three axes → **search
 once per candidate** → analyse → decide → execute → verify → report (`CONSOLIDATION_COGNITIVE_PROCESS.groovy`).
 
 | Tool | What the code does (`consolidation_agent.py:1200-1318`, adapter `fact_management_adapter.py`) |
 |---|---|
-| `search_existing_facts(keywords, primary_query, alternative_query, limit=20)` | `enrich_context` with 6 vector channels (phrase 2 = alternative, else primary), per-channel limits 7/10/10, total `limit`, **no semantic dedup** (`fact_management_adapter.py:85-96`); returns id, text, domain, temporal class, state, priority, tags, metadata, reported date (ISO, owner's offset), `expiry`, `due`, version. `similarity` is **null** for every vector hit (§4.3) |
-| `create_fact(content, fact_attributes)` | requires `domain`, `temporal_class`, `context_priority` and `expiry` (pinned facts and a closing state excepted, §2.7) (`fact_management_adapter.py:159-167`); state defaults to `current`, priority to `medium`; optional `derived_from` on cleanup passes; written **without deduplication** (`skip_deduplication=True`, `fact_management_adapter.py:174-179`) |
+| `search_existing_facts(keywords, primary_query, alternative_query, limit=20)` | `enrich_context` with 6 vector channels (phrase 2 = alternative, else primary), per-channel limits 7/10/10, total `limit`, **no semantic dedup** (`fact_management_adapter.py:85-96`); returns id, text, `primary_domain` (the profile's, null while unprofiled), `directive`, temporal class, state, priority, tags, metadata, reported date (ISO, owner's offset), `expiry`, `due`, version. `similarity` is **null** for every vector hit (§4.3) |
+| `create_fact(content, fact_attributes)` | requires `temporal_class`, `context_priority` and `expiry`; `directive` is required by the tool schema and read as `false` when missing (pinned facts and a closing state excepted, §2.7) (`fact_management_adapter.py:159-167`); state defaults to `current`, priority to `medium`; optional `derived_from` on cleanup passes; written **without deduplication** (`skip_deduplication=True`, `fact_management_adapter.py:174-179`) |
 | `update_fact(fact_id, updates)` | a content change writes a new version (and needs `expiry`) and returns its id; a state, date or `expiry`-only change edits the document in place; a stale id is followed forward; `superseded_by` is required with state `superseded`; `stale` is refused (§2.4, §2.7, `fact_management_adapter.py:218-302`) |
 | `merge_facts(fact_ids, merged_content, fact_attributes)` | one transaction: the merged fact (new lineage, `expiry` required) is created and every source closed with `superseded_by` (§2.4, `fact_management_adapter.py:347-439`) |
 | `count_words(text)` | word count against the 40-word fact limit (`consolidation_agent.py:1286-1297`) |
@@ -588,18 +589,20 @@ model search first and DISCARD (no tool call) what is already known. The number-
 - `Trivial_Exclusions` (TAXONOMY): no logistics, outbursts, chitchat, meta talk, UI commands, unanswered questions,
   file operations, and the **RAG echo trap** — the assistant recalls a fact and the user only confirms it: discard.
   Test: "relevant in 30+ days?"
-- Conflict rules: time series (health, finance, skill) update with history in the text; core identity
-  (biographical, preference) needs explicit correction; negations → `update_fact` to `invalidated` ("never true") or
+- Conflict rules: a value measured or counted over time updates with history in the text; who the owner is and what
+  he holds to (identity, origin, values, lasting tastes) needs explicit correction; negations → `update_fact` to `invalidated` ("never true") or
   `archived` ("no longer true").
 - `Size_Triggers_Review`: an existing fact over 40 words is split before an update (create the atoms, then mark the old one
   `superseded` **with `superseded_by`**; the S3 tokens name the successor in every place that retires a fact this way, and a
   bare `SUPERSEDED` call is still refused, §6).
-- `Directive_Maintenance` (TAXONOMY): `agent_directive` only when the rule is about **how the agent behaves** AND is
-  **in force across most requests**; a conditional agent rule becomes `preference` (§4.2).
+- `Directive_Maintenance` (TAXONOMY): `directive: true` only when the rule is about **how the agent behaves** AND is
+  **in force across most requests**; a conditional agent rule becomes an ordinary fact (`directive: false`) (§4.2).
 - **Expiry and dating (S3, TAXONOMY `expiry`, TOOLS, EXAMPLES, COGNITIVE_PROCESS):** the kinds table and its date rules
   (compare every date with `Today`, not with the message time; a range → its last day, a month → its last day, a year → `none`
   unless a deadline or validity end in that year is stated, then Dec 31; a horizon counts from `reported_date`, so
-  `reported_date + N` must end at least two days after Today, else a larger N, history or DISCARD); the extension rule for an
+  `reported_date + N` must end at least two days after Today, else a larger N, history or DISCARD; a plan whose date has
+  passed and that took place is kept as an event on the usual significance grounds, never dropped for its date, and one
+  that did not take place or whose outcome is unknown is rewritten as history); the extension rule for an
   existing fact said again (§2.7); `reported_date` as the message's time in ISO with its offset; every create, merge and
   content-update example carries an `expiry`. The owner's rule behind them: when unsure, keep the fact.
 
@@ -630,9 +633,9 @@ each part of a split fact gets `derived_from: <the split fact's id>`. This is a 
 ### Step 7 — Stage 2b: the directive rulebook (every run)
 
 Unconditional, even when Stage 1 did nothing (`consolidation_agent.py:836`); a no-op only when the rulebook is
-empty. It reads up to 40 current non-archival `agent_directive` facts (`_review_directives`, `:846-893`) and sends the whole rulebook with the "STANDING DIRECTIVES REVIEW" message
+empty. It reads up to 40 current non-archival directives (`directive == true`, `_review_directives`, `:846-893`) and sends the whole rulebook with the "STANDING DIRECTIVES REVIEW" message
 (`_build_directive_review_message`, `:1081-1168`): one checklist line per record (`scope_ok`, `reminder_dup`, `unusable`), then per record DEMOTE
-(create a `preference` fact stating the condition + invalidate the directive), INVALIDATE, MERGE, or rewrite to the
+(create a fact with `directive: false` stating the condition + invalidate the directive), INVALIDATE, MERGE, or rewrite to the
 target form (imperative, English, terse, one rule), hard cap 15. The message names `fact_attributes={…}` in its DEMOTE and
 MERGE lines: a merge carries `expiry: {kind: "none"}` (directives are pinned), a demotion's `create_fact` carries an `expiry`
 decided from the rewritten preference and `derived_from` naming the directive (so it keeps the directive's date). Then the
@@ -869,8 +872,8 @@ the drive agents; DeepResearch passes no account id, so it gets none either (`de
 4. Facts tagged `mindset` become **principles** (up to 20; extras are dropped, not moved to facts); the rest are facts
    (`biographical_context_service.py:200-206`). Principles are carved out of the 65, not added to them
    (`biographical_context_service.py:162-206`).
-5. Directives are fetched separately: up to 15 current non-archival `agent_directive` facts (`biographical_context_service.py:156-160`).
-6. Each cached item carries only id, text, domain, `primary_domain`, `sensitivity`, tags, priority, created_at
+5. Directives are fetched separately: up to 15 current non-archival facts with `directive == true` (`biographical_context_service.py`).
+6. Each cached item carries only id, text, `directive`, `primary_domain`, `sensitivity`, tags, priority, created_at
    (`biographical_context_service.py`); the two profile fields are None while the fact is unprofiled.
 
 **At most**, an orchestrator prompt carries 65 facts and principles (of which ≤ 20 principles) + ≤ 15 directives + the
@@ -898,13 +901,13 @@ baseline (`smart_response_agent.py:435`, `quick_response_agent.py:187`, `router_
 
 ### 4.2 Standing directives
 
-`agent_directive` facts are the owner's standing orders to the agent, rendered verbatim as the last static block,
+Directives (facts with `directive: true`) are the owner's standing orders to the agent, rendered verbatim as the last static block,
 `standing_directives {}`, newest first (`biographical_formatter.py:87-98`, `prompt_assembly_service.py:477-483`).
 Every agent that gets the baseline gets them, unless it passes `include_directives=False` (the consolidator, Lelik and
 his summarizer, Tutor and its extractor, WebSearchLight, the drive model agents). Bounds: the rulebook is curated to 15
 by Stage 2b and its backstop; the cache holds at most 15 (`DEFAULT_DIRECTIVES_CACHE_LIMIT`, `settings.py:55`).
 
-**Why a directive disappeared**, in order of likelihood: Stage 2b demoted it to `preference` (a new fact exists, the
+**Why a directive disappeared**, in order of likelihood: Stage 2b demoted it (a new fact with `directive: false` exists, the
 directive is `invalidated`); Stage 2b invalidated it (reminder duplicate, unusable, superseded); Stage 2b merged it (a
 new fact with a new id; the sources are `superseded`); the backstop cut it (over 15, lowest priority, then oldest);
 its priority is `archival`; Stage 1 archived or invalidated it after the owner said to stop (a negation, §3 step 5);
@@ -915,10 +918,12 @@ A directive invalidated in the Cabinet leaves `standing_directives` from the nex
 cache at once (§5.2).
 
 **What makes a fact a directive** is decided in one place, `is_directive(fact)` (`src/domain/fact_lifecycle.py`; a fact
-or its cached dict): today the old `domain == agent_directive` marker, later the consolidator's directive flag
-(`FACT_PROFILE_RFC.md` §6 row 15, PR 13). The prompt builder's split, the baseline fill, the profile step and the
-companion call it; the reads that select directives (the baseline's directive list, Stage 2b and its backstop, the
-companion) filter on `DIRECTIVE_DOMAIN`, defined next to it, so both change together. The expiry pin (`expiry_pinned`,
+or its cached dict): the consolidator's `directive` flag, and nothing else (`FACT_PROFILE_RFC.md` §6 row 15). The
+prompt builder's split, the baseline fill, the profile step and the companion call it; the reads that select directives
+(the baseline's directive list, Stage 2b and its backstop, the companion) filter on the same flag
+(`get_active_facts_ordered(..., directive_only=True)`, index `account_id, state, directive, context_priority_rank,
+created_at`). A fact written before PR 13 is a directive only once the owner-run mark script has set its flag from the
+old `domain`. The expiry pin (`expiry_pinned`,
 §2.7) is wider: a directive, a principle or a `mindset` fact; principles and mindset facts are pinned but are not
 directives.
 
@@ -936,11 +941,10 @@ of this section describes `enrich_context`, the older multi-vector engine, which
 `SearchEnrichmentService.enrich_context` (`search_enrichment_service.py:42-249`):
 
 1. Embeds the non-empty inputs in one batch with `RETRIEVAL_QUERY` (`:113-129`).
-2. Runs up to 7 queries in parallel (`:131-179`), each restricted to `account_id` and `state == "current"`:
+2. Runs up to 6 vector queries in parallel, each restricted to `account_id` and `state == "current"`:
 
 | Channel | Input | Field | Limit (defaults) |
 |---|---|---|---|
-| `domain_direct` | `relevant_domains` (1–3) | Firestore `IN` on `domain`, newest first | keyword limit (10) |
 | `keyword_tags` | keywords joined | `tags_vector` | 10 |
 | `keyword_metadata` | keywords joined | `metadata_vector` | 7 |
 | `phrase1_text` | phrase 1 | `vector` | 10 |
@@ -958,8 +962,7 @@ of this section describes `enrich_context`, the older multi-vector engine, which
    numbers are never duplicates; a clearly longer, more detailed text is kept.
 5. Cut to the total limit; drop facts whose id is in the `biographical_facts` passed in (`search_enrichment_service.py:214-236`).
 
-Scores: Firestore returns no distance in this projection, so `relevance_score` is `None` for every vector hit (only
-the domain channel sets 1.0, `search_enrichment_service.py:397,452`). Ranking uses ranks, not scores. A process-wide semaphore caps parallel
+Scores: Firestore returns no distance in this projection, so `relevance_score` is `None` for every hit. Ranking uses ranks, not scores. A process-wide semaphore caps parallel
 `find_nearest` calls at 30 (`firestore_repo.py:50`). Since S3 the result (`EnrichedFact`) also carries `expiry_kind`,
 `ttl_days` and `expires_at` (the last as an ISO string, so the Router's context stays JSON-serialisable for Cloud Task
 payloads); only the consolidator's search dict renders them (§2.7), and Smart, `search_memory`, Lelik, the connector and the
@@ -1012,8 +1015,8 @@ Read routes (`src/web/user_cabinet_app.py`): all current facts; a paginated brow
 domain filter and a state filter, `current` (the default) or `stale`; a single-vector search over `vector` (50 results).
 They show text, domain, type and created date. **Domains come from the profile** (`FACT_PROFILE_RFC.md` §6 row 9): the
 filter is one registry key and lists the facts whose `domain_keys` hold it (a fact not yet profiled is in no domain;
-any other value is a 400); each fact's badge is the registry label of its `primary_domain`, the old `domain` value while
-it has none. The page takes the chips and labels from `GET /api/user/fact-domains?lang=<page language>`: every registry
+any other value is a 400); each fact's badge is the registry label of its `primary_domain`, none while
+it has none; a review question shows the same badge. The page takes the chips and labels from `GET /api/user/fact-domains?lang=<page language>`: every registry
 key in Cabinet order with its label in that language (English when it has none); it holds no domain list of its own. Since S4 the page has three views and a question list (§5.6):
 - **Current** (the browser as before).
 - **Waiting for review**: the stale facts (`state=stale`), each with its `stale_since`, read-only.
@@ -1509,7 +1512,7 @@ close-out (an abandoned-refusal alert, the expiry errors added to the account's 
 | `search_existing_facts` fails (embedding, Firestore) | the adapter catches everything and returns `[]` (`fact_management_adapter.py:136-138`), which the model reads as "no match" | a duplicate of an existing fact may be created | — | no |
 | a tool raises past the adapter | `{"error": …}` returned to the model (`consolidation_agent.py:1307-1312`); rarely reached, since create, update and merge catch their own errors and return `status: failed` | nothing of that call | — | the model may retry in a later turn |
 | `create_fact` missing a required attribute | `status: failed`, message names the fields (`fact_management_adapter.py:159-167`) | none | — | the model may retry |
-| bad value (an enum such as `domain`, `state`, `temporal_class`, `context_priority` (`HISTORICAL` is read as `ARCHIVAL`); a malformed date, `tags: null` or `[]`, empty `content`; `state=superseded` on a create or merge, `state=stale` on a create, merge or update; `superseded_by` missing, or given without `superseded`) | checked **before** any embedding or write; the `ValueError` is caught → `status: failed` with the message (`fact_management_adapter.py:192-198,244-250,372-374`; `new_fact_attributes.py:45-103`, `fact_update.py:32-71`) | none for that call | — | the model may retry |
+| bad value (an enum such as `state`, `temporal_class`, `context_priority`, or a `directive` that is not a boolean (`HISTORICAL` is read as `ARCHIVAL`); a malformed date, `tags: null` or `[]`, empty `content`; `state=superseded` on a create or merge, `state=stale` on a create, merge or update; `superseded_by` missing, or given without `superseded`) | checked **before** any embedding or write; the `ValueError` is caught → `status: failed` with the message (`fact_management_adapter.py:192-198,244-250,372-374`; `new_fact_attributes.py:45-103`, `fact_update.py:32-71`) | none for that call | — | the model may retry |
 | `create_fact`, `merge_facts` or a version-making `update_fact` with a missing, `null` or malformed `expiry` | `status: failed`, `refused: "expiry"`, the text names where `expiry` goes (`fact_attributes` / `updates`) and the three shapes, and ends "Nothing was written. Resend this call with a valid expiry before retiring any fact it replaces." Checked before any embedding or write (§2.7). A malformed merge leaves its sources current | none | — | the model resends; a refusal never answered is an abandoned refusal (🚨, §3.11) |
 | an `expiry` born due (past or today's `date`; on Stage 1 or email a horizon ending within a day) | as above plus `born_due: true`; on Stage 1 and email the text offers discard, rewrite as history (`none`), or a short or longer horizon, and it is counted as an expiry error, never as abandoned; on a cleanup pass a past date reads "do not drop the fact… rewrite as history or give a future date" (no discard) and an unanswered one is abandoned (🚨, §3.11) | none | — | the model resends, rewrites or (conversation passes only) discards |
 | a due horizon on a cleanup pass (Stage 2a, Stage 2b, backstop, cluster) | **not** refused: written with `expires_at` = now + 2 days and a `note` ("counted from … this horizon had already passed; the fact goes to review on …") | written | — | — |
@@ -1650,8 +1653,8 @@ consolidation run).
    and never asked twice.
 
 **A directive** ("always answer in bullet points").
-- Consolidated with its batch (above). Stage 1 classifies it: `agent_directive` only if it is about agent behaviour
-  and holds for most requests; otherwise a conditional `preference` reached by search.
+- Consolidated with its batch (above). Stage 1 decides it: `directive: true` only if it is about agent behaviour
+  and holds for most requests; otherwise an ordinary fact (`directive: false`) reached by search.
 - Stage 2b of the same run already sees it (it reads the rulebook after Stage 1) and may rewrite, merge or demote it.
 - It is in `standing_directives` from the next message after the run.
 
@@ -2009,7 +2012,7 @@ successor while the live consolidation prompts still tell the model to retire a 
 | File | Role |
 |---|---|
 | `src/domain/entities.py` | `FactEntity` (with `superseded_by`, `expiry_kind`, `stale_since`, `lifecycle_events`), the four enums and `ExpiryKind`, `normalize_fact_taxonomy` (`historical` → `archival`), `FACT_SYSTEM_TAGS` |
-| `src/domain/fact_lifecycle.py` | state → `is_current` / `valid_to`; forward resolution (`forward_step`), the accepted end states per caller, `IN_PLACE_FIELDS`, `closure_fields`; `compute_expiry`, `born_due`, `expiry_pinned` / `check_pin`, `lifecycle_event` / `with_event`; `is_directive` and `DIRECTIVE_DOMAIN`, the one directive rule (§4.2) |
+| `src/domain/fact_lifecycle.py` | state → `is_current` / `valid_to`; forward resolution (`forward_step`), the accepted end states per caller, `IN_PLACE_FIELDS`, `closure_fields`; `compute_expiry`, `born_due`, `expiry_pinned` / `check_pin`, `lifecycle_event` / `with_event`; `is_directive`, the one directive rule (§4.2) |
 | `src/domain/fact_update.py`, `src/domain/fact_update_plan.py` | `update_fact` arguments parsed and validated; the plan: version document or in-place fields |
 | `src/domain/fact_expiry.py` | the `expiry` argument: `Expiry`, `parse_expiry`, `expiry_view` (the stored decision as the model sends it), the refusal texts |
 | `src/domain/fact_write_context.py` | `FactWriteContext` (actor, owner's zone, span, who decides dates), `as_utc`, the `reported_date` rules per write |

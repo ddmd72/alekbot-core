@@ -44,7 +44,6 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         keywords: List[str],
         search_phrase_1: str,
         search_phrase_2: str,
-        relevant_domains: Optional[List[str]] = None,
         biographical_facts: Optional[List[Union[FactEntity, Dict]]] = None,
         limits: Optional[SearchLimits] = None,
         dedup_threshold: float = 0.98,
@@ -60,12 +59,6 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         - RRF (Reciprocal Rank Fusion) for result merging
         - Configurable limit via total_limit
 
-        Session 2026-02-17: Added domain-based direct query channel
-        - relevant_domains → direct Firestore query (not vector search)
-        - Uses existing index (account_id, domain, created_at)
-        - Returns ALL current facts in specified domains
-        - Total queries: up to 7 (1 domain + 6 vector)
-
         SESSION_27: Uses RequestContext for implicit account_id resolution.
         
         Session 2026-02-08: Added limits Override via SearchLimits VO.
@@ -79,7 +72,6 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             keywords: List of semantic lens keywords
             search_phrase_1: Primary search phrase
             search_phrase_2: Secondary search phrase
-            relevant_domains: Optional list of 1-3 domains for direct query (NEW)
             biographical_facts: Facts to deduplicate against
             limits: Optional limit overrides (SearchLimits)
             dedup_threshold: Similarity threshold for duplicate detection (default: 0.98)
@@ -97,7 +89,6 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             EnrichedContext with deduplicated facts
 
         Strategy:
-            - relevant_domains → direct Firestore IN query (precise, all facts in domain)
             - keywords → tags_vector (best for categories) + metadata_vector
             - phrase_1 → vector (text) + tags_vector
             - phrase_2 → vector (text) + metadata_vector
@@ -128,14 +119,8 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         phrase1_vector  = _vec.get(1) if search_phrase_1 else None
         phrase2_vector  = _vec.get(2) if search_phrase_2 else None
 
-        # Up to 7 parallel queries (1 domain + 6 vector)
+        # Up to 6 parallel vector queries
         search_tasks = []
-
-        # Session 2026-02-17: NEW Channel - Domain-based direct query
-        if relevant_domains:
-            search_tasks.append(
-                self._search_by_domain(relevant_domains, effective_limits.keyword_limit, "domain_direct")
-            )
 
         # Keywords → tags priority (domain nouns match best with tags)
         if keyword_vector:
@@ -359,45 +344,6 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         """
         from ..domain.rrf import apply_rrf_ranking
         return apply_rrf_ranking(query_results, key_fn=lambda f: f.fact_id, k=k)
-
-    async def _search_by_domain(
-        self,
-        domains: List[str],
-        limit: int,
-        source_label: str
-    ) -> List[EnrichedFact]:
-        """
-        Search facts by domain using direct Firestore query.
-        
-        Session 2026-02-17: Domain-based search for router enrichment.
-        Uses existing index (account_id, domain, created_at).
-        NOT a vector search - returns ALL current facts in specified domains.
-        
-        Args:
-            domains: List of domain values (e.g., ["health", "possession"])
-            limit: Max results per domain
-            source_label: Label for tracking (e.g., "domain_direct")
-        
-        Returns:
-            List of enriched facts
-        """
-        try:
-            facts = await self._repo.search_facts_by_domain(
-                domains=domains,
-                limit=limit
-            )
-            
-            return [
-                EnrichedFact.from_fact(fact, source_label, 1.0)
-                for fact in facts
-            ]
-        except Exception as exc:
-            logger.warning(
-                "⚠️ [SearchEnrichmentService] Domain search failed for %s: %s",
-                domains,
-                exc
-            )
-            return []
 
     async def _search_by_vector_field(
         self,

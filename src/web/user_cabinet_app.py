@@ -88,12 +88,9 @@ async def _json_object_body() -> tuple[Optional[Dict[str, Any]], Optional[tuple]
 
 
 def _domain_fields(fact: Any) -> Dict[str, Optional[str]]:
-    """The two domain fields of a fact in a Cabinet list: the badge shows the registry label of `primary_domain`, and the
-    old `domain` while the fact has no profile yet (fact profile RFC §6 row 9)."""
-    return {
-        "domain": fact.domain.value if fact.domain else None,
-        "primary_domain": fact.primary_domain or None,
-    }
+    """The domain field of a fact in a Cabinet list: the badge shows the registry label of `primary_domain`, none while
+    the fact has no profile yet (fact profile RFC §6 row 9)."""
+    return {"primary_domain": fact.primary_domain or None}
 
 
 def create_user_cabinet_blueprint(
@@ -1006,7 +1003,7 @@ def create_user_cabinet_blueprint(
                     {
                         "question_id": e.question_id,
                         "text": e.text,
-                        "domain": e.domain,
+                        "primary_domain": e.primary_domain,
                         "reported_date": e.reported_date.isoformat() if e.reported_date else None,
                         "waiting_since": e.waiting_since.isoformat(),
                         "asked_at": e.asked_at.isoformat() if e.asked_at else None,

@@ -16,8 +16,8 @@ from .fact_update import AS_HISTORY_SAME_TEXT, ParsedFactUpdate
 from .fact_update_outcome import EXPIRY_REFUSALS, UpdateRefusal
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
-    compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, revival_fields,
-    with_event,
+    compute_expiry, expiry_pinned, horizon_from_now, is_directive, lifecycle_event, lifecycle_fields, resolves_too_soon,
+    revival_fields, with_event,
 )
 from .fact_review_basis import PAYMENT_KEYS, ReviewAction, ReviewBasis
 from .fact_review_outcome import MADE_CURRENT, ReviewDecision
@@ -302,7 +302,7 @@ def confirmed_expiry(fact: FactEntity, now: datetime, tz: str) -> Expiry:
     is ahead (`stored_expiry`; `tz`: the owner's zone), else a horizon of `fallback_window_days`. A date inside its last
     day (`resolves_too_soon`, the write path's bound) is not kept: the write would refuse it. `keeps_expiry` is the same
     decision as a yes or no."""
-    if expiry_pinned(fact.domain, fact.type, fact.tags):
+    if expiry_pinned(is_directive(fact), fact.type, fact.tags):
         return EXPIRY_NONE
     if keeps_expiry(fact, now):
         kept = stored_expiry(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
@@ -312,7 +312,7 @@ def confirmed_expiry(fact: FactEntity, now: datetime, tz: str) -> Expiry:
 
 
 def _holds_no_expiry(fact: FactEntity) -> bool:
-    return expiry_pinned(fact.domain, fact.type, fact.tags) or fact.expiry_kind is ExpiryKind.NONE
+    return expiry_pinned(is_directive(fact), fact.type, fact.tags) or fact.expiry_kind is ExpiryKind.NONE
 
 
 def _date_ahead(fact: FactEntity, now: datetime) -> bool:
@@ -360,7 +360,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
         expiry: Dict[str, Any] = {}
         if not keeps_expiry(fact, now):
             expiry = horizon_from_now(fallback_window_days(fact), fact.reported_date, now)
-        elif expiry_pinned(fact.domain, fact.type, fact.tags) and fact.expiry_kind is not ExpiryKind.NONE:
+        elif expiry_pinned(is_directive(fact), fact.type, fact.tags) and fact.expiry_kind is not ExpiryKind.NONE:
             expiry = compute_expiry(EXPIRY_NONE, fact.reported_date, "UTC")  # a pinned fact is permanent, as a yes says
         return revival_fields(fact, expiry, now, actor, reason)
     fields: Dict[str, Any] = lifecycle_fields(FactState.ARCHIVED, now)

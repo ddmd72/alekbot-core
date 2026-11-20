@@ -8,10 +8,11 @@ from src.domain.fact_lifecycle import IN_PLACE_FIELDS
 from src.domain.fact_profile import PROFILE_FIELDS, require_profile_fields
 from src.domain.fact_profile_fingerprint import failure_fields
 
-# RFC §2.2: kept by their own writers, never written by the profiler.
+# RFC §2.2: kept by their own writers, never written by the profiler. Reviewer edit (fact profile PR 13): the
+# consolidator's old `domain` became its `directive` flag (§2.2).
 OWNED_ELSEWHERE = {
     "id", "account_id", "created_by_user_id", "lineage_id", "text", "metadata", "vector", "tags", "tags_vector",
-    "metadata_vector", "type", "temporal_class", "domain", "state", "context_priority", "ttl_days", "last_updated",
+    "metadata_vector", "type", "temporal_class", "directive", "state", "context_priority", "ttl_days", "last_updated",
     "expires_at", "expiry_kind", "stale_since", "lifecycle_events", "version", "replaces_fact_id", "superseded_by",
     "context", "reported_date", "created_at", "valid_from", "valid_to", "is_current", "visibility",
 }

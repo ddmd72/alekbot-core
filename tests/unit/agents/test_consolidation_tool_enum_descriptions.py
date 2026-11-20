@@ -1,7 +1,7 @@
 """create_fact's enum descriptions name exactly the members of the domain enums."""
 
 from src.agents.consolidation_agent import ConsolidationAgent
-from src.domain.entities import ContextPriority, FactDomain, FactState, TemporalClass
+from src.domain.entities import ContextPriority, FactState, TemporalClass
 
 
 def _attribute_descriptions() -> dict:
@@ -35,8 +35,3 @@ def test_temporal_class_description_names_every_member():
 def test_context_priority_description_names_every_member():
     described = _named_members(_attribute_descriptions()["context_priority"])
     assert described == {m.name for m in ContextPriority}
-
-
-def test_domain_description_names_every_fact_domain():
-    described = _named_members(_attribute_descriptions()["domain"])
-    assert described == {m.name for m in FactDomain}

@@ -176,10 +176,3 @@ async def test_search_leaves_the_trail_and_stale_since_at_their_defaults(store):
     fact = await seed(store, "x", expiry_kind=ExpiryKind.DATE, expires_at=NOW, lifecycle_events=[EARLIER])
     (got,) = await store.repo.search_facts(fact.vector, "vector", user_id=USER, account_id=ACC)
     assert (got.stale_since, got.lifecycle_events) == (None, [])
-
-
-async def test_the_domain_search_returns_the_decision_too(store):
-    due = T0 + timedelta(days=3)
-    await seed(store, "x", expiry_kind=ExpiryKind.DATE, expires_at=due)
-    (got,) = await store.repo.search_facts_by_domain(["health"], account_id=ACC)
-    assert (got.expiry_kind, got.expires_at) == (ExpiryKind.DATE, due)

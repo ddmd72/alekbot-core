@@ -28,7 +28,7 @@ def store():
 
 def meta(**over):
     base = {
-        "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
+        "account_id": ACC, "user_id": USER, "directive": False, "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Maria"}, "type": "event",
     }
     base.update(over)
@@ -50,7 +50,7 @@ def end_of_day_utc(day):
 
 
 def seed(store, doc_id, text="seeded", **entity):
-    return put_raw(store, doc_id, text, entity={"domain": "biographical", **entity})
+    return put_raw(store, doc_id, text, entity={"directive": False, **entity})
 
 
 async def create(store, text="mother is Maria", context=None, **over):
@@ -151,8 +151,10 @@ async def test_a_past_date_is_refused_on_every_kind_of_pass(store, context):
     assert store.docs == {}
 
 
+# Reviewer edit (fact profile PR 13): a directive is pinned by the consolidator's `directive` flag (was the old domain
+# `agent_directive`), here and in the two pinned-fact tests below.
 @pytest.mark.parametrize("over", [
-    {"domain": "agent_directive"}, {"type": "principle"}, {"tags": ["mindset"]},
+    {"directive": True}, {"type": "principle"}, {"tags": ["mindset"]},
 ], ids=["directive", "principle", "mindset"])
 async def test_a_pinned_fact_gets_none_without_an_expiry_and_refuses_any_other(store, over):
     fid = await create(store, **over)
@@ -211,9 +213,9 @@ async def test_merge_with_a_missing_or_malformed_expiry_is_refused_and_leaves_th
 
 
 async def test_merge_into_a_pinned_fact_defaults_to_none(store):
-    first = await create(store, "rule one", expiry=EXPIRY_NONE, domain="agent_directive")
-    second = await create(store, "rule two", expiry=EXPIRY_NONE, domain="agent_directive")
-    res = await store.adapter.merge_facts([first, second], "rule", meta(domain="agent_directive"),
+    first = await create(store, "rule one", expiry=EXPIRY_NONE, directive=True)
+    second = await create(store, "rule two", expiry=EXPIRY_NONE, directive=True)
+    res = await store.adapter.merge_facts([first, second], "rule", meta(directive=True),
                                           context=ctx(**CLEANUP))
     assert res["status"] == "merged" and store.docs[res["new_fact_id"]]["expiry_kind"] == "none"
 
@@ -264,7 +266,7 @@ async def test_a_content_change_without_expiry_is_refused_and_writes_nothing(sto
 
 
 async def test_a_pinned_fact_gets_none_on_a_new_version_without_expiry(store):
-    fid = await create(store, expiry=EXPIRY_NONE, domain="agent_directive")
+    fid = await create(store, expiry=EXPIRY_NONE, directive=True)
     res = await store.adapter.update_fact(fid, {"content": "a sharper rule"}, ACC, context=ctx(**CLEANUP))
     assert res["status"] == "updated" and store.docs[res["fact_id"]]["expiry_kind"] == "none"
 

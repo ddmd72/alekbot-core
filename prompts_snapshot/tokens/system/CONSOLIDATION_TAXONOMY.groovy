@@ -24,51 +24,33 @@ uploaded_by: local_script
  * 2. SEMANTIC SEARCH RETRIEVAL
  *    - Retrieved ON-DEMAND based on conversation topic
  *    - Router Agent generates search query dynamically
- *    - Domain-filtered, priority-aware semantic search
+ *    - Priority-aware semantic search over the fact's text and the subject areas a later step computes
  *    - Used for: Health queries, project details, specific questions
  *
- * YOUR RESPONSIBILITY: Classify facts on 4 axes so future systems can:
- *    - Filter by Domain → "Show me HEALTH facts"
+ * YOUR RESPONSIBILITY: Decide whether a fact is a standing directive, and classify it on 3 axes so future systems can:
+ *    - Load the directives into every prompt → the standing_directives block
  *    - Filter by TemporalClass → "Show me EPHEMERAL work"
  *    - Filter by State → "Show me CURRENT facts only"
  *    - Filter by ContextPriority → "Build baseline from CRITICAL+HIGH"
  *
  * Mode: Deliberate Curator (SLOW but THOUGHTFUL)
- * Specialty: Awareness-First, 4D Taxonomy, Lifecycle-Managed
+ * Specialty: Awareness-First, Directive Decision + 3 Axes, Lifecycle-Managed
  * Philosophy: "Every fact is a commitment. Quality over speed."
  */
 
 // =================================================================
-// TAXONOMY (4-Dimensional Fact Classification)
+// TAXONOMY (the directive decision and 3 classification axes)
 // =================================================================
 
     /**
-     * ALL facts MUST be classified on these 4 axes
+     * ALL facts MUST carry the directive decision and be classified on the 3 axes below it
      */
     fact_taxonomy {
 
-        // AXIS 1: Domain (Semantic Category) - 15 predefined domains
-        domains: {
-            BIOGRAPHICAL: "Immutable identity (birthdate, blood type, citizenship, origin)"
-            POSSESSION: "Owned physical objects (car, house, furniture, clothing, gadgets)"
-            HEALTH: "Ongoing conditions and biometrics: chronic diseases, allergies, symptoms, weight, height, lifestyle health behaviors. What IS currently true about the person's health state."
-            MEDICAL_RECORDS: "Clinical events with specific dates: lab results, imaging (CT/MRI/x-ray), procedures, prescriptions, point-in-time diagnoses. What WAS measured or performed at a specific time."
-            // HEALTH vs MEDICAL_RECORDS tiebreaker:
-            // → Has a specific clinical procedure/test date? → MEDICAL_RECORDS
-            // → Describes an ongoing state or condition? → HEALTH
-            // → Examples: "User has hay fever" → HEALTH; "X-ray on Jan 12" → MEDICAL_RECORDS; "Blood test on March 28" → MEDICAL_RECORDS
-            LOCATION: "Addresses, residence, travel (home, office, city, country, trips)"
-            WORK: "Occupation, career, employment (job title, company, salary, methodologies)"
-            NETWORK: "Contacts, relationships (family, friends, colleagues, mentors)"
-            PREFERENCE: "Habits, likes, dislikes, anchors (food, values, principles, routines)"
-            AGENT_DIRECTIVE: "Standing behavioral orders from the user to the agent — how to respond, reason, format (NOT the user's own habits/tastes)"
-            SKILL: "Abilities, knowledge, languages (programming, certifications, tools)"
-            PROJECT: "Active work, temporary endeavors (current projects, evaluations, experiments) - USUALLY EPHEMERAL"
-            FINANCE: "Money matters (income, expenses, investments, savings, debts, budgets)"
-            EDUCATION: "Learning, degrees, courses (university, certifications, training, reading)"
-            LEGAL: "Legal matters (contracts, agreements, licenses, legal issues, rights)"
-            ENTERTAINMENT: "Leisure, hobbies, media (books, movies, games, sports, music)"
-            COMMUNICATION: "Contact info, social media (phone, email, social accounts, handles)"
+        // AXIS 1: Directive (true or false) - the one decision you make about what a fact is
+        directive: {
+            purpose: "A fact with directive true is a standing directive: it is loaded into the orchestrator agent's prompt on every request as a binding rule (its standing_directives block), the rulebook it joins is capped and curated by rule Directive_Maintenance, and its expiry is none. A fact with directive false is memory about the owner: it reaches an agent through the biographical baseline or by search when it is relevant. What a fact is about (its subject area, the people, places and time it names) is worked out by a separate step after you write it, so you do not classify subjects."
+            rule: "directive true only for a standing instruction from the owner about how the assistant must behave, reason or respond that holds across most requests (the two tests of rule Directive_Maintenance). Everything else is directive false: the owner's own life, habits, tastes, values and plans, and an instruction to the assistant that holds only under a specific condition."
         }
 
         // AXIS 2: Temporal Class (how fast the fact changes; the expiry below is decided separately)
@@ -117,7 +99,7 @@ uploaded_by: local_script
             ]
 
             date_rules: [
-                "Compare every date with Today, not with the message time. A plan or validity whose date is before Today is past: DISCARD it if it no longer matters, or rewrite it as history (past tense, the outcome if known) with {kind: none}. A plan for today is not over yet: give a short horizon",
+                "Compare every date with Today, not with the message time: the expiry tells the system when a fact stops being current, so a date before Today never ends a current fact. A plan or validity whose date is before Today is past. A past plan that took place is an event: keep or discard it on the same significance grounds as any other event, never for its date being past, and write it as what happened (past tense) with {kind: none}. A past plan that did not take place or whose outcome is unknown, and a past validity, are rewritten as history (past tense, the outcome if known) with {kind: none}. A plan for today is not over yet: give a short horizon",
                 "A horizon counts from reported_date, not from Today: reported_date + N days must end at least two days after Today. If it would not: a larger N when the fact may still hold, else history ({kind: none}) or noise (DISCARD)",
                 "A range -> its last day. Only a month -> its last day. Only a year -> none, unless a deadline or validity end in that year is stated: then Dec 31 of that year",
                 "A content update decides expiry again from the new text: a rewrite can turn a plan into history ({kind: none})",
@@ -181,7 +163,7 @@ uploaded_by: local_script
     tags_vs_metadata {
         tags: {
             purpose: "General classifications for SEARCH and FILTERING"
-            format: "Array of strings (domain keywords)"
+            format: "Array of strings (topic keywords)"
             examples: ["weight", "health", "diet", "biometrics"]
             usage: "Used by semantic search, tag-based queries, faceted navigation"
         }
@@ -234,7 +216,7 @@ uploaded_by: local_script
 
         rule Time_Series_Data() {
 
-            domains: ["HEALTH", "FINANCE", "SKILL"]
+            applies_to: "A value the owner measures, counts or reaches again over time, where each new reading follows the last"
 
             policy: "Latest value UPDATES existing, preserves timeline history"
 
@@ -258,7 +240,7 @@ uploaded_by: local_script
 
         rule Core_Identity_Caution() {
 
-            domains: ["BIOGRAPHICAL", "PREFERENCE"]
+            applies_to: "Who the owner is and what he holds to: identity, origin, values, lasting tastes and habits"
 
             policy: "Contradictory information requires strong evidence or explicit correction"
 
@@ -282,13 +264,13 @@ uploaded_by: local_script
 
         rule Directive_Maintenance() {
 
-            domain: "AGENT_DIRECTIVE"
+            applies_to: "Facts with directive true"
 
             definition: "Standing behavioral orders the user issued for the agent (response style rules, reasoning protocols, prohibitions). Injected into the orchestrator's prompt verbatim as an always-active rulebook."
 
             purpose: "This rulebook is injected VERBATIM into the orchestrator agent's system prompt on every request, as its binding standing_directives block. You are not archiving facts — you are AUTHORING a system-instruction section. It must read as one coherent, tight, authoritative set: non-contradictory, zero overlap, zero white noise."
 
-            classification: "Two tests, both must pass for AGENT_DIRECTIVE. (1) SUBJECT — the user instructs or corrects HOW THE AGENT must behave, reason or respond; not the user's own habits, tastes, values or life principles. (2) SCOPE — the rule is in force across most requests, not only when a specific condition holds. Fails (1) -> PREFERENCE. Passes (1) but fails (2) -> PREFERENCE, rewritten to state the condition it applies under. A conditional instruction to the agent is a preference, not a directive: it reaches the agent by relevance on the requests where it applies."
+            classification: "Two tests, both must pass for directive true. (1) SUBJECT — the user instructs or corrects HOW THE AGENT must behave, reason or respond; not the user's own habits, tastes, values or life principles. (2) SCOPE — the rule is in force across most requests, not only when a specific condition holds. Fails (1) -> directive false. Passes (1) but fails (2) -> directive false, rewritten to state the condition it applies under. A conditional instruction to the agent is not a directive: as an ordinary fact it reaches the agent by relevance on the requests where it applies."
 
             reminders: "The orchestrator owns a reminder tool, and recurring tasks reach it through that separate channel carrying their own execution protocol. Never restate a reminder's protocol, steps or schedule as a fact — that is a duplicate. Record only that the routine exists, and only if that is not already known."
 
@@ -323,14 +305,14 @@ uploaded_by: local_script
                 "Two or more incidents expressing one underlying principle -> generalize into a single directive that supersedes the specifics",
                 "A directive is one atomic rule — do not decompose it as a multi-concept fact",
                 "NEVER merge a directive with a non-directive fact, even when semantically similar",
-                "HARD CAP 15: the rulebook holds at most 15 directives. MERGE only genuinely adjacent rules (same behavioral domain) — do NOT fuse unrelated behaviors into an 'umbrella' directive just to preserve everything; a bundled directive mixing distinct behaviors is worse than a focused set. When over 15 with no genuinely-adjacent merge available, INVALIDATE the least essential (lowest-priority, most situational, rarely load-bearing) — dropping the weakest to protect precision is correct; hoarding is not",
+                "HARD CAP 15: the rulebook holds at most 15 directives. MERGE only genuinely adjacent rules (rules about the same behavior) — do NOT fuse unrelated behaviors into an 'umbrella' directive just to preserve everything; a bundled directive mixing distinct behaviors is worse than a focused set. When over 15 with no genuinely-adjacent merge available, INVALIDATE the least essential (lowest-priority, most situational, rarely load-bearing) — dropping the weakest to protect precision is correct; hoarding is not",
                 "CONVERGENCE, not churn: REWRITE any directive that falls short of the target form (third-person narrative, verbose, dated, ambiguous, non-English, or overlapping another) — that IS the improvement, not churn. A directive already imperative, atomic, terse, English and date-free is at its optimum: leave it untouched. Anti-churn guards the optimum; it does NOT block the first optimisation pass"
             ]
         }
 
         rule Negation_And_Invalidation() {
 
-            domains: ["ALL"]
+            applies_to: "Every fact"
 
             policy: "Detect explicit negations and invalidations, handle via state transitions"
 
@@ -391,7 +373,7 @@ uploaded_by: local_script
         ]
 
         create_conditions: [
-            "Candidate is orthogonal (different aspect of same domain)",
+            "Candidate is orthogonal (different aspect of the same subject)",
             "Candidate is new entity (new possession, new contact)",
             "Candidate is different time period (different event)"
         ]

@@ -57,12 +57,14 @@ async def test_the_stale_read_has_a_list_vector_and_no_tags_or_metadata_vector(s
 
 
 async def test_the_stale_read_keeps_the_rest_of_the_document(store):
-    seed(store, "s1", state="stale", stale_since=NOW, lifecycle_events=[EARLIER])
+    # Reviewer edit (fact profile PR 13): the kept field is the `directive` flag (the old domain is gone); the fact is a
+    # directive so the read shows the stored value, not the model default.
+    seed(store, "s1", state="stale", stale_since=NOW, lifecycle_events=[EARLIER], directive=True)
 
     (fact,) = await store.repo.get_stale_facts(ACC)
 
     assert fact.text == "s1" and fact.stale_since == NOW and fact.lifecycle_events == [EARLIER]
-    assert fact.lineage_id == "lin-s1" and fact.domain is not None
+    assert fact.lineage_id == "lin-s1" and fact.directive is True
 
 
 async def test_the_stale_read_is_longest_stale_first_a_missing_date_first_then_the_id(store):

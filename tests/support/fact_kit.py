@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from google.cloud.firestore_v1.vector import Vector
 
-from src.domain.entities import FactDomain, FactEntity, FactType
+from src.domain.entities import FactEntity, FactType
 from tests.support.fact_store import FactStore, embed
 
 ACC = "acc-1"
@@ -26,7 +26,7 @@ def make_fact(text: str, /, *, account: str = ACC, age_days: int = 0, **over: An
     when = T0 + timedelta(days=age_days)
     fields: Dict[str, Any] = dict(
         id=f"f-{text}", account_id=account, created_by_user_id=USER, lineage_id=f"lin-{text}", text=text,
-        type=FactType.EVENT, domain=FactDomain.HEALTH, created_at=when, valid_from=when, last_updated=when,
+        type=FactType.EVENT, created_at=when, valid_from=when, last_updated=when,
     )
     fields.update(over)
     for name, source in (("vector", text), ("tags_vector", "t " + text), ("metadata_vector", "m " + text)):

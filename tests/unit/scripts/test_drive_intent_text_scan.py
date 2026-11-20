@@ -11,7 +11,6 @@ import pytest
 from scripts.validation import drive_intent_text_scan as script
 from scripts.validation.drive_intent_text_scan_logic import (
     NEW_INTENT, OLD_INTENTS, ScanItem, backup_payload, render_report, scan, scan_item, skill_markdown)
-from src.domain.entities import FactDomain
 from src.domain.prompt_v3.slot import OwnerType
 from src.infrastructure.agent_manifest import Intent
 from src.utils.skill_md import parse_skill_md
@@ -75,7 +74,12 @@ def _sources(**over):
                              get_file=AsyncMock(return_value="Use drive_folder."))
     notes = SimpleNamespace(list_active_notes=AsyncMock(return_value=[SimpleNamespace(
         note_id="n1", text="Weekly sort", instruction="search_files_in_drive for new scans", workspace_file=None)]))
-    facts = SimpleNamespace(get_active_facts_ordered=AsyncMock(return_value=[SimpleNamespace(id="f1", text="Be brief")]))
+    # Reviewer edit (fact profile PR 13): the fact reader answers the flag read (`directive_only`) and the read of every
+    # current fact, which holds the directive too; the script keeps the directive out of the `preference` store.
+    directive = SimpleNamespace(id="f1", text="Be brief", directive=True)
+    other = SimpleNamespace(id="f2", text="Be brief", directive=False)
+    facts = SimpleNamespace(get_active_facts_ordered=AsyncMock(
+        side_effect=lambda account, directive_only=False: [directive] if directive_only else [directive, other]))
     entries = {"projects/": [SimpleNamespace(path="projects/inbox.md", generation=7),
                              SimpleNamespace(path="projects/scan.pdf", generation=8)], "references/": [],
                "scratch/": [], "binary_files/": []}   # R2 (plan_arbiter_xcut): scratch/ and binary_files/ are scanned too
@@ -103,12 +107,12 @@ async def test_collect_reads_every_store_read_only():
     assert [(i.store, i.key) for i in items] == [
         ("skill", "recipe-box v4"), ("skill_file", "recipe-box v4:references/rules.md"),
         ("skill_draft", "drive-sort draft c0de"), ("skill_draft", "drive-sort draft c0de:rules.md"), ("reminder", "n1"),
-        ("directive", "f1"), ("preference", "f1"), ("workspace", "projects/inbox.md"),
+        ("directive", "f1"), ("preference", "f2"), ("workspace", "projects/inbox.md"),
         ("prompt_override", "user:VOICE_X")]
     assert skipped == ["prompt_override account:GONE (token missing)"]
-    # R2 (plan_arbiter_xcut): directives are read from agent_directive and from preference, in that order
-    assert src.facts.get_active_facts_ordered.await_args_list == [
-        call("a1", domain=FactDomain.AGENT_DIRECTIVE.value), call("a1", domain=FactDomain.PREFERENCE.value)]
+    # R2 (plan_arbiter_xcut): directives first, then the other current facts (reviewer edit, PR 13: the directive flag
+    # and every non-directive in place of the agent_directive and preference domains)
+    assert src.facts.get_active_facts_ordered.await_args_list == [call("a1", directive_only=True), call("a1")]
     assert [c.args[1] for c in src.workspace.list.await_args_list] == ["projects/", "references/", "scratch/", "binary_files/"]
     src.notes.list_active_notes.assert_awaited_once_with("u1", NOW)
     src.drafts.list_drafts.assert_awaited_once_with("u1", NOW)

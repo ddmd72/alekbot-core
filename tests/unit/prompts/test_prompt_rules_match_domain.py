@@ -18,7 +18,7 @@ from src.agents.consolidation_agent import (
     _REVIEW_UPDATE_SCHEMA,
     ConsolidationAgent,
 )
-from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
+from src.domain.entities import ExpiryKind, FactState, FactType
 from src.domain.exceptions import FactBornDueError, FactExpiryError
 from src.domain.fact_expiry import EXPIRY_NONE, EXPIRY_SHAPES, Expiry, parse_expiry
 from src.domain.fact_lifecycle import (
@@ -83,10 +83,10 @@ def _shape_to_dict(shape: str) -> dict:
 def test_the_pinned_sentence_names_the_facts_the_domain_pins_to_none():
     sentence = "Directives, principles and mindset facts: none."
     assert sentence in _EXPIRY_SCHEMA["description"]
-    assert expiry_pinned(FactDomain.AGENT_DIRECTIVE, FactType.STATE, [])
-    assert expiry_pinned(FactDomain.PREFERENCE, FactType.PRINCIPLE, [])
-    assert expiry_pinned(FactDomain.PREFERENCE, FactType.STATE, ["Mindset"])
-    assert not expiry_pinned(FactDomain.PREFERENCE, FactType.STATE, [])
+    assert expiry_pinned(True, FactType.STATE, [])
+    assert expiry_pinned(False, FactType.PRINCIPLE, [])
+    assert expiry_pinned(False, FactType.STATE, ["Mindset"])
+    assert not expiry_pinned(False, FactType.STATE, [])
     assert check_pin(None, True) == EXPIRY_NONE
     with pytest.raises(FactExpiryError) as raised:
         check_pin(Expiry(ExpiryKind.HORIZON, days=30), True)
@@ -159,7 +159,7 @@ def test_stage_2b_merges_a_directive_with_the_one_expiry_the_domain_allows():
     line = 'expiry: {kind: "none"} - directives are pinned to none'
     assert line in RULEBOOK
     assert parse_expiry({"kind": "none"}) == EXPIRY_NONE
-    assert expiry_pinned(FactDomain.AGENT_DIRECTIVE, FactType.STATE, []) and check_pin(None, True) == EXPIRY_NONE
+    assert expiry_pinned(True, FactType.STATE, []) and check_pin(None, True) == EXPIRY_NONE
 
 
 # ------------------------------------------------------------------------------------------------- the review's horizon

@@ -47,11 +47,14 @@ async def test_the_snapshot_lists_the_current_facts_of_the_account_only(store, r
 
 
 async def test_the_snapshot_projects_text_metadata_dates_and_the_profile_without_vectors(store, repo):
-    await seed(store, "car", metadata={"policy": "MP-2026-118204"}, tags=["insurance"], context="renewal", **PROFILE)
+    # Reviewer edit (fact profile PR 13): the projection carries `directive` in place of the old domain; the fact is a
+    # directive so the read shows the stored value, not the model default.
+    await seed(store, "car", metadata={"policy": "MP-2026-118204"}, tags=["insurance"], context="renewal", directive=True,
+               **PROFILE)
     (got,) = await repo.list_search_snapshot(ACC)
     assert (got.id, got.text, got.metadata, got.tags, got.context) == (
         "f-car", "car", {"policy": "MP-2026-118204"}, ["insurance"], "renewal")
-    assert got.reported_date is not None and got.created_at is not None and got.domain is not None
+    assert got.reported_date is not None and got.created_at is not None and got.directive is True
     assert (got.label_words, got.time_role, got.primary_domain, got.domain_keys, got.kinds, got.sensitivity,
             got.place_keys, got.time_points, got.people) == (
         PROFILE["label_words"], "validity", "transport", ["transport", "money"], ["document"], "ordinary", ["pl:1"],

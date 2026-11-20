@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.entities import ExpiryKind, FactEntity, FactState, FactType, TemporalClass
 from src.domain.exceptions import FactBornDueError, FactExpiryError
 from src.domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE, Expiry
 from src.domain.fact_lifecycle import horizon_from_now
@@ -37,7 +37,7 @@ SUPERSEDED = "superseded by f9"
 def fact(state=FactState.STALE, **overrides):
     base = dict(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="meeting with Ana", type=FactType.EVENT,
-        tags=["work"], metadata={"who": "Ana"}, domain=FactDomain.NETWORK, temporal_class=TemporalClass.DYNAMIC,
+        tags=["work"], metadata={"who": "Ana"}, temporal_class=TemporalClass.DYNAMIC,
         version=2, reported_date=REPORTED, last_updated=REPORTED, expiry_kind=ExpiryKind.HORIZON, ttl_days=30,
         expires_at=REPORTED + timedelta(days=30), state=state,
         stale_since=STALE_SINCE if state is FactState.STALE else None,
@@ -47,7 +47,7 @@ def fact(state=FactState.STALE, **overrides):
 
 
 def pinned_fact(state=FactState.STALE):
-    return fact(state, domain=FactDomain.AGENT_DIRECTIVE, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)
+    return fact(state, directive=True, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)
 
 
 def finish(updates, current, actor="review", now=NOW, evidence_at=None, reason=REVIVED) -> FactFinish:

@@ -1,7 +1,7 @@
 """The Cabinet on the fact profile (RFC §6 row 9, §3.2): `GET /api/user/fact-domains` (every registry key once, in
 Cabinet order, labelled in the page language, behind the same session gate as the other Cabinet routes), the facts
-list filtered by profile `domain_keys`, and the fields the badge reads (`primary_domain`; the old `domain` while a fact
-has none). Real routes and repository on the evaluating Firestore fake (index refusal on); the page itself is read as
+list filtered by profile `domain_keys`, and the field the badge reads (`primary_domain`; none while a fact has none —
+reviewer edit, fact profile PR 13: the old `domain` fallback is gone). Real routes and repository on the evaluating Firestore fake (index refusal on); the page itself is read as
 text for the parts only it holds."""
 import copy
 from pathlib import Path
@@ -13,7 +13,7 @@ from quart import Quart
 
 from src.composition.connector_registry import ConnectorRegistry
 from src.domain import fact_domains
-from src.domain.entities import FactDomain, FactState
+from src.domain.entities import FactState
 from src.domain.fact_domains import Domain
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
@@ -48,9 +48,8 @@ def world():
     return store, repo
 
 
-YOGA = dict(primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT], domain=FactDomain.PREFERENCE)
-INSURANCE = dict(primary_domain=Domain.TRANSPORT, domain_keys=[Domain.TRANSPORT, Domain.MONEY],
-                 domain=FactDomain.FINANCE)
+YOGA = dict(primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT])
+INSURANCE = dict(primary_domain=Domain.TRANSPORT, domain_keys=[Domain.TRANSPORT, Domain.MONEY])
 
 
 # --------------------------------------------------------------------------------------------- the domains route
@@ -107,7 +106,7 @@ async def test_the_filter_lists_the_facts_whose_domain_keys_hold_the_key(world):
     _, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", age_days=1, **YOGA))
     await repo.add_fact(make_fact("Alex's car insurance with Example Mutual Insurance", age_days=2, **INSURANCE))
-    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=3, domain=FactDomain.PREFERENCE))  # no profile
+    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=3))  # no profile
 
     _, money = await _get(f"/api/user/facts/browse?domain={Domain.MONEY}", repo)
     _, sport = await _get(f"/api/user/facts/browse?domain={Domain.SPORT}", repo)
@@ -157,13 +156,6 @@ async def test_a_value_that_is_no_registry_key_is_a_400_and_nothing_is_read(worl
     assert store.docs == before
 
 
-async def test_the_repository_refuses_both_domain_filters_at_once_before_reading(world):
-    _, repo = world
-
-    with pytest.raises(ValueError, match="not both"):
-        await repo.get_paginated_facts(ACC, domain="finance", domain_key=Domain.MONEY)
-
-
 async def test_the_dry_run_kit_forwards_the_domain_key_to_the_live_store(world):
     from scripts.consolidation.s3_dry_run_kit import NoWriteFactRepository
     _, repo = world
@@ -177,16 +169,18 @@ async def test_the_dry_run_kit_forwards_the_domain_key_to_the_live_store(world):
 
 # ------------------------------------------------------------------------------------------- the badge fields
 
-async def test_browse_carries_the_profile_domain_and_the_old_domain_while_it_is_absent(world):
+async def test_browse_carries_the_profile_domain_and_none_while_it_is_absent(world):
+    # Reviewer edit (fact profile PR 13): was ..._and_the_old_domain_while_it_is_absent; the old `domain` key left the
+    # row (the badge has no fallback), so an unprofiled fact carries primary_domain None and nothing else.
     _, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", age_days=2, **YOGA))
-    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=1, domain=FactDomain.PREFERENCE))
+    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=1))
 
     _, body = await _get("/api/user/facts/browse", repo)
 
-    rows = {f["text"]: (f["primary_domain"], f["domain"]) for f in body["facts"]}
-    assert rows == {"morning yoga 30 min": (Domain.SPORT, "preference"),
-                    "plays tennis on Sundays": (None, "preference")}
+    rows = {f["text"]: f["primary_domain"] for f in body["facts"]}
+    assert rows == {"morning yoga 30 min": Domain.SPORT, "plays tennis on Sundays": None}
+    assert all("domain" not in f for f in body["facts"])
 
 
 async def test_the_recently_closed_list_carries_the_profile_domain(world):
@@ -201,13 +195,14 @@ async def test_the_recently_closed_list_carries_the_profile_domain(world):
     _, body = await _get("/api/user/facts/recently-closed", repo)
 
     [row] = body["facts"]
-    assert (row["primary_domain"], row["domain"]) == (Domain.TRANSPORT, "finance")
+    # Reviewer edit (fact profile PR 13): the old `domain` key left the row.
+    assert row["primary_domain"] == Domain.TRANSPORT and "domain" not in row
 
 
 async def test_the_search_list_carries_the_profile_domain(world):
     store, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", **YOGA))
-    await repo.add_fact(make_fact("plays tennis on Sundays", domain=FactDomain.PREFERENCE))
+    await repo.add_fact(make_fact("plays tennis on Sundays"))
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
     app = Quart("test_cabinet_fact_domains_search")
@@ -221,9 +216,11 @@ async def test_the_search_list_carries_the_profile_domain(world):
         body = await resp.get_json()
 
     assert resp.status_code == 200
-    rows = {f["text"]: (f["primary_domain"], f["domain"]) for f in body["facts"]}
-    assert rows["morning yoga 30 min"] == (Domain.SPORT, "preference")
-    assert rows["plays tennis on Sundays"] == (None, "preference")
+    # Reviewer edit (fact profile PR 13): the old `domain` key left the row.
+    rows = {f["text"]: f["primary_domain"] for f in body["facts"]}
+    assert rows["morning yoga 30 min"] == Domain.SPORT
+    assert rows["plays tennis on Sundays"] is None
+    assert all("domain" not in f for f in body["facts"])
 
 
 # ------------------------------------------------------------------------------------------------------- the page
@@ -245,7 +242,9 @@ def test_the_page_loads_labels_and_filter_options_from_the_route_in_its_language
     assert "...factDomains.map((d) => ({ label: d.label, value: d.key }))" in page
 
 
-def test_the_badge_reads_the_profile_domain_then_the_old_domain(page):
-    assert "if (f.primary_domain) return domainLabel(f.primary_domain);" in page
-    assert 'return f.domain ? f.domain.replace(/_/g, " ") : "";' in page
+def test_the_badge_reads_the_profile_domain_only(page):
+    # Reviewer edit (fact profile PR 13): was test_the_badge_reads_the_profile_domain_then_the_old_domain; the fallback
+    # to the old domain is gone, so a fact without a profile domain shows no badge.
+    assert 'return f.primary_domain ? domainLabel(f.primary_domain) : "";' in page
+    assert "f.domain" not in page
     assert '<span class="fact-domain-badge">${escapeHtml(badge)}</span>' in page

@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
+from src.domain.entities import ExpiryKind, FactState, FactType
 from src.domain.fact_expiry import Expiry
 from src.domain.exceptions import FactBornDueError
 from src.domain.fact_lifecycle import born_due, compute_expiry, resolves_too_soon
@@ -31,7 +31,7 @@ def dated(expires_at):
 @pytest.mark.parametrize("name, stale, keeps", [
     ("permanent", fact(**NONE), True),
     ("permanent, current", fact(state=FactState.CURRENT, stale_since=None, **NONE), True),
-    ("directive with a stale horizon", fact(domain=FactDomain.AGENT_DIRECTIVE), True),
+    ("directive with a stale horizon", fact(directive=True), True),
     ("principle with a stale horizon", fact(type=FactType.PRINCIPLE), True),
     ("mindset tag, any case", fact(tags=["MindSet"]), True),
     ("date ahead", dated(AHEAD), True),
@@ -55,8 +55,8 @@ def test_a_naive_moment_is_read_as_utc():
 
 @pytest.mark.parametrize("stale, expected", [
     (fact(**NONE), Expiry(ExpiryKind.NONE)),
-    (fact(domain=FactDomain.AGENT_DIRECTIVE), Expiry(ExpiryKind.NONE)),
-    (fact(domain=FactDomain.AGENT_DIRECTIVE, expiry_kind=ExpiryKind.DATE, expires_at=AHEAD, ttl_days=None),
+    (fact(directive=True), Expiry(ExpiryKind.NONE)),
+    (fact(directive=True, expiry_kind=ExpiryKind.DATE, expires_at=AHEAD, ttl_days=None),
      Expiry(ExpiryKind.NONE)),
     (dated(AHEAD), Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))),
     (dated(NOW - DAY), Expiry(ExpiryKind.HORIZON, days=118)),  # 59 days given since it was reported, doubled
@@ -166,7 +166,7 @@ def test_a_date_in_its_last_day_gets_the_window_on_both_paths():
 
 # ------------------------------------------------------------------------------------------------ a pinned fact is permanent on both paths (R2)
 
-PINNED = [{"domain": FactDomain.AGENT_DIRECTIVE}, {"type": FactType.PRINCIPLE}, {"tags": ["mindset"]}]
+PINNED = [{"directive": True}, {"type": FactType.PRINCIPLE}, {"tags": ["mindset"]}]
 
 
 @pytest.mark.parametrize("pinned", PINNED)
@@ -188,7 +188,7 @@ def test_a_silence_leaves_a_pinned_fact_that_had_a_horizon_permanent(pinned, act
 
 
 def test_a_pinned_fact_with_a_date_ahead_is_permanent_too():
-    plan = dated(AHEAD).model_copy(update={"domain": FactDomain.AGENT_DIRECTIVE})
+    plan = dated(AHEAD).model_copy(update={"directive": True})
     revived = plan.model_copy(update=fallback_fields(plan, question(), NOW, "timeout"))
     assert revived.expiry_kind is ExpiryKind.NONE
     assert confirmed_expiry(plan, NOW, MADRID) == Expiry(ExpiryKind.NONE)

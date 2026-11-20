@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
+from src.domain.entities import ExpiryKind, FactState, FactType
 from src.domain.fact_lifecycle import compute_expiry
 from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_expiry import Expiry
@@ -316,7 +316,7 @@ def test_still_true_on_a_permanent_fact_keeps_it_permanent():
 
 
 @pytest.mark.parametrize("pinned", [
-    {"domain": FactDomain.AGENT_DIRECTIVE}, {"type": FactType.PRINCIPLE}, {"tags": ["Mindset"]},
+    {"directive": True}, {"type": FactType.PRINCIPLE}, {"tags": ["Mindset"]},
 ])
 def test_still_true_on_a_pinned_fact_is_none_even_with_a_stale_horizon(pinned):
     change = answer_updates(AnswerKind.STILL_TRUE, fact(**pinned), question(), NOW, MADRID, "digit")
@@ -356,7 +356,7 @@ def test_still_true_on_anything_else_gets_the_doubled_window(make):
 @pytest.mark.parametrize("make, expected", [
     (fact, Expiry(ExpiryKind.HORIZON, days=28)),
     (lambda: fact(expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None), Expiry(ExpiryKind.NONE)),
-    (lambda: fact(domain=FactDomain.AGENT_DIRECTIVE), Expiry(ExpiryKind.NONE)),
+    (lambda: fact(directive=True), Expiry(ExpiryKind.NONE)),
     (lambda: fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=ENDS_28_OCT),
      Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))),
 ])

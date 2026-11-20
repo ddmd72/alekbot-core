@@ -10,7 +10,6 @@ import pytest
 
 from src.agents.consolidation_agent import ConsolidationAgent, _TrackingFactManagement
 from src.domain.agent import AgentConfig
-from src.domain.entities import FactDomain
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.user import PerformanceTier
 from src.ports.fact_management_port import FactManagementPort
@@ -95,7 +94,7 @@ async def test_the_tracker_forwards_the_context_and_the_zone():
 async def test_the_directive_backstop_writes_under_its_own_actor_and_the_passes_zone_and_span():
     real = RecordingPort()
     agent, repo = make_agent(real)
-    directives = [make_fact(f"rule {i}", domain=FactDomain.AGENT_DIRECTIVE) for i in range(agent.DIRECTIVE_HARD_CAP + 2)]
+    directives = [make_fact(f"rule {i}", directive=True) for i in range(agent.DIRECTIVE_HARD_CAP + 2)]
     repo.get_active_facts_ordered = AsyncMock(return_value=directives)
     stage2b = agent._write_context("stage2b", "Europe/Lisbon")
     ops = await agent._enforce_directive_cap(ACC, agent._write_context("backstop", stage2b.timezone, stage2b.span))
@@ -107,7 +106,7 @@ async def test_the_directive_backstop_writes_under_its_own_actor_and_the_passes_
 async def test_stage_2b_derives_the_backstop_context_from_its_own():
     real = RecordingPort()
     agent, repo = make_agent(real)
-    directives = [make_fact(f"rule {i}", domain=FactDomain.AGENT_DIRECTIVE) for i in range(agent.DIRECTIVE_HARD_CAP + 1)]
+    directives = [make_fact(f"rule {i}", directive=True) for i in range(agent.DIRECTIVE_HARD_CAP + 1)]
     repo.get_active_facts_ordered = AsyncMock(return_value=directives)
     agent.prompt_builder.build_for_agent = AsyncMock(return_value="SYS")
     agent._call_llm = AsyncMock(return_value=LLMResponse(text='{"operations": []}'))

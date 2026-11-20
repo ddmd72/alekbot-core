@@ -5,7 +5,7 @@ fact vocabulary in prose; this file declares, per (token, field), the enum class
 Out of scope: the unrendered `COGNITIVE_PROCESS_CONSOLIDATION` and the universal profile; USER/ACCOUNT overrides (not mirrored)."""
 import pytest
 
-from src.domain.entities import ContextPriority, FactDomain, FactState, TemporalClass
+from src.domain.entities import ContextPriority, FactState, TemporalClass
 from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.search import EnrichedContext, EnrichedFact
@@ -23,35 +23,27 @@ TOOLS = "CONSOLIDATION_TOOLS"
 #   lines        -> ALLCAPS words on lines naming the field are enum members or the row's declared contrast words
 #   exact:<re>   -> a closed list: the ALLCAPS words group 1 of the regex captures equal the enum's member names (all of them)
 POLICY_LISTS = {   # Taxonomy_Enforcement constraint lines, list text only (stops before "(NOT ...)")
-    "domain": r"Domain: MUST be from predefined list \(([^)\n]*)\)",
     "temporal_class": r'Temporal Class: MUST be ([^\n"(]*)',
     "state": r'State: MUST be ([^\n"(]*)',
     "context_priority": r'Context Priority: MUST be ([^\n"(]*)',
 }
 ENUM_ROWS = [
-    (TAXONOMY, "domain", FactDomain, "block:domains", set()),                                  # the definition of each axis
     (TAXONOMY, "temporal_class", TemporalClass, "block:temporal_classes", set()),
     (TAXONOMY, "state", FactState, "block:states", set()),
     (TAXONOMY, "context_priority", ContextPriority, "block:context_priorities", set()),
-    (TAXONOMY, "domains", FactDomain, "lines", {"ALL"}),                                       # `domains: [...]` in the conflict rules
-    ("CONSOLIDATION_COGNITIVE_PROCESS", "domain", FactDomain, "lines", {"UPDATE"}),            # "time series domain (...) -> UPDATE"
     ("CONSOLIDATION_COGNITIVE_PROCESS", "temporal_class", TemporalClass, "lines", {"TTL"}),    # "Determine TTL (based on Temporal Class)"
     ("CONSOLIDATION_COGNITIVE_PROCESS", "state", FactState, "lines", set()),
-    ("CONSOLIDATION_EXAMPLES", "domain", FactDomain, "lines", set()),
     ("CONSOLIDATION_EXAMPLES", "temporal_class", TemporalClass, "lines", set()),
     ("CONSOLIDATION_EXAMPLES", "temporal", TemporalClass, "lines", set()),                     # the "- Temporal: X" classify lines
     ("CONSOLIDATION_EXAMPLES", "state", FactState, "lines", set()),
     ("CONSOLIDATION_EXAMPLES", "context_priority", ContextPriority, "lines", set()),
     ("CONSOLIDATION_OUTPUT_SPEC", "state", FactState, "lines", {"UPDATE"}),                    # "UPDATE state=SUPERSEDED"
-    ("CONSOLIDATION_POLICIES", "domain", FactDomain, "lines", {"MUST"}),                       # Taxonomy_Enforcement lists
     ("CONSOLIDATION_POLICIES", "temporal_class", TemporalClass, "lines", {"MUST", "NOT", "ARCHIVAL"}),  # "(NOT ARCHIVAL!)"
     ("CONSOLIDATION_POLICIES", "state", FactState, "lines", {"MUST", "NOT", "ARCHIVAL"}),      # "ARCHIVAL is context_priority, ARCHIVED is state"
     ("CONSOLIDATION_POLICIES", "context_priority", ContextPriority, "lines", {"MUST", "NOT", "ARCHIVED"}),  # "(NOT ARCHIVED!)"
-    (TOOLS, "domain", FactDomain, "lines", {"MUST", "REQUIRED", "UUID"}),                      # search `returns:` line names domain
     (TOOLS, "temporal_class", TemporalClass, "lines", {"MUST", "REQUIRED", "UUID"}),           # search `returns:` line names it too
     (TOOLS, "state", FactState, "lines", {"MUST", "REQUIRED", "UUID"}),
     (TOOLS, "context_priority", ContextPriority, "lines", {"MUST"}),
-    ("CONSOLIDATION_POLICIES", "domain", FactDomain, "exact:" + POLICY_LISTS["domain"], set()),
     ("CONSOLIDATION_POLICIES", "temporal_class", TemporalClass, "exact:" + POLICY_LISTS["temporal_class"], set()),
     ("CONSOLIDATION_POLICIES", "state", FactState, "exact:" + POLICY_LISTS["state"], set()),
     ("CONSOLIDATION_POLICIES", "context_priority", ContextPriority, "exact:" + POLICY_LISTS["context_priority"], set()),
