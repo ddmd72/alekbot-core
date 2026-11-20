@@ -21,8 +21,8 @@ reads cached tokens from each adapter's usage parsing.
 ## Owned data
 
 None. The block is stateless: no collection, no cache of its own. `PromptCacheConfig` (`src/domain/llm.py`) is the one
-value it passes around, and only two of its fields exist: `enabled`, and `cache_last_message` (also place a breakpoint
-on the messages of a multi-turn loop, not only on the system prompt). The config is per request and never stored.
+value it passes around: an on switch plus `cache_last_message` (also mark the messages of a multi-turn loop, not only
+the system prompt). It has no TTL or scope field. The config is per request and never stored.
 
 ## Flows
 
@@ -52,12 +52,12 @@ one call opts out. Every other `LLMPort` method is delegated to the inner provid
 - **Claude** (`ClaudeAdapter.generate_content`): the system instruction is split at `PROMPT_CACHE_BOUNDARY`
   (`src/domain/llm.py`). The static prefix becomes a system block with `cache_control: ephemeral`; the text after the
   boundary becomes a second block with no mark, and is omitted when empty. With no boundary the whole instruction is one
-  marked block. Empty text is never marked (Anthropic rejects it). With `cache_last_message`, `ClaudeAdapter._convert_messages`
+  marked block. An empty instruction is never marked (Anthropic rejects empty text). With `cache_last_message`, `ClaudeAdapter._convert_messages`
   also marks the last content block of the last user message and of the previous user message (a rolling pair, so the
   chain survives a turn with more than 20 tool blocks). At most three marks are placed.
 - **OpenAI** (`OpenAIAdapter.generate_content`): no markers. For models whose prefix is in
   `OpenAIAdapter._DEPRECATED_RETENTION_PREFIXES` it sends a `prompt_cache_key` hashed from the static prefix
-  (`OpenAIAdapter._prompt_cache_key`); for older models `prompt_cache_retention` of 24 hours.
+  (`OpenAIAdapter._prompt_cache_key`); for older models `prompt_cache_retention`.
 - **Gemini and Grok** declare `context_caching=False`, so the strategy never returns a config for them. They still strip
   the boundary marker from the instruction. Grok ignores an enabled config with a log line; **Gemini raises
   `ValueError`** for one.
@@ -81,8 +81,8 @@ rolling message marks keep hitting (`SYSTEM_TURN_FINGERPRINT_RFC.md` section 4.9
 - **`context_caching` is not Claude-only.** `OpenAIAdapter.CAPABILITIES` sets it, so Smart or Quick moved to OpenAI
   by user config receive an enabled config. Grok sets it false on purpose: its caching is automatic with nothing to
   control (comment at `GrokAdapter.CAPABILITIES`).
-- **The default provider decides what is cached out of the box**, not the strategy: `AgentProviderStrategy.STRATEGIES`
-  gives `consolidation`, `quick`, `drive` and `fact_profiler` Claude by default and `smart` Gemini, so Smart is cached
+- **The default provider decides what is cached out of the box**, not the strategy: each type's `default_provider` in
+  `AgentProviderStrategy.STRATEGIES` decides it, so a type whose default provider cannot cache (Smart today) is cached
   only for a user who moves it to Claude or OpenAI. `tests/unit/services/test_agent_context_builder.py` pins the wrapping
   for a caching provider and its absence otherwise.
 - **Multi-turn marks only for loops that will read them.** A single-turn agent with `cache_last_message` would pay the
@@ -94,6 +94,7 @@ rolling message marks keep hitting (`SYSTEM_TURN_FINGERPRINT_RFC.md` section 4.9
   itself (`DriveAgent` appends it when absent).
 - **An agent never sets `cache_config` except to opt out.** An explicit config bypasses the proxy; on Gemini any
   enabled config raises.
+- **A prompt shorter than the provider's minimum cacheable length is silently not cached**, whatever the config says.
 - **No cache across a provider switch.** The fallback gets the raw provider (see Flows), and a cache written on one
   provider is not read on another.
 - **`ttl` and scope are not controllable here.** `PromptCacheConfig` has no such field; the provider's own default
