@@ -49,7 +49,7 @@ class MapsSearchAgent(BaseAgent):
     calls and returns results to the LLM for formatting.
 
     System prompt is assembled from Firestore profile "maps_search" via PromptBuilderPort,
-    including biographical facts. Falls back to empty instruction on assembly failure.
+    including biographical facts. A prompt-assembly failure fails the response.
     """
 
     THINKING = MAPS_SEARCH.thinking
@@ -90,20 +90,16 @@ class MapsSearchAgent(BaseAgent):
         return await self._run_tool_loop(message, query)
 
     async def _build_system_instruction(self) -> str:
-        try:
-            # Biographical facts are irrelevant to spatial queries and leak PII into a
-            # tool-calling agent that never needs them. user_location is injected
-            # independently from UserBotConfig (assembly_service), and current time is
-            # prepended to the user message below — both survive include_biographical=False.
-            return await self._prompt_builder.build_for_agent(
-                agent_type="maps_search",
-                account_id=self._account_id,
-                user_id=self.user_id,
-                include_biographical=False,
-            )
-        except Exception as exc:
-            logger.warning(f"🗺️ [MapsSearchAgent] prompt build failed ({exc}), using empty instruction")
-            return ""
+        # Biographical facts are irrelevant to spatial queries and leak PII into a
+        # tool-calling agent that never needs them. user_location is injected
+        # independently from UserBotConfig (assembly_service), and current time is
+        # prepended to the user message below — both survive include_biographical=False.
+        return await self._prompt_builder.build_for_agent(
+            agent_type="maps_search",
+            account_id=self._account_id,
+            user_id=self.user_id,
+            include_biographical=False,
+        )
 
     async def _run_tool_loop(self, message: AgentMessage, query: str) -> AgentResponse:
         """

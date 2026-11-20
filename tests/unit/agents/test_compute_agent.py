@@ -249,3 +249,15 @@ class TestAlternativeAgents:
 
     def test_returns_web_search(self, agent):
         assert agent._get_alternative_agents() == ["web_search_agent"]
+
+
+async def test_a_prompt_build_failure_fails_without_calling_the_model(
+    agent, mock_prompt_builder, mock_llm
+):
+    mock_prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+    response = await agent.execute(_make_message("2 + 2"))
+
+    assert response.status == AgentStatus.FAILED
+    assert "Computation failed" in response.error
+    mock_llm.generate_content.assert_not_awaited()

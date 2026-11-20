@@ -463,3 +463,15 @@ class TestMaxTurns:
 
         assert response.status == AgentStatus.SUCCESS
         assert mock_llm.generate_content.call_count == _MAX_TURNS + 1
+
+
+async def test_a_prompt_build_failure_fails_the_response_without_calling_the_model(
+    agent, mock_llm, mock_prompt_builder
+):
+    mock_prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+    response = await agent.execute(_make_message())
+
+    assert response.status == AgentStatus.FAILED
+    assert "Maps search failed" in response.error
+    mock_llm.generate_content.assert_not_awaited()

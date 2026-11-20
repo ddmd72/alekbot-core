@@ -874,3 +874,20 @@ class TestOutputLengthLimit:
         assert response.result.startswith("Tool note:")
         assert "Call d" not in response.result.split("Tool results:")[0]
         assert mock_call.call_count == 2
+
+
+class TestPromptBuildFailure:
+
+    async def test_a_prompt_build_failure_fails_and_calls_no_tool(self):
+        from src.domain.agent import AgentStatus
+
+        agent, provider, _ = _make_agent()
+        agent.prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            response = await agent.execute(_make_message("list my tasks"))
+
+        assert response.status == AgentStatus.FAILED
+        assert response.error.startswith("Failed to build system prompt")
+        mock_call.assert_not_called()
+        provider.list_tasks.assert_not_awaited()

@@ -199,3 +199,15 @@ async def test_execute_passes_brief_as_original_query(mock_job_port):
     await agent.execute(msg)
 
     assert mock_job_port.create_interaction.call_args.kwargs["original_query"] == "One-line summary"
+
+
+async def test_a_prompt_build_failure_fails_and_submits_no_job(mock_job_port):
+    prompt_builder = AsyncMock(spec=PromptBuilderPort)
+    prompt_builder.build_for_agent.side_effect = KeyError("blueprint")
+
+    agent = _make_agent(mock_job_port, prompt_builder=prompt_builder)
+    response = await agent.execute(_make_message())
+
+    assert response.status == AgentStatus.FAILED
+    assert response.error.startswith("Failed to build system prompt")
+    mock_job_port.create_interaction.assert_not_awaited()

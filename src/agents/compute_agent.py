@@ -28,7 +28,6 @@ from ..ports.llm_port import (
     MessagePart,
 )
 from ..ports.prompt_builder_port import PromptBuilderPort
-from ..utils.logger import logger
 
 
 class ComputeAgent(BaseAgent):
@@ -46,7 +45,7 @@ class ComputeAgent(BaseAgent):
         self,
         config: AgentConfig,
         execution_context: AgentExecutionContext,
-        prompt_builder: Optional[PromptBuilderPort] = None,
+        prompt_builder: PromptBuilderPort,
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
@@ -86,22 +85,14 @@ class ComputeAgent(BaseAgent):
 
         try:
             # Build system prompt via PromptBuilder
-            system_prompt = ""
-            if self.prompt_builder:
-                try:
-                    account_id = message.context.get("account_id")
-                    system_prompt = await self.prompt_builder.build_for_agent(
-                        agent_type="compute",
-                        user_id=self.user_id,
-                        account_id=account_id,
-                        routing_metadata=None,
-                        include_biographical=False,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        f"ComputeAgent: build_for_agent failed ({exc}), "
-                        "proceeding with empty prompt"
-                    )
+            account_id = message.context.get("account_id")
+            system_prompt = await self.prompt_builder.build_for_agent(
+                agent_type="compute",
+                user_id=self.user_id,
+                account_id=account_id,
+                routing_metadata=None,
+                include_biographical=False,
+            )
 
             current_time_str = datetime.now(timezone.utc).strftime(
                 "%A, %d %B %Y, %H:%M %Z"
