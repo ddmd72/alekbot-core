@@ -120,8 +120,8 @@ async def test_execute_passes_system_prompt_from_builder(mock_job_port):
     prompt_builder.build_for_agent.assert_called_once_with("deep_research", "u1")
 
 
-async def test_execute_prompt_builder_failure_continues(mock_job_port):
-    """PromptBuilder failure must not block job submission."""
+async def test_execute_prompt_builder_failure_blocks_job_submission(mock_job_port):
+    """A PromptBuilder failure fails the response with its cause and submits no job (no fallback prompt)."""
     prompt_builder = AsyncMock(spec=PromptBuilderPort)
     prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore unavailable")
     mock_job_port.create_interaction.return_value = "job_fallback"
@@ -129,9 +129,10 @@ async def test_execute_prompt_builder_failure_continues(mock_job_port):
     agent = _make_agent(mock_job_port, prompt_builder=prompt_builder)
     response = await agent.execute(_make_message())
 
-    assert response.status == AgentStatus.SUCCESS
-    mock_job_port.create_interaction.assert_called_once()
-    assert mock_job_port.create_interaction.call_args.kwargs["system_prompt"] is None
+    assert response.status == AgentStatus.FAILED
+    assert response.error.startswith("Failed to build system prompt")
+    assert "Firestore unavailable" in response.error
+    mock_job_port.create_interaction.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

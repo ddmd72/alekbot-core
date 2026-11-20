@@ -218,14 +218,17 @@ class TestExecuteFailure:
         assert response.status == AgentStatus.FAILED
         assert "Computation failed" in response.error
 
-    async def test_prompt_builder_failure_non_fatal(self, agent, mock_prompt_builder, mock_llm):
+    async def test_prompt_builder_failure_is_fatal_and_carries_its_cause(self, agent, mock_prompt_builder, mock_llm):
         mock_prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore error")
 
         msg = _make_message()
         response = await agent.execute(msg)
 
-        # Should succeed — prompt builder failure is non-fatal
-        assert response.status == AgentStatus.SUCCESS
+        # Fatal — no fallback prompt (root CLAUDE.md "No fallback prompts")
+        assert response.status == AgentStatus.FAILED
+        assert "Computation failed" in response.error
+        assert "Firestore error" in response.error
+        mock_llm.generate_content.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

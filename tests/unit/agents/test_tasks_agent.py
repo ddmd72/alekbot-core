@@ -355,10 +355,9 @@ class TestCanHandle:
 
 class TestExecuteEdgeCases:
 
-    async def test_prompt_build_failure_still_succeeds(self):
-        """Prompt build exception is swallowed; agent proceeds with empty system prompt."""
-        from src.agents.tasks_agent import TasksAgent
-
+    async def test_prompt_build_failure_fails_with_its_cause(self):
+        """A prompt build exception fails the response with its cause; no model or tool call runs
+        (root CLAUDE.md "No fallback prompts")."""
         agent, provider, indexing = _make_agent()
         agent.prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore down")
         provider.list_tasks.return_value = []
@@ -368,7 +367,11 @@ class TestExecuteEdgeCases:
             response = await agent.execute(_make_message("list my tasks"))
 
         from src.domain.agent import AgentStatus
-        assert response.status == AgentStatus.SUCCESS
+        assert response.status == AgentStatus.FAILED
+        assert response.error.startswith("Failed to build system prompt")
+        assert "Firestore down" in response.error
+        mock_call.assert_not_called()
+        provider.list_tasks.assert_not_awaited()
 
     async def test_legacy_context_key_in_payload_is_not_read(self):
         """payload['context'] is no longer a TasksAgent field: the declared context_schemas

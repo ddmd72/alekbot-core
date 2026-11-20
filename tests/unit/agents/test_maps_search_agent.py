@@ -215,8 +215,11 @@ class TestPromptBuilder:
             include_biographical=False,
         )
 
-    async def test_fallback_to_empty_on_prompt_build_failure(self, mock_llm, mock_maps_port, mock_prompt_builder):
-        """When build_for_agent raises, system instruction falls back to empty string and execute still succeeds."""
+    async def test_a_prompt_build_failure_fails_with_its_cause_and_calls_no_maps_tool(
+        self, mock_llm, mock_maps_port, mock_prompt_builder
+    ):
+        """When build_for_agent raises, the response fails with the cause and no model or maps tool call is made
+        (root CLAUDE.md "No fallback prompts")."""
         mock_prompt_builder.build_for_agent.side_effect = KeyError("blueprint not found")
         mock_llm.generate_content.return_value = LLMResponse(text="Відповідь.", tool_calls=[])
 
@@ -234,7 +237,11 @@ class TestPromptBuilder:
         )
 
         response = await a.execute(_make_message())
-        assert response.status == AgentStatus.SUCCESS
+        assert response.status == AgentStatus.FAILED
+        assert "Maps search failed" in response.error
+        assert "blueprint not found" in response.error
+        mock_llm.generate_content.assert_not_awaited()
+        mock_maps_port.call_tool.assert_not_awaited()
 
     async def test_system_instruction_and_tool_decls_fetched_per_execute(self, agent, mock_prompt_builder, mock_maps_port, mock_llm):
         """Both prompt build and tool declarations are fetched on each execute call."""
