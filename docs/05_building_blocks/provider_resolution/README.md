@@ -40,8 +40,9 @@ Nothing is stored. All state is in process memory:
 - **Strategy table** — `AgentProviderStrategy.STRATEGIES`, one entry per agent type: `default_provider`,
   `allowed_providers`, `required_capabilities`, `fallback` (a provider name or `None`) and an optional `fallback_tier`.
   An unknown agent type gets the `quick` entry. This table is the only place a provider is pinned or locked: an agent
-  whose output format only one provider honours has a single-element `allowed_providers` (for example
-  `postprocessing`, `facts_memory`, `email_card`).
+  that must run on one provider has a single-element `allowed_providers`, either because its output format only that
+  provider honours (`postprocessing`, whose `response_schema` is Gemini-only) or by a measured-quality choice
+  (`email_card`, `fact_query_slots`, the memory-search slots call).
 - **Breaker state** — `InMemoryProviderResilience`, per provider name and per process, shared by all agents: a rolling
   window of failure times and an `opened_at` mark. It is lost on restart and not shared between Cloud Run instances.
 - **Tier maps** — `MODEL_TIERS` on each adapter (`ClaudeAdapter.MODEL_TIERS`, `GeminiAdapter.MODEL_TIERS`,
@@ -59,8 +60,8 @@ Nothing is stored. All state is in process memory:
    (`UserBotConfig.agent_providers`), else the global `provider_preference`, else the strategy default. A value that is
    not in the strategy's `allowed_providers` is **silently skipped**, not an error; names are lowercased first.
 2. **Tier** — `UserBotConfig.get_tier_for_agent`: the stored per-agent tier, else `_DEFAULT_AGENT_TIERS`
-   (`src/domain/user.py`), else `default_tier`. Because the code default is consulted before `default_tier`, a new agent
-   type needs its entry there.
+   (`src/domain/user.py`), else `default_tier`. An agent type with no `_DEFAULT_AGENT_TIERS` entry gets the user's
+   `default_tier`, so a new agent that needs a specific tier needs its entry there.
 3. **Model** — `UserBotConfig.model_overrides[agent_type]`, else `provider.get_model_for_tier(tier)`.
 4. **Wrapping** — `AgentContextBuilder._build` wraps the provider in `CachingLLMProxy` when the cache strategy returns a
    config for the agent type, then in `AlertingLLMProxy` (outermost, so it sees the real provider's errors).
@@ -69,8 +70,10 @@ Nothing is stored. All state is in process memory:
    the caching proxy (a cache is useless after a provider switch). A fallback that cannot be resolved is logged
    (`llm_fallback_provider_unavailable`) and the context is built without one.
 
-`resolve_for_task` is the same build with the tier (and optionally the provider) taken from `ComplexitySettings` instead
-of config; the router-driven path that uses it is in [hybrid_router](../hybrid_router/README.md).
+`resolve_for_task` is the same build with the tier taken from `ComplexitySettings.tier` instead of config; if
+`ComplexitySettings.provider_override` is set it replaces the provider name and `agent_providers` and `provider_preference`
+are not consulted. Smart applies it per request; the per-request override pattern is in
+[hybrid_router](../hybrid_router/README.md).
 Agents whose work is not an `LLMPort` call use the same name resolution against another registry:
 `resolve_async_context` (deep research; a per-agent override outside `allowed_providers` raises
 `UnsupportedProviderError` instead of falling back), `resolve_image_generation_context`,
@@ -93,12 +96,12 @@ thinking blocks, cache), so it is never re-served on another provider.
 3. **Unlocked request**: fail over once to `ctx.fallback_provider`. No fallback configured, or its breaker open, raises
    `BothProvidersUnavailableError`; so does a failing fallback. A fallback success deliberately does **not** call
    `record_success(fallback)`, because the reset would erase its accumulated failures after one lucky call
-   (`decisions/provider_resilience_port.md`).
+   (`BaseAgent._call_llm` docstring).
 4. **Smart rotation.** `SmartResponseAgent.execute` (`src/agents/core/smart_response_agent.py`) catches
    `TranscriptLockedError` and asks `AgentContextBuilder.resolve_next_provider` (via
    `TaskExecutionResolver.next_provider_override`) for the next entry of `allowed_providers` that was not tried and whose
-   breaker is closed, at the same tier, then re-runs the whole delegation from scratch. A turn under the long-running
-   clock does not rotate. Details: `decisions/cross_provider_execution_retry.md`.
+   breaker is closed, at the same tier, then re-runs the whole delegation from scratch. A turn past the long-turn mark
+   (`clock.marked`) does not rotate. Details: `decisions/cross_provider_execution_retry.md`.
 5. **Quick fallback.** A failed Smart response goes to Quick, then to a synthetic apology
    (`src/services/agent_fallback_service.py::AgentFallbackService.try_quick_fallback`).
 
@@ -113,19 +116,19 @@ What a model reads as file bytes instead of converted text (`docs/10_rfcs/EXTERN
 
 1. `LLMPort.native_formats(model_name)` (`src/ports/llm_port.py`) returns a tuple of `NativeFormat`; the default is
    `()` (text only). Claude, Gemini, OpenAI and Grok override it by model-name prefix or id list; any other name gets
-   `()`. The caching and alerting proxies forward the call. The format constants cite the provider's documentation; a
+   `()`. The caching and alerting proxies forward the call. The Claude, Gemini and OpenAI constants cite the provider's documentation; a
    cap that the documentation does not state takes the smallest documented value of the others.
 2. Each engine runner puts `to_plain(provider.native_formats(model))` under `context["native_formats"]`
    (`src/domain/native_format.py::NATIVE_FORMATS_KEY`) in a **copy** of its context, per attempt, so a fallback attempt
-   on another provider declares its own formats. Runners: `QuickResponseAgent`, `SmartResponseAgent`,
-   `DomainResearcherAgent`, `TutorAgent`.
+   on another provider declares its own formats. The runners are the agents that call an LLM and then
+   delegate file work (grep `NATIVE_FORMATS_KEY` under `src/agents/`).
 3. `src/infrastructure/agent_coordinator.py::_specialist_context` drops the key for every intent outside
    `NATIVE_OPENING_INTENTS` (`src/infrastructure/agent_manifest.py`): the declaration is the caller's provider's, not a
    specialist's.
-4. `src/infrastructure/drive_operations.py::_declared_format` reads it: a file is passed natively when its mime is
-   declared, its size is within `max_bytes` and a PDF's page count within `max_pages`; otherwise it goes to the
-   converter as text. No key means text. `NativeFormat` refuses at construction a cap above
-   `document_limits.native_ceiling`.
+4. `src/infrastructure/drive_operations.py::_declared_format` looks up the declaration by mime; its caller passes a file
+   natively when the mime is declared, its size is within `max_bytes` and a PDF's page count within `max_pages`;
+   otherwise the file goes to the converter as text. No key means text. `NativeFormat` refuses at construction a cap
+   above `document_limits.native_ceiling`.
 
 ## Invariants and traps
 
@@ -140,22 +143,24 @@ What a model reads as file bytes instead of converted text (`docs/10_rfcs/EXTERN
     (Haiku 4.5) gets neither, because sending effort there is a 400.
   - `ClaudeAdapter._DYNAMIC_SEARCH_MODELS`: other models get the legacy web-search tool.
   - `ClaudeAdapter._THINKING_OFF`, `ClaudeAdapter._NO_FORCED_TOOL_MODELS`, `ClaudeAdapter._MODEL_FALLBACK`: no-thinking
-    value, forced-tool degradation and same-provider model fallback, all computed in
-    `ClaudeAdapter._model_dependent_params` (traps in `src/adapters/CLAUDE.md`).
+    value, forced-tool degradation and same-provider model fallback. `ClaudeAdapter._model_dependent_params` recomputes
+    thinking, effort and `tool_choice` for the primary model and again for the fallback model; the fallback itself is
+    chosen in the request path (traps in `src/adapters/CLAUDE.md`).
   - `OpenAIAdapter._MIN_MEDIUM_EFFORT_PREFIXES`, `_MIN_LOW_EFFORT_PREFIXES`, `_THINKING_OFF_EFFORT`: effort is clamped up
     to the model's floor after it is resolved, so the clamp covers both an explicit value and the
     grounding-forced `low`.
 - **`required_capabilities` is declarative.** `_build` reads provider capabilities only to pass them on; it does not
   check them against the strategy. A provider in `allowed_providers` is assumed able to serve the agent.
 - **Fallback is per strategy, rotation is not.** `fallback` governs unlocked failover only; rotation walks the whole
-  `allowed_providers` list. Memory-quality agents (`consolidation`, `fact_profiler`, `tutor_extractor`) have
-  `fallback: None` by owner ruling, so their outage is a failure, not a cheaper answer.
-- **Fallback tier is part of the strategy.** The drive agents pin `fallback_tier` because their primary runs at ECO, which
-  on Gemini is a different, weaker model than the fallback should be.
+  `allowed_providers` list. Memory-quality agents have `fallback: None` by an owner ruling recorded in the
+  comments of `AgentProviderStrategy.STRATEGIES`, so their outage is a failure, not a cheaper answer.
+- **Fallback tier is part of the strategy.** An entry pins `fallback_tier` when the fallback must not run at the primary's
+  tier: the drive indexer agents run at ECO, which on Gemini is flash-lite, so their Gemini fallback is pinned to BALANCED;
+  the `drive` specialist runs at BALANCED and pins PERFORMANCE for its OpenAI fallback, whose BALANCED is a smaller model.
 - **The breaker is per process.** With more than one Cloud Run instance each keeps its own view; the port is the seam for
   a shared implementation. The drive indexer service has its own builder and breaker.
 - **Names are lowercased in two places** (`resolve_provider_name` and `_build`) because the registry keys are lowercase
-  and a mixed-case user value once reached the registry and failed every request.
+  and a mixed-case user value reaches the registry as an unknown name.
 
 ## Links
 
