@@ -599,7 +599,7 @@ Unit tests across 6 layers:
 
 | File | Layer | Coverage |
 |------|-------|----------|
-| `tests/unit/ports/test_mcp_client_repository_port.py` | Port contract | ABC, in-memory fake roundtrip, one-shot consume, revoke idempotency |
+| `tests/unit/ports/test_mcp_client_repository_port.py` | Port contract | In-memory fake roundtrip, one-shot consume, revoke idempotency |
 | `tests/unit/services/test_mcp_authorization_service.py` | Service | DCR host allowlist, consent JWT, PKCE, code mint + finalize, refresh rotation, access JWT verify |
 | `tests/unit/composition/test_mcp_sdk_oauth_provider.py` | SDK shim | Type translation, delegation, error mapping |
 | `tests/unit/web/test_mcp_consent_app.py` | Consent blueprint | GET with/without cookie, POST approve/deny, bad JWT |

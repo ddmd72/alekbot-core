@@ -901,9 +901,6 @@ in Phase 5. No real users on Google Tasks.
 
 | File | Key scenarios |
 |------|---------------|
-| `tests/unit/ports/test_task_search_index.py` | ABC contract: `TaskSearchIndex` |
-| `tests/unit/ports/test_task_config_port.py` | ABC contract: `TaskConfigPort` |
-| `tests/unit/ports/test_task_lifecycle_port.py` | ABC contract: `TaskLifecyclePort` |
 | `tests/unit/adapters/test_microsoft_todo_adapter.py` | Wire tests (mock httpx); field mapping; checklist diff logic; `ensure_primary_list` — no Firestore writes; `register_subscription` returns config without persisting |
 | `tests/unit/adapters/test_firestore_task_search_index.py` | Vector wrap/unwrap; RRF; list_id filter; `delete_all_for_user` |
 | `tests/unit/adapters/test_firestore_task_config_repository.py` | `set_primary_list_id_if_absent` transaction; `get_config` missing doc → empty config |

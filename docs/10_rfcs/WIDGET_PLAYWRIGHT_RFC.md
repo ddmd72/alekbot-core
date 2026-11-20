@@ -334,7 +334,7 @@ No double-delivery risk: `full_response` text is sent before image rendering sta
 ## 13. Testing
 
 **Unit tests (implemented):**
-- `tests/unit/ports/test_html_renderer_port.py` — 5 port contract tests
+- `tests/unit/ports/test_html_renderer_port.py` — render and `HtmlRenderError` tests
 - `tests/unit/services/test_rich_content_widget.py` — 5 service tests:
   - normal render → `upload_image` called with correct bytes
   - renderer not configured → no upload, no exception
@@ -367,7 +367,7 @@ open /tmp/widget_test.png
 | `main.py` | **Modified** — renderer lifecycle, `TelegramAdapterFactory` | ✅ |
 | `Dockerfile` | **Modified** — Playwright + Chromium install | ✅ |
 | `requirements.txt` | **Modified** — `playwright>=1.40.0` | ✅ |
-| `tests/unit/ports/test_html_renderer_port.py` | **Created** — port contract tests | ✅ |
+| `tests/unit/ports/test_html_renderer_port.py` | **Created** — render and `HtmlRenderError` tests | ✅ |
 | `tests/unit/services/test_rich_content_widget.py` | **Created** — service tests | ✅ |
 | `scripts/test_html_render.py` | **Created** — local smoke test | ✅ |
 | `firestore_utils/uploads/OUTPUT_FORMAT_JSON.groovy` | **Modified** — `widget` type + iOS widget style + grid layout | ✅ |
