@@ -38,3 +38,6 @@ class CompanionExtractionBatch(BaseModel):
     # Stamped when the batch enters PROCESSING — same zombie-detection use as
     # ConsolidationBatch.processing_started_at.
     processing_started_at: Optional[float] = None
+    # How many times a reset revived this batch from FAILED. Lifetime counter, never cleared by a reset;
+    # caps the paid retries (MAX_FAILED_REVIVALS).
+    revivals: int = 0

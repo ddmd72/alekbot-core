@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from ..domain.companion import CompanionRecord
-from ..domain.consolidation import BatchStatus
+from ..domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus
 from ..ports.companion_cache_repository import CompanionCacheRepository
 from ..ports.companion_extraction_queue import CompanionExtractionQueue
 from ..ports.companion_extractor_port import CompanionExtractorPort
@@ -103,17 +103,23 @@ class CompanionExtractionService:
                     processed += 1
                 except Exception as exc:
                     attempts = await self._queue.increment_attempts(batch.batch_id)
-                    if attempts >= 3:
+                    if attempts >= MAX_BATCH_ATTEMPTS:
                         await self._queue.update_batch_status(batch.batch_id, BatchStatus.FAILED, error=str(exc))
                         logger.error(
                             "❌ [CompanionExtraction] EXTRACTION_FAILED batch_id=%s session_id=%s attempts=%d error=%r",
                             batch.batch_id, batch.session_id, attempts, str(exc),
                         )
+                        if batch.revivals >= MAX_FAILED_REVIVALS:
+                            logger.error(
+                                "❌ [CompanionExtraction] EXTRACTION_GAVE_UP batch_id=%s session_id=%s "
+                                "revivals=%d messages=%d (kept in the queue, not revived again)",
+                                batch.batch_id, batch.session_id, batch.revivals, len(batch.messages),
+                            )
                     else:
                         await self._queue.update_batch_status(batch.batch_id, BatchStatus.RETRY_PENDING, error=str(exc))
                         logger.warning(
-                            "⚠️ [CompanionExtraction] Batch %s failed (attempt %d/3) session=%s: %s",
-                            batch.batch_id, attempts, batch.session_id[:12], exc,
+                            "⚠️ [CompanionExtraction] Batch %s failed (attempt %d/%d) session=%s: %s",
+                            batch.batch_id, attempts, MAX_BATCH_ATTEMPTS, batch.session_id[:12], exc,
                         )
                     break
 
