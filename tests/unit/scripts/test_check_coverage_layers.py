@@ -162,3 +162,27 @@ class TestScript:
         done = subprocess.run([sys.executable, str(REPO_ROOT / "scripts/check_coverage_layers.py")], cwd=tmp_path,
                               capture_output=True, text=True, env={"COVERAGE_JSON_PATH": str(tmp_path / "none.json")})
         assert done.returncode == 1 and "not found" in done.stderr
+
+
+class TestNeverRunFile:
+    """A measured file with statements and no covered line fails the gate; the layer floors' headroom would hide it."""
+
+    def all_layers_full(self):
+        return {f"src/{layer}/x.py": summary(100, 100) for layer in ("domain", "ports", "infrastructure", "agents", "services",
+                                                                      "handlers", "adapters", "web", "composition", "utils")}
+
+    def test_a_never_run_file_fails_naming_it(self, tmp_path):
+        files = {**self.all_layers_full(), "src/utils/dead.py": summary(5, 0, 2, 0)}
+        done = TestScript().run(tmp_path, files)
+        assert done.returncode == 1 and "src/utils/dead.py: no test runs a single line" in done.stderr
+        assert "< floor" not in done.stderr                    # the layer itself is above its floor
+
+    def test_every_file_partly_run_passes(self, tmp_path):
+        files = {**self.all_layers_full(), "src/utils/barely.py": summary(5, 1)}
+        done = TestScript().run(tmp_path, files)
+        assert done.returncode == 0, done.stderr
+
+    def test_a_zero_statement_file_passes(self, tmp_path):
+        files = {**self.all_layers_full(), "src/domain/__init__.py": summary(0, 0)}
+        done = TestScript().run(tmp_path, files)
+        assert done.returncode == 0, done.stderr
