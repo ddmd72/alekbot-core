@@ -74,7 +74,7 @@ from ..domain.email_open_texts import active_kind_refusal_note
 from ..domain.document_open_texts import shown_line, storage_read_note
 from ..domain.document_presentation import present_text
 from ..domain.document_read import (
-    CALLER_CONNECTOR, CALLER_OPEN, INTERACTIVE_OPEN_S, ReadOutcome, ReadStatus, reader_skipped,
+    CALLER_CONNECTOR, CALLER_OPEN, INTERACTIVE_OPEN_S, SYSTEM_FAULT_STATUSES, ReadOutcome, ReadStatus, reader_skipped,
 )
 from ..domain.drive_op import DriveOp
 from ..domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain
@@ -1306,12 +1306,6 @@ def _declared_format(context: Mapping[str, Any], mime: str) -> Optional[NativeFo
     return None
 
 
-# Statuses that are not the file's own fault: a parser, memory or model problem is something to fix, so it is an ERROR
-# line (the Errors policy pages on severity>=ERROR, ALERTING.md). A file-specific outcome stays a WARNING.
-_SYSTEMIC = frozenset({ReadStatus.PARSER_UNAVAILABLE, ReadStatus.MODEL_UNAVAILABLE, ReadStatus.MEMORY,
-                       ReadStatus.ERROR})
-
-
 def _signal_note(ref: str, opened: OpenedFile) -> None:
     """The visible signal for an open that answered a note instead of text: a log line, ERROR when the failure is
     systemic, WARNING otherwise. The note itself is the user-facing sentence (document_open_texts)."""
@@ -1319,7 +1313,7 @@ def _signal_note(ref: str, opened: OpenedFile) -> None:
         return
     status = opened.outcome.status if opened.outcome is not None else None
     detail = opened.outcome.detail if opened.outcome is not None else ""
-    level = logging.ERROR if status in _SYSTEMIC else logging.WARNING
+    level = logging.ERROR if status in SYSTEM_FAULT_STATUSES else logging.WARNING
     logger.log(level, "[DriveOperations] open gave a note: %s status=%s detail=%s", ref,
                status.value if status is not None else "-", detail or "-")
 
