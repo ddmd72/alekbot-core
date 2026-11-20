@@ -3,7 +3,8 @@
 the raw stored documents and on what readers return.
 
 No test asserts the unbounded FAILED revival as correct: it is P15-D5, pinned as a strict xfail in
-`tests/unit/handlers/test_worker_redelivery_chains.py`. Legacy batches missing a field are not pinned (data audit).
+`tests/unit/handlers/test_worker_redelivery_chains.py`. Legacy batches missing a field are not pinned (data audit), except a batch without `session_id`: the stuck-session
+read leaves it out, so the hourly sweep never gets a None id.
 """
 import time
 from pathlib import Path
@@ -132,6 +133,13 @@ async def test_stuck_session_ids_are_distinct(queue):
     for k in ("c1", "c2", "c3"):
         await queue.delete_batch(k)
     assert await queue.get_stuck_session_ids() == []
+
+
+async def test_a_stored_batch_without_a_session_id_is_not_a_stuck_session(queue):
+    await put(queue, "c1", 1.0)
+    await queue.db.collection(QUEUE).document("no-session").set({"batch_id": "no-session", "status": "pending",
+                                                                   "messages": MESSAGES, "created_at": 2.0})
+    assert await queue.get_stuck_session_ids() == [SID]
 
 
 # --------------------------------------------------------------------------------------------------- create-if-absent

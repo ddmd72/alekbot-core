@@ -161,3 +161,17 @@ async def test_the_crossing_logs_the_budget_event(billing, caplog):
     with caplog.at_level("INFO"):
         await billing.quota.record_usage("a1", MODEL, 300, 0.5)
     assert "budget_daily_limit_crossed" in caplog.text
+
+
+@pytest.mark.h1_only("patches the fake's EvalDocRef.get to raise a backend error")
+async def test_a_backend_error_of_the_repository_is_swallowed_and_posts_nothing(billing, monkeypatch):
+    await billing.seed(daily_cost=4.6)
+    before = dict(billing.usage())
+
+    async def unavailable(self, *args, **kwargs):
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(EvalDocRef, "get", unavailable)
+    assert await billing.quota.record_usage("a1", MODEL, 300, 0.5) is None
+    assert billing.sink.posts == []
+    assert billing.usage() == before
