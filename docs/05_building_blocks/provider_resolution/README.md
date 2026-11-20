@@ -1,288 +1,176 @@
-# Provider Resolution (Building Block)
-
-## 1. Overview
-
-The **Provider Resolution** system decouples Alek-Core's reasoning logic from specific LLM vendors. It allows the system to dynamically choose the best model for a task based on performance requirements, user preferences, and cost constraints.
-
-**Core Principle:** Agents request a **Performance Tier**, and the system resolves it to a concrete **Provider** and **Model**.
-
----
-
-## 2. Core Components
-
-### 2.1 Performance Tiers
-
-Abstract levels of reasoning capability:
-
-- **ECO:** Fast, low-cost models (e.g., Gemini Flash). Used for routing and simple queries.
-- **BALANCED:** Good reasoning at moderate cost (e.g., Gemini Pro). Used for standard tasks.
-- **PERFORMANCE:** Top-tier reasoning (e.g., Claude Opus). Used for complex synthesis and tool orchestration.
-
-> **Tier × provider matrix has sharp edges.** Every adapter maps a tier to a
-> concrete model name and not every model accepts every parameter. Concrete
-> example: `BALANCED` on Claude resolved to `claude-haiku-4-5-20251001` (until
-> 2026-10-08), which rejected `output_config.effort` with HTTP 400. Claude tier
-> map since 2026-10-15: ECO and TIER1–3 `claude-haiku-5-5`, BALANCED
-> `claude-sonnet-5-5`, PERFORMANCE `claude-opus-5-5`, ULTRA `claude-fable-5-1`
-> (`ClaudeAdapter.MODEL_TIERS`). The ConsolidationAgent default
-> tier was therefore lifted to `PERFORMANCE` (`claude-sonnet-4-6`) in
-> `_DEFAULT_AGENT_TIERS` (`src/domain/user.py`). When you change a default
-> tier, also verify that the resulting model accepts every parameter the agent
-> sends (effort, thinking type, response_schema, etc.) — see §2.4.
-
-### 2.2 ProviderRegistry
-
-A central service locator that maintains active instances of LLM adapters (Gemini, Claude, etc.).
-
-- **Registration:** Adapters are registered at startup in `ServiceContainer` (built by `build_application_graph`).
-- **Lookup:** Services fetch concrete `LLMPort` implementations by name.
-
-### 2.4 Per-model capability gates inside adapters
-
-Beyond strategy/tier resolution, each adapter applies **capability gates**
-before serializing the request — silently dropping parameters the resolved
-model does not accept rather than crashing on a 400. Authoritative source for
-support is the provider's own `models.retrieve()` capability response (verified
-2026-04-25 via `client.models.retrieve(<model>).capabilities` for Anthropic).
-
-**ClaudeAdapter** (`src/adapters/claude_adapter.py`):
-
-| Parameter             | Gated to                                | Behavior on unsupported model                |
-| --------------------- | --------------------------------------- | -------------------------------------------- |
-| `thinking={adaptive}` | `_THINKING_MODELS = sonnet, opus, haiku-5` | Skipped silently on Haiku 4.5 (only `enabled`). Haiku 5.5 takes adaptive; `enabled` and `between_tools` 400 there. |
-| `output_config.effort`| Same `_THINKING_MODELS` substring check | Dropped silently on Haiku 4.5. Required: API rejects with `400 invalid_request_error: This model does not support the effort parameter.` on Haiku 4.5. Effort and adaptive thinking go together — only Sonnet 4.6 / Opus 4.7 accept both. |
-| `web_search_20260209` | `_DYNAMIC_SEARCH_MODELS = sonnet, opus` | Falls back to legacy `web_search_20250305` on Haiku (incl. 5.5: the dynamic variant returned a failed search in the 2026-10-08 probe). |
-
-The gate uses substring matching (`"claude-sonnet" in model_name`) rather than
-hard-coded model lists so new minor revisions inherit the right behavior. Haiku 5.5 is the
-first Haiku with effort (hence `claude-haiku-5` in the gate); **never send effort to a
-model whose `capabilities.effort.supported` is false**.
-
-**SDK pin:** `anthropic >= 0.97.0` (see `requirements.txt`). Older versions
-lack typed support for the GA `output_config.format` structured outputs API.
-
-**OpenAIAdapter** (`src/adapters/openai_adapter.py`):
-
-| Parameter                     | Gated to                                      | Behavior on unsupported model                |
-| ----------------------------- | --------------------------------------------- | -------------------------------------------- |
-| sampling (`temperature`, …)   | none                                          | Never sent on any provider (removed 2026-10-08, `decisions/temperature_removed.md`). |
-| `reasoning.effort = "low"`    | `_MIN_MEDIUM_EFFORT_PREFIXES = gpt-5.5-pro`   | **Clamped up to `"medium"`** — `gpt-5.5-pro` rejects `low` (`400 Unsupported value: 'low' … Supported: 'medium', 'high', 'xhigh'`; floor verified via live API probe 2026-07-13). The 5.4 family (nano/mini/5.4) accepts `low`. The clamp sits after effort is resolved, so it covers BOTH sources: an explicit `thinking="low"` and the grounding-forced `"low"`. Prefix match (`startswith`) so dated snapshots inherit it. |
-| `reasoning.effort = "none"`   | `_MIN_LOW_EFFORT_PREFIXES = gpt-6.1-sol`      | **Clamped up to `"low"`** (probed 2026-10-03). |
-| no `thinking` requested       | `_THINKING_OFF_EFFORT = {gpt-6-luna: none}`   | Sends `effort: none` — the model reasons by default otherwise. |
-
-### 2.3 AgentProviderStrategy
-
-Defines the default provider and allowed overrides for each agent type.
-
-- **Router:** Default `gemini`, allowed: `["grok", "gemini", "openai"]` (fast inference).
-- **Quick:** Default `gemini`, allowed: `["grok", "gemini", "claude", "openai"]` (native tools). Claude supported since 2026-02-23: `AutomaticFunctionCallingConfig` is now conditional on `capabilities.native_tools` (True for Gemini/Grok/OpenAI, False for Claude).
-- **Smart:** Default `gemini`, allowed: `["claude", "openai", "gemini", "grok"]` (tool orchestration).
-- **Consolidation:** Default `claude`, allowed: `["claude", "gemini"]` (context caching).
-- **Postprocessing:** Default `gemini`, allowed: `["gemini"]` — **locked, no override**. Rationale: the agent uses `response_mime_type` (enforces raw JSON), which is not supported by Claude or Grok. Tier (ECO/BALANCED/PERFORMANCE) remains user-configurable via `agent_tiers["postprocessing"]`.
-- **MemorySearch:** No dedicated strategy entry — resolved via `build("router", config)`. Always gets the same provider/model as RouterAgent (Gemini Flash by default). Rationale: MemorySearch does key formulation only (small, fast task), not user-facing reasoning.
-
----
-
-### 2.5 Native-format declaration
-
-What a model reads as file bytes instead of converted text (EXTERNAL_FILES_RFC §4.3).
-
-- **Port:** `LLMPort.native_formats(model_name) -> Tuple[NativeFormat, ...]` (`src/ports/llm_port.py:79`); the default is
-  text-only (no declaration). The caching and alerting proxies forward it (`caching_llm_proxy.py:53`,
-  `alerting_llm_proxy.py:97`).
-- **Values:** per adapter, constants citing the provider's documentation; the measured spike U0-e replaces the PDF page
-  caps. Images (`VISION_MIME_TYPES`) and PDF unless noted.
-
-  | Adapter | `native_formats` | Declared |
-  |---|---|---|
-  | Claude (`claude_adapter.py:780`) | `claude-*` | images; PDF 600 pages, Haiku 100 (`:191-197`) |
-  | Gemini (`gemini_adapter.py:285`) | `gemini-*` | images; PDF 1000 pages (`:59-61`) |
-  | OpenAI (`openai_adapter.py:500`) | `gpt-*` | images; PDF 100 pages (`:80-82`; no documented limit, the smallest documented value of the others) |
-  | Grok (`grok_adapter.py:402`) | `_GROK_VISION_MODELS` (`:67`) | images only |
-
-  Any other model name returns `()`.
-- **Per attempt:** the four engine runners (`quick_response_agent.py:248`, `smart_response_agent.py:578`,
-  `domain_researcher_agent.py:145`, `tutor_agent.py:197`) put `to_plain(provider.native_formats(model))` under
-  `context["native_formats"]` (`NATIVE_FORMATS_KEY`, `src/domain/native_format.py:26`) in a copy of the context, so a
-  fallback attempt on another provider declares its own formats.
-- **Scope:** `AgentCoordinator._specialist_context` (`agent_coordinator.py:28-33`, used at `:541` and `:572`) drops the key
-  for every intent outside `NATIVE_OPENING_INTENTS` (`open_file`, `work_with_drive_files`;
-  `src/infrastructure/agent_manifest.py:108`): the declaration is the caller's provider's, not a specialist's.
-- **Decision:** `DriveOperations` reads the key (`_declared_format`, `src/infrastructure/drive_operations.py:664`, `:710`,
-  `:1013`): a file is native when its mime is declared, its bytes are within `max_bytes` and a PDF's pages within
-  `max_pages`; otherwise it goes to the converter as text. No declaration means text.
-
----
-
-## 3. Resolution Process
-
-The `AgentContextBuilder` orchestrates the resolution of an `AgentExecutionContext` for every request.
-
-### 3.1 Resolution Order
-
-1. **Strategy Lookup:** Get the default provider and allowed overrides for the `agent_type`.
-2. **Provider Selection (3-Level Resolution):**
-   - **Level 1 (highest priority):** Use `user_config.agent_providers[agent_type]` if set and in allowed list.
-   - **Level 2:** Use `user_config.provider_preference` if it's in the allowed list.
-   - **Level 3 (lowest priority):** Use the strategy's `default_provider`.
-3. **Tier Selection:**
-   - Use per-agent tier from `user_config.agent_tiers`.
-   - Fallback to `user_config.default_tier`.
-4. **Model Selection:**
-   - Use `user_config.model_overrides` if present for the agent.
-   - Otherwise, call `provider.get_model_for_tier(tier)` to get the vendor-specific model name.
-
-### 3.2 Provider Selection Examples
-
-**Example 1: Per-Agent Override (Level 1)**
-
-```python
-config = UserBotConfig(
-    provider_preference="gemini",  # Global default
-    agent_providers={
-        "smart": "claude",  # Per-agent override
-        "consolidation": "claude"
-    }
-)
-
-# smart agent → claude (Level 1 wins)
-# quick agent → gemini (Level 2, no Level 1 override)
-```
-
-**Example 2: Global Preference (Level 2)**
-
-```python
-config = UserBotConfig(
-    provider_preference="claude"  # No per-agent overrides
-)
-
-# smart agent → claude (Level 2)
-# quick agent → claude (Level 2)
-# router agent → claude (Level 2, if allowed)
-```
-
-**Example 3: Strategy Default (Level 3)**
-
-```python
-config = UserBotConfig()  # Empty config
-
-# smart agent → claude (strategy default)
-# router agent → gemini (strategy default)
-```
-
-### 3.3 Task-Complexity Resolution (Dynamic Routing Path)
-
-When SmartResponseAgent processes a request with a known `TaskComplexity`, it calls
-`AgentContextBuilder.resolve_for_task()` instead of `build()`:
-
-```python
-def resolve_for_task(
-    self,
-    agent_type: str,
-    config: UserBotConfig,
-    settings: ComplexitySettings,       # already merged: user override > default
-) -> AgentExecutionContext:
-```
-
-The difference from `build()`:
-
-| Concern         | `build()`                                   | `resolve_for_task()`                                |
-|-----------------|---------------------------------------------|-----------------------------------------------------|
-| **Tier source** | `config.get_tier_for_agent(agent_type)`     | `settings.tier` (from merged ComplexitySettings)    |
-| **Provider**    | 3-level resolution (per-agent > pref > default) | Same 3-level, but `settings.provider_override` wins above all if set |
-| **Use case**    | Agent startup / default path                | Per-request dynamic override in SmartResponseAgent  |
-
-`settings.provider_override` (e.g. `"claude"`) short-circuits the normal 3-level provider
-resolution: if set, it is used directly without consulting `agent_providers` or
-`provider_preference`.
-
-The returned `AgentExecutionContext` has the same structure as the standard build path.
-SmartResponseAgent applies it as a temporary override for the duration of one request,
-then restores the default context.
-
-See [Smart Agent Execution](../smart_agent_execution/README.md) for the full override/restore
-pattern and `DEFAULT_COMPLEXITY_SETTINGS`.
-
-### 3.4 Prompt Cache Strategy (Step 5)
-
-After resolving provider, tier, and model, the builder applies the **Prompt Cache Strategy**:
-
-5. **Cache Strategy:** If a `PromptCacheStrategyPort` is configured:
-   - Call `strategy.resolve(agent_type, capabilities)`.
-   - If it returns a `PromptCacheConfig`, wrap the provider in `CachingLLMProxy`.
-   - The proxy transparently injects `cache_config` into every `LLMRequest`.
-
-This step is transparent to agents — they receive a `CachingLLMProxy` (which implements `LLMPort`) instead of the raw adapter. See [Prompt Cache Strategy](../prompt_cache_strategy/README.md) for details.
-
-### 3.5 Execution Context
-
-The result is an `AgentExecutionContext` DTO containing:
-
-- Concrete `LLMPort` instance (possibly wrapped with `CachingLLMProxy`).
-- Resolved `model_name`.
-- Target `tier`.
-- Provider `capabilities` (vision, tools, caching).
-- `provider_name` — string identifier for logging (e.g. `"gemini"`).
-- `fallback_provider` — raw `LLMPort` instance (no caching proxy) for the strategy's `"fallback"` entry, or `None`.
-- `fallback_model_name`, `fallback_provider_name` — resolved at build time from the fallback provider.
-
-### 3.6 Runtime Fallback & Retry Ladder
-
-`BaseAgent._call_llm()` handles transient provider errors (429/503/5xx, translated by adapters to
-`LLMRateLimitError` / `LLMUnavailableError` / `LLMServerError` — hexagonal isolation: `base_agent.py`
-imports only domain types). The ladder is governed by one invariant — **one delegation transcript =
-one provider** (`decisions/transcript_integrity_one_provider.md`): a multi-turn transcript is
-provider-specific (tool_use ids, thinking, raw_content, cache), so it is never re-served on another
-provider mid-loop.
-
-- **L1 — same-provider retry (locked transcript).** When `request.messages` carries provider-locked
-  state (any `tool_call`/`tool_response` part, or `raw_content`), a transient error retries the SAME
-  provider up to `_SAME_PROVIDER_RETRY_ATTEMPTS` times (`event="llm_same_provider_retry"`), then raises
-  the terminal `TranscriptLockedError` (`event="llm_transcript_locked"`). Never switches provider
-  mid-transcript.
-- **L1 — single-call cross-provider failover (unlocked).** For single-call agents / turn-1 requests
-  (no locked state), a transient error fails over once to `ctx.fallback_provider`
-  (`event="llm_fallback"`; raw provider, no `CachingLLMProxy`). `"fallback": None` agents (e.g.
-  `postprocessing`, `maps_search`) let it propagate. Both providers open → `BothProvidersUnavailableError`.
-- **L2 — cross-provider execution retry / provider rotation (Smart).** On `TranscriptLockedError`,
-  `SmartResponseAgent.execute()` rotates: `AgentContextBuilder.resolve_next_provider()` walks
-  `allowed_providers` (skipping already-tried + breaker-open), rebuilds the full execution context on
-  the next provider at the **same tier** (each provider resolves its own `get_model_for_tier` — no
-  equivalence map), and re-runs the whole delegation from scratch (`event="smart_provider_rotation"`).
-  Exhausting the list yields the standard failure. See `decisions/cross_provider_execution_retry.md`.
-- **L3 — Quick fallback.** A FAILED Smart response degrades to Quick, then a synthetic apology
-  (`AgentFallbackService.try_quick_fallback`).
-
-All events are structured (`event=…`) for GCP log-based alerts on provider health. The `"fallback"`
-key in `AgentProviderStrategy.STRATEGIES` controls L1 non-locked failover; the L2 rotation walks the
-full `allowed_providers` list instead.
-
----
-
-## 4. Code References
-
-- `src/domain/user.py`: `PerformanceTier` and `LLMProvider` enums.
-- `src/domain/exceptions.py`: `LLMRateLimitError`, `LLMUnavailableError` — domain-level transient error types.
-- `src/services/provider_registry.py`: Service locator for adapters.
-- `src/services/agent_context_builder.py`: Main resolution logic and strategies (including fallback population).
-- `src/agents/base_agent.py`: `_call_llm()` — fallback retry logic; `_set_execution_context()` — context wiring.
-- `src/adapters/gemini_adapter.py`: Gemini-specific tier mapping + SDK error wrapping.
-- `src/adapters/claude_adapter.py`: Claude-specific tier mapping + SDK error wrapping.
-- `src/adapters/openai_adapter.py`: OpenAI gpt-5 family tier mapping + SDK error wrapping.
-- `src/adapters/grok_adapter.py`: Grok-specific tier mapping + SDK error wrapping.
-
----
-
-## 5. Status & Roadmap
-
-**Status:** ✅ Production Ready
-
-### Planned Enhancements
-
-- **Cost-Aware Routing:** Select models based on real-time spot pricing or remaining user quota.
-- **Capability-Based Discovery:** Route tasks to providers based on specific features (e.g., "needs 1M context" → Gemini).
-
----
-
-**Last Updated:** 2026-03-08
-**Status:** ✅ Complete (Provider Resolution + Prompt Cache Strategy + Runtime Fallback on 429/503)
+<!-- living-doc
+covers:
+  src/services/provider_registry.py
+  src/services/agent_context_builder.py
+  src/services/alerting_llm_proxy.py
+  src/services/provider_breaker_alerter.py
+  src/adapters/in_memory_provider_resilience.py
+  src/ports/provider_resilience_port.py
+  src/domain/native_format.py
+  src/domain/llm.py
+  src/ports/llm_port.py
+  src/adapters/claude_adapter.py
+  src/adapters/gemini_adapter.py
+  src/utils/genai_sdk_compat.py
+-->
+# Provider Resolution
+
+## Purpose
+
+This block keeps agent code independent of LLM vendors. An agent asks for a **performance tier**
+(`src/domain/user.py::PerformanceTier`); the block turns the request, the user's configuration and the agent type into
+a concrete provider, model and failover plan, delivered as one `AgentExecutionContext`
+(`src/ports/llm_port.py::AgentExecutionContext`). It also owns what happens when a provider fails (circuit breaker,
+fallback, rotation), the per-model capability gates inside the adapters, and the declaration of which file formats a
+model reads natively.
+
+It is not the model catalogue (the tier maps live in each adapter), not the price list (`src/domain/billing.py`), and
+not the prompt cache policy ([prompt_cache_strategy](../prompt_cache_strategy/README.md)). Per-request tier and provider
+overrides chosen by the router are described in [hybrid_router](../hybrid_router/README.md).
+
+## Owned data
+
+Nothing is stored. All state is in process memory:
+
+- **Registry** — `ProviderRegistry` maps a lowercase name to an adapter. There are separate instances for the text LLMs
+  (`ServiceContainer`: `gemini` and `claude` always, `grok` and `openai` when their keys are set), for deep research,
+  image and video (`src/composition/application_graph.py`), and for the drive indexer service
+  (`src/composition/drive_model_setup.py::build_drive_model_registry`, Claude, OpenAI and Gemini only).
+  `ProviderRegistry.get` raises `ValueError` for an unregistered name.
+- **Strategy table** — `AgentProviderStrategy.STRATEGIES`, one entry per agent type: `default_provider`,
+  `allowed_providers`, `required_capabilities`, `fallback` (a provider name or `None`) and an optional `fallback_tier`.
+  An unknown agent type gets the `quick` entry. This table is the only place a provider is pinned or locked: an agent
+  whose output format only one provider honours has a single-element `allowed_providers` (for example
+  `postprocessing`, `facts_memory`, `email_card`).
+- **Breaker state** — `InMemoryProviderResilience`, per provider name and per process, shared by all agents: a rolling
+  window of failure times and an `opened_at` mark. It is lost on restart and not shared between Cloud Run instances.
+- **Tier maps** — `MODEL_TIERS` on each adapter (`ClaudeAdapter.MODEL_TIERS`, `GeminiAdapter.MODEL_TIERS`,
+  `OpenAIAdapter.MODEL_TIERS`, `GrokAdapter.MODEL_TIERS`); `ClaudeAdapter.__init__` and `OpenAIAdapter.__init__` let
+  environment variables (`CLAUDE_PERFORMANCE_MODEL`, `CLAUDE_SMALL_MODEL`, `OPENAI_TIER_OVERRIDES`) repoint tiers
+  without a redeploy.
+
+## Flows
+
+### Resolving a context
+
+`AgentContextBuilder.build(agent_type, config)` (`src/services/agent_context_builder.py`):
+
+1. **Provider name** — `AgentContextBuilder.resolve_provider_name`: the user's per-agent choice
+   (`UserBotConfig.agent_providers`), else the global `provider_preference`, else the strategy default. A value that is
+   not in the strategy's `allowed_providers` is **silently skipped**, not an error; names are lowercased first.
+2. **Tier** — `UserBotConfig.get_tier_for_agent`: the stored per-agent tier, else `_DEFAULT_AGENT_TIERS`
+   (`src/domain/user.py`), else `default_tier`. Because the code default is consulted before `default_tier`, a new agent
+   type needs its entry there.
+3. **Model** — `UserBotConfig.model_overrides[agent_type]`, else `provider.get_model_for_tier(tier)`.
+4. **Wrapping** — `AgentContextBuilder._build` wraps the provider in `CachingLLMProxy` when the cache strategy returns a
+   config for the agent type, then in `AlertingLLMProxy` (outermost, so it sees the real provider's errors).
+5. **Fallback** — the strategy's `fallback`, when it differs from the primary: resolved at build time to a provider and
+   model, at `fallback_tier` if the strategy pins one, otherwise at the primary's tier. It gets the alerting proxy but not
+   the caching proxy (a cache is useless after a provider switch). A fallback that cannot be resolved is logged
+   (`llm_fallback_provider_unavailable`) and the context is built without one.
+
+`resolve_for_task` is the same build with the tier (and optionally the provider) taken from `ComplexitySettings` instead
+of config; the router-driven path that uses it is in [hybrid_router](../hybrid_router/README.md).
+Agents whose work is not an `LLMPort` call use the same name resolution against another registry:
+`resolve_async_context` (deep research; a per-agent override outside `allowed_providers` raises
+`UnsupportedProviderError` instead of falling back), `resolve_image_generation_context`,
+`resolve_video_generation_context`.
+
+### Runtime failover
+
+`BaseAgent._call_llm` (`src/agents/base_agent.py`) is the one place a provider failure is handled. Adapters translate SDK
+errors into domain types (`LLMRateLimitError`, `LLMUnavailableError`, ...), and only the set
+`src/domain/exceptions.py::FAILOVER_TRIGGER_TYPES` triggers any of what follows; a 4xx (`LLMClientError`) never does and
+is alerted by `AlertingLLMProxy`. The governing invariant is **one transcript = one provider**
+(`decisions/transcript_integrity_one_provider.md`): a multi-turn transcript carries provider-specific state (tool ids,
+thinking blocks, cache), so it is never re-served on another provider.
+
+1. **Breaker pre-check.** If `ProviderResiliencePort.is_provider_open(primary)`, the call is not made and
+   `ProviderBreakerOpenError` takes the failure path (it is not counted as a new failure, which would feed back on
+   itself). Success calls `record_success`, except when the breaker tripped during the call.
+2. **Locked transcript** (any tool part or `raw_content` in `request.messages`): retry the same provider up to
+   `BaseAgent._SAME_PROVIDER_RETRY_ATTEMPTS` times, then raise `TranscriptLockedError`. Never switches provider.
+3. **Unlocked request**: fail over once to `ctx.fallback_provider`. No fallback configured, or its breaker open, raises
+   `BothProvidersUnavailableError`; so does a failing fallback. A fallback success deliberately does **not** call
+   `record_success(fallback)`, because the reset would erase its accumulated failures after one lucky call
+   (`decisions/provider_resilience_port.md`).
+4. **Smart rotation.** `SmartResponseAgent.execute` (`src/agents/core/smart_response_agent.py`) catches
+   `TranscriptLockedError` and asks `AgentContextBuilder.resolve_next_provider` (via
+   `TaskExecutionResolver.next_provider_override`) for the next entry of `allowed_providers` that was not tried and whose
+   breaker is closed, at the same tier, then re-runs the whole delegation from scratch. A turn under the long-running
+   clock does not rotate. Details: `decisions/cross_provider_execution_retry.md`.
+5. **Quick fallback.** A failed Smart response goes to Quick, then to a synthetic apology
+   (`src/services/agent_fallback_service.py::AgentFallbackService.try_quick_fallback`).
+
+`InMemoryProviderResilience.record_failure` opens the breaker on the threshold-th failure inside the rolling window;
+after the cooldown the next `is_provider_open` call reports closed again (half-open) and clears the window. On each
+CLOSED to OPEN transition `ProviderBreakerAlerter.on_open` posts a throttled Slack alert: failover keeps users served, so
+a chronically dead provider would otherwise stay invisible.
+
+### Native-format declaration
+
+What a model reads as file bytes instead of converted text (`docs/10_rfcs/EXTERNAL_FILES_RFC.md` §4.3).
+
+1. `LLMPort.native_formats(model_name)` (`src/ports/llm_port.py`) returns a tuple of `NativeFormat`; the default is
+   `()` (text only). Claude, Gemini, OpenAI and Grok override it by model-name prefix or id list; any other name gets
+   `()`. The caching and alerting proxies forward the call. The format constants cite the provider's documentation; a
+   cap that the documentation does not state takes the smallest documented value of the others.
+2. Each engine runner puts `to_plain(provider.native_formats(model))` under `context["native_formats"]`
+   (`src/domain/native_format.py::NATIVE_FORMATS_KEY`) in a **copy** of its context, per attempt, so a fallback attempt
+   on another provider declares its own formats. Runners: `QuickResponseAgent`, `SmartResponseAgent`,
+   `DomainResearcherAgent`, `TutorAgent`.
+3. `src/infrastructure/agent_coordinator.py::_specialist_context` drops the key for every intent outside
+   `NATIVE_OPENING_INTENTS` (`src/infrastructure/agent_manifest.py`): the declaration is the caller's provider's, not a
+   specialist's.
+4. `src/infrastructure/drive_operations.py::_declared_format` reads it: a file is passed natively when its mime is
+   declared, its size is within `max_bytes` and a PDF's page count within `max_pages`; otherwise it goes to the
+   converter as text. No key means text. `NativeFormat` refuses at construction a cap above
+   `document_limits.native_ceiling`.
+
+## Invariants and traps
+
+- **A tier is not a model, and models differ in what they accept.** Changing a default tier (`_DEFAULT_AGENT_TIERS`) or a
+  `MODEL_TIERS` entry changes the model, which may reject a parameter the agent sends (effort, thinking type,
+  `response_schema`). Verify the resolved model against every parameter the agent sends. The Claude tier map and the env
+  levers are in `src/adapters/CLAUDE.md`.
+- **Silent parameter dropping, not 400s.** Each adapter gates parameters per model before serializing. No adapter sends
+  sampling parameters at all (`decisions/temperature_removed.md`). Gates are prefix or substring matches, so a model id
+  that is a prefix of another matches both: read every gate before adding a model.
+  - `ClaudeAdapter._THINKING_MODELS`: adaptive thinking and `output_config.effort` go together; a model outside the tuple
+    (Haiku 4.5) gets neither, because sending effort there is a 400.
+  - `ClaudeAdapter._DYNAMIC_SEARCH_MODELS`: other models get the legacy web-search tool.
+  - `ClaudeAdapter._THINKING_OFF`, `ClaudeAdapter._NO_FORCED_TOOL_MODELS`, `ClaudeAdapter._MODEL_FALLBACK`: no-thinking
+    value, forced-tool degradation and same-provider model fallback, all computed in
+    `ClaudeAdapter._model_dependent_params` (traps in `src/adapters/CLAUDE.md`).
+  - `OpenAIAdapter._MIN_MEDIUM_EFFORT_PREFIXES`, `_MIN_LOW_EFFORT_PREFIXES`, `_THINKING_OFF_EFFORT`: effort is clamped up
+    to the model's floor after it is resolved, so the clamp covers both an explicit value and the
+    grounding-forced `low`.
+- **`required_capabilities` is declarative.** `_build` reads provider capabilities only to pass them on; it does not
+  check them against the strategy. A provider in `allowed_providers` is assumed able to serve the agent.
+- **Fallback is per strategy, rotation is not.** `fallback` governs unlocked failover only; rotation walks the whole
+  `allowed_providers` list. Memory-quality agents (`consolidation`, `fact_profiler`, `tutor_extractor`) have
+  `fallback: None` by owner ruling, so their outage is a failure, not a cheaper answer.
+- **Fallback tier is part of the strategy.** The drive agents pin `fallback_tier` because their primary runs at ECO, which
+  on Gemini is a different, weaker model than the fallback should be.
+- **The breaker is per process.** With more than one Cloud Run instance each keeps its own view; the port is the seam for
+  a shared implementation. The drive indexer service has its own builder and breaker.
+- **Names are lowercased in two places** (`resolve_provider_name` and `_build`) because the registry keys are lowercase
+  and a mixed-case user value once reached the registry and failed every request.
+
+## Links
+
+- [prompt_cache_strategy](../prompt_cache_strategy/README.md), [hybrid_router](../hybrid_router/README.md),
+  [openai_integration](../openai_integration/README.md), [grok_integration](../grok_integration/README.md)
+- Decisions in `docs/04_solution_strategy/decisions/`: `transcript_integrity_one_provider.md`,
+  `cross_provider_execution_retry.md`, `provider_resilience_port.md`, `temperature_removed.md`, `model_refresh_2026_10.md`
+- `docs/10_rfcs/EXTERNAL_FILES_RFC.md` (native formats); `src/adapters/CLAUDE.md` (tier maps and gates);
+  `docs/how_to/ADAPTER_WIRE_TESTING.md`
+
+## Where to start reading
+
+- `src/services/agent_context_builder.py::AgentProviderStrategy` and `AgentContextBuilder.build`
+- `src/agents/base_agent.py::BaseAgent._call_llm`
+- `src/agents/core/smart_response_agent.py::SmartResponseAgent.execute`
+- `src/adapters/in_memory_provider_resilience.py::InMemoryProviderResilience`
+- `src/adapters/claude_adapter.py::ClaudeAdapter._model_dependent_params`
+- `src/ports/llm_port.py::LLMPort.native_formats`
