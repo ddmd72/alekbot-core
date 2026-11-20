@@ -2,7 +2,7 @@
 
 ## 📖 Overview
 
-This concept guide explains the **philosophy and ideology** behind Multi-Vector Semantic Search with RRF Ranking. While the [Building Block](../05_building_blocks/search_enrichment/README.md) describes "how it works", this document explains "**why it works**" and "**when to use it**".
+This concept guide explains the **philosophy and ideology** behind Multi-Vector Semantic Search with RRF Ranking. While the [memory map §4.3](../05_building_blocks/memory/README.md) describes "how it works", this document explains "**why it works**" and "**when to use it**".
 
 **Key Insight:** Different representations of the same query → better retrieval than single representation.
 
@@ -539,6 +539,5 @@ merge.
 
 - **Reciprocal Rank Fusion:** Cormack, Clarke and Büttcher, SIGIR 2009.
 - **Elasticsearch RRF:** [Official Docs](https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html)
-- **Building Block:** [../05_building_blocks/search_enrichment/README.md](../05_building_blocks/search_enrichment/README.md)
 - **Memory map:** [../05_building_blocks/memory/README.md](../05_building_blocks/memory/README.md) — how facts are
   written, versioned and searched.

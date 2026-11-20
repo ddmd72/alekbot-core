@@ -26,7 +26,7 @@ This document MUST be updated when:
 
 - **Dynamic Execution:** [../smart_agent_execution/README.md](../smart_agent_execution/README.md)
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
+- **Memory (the Router's prefetch, §4.4; the search engines, §4.3):** [../memory/README.md](../memory/README.md)
 - **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
 
 ---
