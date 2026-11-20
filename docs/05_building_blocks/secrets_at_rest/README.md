@@ -35,25 +35,24 @@ this table says what each does with a secret.
 | `{prefix}credentials` (`FirestoreCredentialStore`) | the grant of every integration kind | one ciphertext of `{access_token, refresh_token, account_label}`, AAD `credentials/{user_id}:{credential_id}` |
 | `{prefix}mcp_clients` (`FirestoreMCPClientRepository`) | a confidential client's secret | ciphertext, AAD `mcp_clients/{client_id}` |
 | `{prefix}mcp_auth_codes` (same repository) | authorization code | digest (purpose `mcp_code`) is the doc id; no `code` field |
-| `{prefix}invite_codes_v2` (`FirestoreInviteCodeRepository`) | invite code | digest (purpose `invite`) of the normalised code is the doc id; only a 4-character `hint` is stored |
+| `{prefix}invite_codes_v2` (`FirestoreInviteCodeRepository`) | invite code | digest (purpose `invite`) of the normalised code is the doc id; only a short `hint` (`HINT_LENGTH`) is stored |
 | ephemeral `oauth_flow:` records (`OAuthConnectService`) | OAuth `state` and the PKCE verifier | key is a digest of the state; the verifier is ciphertext, AAD `oauth_flows/{digest}` |
 | ephemeral `voice_*` records | voice ticket | every key derived from a ticket is `{prefix}:{digest}` (`src/domain/voice_ticket_keys.py`); the two hand-out records hold the ticket as ciphertext, AAD `voice/{the record's store key}` |
-| geo and drive link stores, voice MCP client id | a bot-issued capability id | digest under the service's own purpose (`GeoMarkService`, `DriveLinkService`, `src/domain/voice_mcp_token.py`) |
+| geo and drive link stores, the voice MCP token's call id | a bot-issued capability id | digest under the service's own purpose (`src/services/geo_mark_service.py::GeoMarkService`, `src/services/drive_link_service.py::DriveLinkService`, `src/domain/voice_mcp_token.py`, where the digest of the call's ticket is the token's `cid`) |
 
-Plain fields that are queried or operational (`user_id`, `kind`, `account.realm`, `account.subject`, `scopes`,
-`token_expiry`, `needs_reconnect`, `drive_id`, timestamps) stay plaintext on a credential record. Listings and
+The queried and operational fields of a credential record stay plaintext (the field list is the docstring of
+`src/adapters/firestore_credential_store.py`). Listings and
 existence checks (`list_keys`, `list_by_account`, `list_user_ids`) read only those fields and never call KMS, so a
 cipher outage never reads as "not connected".
 
 **Configuration.** `KMS_CRYPTO_KEY` (the Cloud KMS key name) and `SECRET_DIGEST_KEY` (hex) are both listed in
-`src/config/settings.py::load_settings` and both required. The key's rotation is automatic; no key version is ever
-disabled or destroyed, because an idle record decrypts under the version it was written with.
+`src/config/settings.py::load_settings` and both required.
 
 ## Flows
 
 ### Boot, fail closed
 
-1. `src/composition/boot_setup.py::build_boot_checks` runs at the start of `build_application_graph`, before anything touches the database: it calls
+1. `src/composition/boot_setup.py::build_boot_checks` runs at the start of `build_application_graph`, before the graph builds any store: it calls
    `src/composition/cipher_setup.py::build_cipher` and `digest_key`. An empty or whitespace key name, an empty or
    non-hex digest key, or one under `DIGEST_KEY_MIN_BYTES` raises `ValueError` and the process exits. The check runs on
    every start, locally too (local dev uses the real KMS key).
@@ -63,8 +62,8 @@ disabled or destroyed, because an idle record decrypts under the version it was 
    `src/composition/mcp_setup.py::build_mcp_components`, `src/composition/oauth_connect_setup.py`,
    `src/composition/service_container.py`, which builds the credential store).
 4. The indexer has no `load_settings()`: `indexer_main.py` reads `KMS_CRYPTO_KEY` from its environment through the same
-   `build_cipher` and refuses to start without it. It holds no digest key. The relay, sandbox and deep-research job get
-   no key grant and build neither primitive.
+   `build_cipher` and refuses to start without it. It holds no digest key. The relay, sandbox and deep-research job build neither
+   primitive.
 5. There is no boot-time KMS round trip: a KMS outage at cold start must not take the bot down. A wrong key surfaces on
    the first encrypt or decrypt instead.
 
@@ -78,8 +77,8 @@ client is created lazily on first use inside the running loop (the indexer build
 ### Keyed digest
 
 `src/domain/secret_digest.py::keyed_digest` is a hex HMAC-SHA256 of `purpose`, a NUL byte and the value. The purpose
-separates uses, so one value digested for two purposes gives unrelated digests. `fingerprint` is the first 8 hex
-characters of an unkeyed sha256, for log correlation only, never a lookup key.
+separates uses, so one value digested for two purposes gives unrelated digests. `fingerprint` is a short prefix
+of an unkeyed sha256, for log correlation only, never a lookup key.
 
 ### Per store
 
@@ -97,11 +96,9 @@ characters of an unkeyed sha256, for log correlation only, never a lookup key.
   also holds the call-control token as a second ciphertext under a different AAD, so the two cannot stand in for each
   other. Every other ticket-derived key is a digest; the redeeming route digests the presented ticket. Logs print
   `fingerprint(ticket)`.
-- **Invite codes** (`src/services/invite_code_service.py`): 16 random bytes as unpadded base32, shown grouped once at
+- **Invite codes** (`src/services/invite_code_service.py`): a random code of 128 bits, base32 without padding, shown grouped once at
   creation. `src/domain/invite_code.py::normalise_invite_code` runs before every digest. A lookup rebuilds the invite from
   the presented value, so `InviteCode.code` is `None` on a list. Invite codes are never logged.
-- **Migration** was by reconnect, not copy: each new store started empty and the old plaintext collections are never read
-  (see invariant 6).
 
 ## Invariants and traps
 
@@ -111,9 +108,11 @@ characters of an unkeyed sha256, for log correlation only, never a lookup key.
    proves no plaintext reaches a field. Never write an identity cipher for a test.
 2. **`aad` is keyword-only with no default**, of the form `<store>/<record key>`. A ciphertext copied to another record or
    store does not decrypt. Identity comes from the record key, never from the body of the record. Same test module.
-3. **A cipher failure is never a state.** A wrong key, a tampered ciphertext, a wrong AAD or a KMS error raises (and is
+3. **A cipher failure is never a state.** For a stored record, a wrong key, a tampered ciphertext, a wrong AAD or a KMS error raises (and is
    logged without values); it never becomes "not connected", a delete, a flag, a purge or a reconnect notice. This is why
-   existence checks read plaintext fields only. Do not add a `try/except` that turns a decrypt error into `None`.
+   existence checks read plaintext fields only. Do not add a `try/except` that turns a decrypt error into `None`. The one catch is the single-use PKCE verifier in
+   `OAuthConnectService.complete`: the flow is already consumed, so a decrypt failure there is logged and answers a failed
+   connect, with no record touched.
 4. **Stores take their cipher and digest key as required keyword-only arguments.** A store built without them cannot
    exist (`test_the_mcp_store_requires_a_cipher_and_a_digest_key`, `test_the_credential_store_requires_a_cipher`). The
    indexer's store is built over its own fail-closed cipher, checked by AST in the same module.
@@ -125,20 +124,19 @@ characters of an unkeyed sha256, for log correlation only, never a lookup key.
    gone (`test_no_code_reaches_the_old_credential_collection`). New collections carry a new name; do not reuse an old
    name for new-format data.
 7. **A digest is only as strong as the value it hides.** The digest key is configuration, not a separate trust domain
-   from Firestore readers (owner decision recorded in the RFC), so an offline search over a low-entropy value would
+   from Firestore readers (`docs/10_rfcs/SECRETS_AT_REST_RFC.md` §2.5), so an offline search over a low-entropy value would
    succeed. This is why invite codes are 128 bits and digested, and why a short human-typed code must never become a
    verify-only secret here. MCP refresh
-   tokens are the exception by design: unkeyed sha256 of 384 random bits, because a key adds nothing.
-8. **Fingerprints are for logs only.** `fingerprint` is unkeyed and 8 characters; it is safe only because every value it
+   tokens are the exception by design: an unkeyed sha256 of a long random token, because a key adds nothing.
+8. **Fingerprints are for logs only.** `fingerprint` is unkeyed and short; it is safe only because every value it
    is applied to is long and random. Never use it as a key or apply it to a guessable value.
 9. **Rotating `SECRET_DIGEST_KEY` orphans every digest at once** (outstanding codes, tickets, invites stop resolving); it
-   is not a routine operation. Rotating the KMS key is routine and invisible.
-10. **Plaintext lives in process memory only**, for the provider call; logs carry `fingerprint` or nothing.
-11. **A new secret decides its class first.** Needs to be sent onward: `CipherPort` with an AAD naming its store and key.
+   is not a routine operation.
+10. **A new secret decides its class first.** Needs to be sent onward: `CipherPort` with an AAD naming its store and key.
     Compared only: `keyed_digest` with its own purpose string, and the raw value in no field, key or log line. Adding a
     secret to an existing store changes its AAD or purpose only through a new collection or record format.
-12. **The key grant is held by two identities** (main service, indexer). The relay, sandbox and job build neither
-    primitive; a new consumer of the cipher there needs a new grant, which is an owner decision.
+11. **Consumers of the cipher are the main service and the indexer.** The relay, sandbox and job build neither primitive;
+    do not wire one in without an owner decision.
 
 ## Links
 
