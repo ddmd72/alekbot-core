@@ -1,53 +1,54 @@
+<!-- living-doc
+covers: none
+-->
+
 # Alerting (dev)
 
-GCP Monitoring alert policies for the `alek-bot-dev` Cloud Run service. **gcloud-managed, NOT in
-git** — this doc describes what exists and why; the live source of truth is the GCP project.
+GCP Monitoring alert policies on the Cloud Run services. **gcloud-managed, not in git:** the live GCP project is the
+source of truth for filters, rate limits and auto-close; this doc says what each policy is for, what trips it and what to
+do. All policies route to one Slack notification channel (`#alerts-dev`; its id lives in GCP / `.env`, never in git).
 
-**The drive indexer (`alek-bot-indexer-dev`) is a second Cloud Run service.** "Errors-dev" and "Worker non-2xx"
-filter on `resource.labels.service_name=("alek-bot-dev" OR "alek-bot-indexer-dev")` since the indexer's first deploy
-(2026-10-12), so its tick errors and `/worker` failures page too. A new service needs the same widening. Its staleness
-alert is separate: the fan-out posts it to the ops webhook (USER_DRIVE_INDEXING_RFC §12.1).
-
-All policies route to one Slack notification channel **#alerts-dev** (channel id stored in GCP /
-`.env`, never committed). Each has `notificationRateLimit` 1/hour + `autoClose` 24h.
+Two services are watched: the main service and the drive indexer. The two log-based "errors" and "worker" policies
+filter on both service names, so a new Cloud Run service needs its name added to both filters. The indexer's staleness
+alert is separate: the scheduler fan-out posts it through `src/ports/alert_sink.py::AlertSinkPort` (implemented by
+`src/adapters/slack/webhook_adapter.py::SlackWebhookAdapter`, wired in `src/composition/operations_setup.py`); see
+`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §12.1.
 
 ## Policies
 
-1. **Errors-dev** (pre-existing) — `cloud_run_revision` + `severity>=ERROR`. Catches exceptions
-   *inside* a running task.
-   **Blind spot:** a task that never *runs* (e.g. a `/worker` 401, logged as WARNING) produces no
-   ERROR, so this policy alone misses "task didn't start" failures.
-2. **Worker non-2xx (legit callers) - dev** (2026-06-03) — `/worker` non-2xx from a
-   `Google-Cloud-*` user-agent OR any 5xx. Catches Cloud Tasks / Scheduler being rejected or
-   erroring at the HTTP layer; excludes anonymous-scanner 401 noise (the OIDC gate 401s random
-   POSTs by design — see `decisions/worker_oidc_and_docx_sandbox.md`).
-3. **Cloud Scheduler job failures - dev** (2026-06-03) — `cloud_scheduler_job` failures. Covers the
-   "scheduled task never fired" gap that policy 1 cannot see.
-4. **Sensitive-path 2xx tripwire - dev** (2026-10-07) — `cloud_run_revision` + a 2xx response to a
-   path vulnerability scanners probe for (`.env`, `credentials*`, `wp-*`, `.php`,
-   `/proc/self/environ`, `aws-exports.js`, `appsettings.json`). The weekly scan volume on these
-   paths is pure noise (verified 100% 404, excluded from the `_Default` sink — see the
-   `scanner-404-noise` exclusion) — this fires only if one of them is ever actually served.
-5. **Cabinet sign-in rejected - dev** (2026-10-09) — `textPayload:"OAuth sign-in rejected"` on
-   `alek-bot-dev`. The whitelist gate refused a Google account at `/auth/callback` or
-   `/auth/link-oauth`; the log line names the reason (not whitelisted / email not verified / no
-   email) and the email. Matched on the app log, not on HTTP 403, so it covers both routes and
-   carries the reason. CSRF state is checked before the gate, so scanners cannot reach it.
-6. **New user registered (tripwire) - dev** (2026-10-09) — `textPayload:"Registering new user"`.
-   Only whitelisted emails can register, so this is rare; one you did not expect means the gate
-   was bypassed. Same idea as policy 4: alert on the attempt *succeeding*.
-   See `decisions/cabinet_oauth_whitelist_gate.md` for both.
+| # | Policy | Trips on | First reaction |
+|---|---|---|---|
+| 1 | Errors-dev | a log entry with severity ERROR or higher on either service | read the entry (`make fetch-logs`, see `CLAUDE.md` § Debugging Cloud Run) |
+| 2 | Worker non-2xx (legit callers) | a `/worker` non-2xx from a `Google-Cloud-*` user agent, or any 5xx | Cloud Tasks / Scheduler is being rejected or the handler fails at HTTP level: check the OIDC identity and the handler logs |
+| 3 | Cloud Scheduler job failures | a `cloud_scheduler_job` failure | a scheduled task never fired; see `docs/07_deployment/SCHEDULERS.md` |
+| 4 | Sensitive-path 2xx tripwire | a 2xx answer to a path scanners probe (`.env`, `credentials*`, `wp-*`, `.php`, `/proc/self/environ`, and similar) | something sensitive is being served: treat as a leak, find the route that answered |
+| 5 | Cabinet sign-in rejected | log text `OAuth sign-in rejected` on the main service | the line names the reason (no email, email not verified, not whitelisted) and the email; decide whether to whitelist or ignore |
+| 6 | New user registered (tripwire) | log text `Registering new user` | only whitelisted emails can register, so an unexpected one means the gate was bypassed |
 
-## Why policies 2–3 exist
+Why these six exist:
+- **Policy 1 alone has a blind spot.** It sees only errors raised inside a running task. A rejected `/worker` caller
+  is logged as WARNING (`src/web/main_service_routes.py`, "Rejected unauthenticated /worker request", 401), and a
+  scheduler that never invokes the service writes nothing to the revision logs. Policies 2 and 3 close that gap at the
+  HTTP and scheduler layers.
+- **Policy 2 excludes anonymous scanners on purpose.** The OIDC gate answers 401 to random POSTs by design
+  (`docs/04_solution_strategy/decisions/worker_oidc_and_docx_sandbox.md`); only Google callers or 5xx page.
+- **Policies 4 and 6 alert on an attempt succeeding**, not on the attempt. Policy 4 pairs with the log exclusion below.
+- **Policy 5 matches the app log, not HTTP 403**, so it covers both gate routes (`/auth/callback`, `/auth/link-oauth`,
+  `src/web/oauth_app.py`) and carries the reason. The CSRF state is checked before the gate, so scanners cannot reach
+  it. Policies 5 and 6: `docs/04_solution_strategy/decisions/cabinet_oauth_whitelist_gate.md`.
 
-Policy 1 only fires on errors *within* a task. The OIDC gate on `/worker` returns 401 (logged
-WARNING) when a caller is rejected, and a scheduler that never invokes the service emits nothing to
-the revision logs — both are silent to an ERROR-only policy. 2 and 3 close that gap at the HTTP and
-scheduler layers respectively. See also `decisions/` and the enumerate-callers-before-gating lesson.
+## Traps
 
-## Logging exclusions
+- **Log text and severity are an interface.** Policies 5 and 6 match literal text and policy 1 matches severity, so
+  changing the wording or level of these lines silently disables the alert:
+  `src/services/authentication_service.py::AuthenticationService._require_allowed_email` (`OAuth sign-in rejected`, kept
+  verbatim by its docstring) and the `Registering new user` line in the same file.
+- **A systemic failure must log at ERROR to page; a file's own failure must not.** The document-service path and the
+  drive open path pick the level for this reason (`src/services/document_service.py`, `src/infrastructure/drive_operations.py::_SYSTEMIC`).
+  A new failure path that logs WARNING for a systemic cause never pages.
 
-`_Default` sink exclusion **`scanner-404-noise`** (2026-10-07): drops `run.googleapis.com/requests`
-entries with `httpRequest.status=404` from storage — background vulnerability-scanner traffic
-(verified zero 2xx hits over a 7-day sample, `docs/reviews/PROD_LOG_AUDIT_FOLLOWUP.md` C-17).
-Anything that stops being a 404 is not excluded, and is independently covered by policy 4 above.
+## Logging exclusion
+
+The `_Default` sink exclusion `scanner-404-noise` drops `run.googleapis.com/requests` entries with
+`httpRequest.status=404` from storage: background scanner traffic with no 2xx hits in the owner's sample. Anything that
+stops being a 404 is not excluded and is covered by policy 4.
