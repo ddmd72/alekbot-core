@@ -219,6 +219,14 @@ class ClaudeAdapter(LLMPort):
     # `claude-fable` here the caller's effort was silently dropped for it.
     _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5", "claude-fable")
 
+    @classmethod
+    def takes_adaptive_thinking(cls, model_name: str) -> bool:
+        """The one gate for adaptive thinking + `output_config.effort`.
+
+        Also used by the deep-research runner (injected by composition), so the two never keep separate copies.
+        """
+        return any(m in model_name for m in cls._THINKING_MODELS)
+
     # Models that support dynamic filtering web search (web_search_20260209 / web_fetch_20260209).
     # Haiku 4.5 only supports the legacy web_search_20250305 (no dynamic filtering, no code_execution).
     _DYNAMIC_SEARCH_MODELS = ("claude-sonnet", "claude-opus")
@@ -578,7 +586,7 @@ class ClaudeAdapter(LLMPort):
         thinking_param: Optional[dict] = None
         if effort == "xhigh" and model_name.startswith(self._NO_XHIGH_MODELS):
             effort = "high"
-        if effort and any(m in model_name for m in self._THINKING_MODELS):
+        if effort and self.takes_adaptive_thinking(model_name):
             thinking_param = {"type": "adaptive"}
             params["output_config"] = {"effort": effort}
             logger.info(

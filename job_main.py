@@ -31,6 +31,7 @@ import sys
 import anthropic
 
 from src.adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
+from src.adapters.claude_adapter import ClaudeAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
@@ -225,6 +226,7 @@ async def _run_job() -> None:
             capabilities=["execute_deep_research_claude"],
         ),
         anthropic_client=anthropic_client,
+        adaptive_thinking=ClaudeAdapter.takes_adaptive_thinking,
     )
 
     message = AgentMessage.create(

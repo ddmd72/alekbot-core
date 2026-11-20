@@ -140,7 +140,8 @@ What a model reads as file bytes instead of converted text (`docs/10_rfcs/EXTERN
   sampling parameters at all (`decisions/temperature_removed.md`). Gates are prefix or substring matches, so a model id
   that is a prefix of another matches both: read every gate before adding a model.
   - `ClaudeAdapter._THINKING_MODELS`: adaptive thinking and `output_config.effort` go together; a model outside the tuple
-    (Haiku 4.5) gets neither, because sending effort there is a 400.
+    (Haiku 4.5) gets neither, because sending effort there is a 400. Public form: `ClaudeAdapter.takes_adaptive_thinking`;
+    the deep-research runner takes the same gate through it (injected, never copied).
   - `ClaudeAdapter._DYNAMIC_SEARCH_MODELS`: other models get the legacy web-search tool.
   - `ClaudeAdapter._THINKING_OFF`, `ClaudeAdapter._NO_FORCED_TOOL_MODELS`, `ClaudeAdapter._MODEL_FALLBACK`: no-thinking
     value, forced-tool degradation and same-provider model fallback. `ClaudeAdapter._model_dependent_params` recomputes

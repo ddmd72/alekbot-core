@@ -84,7 +84,7 @@ mocks cannot detect translation regressions) + contract validators in
 - **Adapter capability gates** — each adapter silently drops/clamps parameters the resolved model
   doesn't accept instead of forwarding and crashing on 400. ClaudeAdapter gates `thinking`,
   `output_config.effort`, and `web_search_20260209` on `_THINKING_MODELS` / `_DYNAMIC_SEARCH_MODELS`
-  substring checks; verify against `client.models.retrieve(<model>).capabilities` when adding
+  substring checks (`ClaudeAdapter.takes_adaptive_thinking` is the thinking gate's public form; the deep-research runner uses it); verify against `client.models.retrieve(<model>).capabilities` when adding
   a new gate. SDK pin: `anthropic >= 0.97.0`.
   - **OpenAIAdapter reasoning.effort floor** — `gpt-5.5-pro` (ULTRA) rejects `reasoning.effort="low"`
     (min `medium`; `400 Unsupported value: 'low'`). `_MIN_MEDIUM_EFFORT_PREFIXES = ("gpt-5.5-pro",)`
