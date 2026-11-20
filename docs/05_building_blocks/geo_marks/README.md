@@ -48,6 +48,9 @@ Almost nothing is stored; that is the design.
 
 ### Slack: `$geo [text]`
 
+The Slack slash command `/geo [text]` reaches the same flow: it is queued and run as `$geo [text]` in the owner's DM with the
+bot (`slack_integration/README.md` § Slash command).
+
 1. The command reaches `src/handlers/conversation_handler.py::ConversationHandler._handle_geo_command` through
    `handle_command`. Guards in `_geo_marks_for` and the handler: no service configured, a bound channel (marks live in
    the default session only), Telegram (answers with a pointer to the pin), and anything but a direct message each get
