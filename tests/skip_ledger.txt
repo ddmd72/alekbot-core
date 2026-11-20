@@ -228,7 +228,6 @@ tests/unit/test_dockerfile_sandbox.py :: marker :: docker  # render-job: the mar
 tests/unit/test_dockerfile_sandbox.py :: skipif :: not _IMAGE or shutil.which('docker') is None :: x6  # render-job: needs the built sandbox image (SANDBOX_TEST_IMAGE); built by the post-merge workflow render.yml (job `sandbox-image`), which runs the `docker` tests against it and fails when one skips
 tests/unit/test_dockerfile_sandbox_render_browser.py :: skip :: 'docker daemon not running' :: x1  # ci: the same docker assumption: skips only without a daemon
 tests/unit/test_dockerfile_sandbox_render_browser.py :: skipif :: shutil.which('docker') is None :: x1  # ci: assumes the runner's docker daemon (the test builds the render image); the skip report shows whether it ran
-tests/unit/test_every_src_module_is_imported_by_a_test.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/test_firestore_database_explicit.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/test_main_boots_offline.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/test_main_doc_delivery_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
