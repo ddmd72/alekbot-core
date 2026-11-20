@@ -37,7 +37,8 @@ The steps run in order. Every change reaches `main` through a pull request; the 
 Add an `Intent` constant in `agent_manifest.py::Intent` and an `AgentDescriptor` (`src/infrastructure/agent_registry.py::AgentDescriptor`),
 then append it to `agent_manifest.py::ALL_DESCRIPTORS`. Mirror `COMPUTE` for a plain specialist.
 
-- `agent_type` is the profile document id in Step 8 and the key in Steps 3 and 5.
+- `agent_type` is the profile document id in Step 8 and the key of `STRATEGIES`, `_DEFAULT_AGENT_TIERS` and the lazy
+  tables (Steps 3 and 5). `agent_id` is a separate string with an invariant: see "Id invariant" in Step 5.
 - `capability_descriptions` is what the orchestrator LLM reads to choose the intent: say when to call it and what it
   cannot do.
 - `internal=True` hides the intents from every caller whose `allowed_intents` is `None`; a caller that names them in an
@@ -57,34 +58,40 @@ the agent reads as class constants. Provider choice is not here (Step 3).
 Two separate lookups, both silent when skipped:
 
 1. **Provider.** Add an entry to `src/services/agent_context_builder.py::AgentProviderStrategy.STRATEGIES`
-   (`default_provider`, `allowed_providers`, `required_capabilities`, `fallback`). An agent type with no entry resolves
+   (mirror a neighbour). An agent type with no entry resolves
    to the `quick` strategy (`AgentProviderStrategy.get_strategy`), so it silently runs on Quick's provider.
 2. **Tier.** `UserBotConfig.get_tier_for_agent` falls through to the user's `default_tier` when the type is not in
    `src/domain/user.py::_DEFAULT_AGENT_TIERS`, with no error and no log line. Add the Phase 0 answer there with a
-   one-line reason. Three agents shipped without it (`decisions/agent_tier_default_enforcement.md`).
+   one-line reason (`decisions/agent_tier_default_enforcement.md`).
    An agent with no LLM call goes into `_ZERO_LLM_AGENT_TYPES` in `tests/unit/domain/test_user.py` instead, with a reason.
    `test_every_llm_agent_has_a_default_tier` enumerates `ALL_DESCRIPTORS` and fails on a type that is in neither.
 
 A JSON-output agent must be locked to providers that support its output mode (`src/adapters/CLAUDE.md`, "Agent Output
-Format Standards"). An agent that deliberately has no cross-provider fallback sets `fallback: None` and goes on the
-reasoned allowlist of `tests/unit/agents/test_agents_set_execution_context.py` (Step 5).
+Format Standards"). An agent with `fallback: None` still calls `_set_execution_context` (Step 4; breaker accounting);
+only an agent that deliberately does not call it is listed, with a reason, in `ALLOWED_WITHOUT` of
+`tests/unit/agents/test_agents_set_execution_context.py`.
 
 ### Step 4: the agent class (`foo_agent.py` in `src/agents/`)
 
-A `BaseAgent` subclass implementing `can_handle` and `execute`; the constructor takes `config`, `execution_context`,
-`prompt_builder`, `user_id`. Mirror `DomainResearcherAgent` for the shape that fails correctly. Rules the code and tests enforce:
+A `BaseAgent` subclass implementing `can_handle` and `execute`. Mirror `DomainResearcherAgent` for the shape that fails
+correctly. Rules (the first, second and last are enforced by tests):
 
 - **Hand the context to the base class:** `self._set_execution_context(execution_context)` in the constructor. Without
   it `BaseAgent._call_llm` has no breaker accounting and no cross-provider failover, and nothing errors
   (`tests/unit/agents/test_agents_set_execution_context.py`, which lists the deliberate exceptions).
 - **PromptBuilder is mandatory and fails fast.** If `PromptBuilderPort.build_for_agent(agent_type, ...)` raises, return
-  `AgentResponse.failure(...)`; never fall back to an empty or inline prompt. `ComputeAgent` and `DeepResearchAgent`
-  still degrade to an empty prompt on a builder failure: do not copy that part.
-- Call the model only through `BaseAgent._call_llm`; log through `_on_agent_start` / `_on_agent_success` / `_on_agent_error`.
-- Provider-specific tools are flags on `LLMRequest` (`use_code_execution`, `use_grounding`); never import `types.Tool` in
-  an agent or the factory.
+  `AgentResponse.failure(...)`; never fall back to an empty or inline prompt. **Trap:** `ComputeAgent`
+  (`src/agents/compute_agent.py`) and `DeepResearchAgent` (`src/agents/deep_research_agent.py`) fall back to an empty
+  prompt when the build fails (and `test_compute_agent.py` pins that). Do not copy that part of either.
+- Convention (no guard): call the model only through `BaseAgent._call_llm`; log through the `_on_agent_*` hooks.
+- Convention (no guard): provider-specific tools are flags on `LLMRequest` (`use_code_execution`, `use_grounding`);
+  never import `types.Tool` in an agent or the factory.
+- **Every constructor parameter stored as `self.x` must be read in the class.** `test_arch_every_injected_dep_is_read.py`
+  checks `src/agents/` too; `ComputeAgent`'s stored `execution_context` is on
+  `tests/unit/architecture/unread_injected_deps_allowlist.txt`, so mirroring its constructor fails. A line there is
+  debt, never the way to pass: drop the unread attribute.
 - An agent instance serves concurrent turns: instance state written outside `__init__` needs a line in
-  `tests/unit/agents/agent_instance_writes_allowlist.txt` (`tests/unit/agents/test_agent_request_state_meta.py`).
+  `tests/unit/agents/agent_instance_writes_allowlist.txt` (`tests/unit/agents/test_agent_request_state_meta.py`; a new line is a reviewer's decision).
 
 **Output modes.** Pick one; the adapter behaviour per provider is in `src/adapters/CLAUDE.md` ("Agent Output Format Standards"),
 not repeated here.
@@ -98,12 +105,25 @@ not repeated here.
 1. `allowed_intents=frozenset({...})` on the descriptor (it may name internal intents) and `max_delegation_turns` in the agent config.
 2. A class attribute `_descriptor` set to that descriptor.
 3. In `execute()`: `self.coordinator.get_available_intents_for(self._descriptor)`, `self._build_delegate_tool_declaration(...)`,
-   then `DelegationEngine(self.coordinator).execute(call_llm=self._call_llm, base_request=..., context=..., max_turns=..., calling_agent_id=self.agent_id)`.
+   then `DelegationEngine(self.coordinator).execute(...)` as `DomainResearcherAgent` does.
    `DelegationResult.failed` means the turns ran out.
 
 ### Step 5: factory wiring (`src/composition/user_agent_factory.py`)
 
 Build the context with `self.context_builder.build("foo", user_profile.config)`, then follow the eager or lazy path.
+
+**Id invariant.** The built instance's `AgentConfig.agent_id` must be `f"{descriptor.agent_id}_{user_id}"`: the coordinator
+routes a delegation to exactly that id (`AgentCoordinator`, `f"{base_agent_id}_{user_id}"`). For a lazy agent,
+`_LAZY_AGENT_IDS[agent_type]` must equal `descriptor.agent_id` (the idempotency check in `create_agent_on_demand` uses it).
+On a mismatch the agent builds and registers but is never reached ("unknown recipient"), and no guard names it.
+
+**Prefer the lazy path.** The eager path trips two architecture ratchets (fast tests in `tests/unit/architecture/`):
+`UserAgentFactory._create_and_cache_agents` is capped at its current length by
+`composition_function_size_allowlist.txt` (`test_arch_composition_function_size.py`, only growth fails), and the
+`UserAgentFactory` constructor is pinned at its exact parameter count by `constructor_arity_allowlist.txt`
+(`test_arch_constructor_arity_cap.py`). Inlining one more eager agent grows the function; a new dependency injected into
+the factory grows the arity. Put an eager agent's build in its own function outside `_create_and_cache_agents`, or make the
+agent lazy. Raising either number is a reviewer's decision, never a way to pass.
 
 **Eager** (mirror `compute_agent` in `UserAgentFactory._create_and_cache_agents`): construct the agent, add it to
 `agents_to_register`, add it to the `cached` dict, and add its key to `UserAgentFactory._EAGER_AGENT_KEYS`, which is what
@@ -117,15 +137,19 @@ eviction tracking (`cached["_lazy_agent_ids"]`) are done by `create_agent_on_dem
 
 **Wiring guards.** The production graph walk (`tests/CLAUDE.md`, "The production graph") builds one user's eager and every
 lazy agent. The two ledgers `tests/unit/composition/wiring_none_ledger.txt` and `wiring_instance_ledger.txt` fail when a
-new agent leaves an attribute `None` or a new class adds an instance; wire the dependency in `build_application_graph`,
-and treat a ledger line as a reviewer's decision. They are `slow` tests (`RUN_SLOW_TESTS=1`).
+new agent leaves an attribute `None` or a new class adds an instance; wire the dependency in `build_application_graph`.
+A count-1 line of `wiring_instance_ledger.txt` is a registration and the implementer's to add; counts above 1 and every
+line of `wiring_none_ledger.txt` are the reviewer's decision. These are `slow` tests (`RUN_SLOW_TESTS=1`).
 
 ### Step 6: tests
 
 One primary test file per agent, `test_foo_agent.py` in `tests/unit/agents/` (where a test goes: `tests/CLAUDE.md`, "Where a test
-goes"). Cover `can_handle`, the happy path, an empty query, an LLM exception, and a prompt-builder failure returning
-`AgentResponse.failure`. Mirror `tests/unit/agents/test_compute_agent.py`. Use fakes that evaluate over call assertions;
-a new descriptor needs no test of its own beyond the guards above.
+goes"). Cover `can_handle`, the happy path, an empty query, an LLM exception, and a prompt-builder failure that must
+return `AgentResponse.failure` (the test asserts `status == FAILED` and the error text; model it on
+`test_execute_prompt_builder_failure` in `tests/unit/agents/test_tutor_agent.py`). Do not model it on
+`tests/unit/agents/test_compute_agent.py`: that file asserts the opposite (a builder failure still succeeds). Script the
+model with `tests/support/scripted_llm.py` and assert the outcome, not the call (`tests/CLAUDE.md`); a new descriptor
+needs no test of its own beyond the guards above.
 
 ### Step 6b: user-facing text
 
@@ -144,15 +168,15 @@ The prompt layer (tokens, blueprints, profiles) lives in Firestore; `prompts_sna
 
 Open the mirror files of a similar agent: `prompts_snapshot/profiles/compute.yaml`,
 `prompts_snapshot/blueprints/compute_agent_v1.yaml`, `prompts_snapshot/tokens/system/COMPUTE_COGNITIVE_PROCESS.groovy`
-(a larger one: `email_search`). The legacy `download.py` is not part of this flow.
+(a larger one with an `OUTPUT_FORMAT` token: `doc_planner`). The legacy `download.py` is not part of this flow.
 
 ### Step 8: create the mirror files
 
 - Token `<TOKEN>.groovy` in `prompts_snapshot/tokens/system/`: frontmatter plus the groovy body; its `class` must be a class in
-  the blueprint's `class_order`. The prompt text states what its output is for before the rules (root `CLAUDE.md`, "Code Conventions").
-- Blueprint `foo_agent_v1.yaml` in `prompts_snapshot/blueprints/`: `blueprint_id`, `outer_class`, `class_order`.
+  the blueprint's `class_order` (mirror a reference). The prompt text states what its output is for before the rules (root `CLAUDE.md`, "Code Conventions").
+- Blueprint `foo_agent_v1.yaml` in `prompts_snapshot/blueprints/`.
 - Profile `foo.yaml` in `prompts_snapshot/profiles/`: the file name and `agent_id` equal the `agent_type` passed to
-  `build_for_agent`; `tokens` maps token ids to `order` and `non_overridable`.
+  `build_for_agent`.
 - A structured-output agent also gets its `OUTPUT_FORMAT_{AGENT}` token, in its own class.
 
 Two failures are silent: a missing profile document yields an empty profile (no tokens, no error;
@@ -183,8 +207,9 @@ Quick and Smart share one token, `PROTOCOL_AGENT_SELECTION` (both profiles assig
 intent the orchestrators see only its `capability_descriptions`. Edit the mirror
 `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` and, because tests pin the two equal
 (`tests/unit/firestore_utils/test_protocol_drive_specialist.py`), its draft
-`firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json`. Add `when`, `how` and `anti_patterns` for the intent in the
-existing structure, in the style of its neighbours. Upload with the Step 9 commands; one upload changes Quick and Smart together.
+`firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json`. Add a specialist block for the intent inside
+`delegate_to_specialist_extended_rules`, shaped like its neighbours (`web_search_specialist`: `intent`,
+`query_formulation`; add `do_not` or `requires` where they apply). Upload with the Step 9 commands; one upload changes Quick and Smart together.
 
 ---
 
@@ -193,8 +218,9 @@ existing structure, in the style of its neighbours. Upload with the Step 9 comma
 ### Step 11: test
 
 Run the targeted tests for the files you touched, then the guards named above (execution-context test, the tier test,
-the ledgers with `RUN_SLOW_TESTS=1`). The one batch run per push and the commands' meaning: root `CLAUDE.md`, "Commands".
-Then a manual check: a message that should trigger the intent, and in the logs `_on_agent_start`, `_on_agent_success`, no circuit-breaker trips.
+the ledgers with `RUN_SLOW_TESTS=1`, the architecture ratchets of Steps 4 and 5). What each command does: root `CLAUDE.md`,
+"Commands". Then a manual check: a message that should trigger the intent, and in the logs the agent's `[<agent_id>] start`
+and `done` lines and no circuit-breaker trips.
 
 ---
 
