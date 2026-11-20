@@ -112,16 +112,16 @@ Decision records (`docs/04_solution_strategy/decisions/`): `fact_s1_defects.md`,
 | What the review pass does with a stale fact; why a fact came back, was set aside, became history or was asked about | §5.6, §6 |
 | What happens to a plan whose date passed, a document or membership that ended, an invoice, a fine | §5.6, §2.7, §7 |
 | How a question reaches me, how I answer it (a digit, a button, words, the Cabinet), what happens if I do not | §5.6 |
-| Why no question arrived, or arrived twice, or its buttons did nothing | §5.6, §9.2b |
+| Why no question arrived, or arrived twice, or its buttons did nothing | §5.6 (one question at a time, the send), §9.2b |
 | What the weekly digest says and when it is sent | §5.6 |
 | What the Cabinet shows for stale, set-aside and waiting facts, and what it cannot do | §4.8, §5.6 |
 | What the memory-write lease is; why a consolidation task waited or ran twice a few minutes apart | §3 step 3, §6, §7 |
 | What the consolidator sees (whose words, which text of the bot's replies) and how it decides create / update / merge / discard | §3 steps 4–5 |
 | Why the bot remembered something wrong, or something it said itself (echo trap) | §3 step 5, §9.3 |
 | What Stage 2a (cluster review) and Stage 2b (directive review) do and when they run | §3 steps 6–7 |
-| What a standing directive is; why one disappeared or was rewritten; the cap of 15 | §3 step 7, §4.2, §5.3 |
+| What a standing directive is; why one disappeared or was rewritten; the cap | §3 step 7, §4.2, §5.3 |
 | What the bot sees about me in every message (the baseline); how it is chosen and ordered; its limits | §4.1 |
-| How memory search ranks; what `search_memory` returns | §4.3, §4.5 |
+| How memory search ranks (the scored engine every reader uses, and the older RRF engine); what `search_memory` returns | §4.3, §4.5 |
 | What the Router prefetches before Smart answers | §4.4 |
 | What Lelik and the claude.ai connector (MCP) see | §4.6, §4.7 |
 | What `$memory save` does; why the bot never writes memory itself | §5.1 |
@@ -171,7 +171,7 @@ are `EnvironmentConfig` properties (`src/config/environment.py::EnvironmentConfi
 | Facts | `domain_facts_collection` | one document per fact **version** (a content change adds a document, a lifecycle change edits one, §2.4), three 768-dim vectors each | consolidation tools (§3), Cabinet invalidate (§5.2), the janitor (state to `stale` only, §5.5), the review pass and the owner's answers (§5.6) |
 | Sessions | `sessions_collection`, doc id `{user_id}:{channel_id}` | the channel's recent messages (the sliding window) | `ConversationHandler`, notifications, `$memory save` |
 | Consolidation queue | `consolidation_queue_collection` | batches cut from sessions, until consolidated | overflow routing (§3 step 3), `$consolidate` |
-| Baseline cache | `user_context_collection`, doc id = account id | `facts`, `principles`, `directives` lists | `BiographicalContextService.refresh_cache` (§3 step 9) |
+| Baseline cache | `user_context_collection`, doc id = account id | `biographical_facts`, `principles`, `directives` lists (plus `refreshed_at`, which keys the fact-search snapshot) | `BiographicalContextService.refresh_cache` (§3 step 9) |
 | Memory-write lease | `memory_write_leases_collection`, doc id = account id | `lease_owner`, `lease_until`, `acquired_at` | `ConsolidationService`, `FactReviewService` (§3 step 3) |
 | Memory drafts | `memory_fact_drafts_collection`, doc id `{user_id}:{code}` | facts Smart proposed, TTL policy on `expires_at` | `propose_memory_facts` (§5.1) |
 | Janitor day | `fact_lifecycle_daily_collection`, doc id `{account_id}:{UTC day}` | the day's janitor snapshot (last run of the day wins) plus counters other code increments (§5.5) | the janitor, the consolidator, the review (§5.5) |
@@ -215,7 +215,7 @@ different field, `purge_after` (§5.6).
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
 The profile is made by `src/agents/fact_profiler_agent.py::FactProfilerAgent`, one structured model call per fact; the
-27 domains live in one registry, `src/domain/fact_domains.py`. The consolidator does not classify subjects; it decides
+The domains live in one registry, `src/domain/fact_domains.py`. The consolidator does not classify subjects; it decides
 only whether a fact is a directive (§2.2).
 
 `FirestoreFactRepository` also stores `context_priority_rank` (critical 1 … archival 5) beside the entity for ordering
@@ -226,7 +226,7 @@ only whether a fact is a directive (§2.2).
 | Axis | Values | What code does with it |
 |---|---|---|
 | `directive` | `true` / `false` (default `false`) | a standing directive: in the rulebook, kept out of the baseline fill, expiry pinned to `none`. Decided in one place, `src/domain/fact_lifecycle.py::is_directive`; every read that selects directives filters `directive == true` (§4.2) |
-| `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` | only a default for the expiry decision when no row of the kinds table applies (§2.7); no code reads it otherwise |
+| `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` | none; a prompt rule makes it the default for the expiry decision when no row of the kinds table applies (§2.7) |
 | `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` | **the only visibility switch**: every reader filters `state == "current"`. Only the janitor sets `stale` (§5.5); the model is refused it everywhere (§2.7). A fact whose question waits for the owner is `current` (§5.6) |
 | `context_priority` | `critical`, `high`, `medium`, `low`, `archival` | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`FirestoreFactRepository.get_active_facts_ordered`) |
 
@@ -297,7 +297,7 @@ Two kinds of write (`src/domain/fact_update_plan.py`):
 - **History.** The old wording stays in the closed document. There is **no Cabinet view or script for old versions**: in
   the Firestore console filter the facts collection by `lineage_id` and sort by `version`; a merged fact starts a new
   lineage whose sources are the documents with `superseded_by == <its id>`. `FirestoreFactRepository.get_lineage` returns
-  the same, without vectors; nothing in the product calls it.
+  the same, without vectors; the only caller is the review's prefetch of "earlier versions" (`FactReviewService._task`).
 - **A retry can add a version.** A consolidation batch that fails and is retried runs Stage 1 again over facts it already
   wrote; an update it repeats on the live version can add one more version document (§6).
 - `ConsolidationAgent._handle_consolidate_cluster` (task `consolidate_cluster`) has no live caller: only dry-run scripts
@@ -345,7 +345,7 @@ stored states a write may start from and how a refusal reads):
   stored fact, there is no DISCARD);
 - a horizon that ends at or before now + 1 day is refused on Stage 1 and mail with the minimum N;
 - **cleanup passes** (Stage 2a, Stage 2b, the directive backstop, `consolidate_cluster`; they cannot move `reported_date`)
-  are not refused for a due horizon: `expires_at` becomes now + 2 days (`_CLEANUP_FLOOR`), kind and days are kept, and the
+  are not refused for a due horizon: `expires_at` becomes now plus `_CLEANUP_FLOOR`, kind and days are kept, and the
   result carries a note, so the fact reaches the review soon (owner ruling).
 Every expiry refusal ends "Nothing was written. Resend this call with a valid expiry before retiring any fact it
 replaces." (`src/domain/fact_expiry.py::NOTHING_WRITTEN`) and the tool result is `status: failed, refused: "expiry"`,
@@ -397,7 +397,7 @@ formatter, in the owner's zone, with year and weekday (`src/domain/local_time.py
 **The trail.** Every state change writes a `lifecycle_events` entry in the same write, with code-built reasons only
 (`src/domain/fact_lifecycle.py::lifecycle_event`, `with_event`; the review's reasons in
 `src/domain/fact_review_reasons.py`). A version starts with its predecessor's trail plus its own entry; a merge or version
-close appends to each closed document. Actors are the pass labels plus `cabinet`, `janitor` and `migration`. The trail is
+close appends to each closed document. Actors are the pass labels plus `cabinet`, `janitor`, `migration` and `review_fallback` (a kept-twice queue write, `KEPT_TWICE_ACTOR`). The trail is
 how §9.2 step 7 tells who removed a fact.
 
 ---
@@ -414,7 +414,7 @@ same sessions and count toward the window.
 ### Step 2 — the sliding window overflows
 
 When the session holds more than `threshold` messages after an append, the oldest `batch_size` form a batch, repeatedly
-until the rest is back under the threshold. The values are `src/domain/settings.py::ConsolidationSettings` (70 / 50),
+until the rest is back under the threshold. The values are `src/domain/settings.py::ConsolidationSettings` (threshold and batch size),
 lowered by `load_settings` only for the `is_production` environment, which is not the live one; they are global:
 `consolidation_batch_size` of the user only sizes the `$consolidate` cut (§5.4). A channel bound to a companion uses that
 binding's own window (`threshold_resolver`) and routes elsewhere. The append is stored whole; a batch leaves the session
@@ -507,7 +507,8 @@ agent also accepts `consolidate` (Stage 1–2b only), `consolidate_cluster`, `co
 with one ERROR line and writes nothing.
 
 - **Model:** agent type `consolidation`, default provider Claude, **no cross-provider fallback**
-  (`src/services/agent_context_builder.py`, owner ruling: a memory write never moves to another model on an outage;
+  (`src/services/agent_context_builder.py`, owner ruling: a memory write never moves to another provider on an outage; the
+  Claude adapter alone retries once on the next model down on a 5xx or 529, `src/adapters/claude_adapter.py`;
   the transcript is locked to one provider after the first tool call anyway, `src/agents/CLAUDE.md`), tier PERFORMANCE
   (`src/domain/user.py::_DEFAULT_AGENT_TIERS`), which on Claude is `claude-opus-5-5` unless the live env var
   `CLAUDE_PERFORMANCE_MODEL` pins another model (`src/adapters/claude_adapter.py`; `make claude-model` shows the live
@@ -583,7 +584,7 @@ Unconditional, even when Stage 1 did nothing; a no-op only when the rulebook is 
 and sends the whole rulebook with the "STANDING DIRECTIVES REVIEW" message (`_build_directive_review_message`): one
 checklist line per record, then per record DEMOTE (create a fact with `directive: false` stating the condition, and
 invalidate the directive), INVALIDATE, MERGE, or rewrite to the target form (imperative, English, terse, one rule), hard
-cap `DIRECTIVE_HARD_CAP` (15). Then the **code backstop** `ConsolidationAgent._enforce_directive_cap`: if more than the
+cap `DIRECTIVE_HARD_CAP`. Then the **code backstop** `ConsolidationAgent._enforce_directive_cap`: if more than the
 cap remain current, the tail in (priority, newest first) order is invalidated through the same `update_fact` (state only,
 so in place, trail reason `directive cap`); a result that is not `updated` is logged at ERROR and posted as one 🚨.
 Run-to-run results differ on identical input (`docs/04_solution_strategy/decisions/directive_applicability_gate.md`).
@@ -644,7 +645,7 @@ step that raises is logged and changes nothing of the run's result.
   re-derived without a call; a standing directive gets its fixed profile; `abandoned` facts are skipped); then model calls
   for the missing, stale-input and former-directive facts, newest first, at most `FACT_PROFILER_MAX_PER_RUN` per run
   (`src/composition/fact_profile_setup.py`), each started only while the lease leaves time; one embedding batch of the
-  label words; one compare-and-set write per fact. `SYSTEM` facts are out.
+  label words; one compare-and-set write per fact. Facts of the SYSTEM account are out.
 - **Confirmed people:** the owner-confirmed people list is read once per run before classifying; every call carries it as a
   block, and a fact's fingerprint holds only the entries it names, so a list edit re-profiles only the facts naming that
   person. An unreadable list ends the step with `error=True`.
@@ -666,7 +667,8 @@ step that raises is logged and changes nothing of the run's result.
 
 ### Step 10 — the next conversation
 
-Smart reads the cache document on every request (no in-process copy), so the new baseline applies from the next message
+Smart reads the cache document on every request, but `PromptBuilder` keeps a component copy that the consolidator
+invalidates (`invalidate_biographical_cache`), so the new baseline applies from the next message
 after the run. A new fact is searchable from the moment it is written. Whether it is in the baseline depends on §4.1.
 
 ### 3.11 Loop alerts and stats lines
@@ -680,8 +682,8 @@ into a typed `PassCall` and renders the lines (no arguments, no fact text):
   `review`), model, effort, turns, tool counts, writes, tool-error turns, seconds.
 - **Abandoned refusals, 🚨 permanent, also with the stats line off.** A refused create or merge is abandoned when no later
   successful create or merge in the same pass answers it (same text, or on a cleanup pass a born-due refusal answered by
-  the rewrite it asks for: a later merge of the same set, or a create of the same domain that keeps more than half of the
-  content words); a refused update, when no later successful non-closing update targets the same fact. It errs towards an
+  the rewrite it asks for: a later merge of the same set, or a create with the same `directive` decision (and, when made from facts, the same
+  source set) that keeps more than half of the content words); a refused update, when no later successful non-closing update targets the same fact. It errs towards an
   alert. On Stage 1 and mail a born-due refusal is never abandoned (the text lets the model discard).
 - **The review pass** (§5.6) gives each fact one result (`PassActor.one_result_per_fact`): any successful update or ask of
   the fact anywhere in the pass answers it; a basis or ask refusal leaves the fact kept.
@@ -704,7 +706,7 @@ drive agents, Lelik's summarizer). Smart and Quick read the cache document direc
 gets a filtered copy (§4.6).
 
 **How it is chosen** (`src/services/biographical_context_service.py::BiographicalContextService.refresh_context`):
-1. Limits: `DEFAULT_BIOGRAPHICAL_CACHE_LIMIT` (65) and `DEFAULT_PRINCIPLES_CACHE_LIMIT` (20)
+1. Limits: `DEFAULT_BIOGRAPHICAL_CACHE_LIMIT` and `DEFAULT_PRINCIPLES_CACHE_LIMIT`
    (`src/domain/settings.py::SearchConfig`), resolved user → account defaults → system by `ConfigurationService`; an
    explicit limit wins. The consolidator passes its own, resolved per user when its agents are built
    (`src/composition/user_agent_factory.py`); the Cabinet invalidate passes none, so a user-level override is not applied
@@ -716,7 +718,7 @@ gets a filtered copy (§4.6).
    directives.
 4. Facts tagged `mindset` become **principles** (up to the principles limit; extras are dropped, not moved to facts), carved
    out of the same limit.
-5. Directives are fetched separately: up to `DEFAULT_DIRECTIVES_CACHE_LIMIT` (15) current non-archival facts with
+5. Directives are fetched separately: up to `DEFAULT_DIRECTIVES_CACHE_LIMIT` current non-archival facts with
    `directive == true`.
 6. Each cached item carries id, text, `directive`, `primary_domain`, `sensitivity`, tags, priority, `created_at`; the two
    profile fields are None while the fact is unprofiled.
@@ -724,7 +726,8 @@ gets a filtered copy (§4.6).
 **How it is rendered.** `PromptBuilder.build_for_agent` splits the list: directives → `standing_directives {}` (§4.2);
 items tagged `semantic_lens` (the Router's prefetch) → `query_specific_context` after the cache boundary; the rest →
 `knowledge_base { biographical_context }`, one section per `primary_domain` headed by its registry label
-(`src/domain/fact_domains.py`), the identity domain first, an item with no `primary_domain` in the Lifestyle section, a
+(`src/domain/fact_domains.py`), the Biography section first (oldest to newest), the other registry domains after it (newest first; the identity flag only
+selects the identity block, it is not a section), an item with no `primary_domain` in the Lifestyle section, a
 fact tagged `mindset` prefixed `[MINDSET]`, each line with its recorded date, under a note that conversation history wins
 on conflict (`src/services/prompt_v3/biographical_formatter.py`,
 `src/services/prompt_v3/prompt_assembly_service.py`). Facts and directives pass the security validator as untrusted text.
@@ -752,8 +755,8 @@ fact; the sources are `superseded`); the backstop cut it (over 15, lowest priori
 📊 `stage2b` line of that run shows the writes; BigQuery shows the checklist (§9.4).
 
 **What makes a fact a directive** is decided in one place, `is_directive` (§2.2): the consolidator's `directive` flag and
-nothing else. The prompt builder's split, the baseline fill, the profile step and the companion call it; the reads that
-select directives filter on the same flag. A fact written before the flag existed is a directive only once the owner-run
+nothing else. The prompt builder's split, the baseline fill, the profile step and the review rules call it; the reads that
+select directives (the baseline, Stage 2b and its backstop, the companion) filter on the same flag. A fact written before the flag existed is a directive only once the owner-run
 mark script has set it (`scripts/migration/fact_directive_flag_mark.py`). The expiry pin (`expiry_pinned`) is wider: a
 directive, a principle or a `mindset` fact; principles are pinned but are not directives.
 
@@ -761,7 +764,12 @@ directive, a principle or a `mindset` fact; principles are pinned but are not di
 
 Readers use the scored fact search (`src/services/fact_search_service.py::FactSearchService.search_phrases`,
 `docs/10_rfcs/FACT_PROFILE_RFC.md` §5.3): per-phrase candidate lists, a linear score, fusion over up to four phrases, a
-cut. The Router, `search_memory`, Lelik and the connector all reach it (§4.4, §4.5, §4.7), and so does the companion's
+cut. How it ranks: it embeds the queries' subject, kinds and message in one batch and reads the account's cached snapshot
+(`src/domain/fact_search_snapshot.py`, valid while the baseline document keeps its `refreshed_at`); candidate lists come
+from the kNN and from set membership over profile keys (labels, domain, time, kinds, places, people, home); one linear
+score with fitted weights (`src/domain/fact_search_rank.py`) orders them; a near-duplicate pass and a cut follow; several
+phrases are fused by `fuse_phrases` with priority weights and a bonus for a fact several phrases found
+(`src/domain/fact_search_lists.py`). The Router, `search_memory`, Lelik and the connector all reach it (§4.4, §4.5, §4.7), and so does the companion's
 biographical slice (`FactSearchPort.search` with the channel's `session_domains`). The rest of this section describes
 `enrich_context`, the older multi-vector engine, which only the consolidator's `search_existing_facts` still calls.
 
@@ -804,8 +812,10 @@ call of its own:
 2. Each phrase goes through the slots agent (a failure costs that phrase its slots, not the search), then
    `FactSearchService.search_phrases` scores and fuses them. `FactQuery.message` is the user's latest message when the turn
    has one, else the phrase. No baseline exclusion.
-3. Each fact is rendered as its text plus `context:`, `reported:` and `metadata:` lines (`src/domain/memory_search_format.py`),
-   joined by `---`; no match gives `No records matched.`
+3. The result is formatted by `src/domain/memory_search_format.py` (one formatter for the connector and this agent): an
+   explanation line and one header line per phrase saying how many facts it found, then per fact a head line (a `[qN]` tag
+   naming the phrases that found it, its domain label, when it applies, when it was recorded), its text, and `context:` and
+   `metadata:` lines; no match gives `No records matched.`
 
 ### 4.6 Lelik
 
@@ -818,8 +828,8 @@ Alek. A failed cache read raises, and the call is not opened on an empty context
 ### 4.7 The claude.ai connector (MCP)
 
 `get_user_context(queries)` (`src/composition/mcp_setup.py`) hands the phrases to the token account's `FactsMemoryAgent`
-(§4.5), the same entry point as every other caller; no model and no Router in the connector itself. The answer groups
-facts by domain, one line each, with a `when:` line where a record has one.
+(§4.5), the same entry point as every other caller; no model and no Router in the connector itself. The answer is the same
+`format_search_result` text as `search_memory` returns (§4.5).
 
 ### 4.8 The Cabinet fact page
 
@@ -1018,7 +1028,7 @@ lease (the one consolidation holds, so the two never write at once; busy → the
    is left out.
 6. *The model pass* (`ConsolidationAgent._handle_review_stale_facts`, task `review_stale_facts`, label `review`; nothing
    selected means no model call). Profile `consolidation_review` (tokens `CONSOLIDATION_TAXONOMY` and
-   `CONSOLIDATION_LIFECYCLE`), no baseline conversation. It sees, per fact, built by code: the text, domain, expiry,
+   `CONSOLIDATION_LIFECYCLE`), no conversation (the baseline is in the prompt like on every pass). It sees, per fact, built by code: the text, domain, expiry,
    `reported`, `stale_since`, earlier versions, its nearest current neighbours and, when there is one, its question with
    the owner's reply. Every listed fact must end with exactly one outcome, decided by the first rule that applies:
    **supersede** (a current fact says the same), **revive** (a reply or other evidence says it still holds), **history**
@@ -1094,8 +1104,9 @@ question's `quoted_text` stay as stored. The pair appended to the history carrie
 a translated quote (its echo-trap exception says so). The Cabinet keeps showing the English text.
 
 **How the owner answers.** Only a *reply to the question message* counts (a Slack thread reply, a Telegram reply), or a
-click, or the Cabinet. Any other message is ordinary conversation and the question stays open. Four ways, one path
-(`FactAnswerService.apply`, source `digit`, `button` or `cabinet`):
+click, or the Cabinet. Any other message is ordinary conversation and the question stays open. Four ways; a digit, a button and a Cabinet click share
+one path (`FactAnswerService.apply`, source `digit`, `button` or `cabinet`), while words are only recorded
+(`record_reply`) and applied by the next review pass:
 - **A digit as a reply.** Taken at intake in `ConversationHandler` (`answer_reply`), before any model call, in an unbound
   channel, for a text-only message. Applied at once by code; the acknowledgement is posted as a real reply to the question
   message, and the pair `[Reply to memory review q=<id>] <text>` plus the acknowledgement is appended to the session.
@@ -1109,7 +1120,9 @@ click, or the Cabinet. Any other message is ordinary conversation and the questi
   shortens the timeout; if the review leaves it undecided, the timeout sees the reply.
 - **The Cabinet.** The "Questions" list shows each waiting or asked fact with one button per deciding option of its kind
   ("don't remember" is never offered) and a bulk "mark selected as …" for one kind at a time; the invoice digest questions
-  are their own group. An answer that is not one of its question's options is `not_applied` before any write.
+  are their own group. An answer that is not one of its question's options is `not_applied` before any write. A fact rewritten since its question
+  shows the quoted text the owner was asked about, and only the session user's own questions are listed or answerable
+  (`FactAnswerService.review_queue`).
 
 Two kinds of message that are not taken as an answer fall through to ordinary conversation, so nothing the owner wrote is
 dropped: a reply the system could not take (an error in the path, logged, counted as `reply_intake_failed` and alerted the
@@ -1139,9 +1152,12 @@ consolidation or review write from being lost and the loser reports `conflict`.
 sent. `revive` (the default for `still_true`): the fact is brought back with twice the window its last revive gave (§2.7).
 `archive` (noise): the fact is archived. `history` (`happened`, `renewed`, `paid`): the question's "unknown" text is written
 as history through the typed write path under the `timeout` actor; the fact now has `none`, so it is never asked again, and
-the weekly digest lists it. A write conflict leaves the question for the next run; a refused or failing write is a WARNING
+the weekly digest lists it. A write conflict leaves the question for the next run; for the `history` fallback a refused or raising write is a WARNING
 and `fallbacks_not_applied`, the question stays open with one more attempt, and it closes `resolved_elsewhere` on a typed
-refusal or after `MAX_FALLBACK_ATTEMPTS`; one bad question never stops the run. Every typed write (the review's, an
+refusal at an attempt after the first or at the `MAX_FALLBACK_ATTEMPTS`-th failure (`history_fallback_gives_up`); one bad
+question never stops the run. If the history landed and the close did not (a crash between), the next run finds the
+question's own timeout reason on the version its fact resolves to and closes it `timeout`, so the digest still lists it
+(`FactReviewService._silence_already_written`). Every typed write (the review's, an
 answer's, the timeout's) names the exact document it decided on (`expected_id`): if the fact moved on meanwhile the write
 is refused, so an answer racing a timeout never overwrites the other's history.
 
@@ -1156,8 +1172,8 @@ and open invoice digest questions with the link to the Cabinet. The last line is
 there is nothing to list, no message is sent but the week is still claimed; a digest that could not be delivered releases
 its claim and tries again at the next run.
 
-**Retention.** `purge_after` is the close time (or the claim time of a digest) plus `QUESTION_RETENTION`; it exists only in
-storage. A Firestore TTL policy on it deletes them; without one they stay and the janitor's run-level 🚨 reports them. An
+**Retention.** `purge_after` is the close time (or the claim time of a digest) plus `QUESTION_RETENTION`, and a quote
+translation's write time plus its own retention (`src/domain/fact_review_quote_translation.py`); it exists only in storage. A Firestore TTL policy on it deletes them; without one they stay and the janitor's run-level 🚨 reports them. An
 open question never has one; the state document has none.
 
 ---
@@ -1172,7 +1188,7 @@ open question never has one; the state document has none.
 | a bad value (an enum, a `directive` that is not a boolean, a malformed date, `tags: null` or `[]`, empty `content`, `superseded` on a create or merge, `stale` on a create, merge or update, `superseded_by` missing or without `superseded`) | checked **before** any embedding or write, `ValueError` caught → `status: failed` with the message | the model may retry |
 | a missing, `null` or malformed `expiry` on create, merge or a version-making update | `status: failed`, `refused: "expiry"`, the text names where `expiry` goes and the three shapes (§2.7). A malformed merge leaves its sources current | the model resends; a refusal never answered is an abandoned refusal (🚨, §3.11) |
 | an `expiry` born due | as above plus `born_due: true`; the way out depends on the pass (§2.7) | the model resends, rewrites, or (conversation passes only) discards |
-| a due horizon on a cleanup pass | **not** refused: written with `expires_at` = now + 2 days and a `note` | — |
+| a due horizon on a cleanup pass | **not** refused: written with `expires_at` = now plus the cleanup floor and a `note` | — |
 | `expiry` sent with a closing state, or a `reported_date` or `derived_from` the pass ignores | not an error: the result's `note` says so | — |
 | `update_fact` on an unknown or foreign id | `status: not_found`, the same words for both | — |
 | `update_fact` or `merge_facts` with an id the store has moved on from | followed forward, the call lands on the live document; the result carries the written id (and `resolved_from` for an update) | — |
@@ -1200,7 +1216,8 @@ open question never has one; the state document has none.
 | a review call is refused | the tool result says what to fix, tagged `basis`, `scope` or `ask`; nothing is written; **a revive without evidence or a reply is never written** | the model fixes the call or leaves the fact |
 | the review pass fails | 200 `failed`, `last_failed_at` set, the next send and the digest still run, writes already made stand | no Cloud Tasks retry; the janitor enqueues again |
 | a review run finds the lease taken | it enqueues itself again, later, under a name made of the account and the lease bucket | yes |
-| an owner's answer finds the fact changed, or its write conflicts or is refused | `changed`, `conflict` or `not_applied`: nothing written, the owner is told, the question stays open | the owner may answer again |
+| an owner's answer finds the fact changed, or its write conflicts | `changed` or `conflict`: nothing written, the owner is told, the question stays open | the owner may answer again |
+| an owner's answer is refused by the write rules (`not_applied`) | WARNING and `answers_not_applied` counted, nothing written, the owner is not told: a digit reply goes on as ordinary conversation, a button click returns nothing and keeps its buttons; the question stays open | no |
 | a question cannot be sent | pair not stored: back to the front of the queue, nothing posted; post failed: a "not delivered" pair, back to the front, no more that day | the next day's run |
 | a Slack click arrives with a bad signature, or the queue is down | 401 with nothing parsed; 503 or 500 when the task is not queued | the owner clicks again |
 | the digest is not delivered | the claim is released, the next run tries again | yes |
@@ -1213,8 +1230,8 @@ open question never has one; the state document has none.
 1. *Seconds:* it is in the session. Smart sees it while it is within the history window it still holds. An overflow cuts the
    oldest batch, so a recent message can leave Smart's history before its batch is consolidated; once out of it and not yet
    in memory, nothing finds it.
-2. *Consolidated:* at the channel's next overflow after which it is among the oldest `batch_size` messages. With threshold
-   70 / batch 50 a message waits for roughly 20–70 more messages in the same channel (notifications count). A quiet channel
+2. *Consolidated:* at the channel's next overflow after which it is among the oldest `batch_size` messages. With the live threshold
+   and batch size a message waits for roughly 20–70 more messages in the same channel (notifications count). A quiet channel
    may wait days; one that stays under the threshold never consolidates on its own (`$consolidate`).
 3. *Minutes later:* the Cloud Task runs; Stage 1 writes the fact. From then `search_memory` and the Router prefetch find it.
 4. *End of the run:* the baseline is rebuilt. The fact enters it only if selected (§4.1); otherwise it is reached by search.
@@ -1250,11 +1267,13 @@ may rewrite, merge or demote it. It is in `standing_directives` from the next me
 
 ## 8. Costs
 
-**Which model.** Claude PERFORMANCE: `claude-opus-5-5` by code default, or the model pinned by the live
-`CLAUDE_PERFORMANCE_MODEL` (`make claude-model` shows it). The records disagree on which model consolidation should run on
-(`src/adapters/CLAUDE.md` says a deploy returns to the Opus default;
-`docs/04_solution_strategy/decisions/sonnet55_adaptive_thinking_stall.md` keeps consolidation on Sonnet 5.5): check
-`make claude-model` before reasoning about cost or behaviour. Measured per-batch figures are in
+**Which model.** Consolidation's tier is PERFORMANCE (`src/domain/user.py::_DEFAULT_AGENT_TIERS`) on provider Claude, whose
+code default is `claude-opus-5-5` (`src/adapters/claude_adapter.py`, `MODEL_TIERS`). The only override is the env var
+`CLAUDE_PERFORMANCE_MODEL`, read in the adapter's constructor. `cloudbuild-dev.yaml` deploys with `--set-env-vars`, which
+replaces every variable and carries no pin, so every deploy returns consolidation to Opus 5.5; `make claude-forward`
+(`Makefile`) pins Sonnet 5.5 live only until the next deploy, and `make claude-model` shows which holds. The 📊 line names
+the model that ran. The decision `docs/04_solution_strategy/decisions/sonnet55_adaptive_thinking_stall.md` records a
+point-in-time choice of Sonnet 5.5 that no code or deploy config encodes. Measured per-batch figures are in
 `docs/04_solution_strategy/decisions/model_refresh_2026_10.md` and `consolidation_provider_model_eval.md`.
 
 **What drives it.** Turns × prompt (every turn resends the system prompt and the growing tool history; Claude caches the
@@ -1267,7 +1286,8 @@ run by `FACT_PROFILER_MAX_PER_RUN`.
 
 **Where it is recorded.** Every model call goes through `BaseAgent._call_llm`, which bills the account per model that ran
 (`docs/04_solution_strategy/decisions/billing_execution_scoped_ledger.md`) and writes a `prompt_content` row per turn
-(§9.1). The 📊 line carries no cost. Embedding calls are not billed to the account.
+(§9.1). The 📊 line carries no cost. Embedding calls are billed too: each successful one adds its tokens to the ledger in scope
+(`src/adapters/gemini_embedding_adapter.py`).
 
 ---
 
@@ -1292,7 +1312,7 @@ session`, `Overflow hand-off failed`, `🚨 [SessionStore] … the history passe
 `Stage 2a: reviewing cluster`, `Stage 2b: reviewing N directives`, `Directive cap backstop`, `Max turns reached without final
 report`, `Stage 3 (email) failed` / `timed out`, `Email cards pass n`; tools `[FactManagement] create_fact() TOOL CALL`,
 `Cannot resolve fact`, `changed concurrently twice; update refused`, `moved forward between attempts`, `Merge refused`;
-baseline `[BiographicalContext] Cache refreshed`; batch result `consolidated … → DELETED`, `failed (attempt n/3)`,
+baseline `[BiographicalContext] Cache refreshed`; batch result `consolidated … → DELETED`, `failed (attempt n/…)`,
 `CONSOLIDATION_FAILED`, and once per batch when the last allowed round failed `CONSOLIDATION_GAVE_UP` (grep it to find
 batches that need the owner); `$consolidate`: `[Librarian] $consolidate failed`; Cabinet `Fact <id> not invalidated`,
 `Failed to refresh biographical cache`; janitor startup `fact lifecycle sweep: log-only` / `: writes`,
@@ -1326,15 +1346,17 @@ search `[SearchEnrichment] Final: N facts`.
 2. Did the review run? The review state document: `enqueued_at`, `started_at`, `last_review_at`, `last_failed_at`.
 3. Did the review decide the facts itself? Most facts are decided from their neighbours and ask nothing. Look at the
    counters (`revived`, `archived_by_review`, `queued`).
-4. Is a question waiting? `queued` questions wait for the current one to be answered, or for the next local day; at most
+4. Did a question arrive twice? A send that crashed between the post and the `asked` mark is completed by the next run's
+   housekeeping from the recorded post or message reference, never sent again (§5.6 housekeeping).
+5. Is a question waiting? `queued` questions wait for the current one to be answered, or for the next local day; at most
    `MAX_QUESTIONS_PER_DAY` go per local day; a failed delivery stops that day; with no primary channel, or one bound to a
    companion, nothing is sent (`no question sent … the queue waits`). The Cabinet's question list shows the same queue.
-5. Did a button do nothing? Interactivity must be enabled in the Slack app with the main service's `/slack/interactivity` as
+6. Did a button do nothing? Interactivity must be enabled in the Slack app with the main service's `/slack/interactivity` as
    its request URL; a click that failed leaves no `[SlackInteractivity] queued …` line (a bad signature is a 401). A thread
    reply works without it.
-6. Did a digit get "That fact has changed in the meantime"? The fact was rewritten after the question was asked; the review
+7. Did a digit get "That fact has changed in the meantime"? The fact was rewritten after the question was asked; the review
    or the timeout handles that question.
-7. An invoice never arrives as a chat question: a routine invoice is a digest question (weekly digest, Cabinet group). A fact
+8. An invoice never arrives as a chat question: a routine invoice is a digest question (weekly digest, Cabinet group). A fact
    the review rewrote as history from evidence or its own text asks nothing either.
 
 ### 9.3 Why did it remember something wrong?
@@ -1346,8 +1368,8 @@ search `[SearchEnrichment] Final: N facts`.
   wrote a new version; the earlier wording stays in the closed document of the lineage (§2.4).
 - From mail: Stage 3 writes facts from indexed mail (§3 step 8).
 - From a system note (a known gap, current behaviour): notes the system writes into history are stored as `role="user"`
-  messages: every `notify()` alert with the default `save_history=True`, the call-event line, the async-document note and
-  the `$memory save` note (`src/services/user_notification_service.py`). The consolidator reads them as `User (…): …`
+  messages: every `notify()` alert with the default `save_history=True`, the call-event line and the async-document note
+  (`src/services/user_notification_service.py`), and the `$memory save` pair (`src/services/memory_fact_service.py`). The consolidator reads them as `User (…): …`
   (`src/services/prompt_v3/context_formatter.py`), and `Domain_Scope` bars only ASSISTANT statements, so a reminder's alert
   text sits in the owner's slot.
 - Fix: invalidate it in the Cabinet (the baseline is rebuilt at once), or tell the bot the correction.
@@ -1373,7 +1395,7 @@ All need the owner's OK, credentials and `.env`; exports go to gitignored folder
 |---|---|
 | `scripts/consolidation/` benches (`ab_cross_provider.py`, `test_directive_review_dryrun.py`, `test_stage1_classification_dryrun.py`, `test_confirmed_facts_dryrun.py`, `test_file_ops_exclusion_dryrun.py`, `test_cluster_audit_dryrun.py`, `test_decomposition_dryrun.py`, `test_anchor_cluster_dryrun.py`) | run the real agent against live reads: fact writes are intercepted and the cache refresh is stubbed, but the model calls are real (paid) and may be recorded in the account's billing counters |
 | `scripts/email/test_consolidation_dryrun.py` | the dry run of Stage 3 (mail cards) |
-| `--s3-kit` of those benches (`scripts/consolidation/s3_dry_run_kit.py`, `scripts/consolidation/s3_bench_support.py`) | puts a no-write fact store under the **real** agent and the real `FactManagementAdapter` (parse, expiry, pin, born-due, `derived_from` and the notes run as in production), a no-write mail repository and a recording counters store: no fact, cache document, mail mark or lifecycle counter is written; spend is capped by the kit's own ledger under `scripts/memory/` |
+| `--s3-kit` of the stage 1 classification, cluster audit, decomposition and directive review benches, the mail bench and the review benches (`scripts/consolidation/s3_dry_run_kit.py`, `scripts/consolidation/s3_bench_support.py`) | puts a no-write fact store under the **real** agent and the real `FactManagementAdapter` (parse, expiry, pin, born-due, `derived_from` and the notes run as in production), a no-write mail repository and a recording counters store: no fact, cache document, mail mark or lifecycle counter is written; spend is capped by the kit's own ledger under `scripts/memory/` |
 | `scripts/consolidation/test_review_answers_dryrun.py`, `scripts/consolidation/test_review_dryrun.py` | the review benches: Stage 1 over the history shapes of a question and a reply (the quoted fact must be left alone), and the real `FactReviewService.run` on the kit over live stale facts and seeded cases; no stale fact, question, message or counter is written live |
 | `scripts/migration/fact_p2_reopen_archives.py`, `scripts/migration/fact_p2_owner_decisions.py` | re-open archived or invalidated facts of an owner-chosen list as `stale` so the daily review decides them again, or write the owner's own decision on each; dry run by default, `--apply` writes under the scanned `update_time` |
 | `scripts/migration/fact_p2_rollback_questions.py` | brings review questions back to the older shape before a rollback; dry run by default |
@@ -1381,9 +1403,10 @@ All need the owner's OK, credentials and `.env`; exports go to gitignored folder
 | `scripts/export_account_facts.py`, `scripts/validation/inspect_consolidation.py`, `scripts/cleanup_consolidation_queue_dev.py`, `scripts/admin/fix_broken_vector_facts.py` | dump the account's facts to a gitignored folder; print the queue and recent facts; clean the dev queue; repair facts with broken vectors |
 | `scripts/people/assign_people_entry_ids.py` | gives the confirmed people entries their stable ids |
 
-**A re-review of closed facts** is always a dry run first: classify the set, run bench 7 (`test_review_dryrun.py --stage-ids`)
-to read what the review would write for each fact, and only then re-open the kept ones with the reopen script or write the
-owner's decisions.
+**A re-review of closed facts** is always a dry run first: run the review bench `scripts/consolidation/test_review_dryrun.py
+--s3-kit --stage-ids <ids file>` to read what the review would write for each fact (its `--expiry-plan` input is an expiry plan
+JSON; no tool in the repo produces one now, so omit it), and only then re-open the kept ones with the reopen script or write
+the owner's decisions.
 
 ### 9.6 The data audit
 
@@ -1415,7 +1438,8 @@ backfill.
 The consolidation prompt lives in Firestore; `prompts_snapshot/` is its git mirror: profile `consolidation.yaml`,
 blueprint `consolidation_agent_v1.yaml` and the six `CONSOLIDATION_*` tokens; the mail pass has `consolidation_email.yaml`
 over `CONSOLIDATION_EMAIL_CANDIDATES`; the review pass has `consolidation_review.yaml` over `CONSOLIDATION_TAXONOMY` and
-`CONSOLIDATION_LIFECYCLE`; Smart's profile carries `PROTOCOL_MEMORY_REVIEW_MARKERS`. Tokens ship by token upload, not by a
+`CONSOLIDATION_LIFECYCLE`; Smart's profile carries `PROTOCOL_MEMORY_REVIEW_MARKERS`. `COGNITIVE_PROCESS_CONSOLIDATION.groovy` is an older token no
+profile renders: an edit to it ships nothing. Tokens ship by token upload, not by a
 code deploy (`CLAUDE.md` § Traps): edit there and upload with `firestore_utils/snapshot_upload.py`
 (`prompts_snapshot/README.md`). The static template is cached per instance, so the upload goes in before code that depends
 on it. The tokens are pinned to the code by tests: `tests/unit/prompts/test_consolidation_vocabulary.py` checks every enum
