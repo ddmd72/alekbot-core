@@ -43,16 +43,16 @@ None of its own. What it leans on:
 4. Cloud Tasks calls `/worker`. `WorkerHandler` claims the delivery, recognises a payload with `event` and `session_id`
    and no `task_type` as a Slack event (`src/handlers/worker_handler.py::WorkerHandler._dispatch`) and calls
    `HTTPModeAdapter.handle_queued_event` (wired in `src/composition/application_graph.py`).
-5. `handle_queued_event` drops what the processing path ignores (`_ignored_before_lock`: bot messages, messages without
-   a user, subtypes other than plain and `file_share`), takes the lock, then `_process_message_event` or
-   `_process_mention_event`: `iam_service.authorize("slack", ...)`, a `reject` posts the IAM message and ends the turn;
-   otherwise `_run_authorized_turn` resolves the language, builds `SlackResponseChannel` and either dispatches a `$`
-   command (`handle_command`) or runs `handle_message`.
+5. `handle_queued_event` drops what the processing path ignores (`_ignored_before_lock`), takes the lock, then
+   `_process_message_event` or `_process_mention_event`. Both call `iam_service.authorize("slack", ...)`; a `reject`
+   posts the IAM message and ends the turn. A message goes on through `_run_authorized_turn` (language, response
+   channel, then a `$` command via `handle_command` or `handle_message`). A mention builds its context inline and
+   always calls `handle_message`: a `$` command inside an @mention is not dispatched as a command.
 
 ### Session lock and busy events
 
 The lock is `HTTPModeAdapter._session_locks`, keyed by the event's `thread_ts`, else its `ts` (not by the chat session
-id). It orders turns inside one instance only.
+id). It orders turns inside one instance only; two top-level messages (each has its own `ts`) never share a lock.
 
 1. A busy lock is waited for `BUSY_WAIT_S`; a redelivery (Cloud Tasks retry count above 0) finds a busy lock and
    re-queues at once.
@@ -62,7 +62,8 @@ id). It orders turns inside one instance only.
 3. A turn that passes the long-turn mark releases the lock early: `ConversationHandler._watch_long_turn` calls
    `SlackResponseChannel.on_long_turn`, which fires the `release_lock` hook once
    (`decisions/long_running_turns.md`).
-4. `handle_geo_mark_turn` (the `geo_mark_turn` worker task) takes the same lock; a lock still held after `BUSY_WAIT_S`
+4. `handle_geo_mark_turn` (the `geo_mark_turn` worker task) uses the same `_session_locks` dict but keys it by the chat
+   session id (`user:channel`), so it never contends with message turns; a lock still held after `BUSY_WAIT_S`
    answers 503 so the queue retries.
 
 ### Button press
@@ -73,8 +74,7 @@ one codec for poster and route). A press arrives at `/slack/interactivity`
 (`interactivity_route.py::SlackInteractivityRoute.handle`): signature on the raw body, then parse, then enqueue an
 `interactive_choice` worker task on the **main** queue (not the Slack intake queue) with a dedup key from the press, and
 answer 200. `WorkerHandler._handle_interactive_choice` applies it and `show_choice` re-renders the message with
-`chat.update`. The Slack app needs Interactivity enabled with this route as Request URL. Who builds the messages: the
-memory review (`memory/README.md` §5.6) and profile questions.
+`chat.update`. The Slack app needs Interactivity enabled with this route as Request URL. Its only poster is the memory review, profile questions included (`memory/README.md` §5.6).
 
 ### Literal text
 
@@ -92,9 +92,9 @@ notification path to it. Interactive messages escape the same way before capping
   Slack-side dedup store. Re-queued copies get their own names (`-r{n}`), so they are not mistaken for the original
   (`tests/unit/adapters/test_intake_release_and_busy_requeue.py`).
 - **The lock is per process.** `_session_locks` is a `WeakValueDictionary` of `asyncio.Lock`s; two Cloud Run instances
-  do not serialize against each other. Known residuals are listed above `BUSY_CREATE_BACKOFF_S`: a third message
-  behind two long turns can exhaust the re-queues; a Cloud Tasks outage during a re-queue loses the message (ERROR
-  log); a re-queue that was created after its create call failed can run the turn twice.
+  do not serialize against each other. It suffices because the main service deploys with a max-instances cap
+  (`cloudbuild-dev.yaml`, the main service's deploy step); the gap is real during a revision overlap in a deploy, and
+  if that cap is raised. Known residuals of the busy path are the comment above `BUSY_CREATE_BACKOFF_S`.
 - **Do the work before answering 200, or queue it.** Routes only verify and enqueue; anything started after the
   response is throttled or killed.
 - **Unauthorized users.** `authorize` runs per processed message; a `reject` posts `decision.message` (the registration
