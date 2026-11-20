@@ -26,7 +26,8 @@ Scheduler jobs, the drive queue and the deadlines. Manual triggers: root `CLAUDE
 ## The hub
 
 - **Gate.** `/worker` verifies a Google OIDC token in the app (`src/web/worker_oidc_verifier.py::build_oidc_gate`): valid
-  signature, an accepted service-account email, no audience pinning (Cloud Tasks and Scheduler use different audiences).
+  signature, an accepted service-account email, no audience pinning (several callers, so the audience is not part of the check; the build-managed Scheduler jobs
+  send the target URL as the audience, as Cloud Tasks does by default).
   An empty accepted set refuses every call on Cloud Run and opens only locally. Refused: 401, the handler never runs
   (`decisions/worker_oidc_and_docx_sandbox.md`).
 - **Dispatch.** `src/handlers/worker_handler.py::WorkerHandler.handle` claims the delivery, then `WorkerHandler._dispatch`
@@ -45,8 +46,9 @@ Scheduler jobs, the drive queue and the deadlines. Manual triggers: root `CLAUDE
 - **Status contract.** 5xx asks Cloud Tasks to retry; 2xx and 4xx end the task. A handler answers 5xx only when a rerun
   is safe. Once a background turn has started its outcome is final and 200, even a failed one, because a rerun would
   repeat what the turn already did (`decisions/background_turn_started_is_final.md`).
-- **Enqueue.** Services enqueue through `src/services/task_dispatch_service.py::TaskDispatchService`, which delegates to
-  the `src/ports/task_queue.py::TaskQueue` port (`src/adapters/gcp_task_queue.py::GcpTaskQueue`).
+- **Enqueue.** Services enqueue through the `src/ports/task_queue.py::TaskQueue` port
+  (`src/adapters/gcp_task_queue.py::GcpTaskQueue`); some hold it directly, others through the wrapper
+  `src/services/task_dispatch_service.py::TaskDispatchService`.
   `enqueue_worker_task(..., dedup_key=)` names the Cloud Tasks task `{task_type}-<sha256(key)[:32]>`; an
   `AlreadyExists` is a silent no-op (returns `None`). Cloud Tasks keeps a name only while the task is queued or
   running and for about an hour after, so a name merges tasks created close together; it never means "once a day".
@@ -63,10 +65,10 @@ All Scheduler jobs POST to the main service, with OIDC (`/health` keep-alive exc
 | `execute_reminder` | Cloud Task | `ExecuteReminderTask` | One claimed fire |
 | `start_email_indexing` | Scheduler | `WorkerHandler._handle_start_email_indexing` | Fan-out; enqueues `email_indexing` per job |
 | `email_indexing` | Cloud Task | `WorkerHandler._handle_email_indexing` | One page, re-enqueues itself while pages remain |
-| `email_indexing_watchdog` | Scheduler | `WorkerHandler._handle_watchdog` | Fails `running` jobs stale for 2 h |
+| `email_indexing_watchdog` | Scheduler | `WorkerHandler._handle_watchdog` | Fails `running` jobs not updated for the stale threshold |
 | `start_daily_email_review` | Scheduler | `StartDailyEmailReviewTask` | Fan-out |
 | `daily_email_review` | Cloud Task | `DailyEmailReviewTask` | Review flow: `docs/05_building_blocks/gmail_email_indexing/README.md` |
-| `renew_all_task_subscriptions` | Scheduler | `WorkerHandler._handle_renew_all_task_subscriptions` | Fan-out: `renew_task_subscriptions` per To Do user |
+| `renew_all_task_subscriptions` | Scheduler | `WorkerHandler._handle_renew_all_task_subscriptions` | Fan-out: `renew_task_subscriptions` per To Do user (Microsoft webhook subscriptions expire; this keeps them alive) |
 | `renew_task_subscriptions`, `setup_microsoft_todo`, `reindex_task_list` | Cloud Task | `WorkerHandler._handle_*` | To Do onboarding and upkeep; 501 without the To Do services |
 | `reconnect_notice_sweep` | Scheduler | `WorkerHandler._handle_reconnect_notice_sweep` → `IntegrationReconnectService.sweep` | See below |
 | `start_drive_sync` | Scheduler | `WorkerHandler._handle_start_drive_sync` → `DriveSyncSchedulerService.fan_out` | See § Start Drive Sync |
@@ -81,10 +83,10 @@ All Scheduler jobs POST to the main service, with OIDC (`/health` keep-alive exc
 
 ## Deadlines: two numbers, do not confuse them
 
-The Scheduler attempt deadline bounds only the fan-out call (claim due work, enqueue tasks). Most jobs use 60 s; the
-ones that may post a notice or do a pass of work inside the request use 180 s (the script holds each value; the
-keep-alive uses 30 s). The work itself runs under the Cloud Tasks `dispatch_deadline` of the task the tick enqueued.
-Left unset it is 600 s; an in-process budget above it is cut mid-run, the cut reads as a failure and the queue retries
+The Scheduler attempt deadline bounds only the fan-out call (claim due work, enqueue tasks). Most jobs use the short
+default; the ones that may post a notice or do a pass of work inside the request use a longer one (the script holds
+each value). The work itself runs under the Cloud Tasks `dispatch_deadline` of the task the tick enqueued.
+Left unset it is the Cloud Tasks default (600 s); an in-process budget above it is cut mid-run, the cut reads as a failure and the queue retries
 the whole run.
 
 A task type whose budget can exceed 10 minutes must pass `deadline_seconds` to `enqueue_worker_task`:
@@ -93,7 +95,7 @@ A task type whose budget can exceed 10 minutes must pass `deadline_seconds` to `
 |---|---|
 | `execute_reminder`, `daily_email_review` | `src/infrastructure/notification_sla.py::dispatch_deadline_s` of the kind (`REMINDER`, `DAILY_DIGEST`) |
 | `drive_sync` (every enqueue) | `src/domain/drive_index_params.py::TICK_DEADLINE_S` |
-| `fact_review` (janitor enqueue, the review's own deferral) | `src/domain/fact_review_task_keys.py::REVIEW_DEADLINE_S`; the `next` send released by an answer sets none (no model call) |
+| `fact_review` (janitor enqueue, the review's own deferral) | `src/domain/fact_review_task_keys.py::REVIEW_DEADLINE_S`; the `next` send released by an answer sets none (it takes no lease and makes no model call); the review's own deferral is delayed by `LEASE_BUSY_RETRY_DELAY_S` |
 | `consolidation` deferral, `geo_mark_turn` | `src/services/consolidation_service.py::_DEFERRAL_DEADLINE_S`, `src/services/geo_mark_service.py::TURN_DEADLINE_S` |
 | anything else | what its enqueue method sets (`GcpTaskQueue`), else 600 s |
 
@@ -111,15 +113,32 @@ to keep when adding a job. The OIDC identity is read from the `SERVICE_ACCOUNT_E
 hardcoded. There is one live environment: every job is named `alek-bot-dev-<job>` (the voice keep-alive
 `alek-voice-relay-dev-keep-alive`).
 
-**Adding a job:** copy a block of the script, set its schedule, `message-body` and `--attempt-deadline` (180 s only if
-a pass can exceed 60 s), and add the task type to the map above and to this section if it carries a trap.
+**Adding a job:** copy a block of the script, set its schedule, `--message-body` and `--attempt-deadline` (the longer
+value only if a pass can exceed the short one), and add the task type to the map above and to this section if it
+carries a trap. Keep the OIDC flags, or the job gets 401 at the `/worker` gate:
+
+```bash
+gcloud scheduler jobs describe <JOB_NAME> --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+&& gcloud scheduler jobs update http <JOB_NAME> \
+  --schedule="<CRON>" --uri="$SERVICE_URL/worker" --http-method=POST \
+  --oidc-service-account-email="$SA" --oidc-token-audience="$SERVICE_URL/worker" \
+  --message-body='{"task_type":"<TASK_TYPE>"}' --update-headers="Content-Type=application/json" \
+  --location=us-central1 --attempt-deadline=<DEADLINE> --project=$PROJECT_ID \
+|| gcloud scheduler jobs create http <JOB_NAME> ...   # same flags, with --headers instead of --update-headers
+```
+
+`$SERVICE_URL` and `$PROJECT_ID` come from the step's `env:` and `$SA` from the secret read at the top of the script;
+Cloud Build substitutions do not apply inside the script file.
+
+The job update runs after the `drive-queue` step, so a failing drive-queue step (for example a missing queue admin
+grant) skips the job update too.
 
 **Stagger.** Hourly fan-outs sit on distinct minutes so they do not collide with each other, `fire-due-reminders`
 (every 5 min) and the keep-alives (every 10 min); the drive fan-out runs at `3-59/10` so it fires inside each 10-minute
 `tick_key` bucket, not on its boundary. Pick a free minute when adding one.
 
 **Do not run `scripts/infrastructure/setup-daily-email-review-scheduler.sh`.** It deletes and recreates the
-daily-review job on a different minute and attempt deadline, with a different audience; the next deploy overwrites it
+daily-review job on a different minute and with a different audience (the bare service URL); the next deploy overwrites it
 again. The build-managed job is the authority.
 
 ### Keep-alives
@@ -128,7 +147,7 @@ again. The build-managed job is the authority.
 POSTs `/voice/relay-warmup` on the main service (`src/web/voice_control_plane_app.py`, OIDC, audience = that route's
 URL, empty body), which GETs the relay and waits for it. The relay's cold start outlasts Cloudflare's WebSocket
 handshake, and Scheduler cannot call the relay directly: its request carries a `Content-Length`, which the relay's
-`websockets` parser rejects. The attempt deadline (180 s) must outlast the warm-up's own wait.
+`websockets` parser rejects. The attempt deadline must outlast the warm-up's own wait.
 
 ### Fire Due Reminders
 
@@ -149,9 +168,9 @@ together. Missed occurrences are skipped, not replayed.
 - `start_email_indexing` (hourly): for each Gmail user with auto-index on, `EmailIndexingService.start_indexing_for_eligible_users`
   starts at most one job per local date (deterministic job id, no job already running, credentials present) in the
   hour slot of the user's setting; the handler enqueues one `email_indexing` Cloud Task per job.
-- `email_indexing_watchdog` (every 2 h): marks `running` jobs not updated for 2 h as `failed`; covers a task timeout
+- `email_indexing_watchdog` (every 2 h): marks `running` jobs not updated within the stale threshold as `failed`; covers a task timeout
   or a crash.
-- `start_daily_email_review` (hourly, 180 s): `StartDailyEmailReviewTask` finds users whose review slot is open at this
+- `start_daily_email_review` (hourly): `StartDailyEmailReviewTask` finds users whose review slot is open at this
   tick (`src/domain/daily_review_window.py::review_slot_date`), claims the mark `daily_review:{user}:{slot_date}`, and
   enqueues `daily_email_review` named by that mark with `slot_date` in the payload. A failed claim is retried next
   tick; a failed enqueue releases the mark. `daily_email_review` answers 500 only when the turn never started (same
@@ -159,7 +178,7 @@ together. Missed occurrences are skipped, not replayed.
 
 ### Reconnect Notice Sweep
 
-`reconnect_notice_sweep` (hourly, 180 s because a pass may post through the formatter agent): lists users from the
+`reconnect_notice_sweep` (hourly; the longer attempt deadline, because a pass may post through the formatter agent): lists users from the
 feature stores (Gmail indexing states, To Do configs), not the credential store. For each with a past connection, no
 credential and no deliberate disconnect it sends the one reconnect notice and raises a flag on the feature state; a
 credential that is back lowers it. Drive's notice runs in the drive fan-out. Unconfigured it answers
@@ -168,7 +187,7 @@ credential that is back lowers it. Drive's notice runs in the drive fan-out. Unc
 
 ### Start Drive Sync
 
-`start_drive_sync` (every 10 minutes = `src/domain/drive_index_params.py::TICK_INTERVAL`, 180 s) is the fan-out:
+`start_drive_sync` (every 10 minutes = `src/domain/drive_index_params.py::TICK_INTERVAL`) is the fan-out:
 `DriveSyncSchedulerService.fan_out` enqueues one `drive_sync` Cloud Task per connection, on the drive queue.
 Spec: `docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §7.1, §12.1, §12.5.
 
@@ -177,9 +196,10 @@ Spec: `docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §7.1, §12.1, §12.5.
 - **Skips:** a connection whose continuation was enqueued less than `TICK_DEADLINE_S` ago, or whose lease is held by a
   running tick. Task key `{connection_id}:tick:{10-min bucket}` (`src/domain/drive_task_keys.py::tick_task_key`), so a
   Scheduler retry in the same bucket is a no-op.
+- **Minimal state:** right after a connection's own enqueue, an `ACTIVE` indexing connection with no sync state gets
+  one (`created_at` only), so a connection whose ticks never land is alerted.
 - **Second pass**, after every tick is enqueued: the reconnect and inaccessible-file notices and the ops alerts
-  (staleness, search-v2, caps). A failure here never costs anyone their tick. It also writes a minimal sync state
-  (`created_at` only) for an `ACTIVE` indexing connection with none, so a connection whose ticks never land is alerted.
+  (staleness, search-v2, caps). A failure here never costs anyone their tick.
 - **Unconfigured:** without `DRIVE_INDEXER_URL` (the first pass of the two-pass first deploy) it answers
   `200 {"status": "disabled"}`, not 501, which would be an ERROR log every 10 minutes.
 - **Backlog:** while the queue drains it holds about one task per connection plus nudges. While it is stuck (indexer
@@ -190,9 +210,9 @@ The ticks run on the indexer service (`indexer_main.py`, Cloud Run service `alek
 dedicated queue `drive-sync-dev`, both provisioned in `cloudbuild-dev.yaml` (steps `drive-queue` and the indexer
 deploy):
 
-- **Queue:** `max-concurrent-dispatches=1` and `max-dispatches-per-second=1` are a CPU/memory knob for the indexer
+- **Queue:** The concurrency and dispatch-rate limits are a CPU/memory knob for the indexer
   instance; the per-connection Firestore lease is the correctness mechanism. The app never calls
-  `create_queue_if_not_exists` on it (that would create it with concurrency 5). Retry is bounded (`max-attempts=3`,
+  `create_queue_if_not_exists` on it (that would create it with concurrency 5). Retry is bounded (a few attempts with
   backoff): only an unhandled exception answers 500; every handled tick outcome is 200 and the tick enqueues its own
   continuation. The values are in the `drive-queue` step.
 - **Target:** `/worker` of the indexer, `--ingress=internal` plus the in-app OIDC gate
@@ -218,25 +238,27 @@ deploy):
 ### Billing Daily Summary
 
 `BillingDailySummaryTask` posts one message to the billing webhook (the alert sink) covering every account that used
-tokens yesterday. Yesterday and its month are resolved against the calendar, not the raw snapshot, so an idle day
-reports 0. The job runs in Europe/Madrid time (DST-aware). Prices: `src/domain/billing.py` is the authority.
+tokens yesterday. Yesterday and its month are resolved against the calendar, not the raw snapshot, so an idle account is skipped; a day with no
+activity posts nothing. The job runs in Europe/Madrid time (DST-aware). Prices: `src/domain/billing.py` is the authority.
 
 ### Fact Lifecycle Sweep (the fact janitor)
 
 `WorkerHandler._handle_fact_lifecycle_sweep` → `FactLifecycleSweepService.sweep`, daily 09:30 Europe/Madrid (after the
-09:00 billing summary), 180 s. What it does to facts, the breaker and the review: owner's map
+09:00 billing summary), with the longer attempt deadline. What it does to facts, the breaker and the review: owner's map
 `docs/05_building_blocks/memory/README.md` §5.5, §5.6; spec `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D4. Hub-level facts:
 
-- **No retry on purpose** (the job sets no `--max-retry-attempts`): a retry after the 180 s deadline would run beside a
+- **No retry on purpose** (the job sets no `--max-retry-attempts`): a retry after the attempt deadline would run beside a
   run still going. A failed run logs its type and stage, posts one failure line to the ops sink and answers 500; the
   next day's run catches up.
 - **Run guard:** `FactLifecycleSweepService` takes a Firestore guard (held `src/domain/fact_lifecycle_run_guard.py::RUN_GUARD_SECONDS`)
   before reading anything; an overlapping run answers 200 `{"status": "busy"}` and does nothing, so a hand run during
-  the scheduled one is safe. The ops line is posted once per UTC day.
-- **The sweep works inside Scheduler's own request**, unlike the fan-outs: a run past 180 s shows as a failed attempt
+  the scheduled one is safe. The ops line is posted once per UTC day, and the last run of
+  a day replaces the day's snapshot. A hand run before 09:30 Europe/Madrid on the same UTC day takes the day's line,
+  so the scheduled run then posts none (its numbers are in the snapshot).
+- **The sweep works inside Scheduler's own request**, unlike the fan-outs: a run past the attempt deadline shows as a failed attempt
   in Scheduler while it goes on. It is not a Cloud Task, so there is no claim record, and it takes no memory-write lease.
-- **Log-only unless switched on:** `FACT_LIFECYCLE_SWEEP_DRY_RUN` is read at the call site
-  (`src/domain/fact_lifecycle_sweep.py::sweep_dry_run`); only an explicit off value (`0`, `false`, `no`, `off`) makes it
+- **Log-only unless switched on:** `FACT_LIFECYCLE_SWEEP_DRY_RUN` is read with `os.getenv` in
+  `src/composition/memory_setup.py` and parsed by `src/domain/fact_lifecycle_sweep.py::sweep_dry_run`; only an explicit off value (`0`, `false`, `no`, `off`) makes it
   write. The deploy sets `0`. Rollback: remove the variable in `cloudbuild-dev.yaml` and deploy (`--set-env-vars`
   replaces every variable).
 - **Indexes** (`config/firestore.indexes.json`, `READY` before the code ships): `(state, expires_at)` on the facts
@@ -261,15 +283,17 @@ chain, and its messages are already out of session history but not in memory. `W
 No-op when the queue is empty.
 
 The `consolidation` task may defer itself: every batch runs under the account's memory-write lease. A task that finds
-the lease taken while the user has an open batch enqueues one more `consolidation` task (120 s delay,
-`_DEFERRAL_DEADLINE_S`) named from `consolidation-defer:<user>:<120 s bucket>` and answers 200 without enqueueing the
+the lease taken while the user has an open batch enqueues one more `consolidation` task (delayed by `LEASE_BUSY_RETRY_DELAY_S`,
+`_DEFERRAL_DEADLINE_S`) named from `consolidation-defer:<user>:<delay-width bucket>` and answers 200 without enqueueing the
 next batch; losers in one bucket collapse into one task. The name is never fixed because Cloud Tasks keeps a name for
 about an hour. The sweep takes no lease. A zombie reset (a `processing` batch past its threshold, shorter under the
 lease) counts the lost run as an attempt, so a batch that kills its worker ends `failed` instead of looping. Memory map
 `docs/05_building_blocks/memory/README.md` §3.
 
-`sweep_companion_consolidation` (hourly) is the same for companion extraction batches
-(`CompanionExtractionService.find_stuck_sessions`; `companion_consolidation` is its Cloud Task, keyed by `session_id`).
+`sweep_companion_consolidation` (hourly) is the session-keyed twin but not the same: it enqueues one
+`companion_consolidation` Cloud Task per session found by `CompanionExtractionService.find_stuck_sessions`; the handler
+does no bounded revival, the companion queue resets `FAILED` batches without a cap (attempts back to 0), and the path
+takes no memory-write lease.
 
 ## Tasks without a Scheduler job
 

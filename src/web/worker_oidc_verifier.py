@@ -12,10 +12,10 @@ service down at the ingress, so the `/worker` route verifies the OIDC token
 itself.
 
 Identity-only check (no audience pinning): `/worker` is driven by several Google
-callers whose token audiences are inconsistent — Cloud Tasks defaults the
-audience to `<service_url>/worker`, while Cloud Scheduler jobs use the bare
-Cloud Run URL (and `CLOUD_RUN_SERVICE_URL` is not reliably set). Pinning a single
-audience would reject legitimate callers. They share a small set of
+callers (Cloud Tasks defaults the audience to `<service_url>/worker`; the
+build-managed Scheduler jobs set the same value explicitly, but a hand-made job
+may use the bare Cloud Run URL, and `CLOUD_RUN_SERVICE_URL` is not reliably set).
+Pinning a single audience could reject a legitimate caller. They share a small set of
 service-account identities (`parse_sa_emails`), so the gate is: valid Google signature + `email in accepted set` +
 `email_verified`. The real threat — anonymous internet POSTs (denial-of-wallet)
 — carries no Google-signed token at all and is fully stopped by the signature +
