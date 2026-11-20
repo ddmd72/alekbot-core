@@ -25,11 +25,11 @@ answering a different question:
 |---|---|---|
 | Logs | what happened, in order, for one request or user | stdout; Cloud Logging on Cloud Run |
 | Spans | how long, who called whom, which provider | Logfire and/or Cloud Trace (OpenTelemetry) |
-| Prompt content | what exactly was sent to and returned by the model | BigQuery `prompt_content`, 30-day expiry |
-| Event marks | has this event already been taken | Firestore (not an observability stream; it lives here because it guards Slack/Telegram retries and the daily review) |
+| Prompt content | what exactly was sent to and returned by the model | BigQuery `prompt_content`, expiring by partition |
+| Event marks | has this event already been taken | Firestore (not an observability stream; it lives here because it guards Telegram retries and the daily review) |
 
-The streams are joined by `trace_id` (a log line, a span and a `prompt_content` row of one request carry the same
-one). **How to read them** (queries, filters, `make fetch-logs`, the Logfire MCP) is
+The streams are joined by `trace_id`: logs and `prompt_content` rows carry it as `tr_` plus 32 hex characters, the
+span's own id is the bare hex, so strip the prefix to join to Logfire. **How to read them** (queries, filters, `make fetch-logs`, the Logfire MCP) is
 [`LOGGING.md`](../../07_deployment/LOGGING.md); this file is what is recorded and the rules behind it. Memory
 telemetry (`alek_memory_dev`) is a separate stream: [`memory_telemetry`](../memory_telemetry/README.md).
 
@@ -45,15 +45,16 @@ first use (`_ensure_table_sync`) as DAY-partitioned on `timestamp` with the expi
 linkage (`trace_id`, `span_id`), who (`user_id`, `account_id`), which agent and model, `turn`, the content
 (`request_text`: system instruction plus rendered messages; `response_text`; `thought_text`, the reasoning summary kept
 apart from the answer; `tool_calls` as JSON), token counts including cache legs, and `latency_ms`. The `error` column
-exists but nothing sets it: a failed call writes no row. Two rows are not LLM turns: deep-research results
-(`record_dr_result`, `agent_type="deep_research"`, the pass number carried in `turn`).
+exists but nothing sets it: a failed call writes no row. Two kinds of row are written outside `_call_llm`: deep-research results
+(`record_dr_result`, `agent_type="deep_research"`, the pass number carried in `turn`) and realtime-voice turns
+(`record_turn` from `src/web/voice_control_plane_app.py`).
 
 **Spans** are not stored by us: Logfire and Cloud Trace hold them.
 
 **Event marks** (`FirestoreDedupStore`, port `DedupStore`): one document per key, `created_at` plus `expires_at` (the
-Firestore TTL field). Two live users: Telegram inline updates (`event_dedup` collection, 1 h; key
+Firestore TTL field). Two live users: Telegram inline updates (`event_dedup` collection, the store's default `ttl_seconds`; key
 `telegram::{update_id}`, `src/adapters/telegram/webhook_adapter.py`) and the daily email review (the
-`worker_task_dedup` collection shared with the task claims, 48 h; key `daily_review:{user}:{date}`,
+`worker_task_dedup` collection shared with the task claims, `ttl_seconds` set in `application_graph.py`; key `daily_review:{user}:{date}`,
 `src/services/start_daily_email_review_task.py`). Slack and Cloud Tasks deliveries are not deduped here (see Flows).
 
 ## Flows
@@ -66,10 +67,11 @@ Firestore TTL field). Two live users: Telegram inline updates (`event_dedup` col
    console line and `alek_debug.log` (DEBUG, overwritten each start).
 2. Only the local console formatter `AlekFormatter` honours `LOG_TRACE_CONTEXT` (`full`, the default, appends the ids;
    `clean` omits them). On Cloud Run the labels are always there.
-3. The ids come from two sources, read in this order: the live OpenTelemetry span (`telemetry.get_trace_ids`), then
-   the context variables set by `logging_context.set_log_context` (Slack intake, `ConversationHandler`).
-   `telemetry.set_request_context` is a second, separate set of variables that feeds the prompt-content row.
-4. `quiet_third_party_loggers` (every entry point) holds the HTTP libraries at WARNING: their INFO lines carry full
+3. `trace_id` comes from the live OpenTelemetry span, else telemetry's own variable (`telemetry.get_trace_ids`), else
+   `logging_context`; `session_id`, `event_id` and `user_id` come from the variables set by
+   `logging_context.set_log_context` (Slack intake, `ConversationHandler`). `telemetry.set_request_context` is a second,
+   separate set that feeds the prompt-content row's `user_id` (and `trace_id` for logs, as above).
+4. `quiet_third_party_loggers` (called by the main service, indexer, job and relay; not the sandbox) holds the HTTP libraries at WARNING: their INFO lines carry full
    URLs, which for Telegram contain the bot token.
 5. Lifecycle lines come from `BaseAgent` (`_on_agent_start`, `_on_agent_success`, `_on_agent_error`,
    `_on_delegation`): an agent calls them instead of writing its own start/done/error lines, and does not log an error
@@ -80,44 +82,51 @@ Firestore TTL field). Two live users: Telegram inline updates (`event_dedup` col
 
 ### Spans
 
-1. `main.py::main` calls `telemetry.init_telemetry` first, before the application graph; the indexer, job, relay and
-   sandbox entry points do not, so they emit no spans.
+1. `main.py::main` calls `telemetry.init_telemetry` first, before the application graph; `job_main.py` calls it too,
+   but its deploy sets no `TRACING_BACKEND` (backend `none`), so it exports no spans. The indexer, relay and sandbox
+   entry points do not call it.
 2. `TRACING_BACKEND` (`cloud_trace`, `logfire`, `both`, `none`) picks the backend (`_resolve_backend`). Unset: Cloud
    Trace when `APP_ENV=production`, otherwise none. `logfire.configure()` swaps the global OpenTelemetry provider, so
    `start_span` call sites do not know the backend; there is no tracing port on purpose. For `both`, Cloud Trace is an
    extra processor on the Logfire provider. If Logfire is requested but unusable (no `LOGFIRE_TOKEN`, not installed),
    `init_telemetry` falls back to Cloud Trace on its own provider, and content capture (below) is then off.
-3. Trace context crosses Cloud Tasks: the Slack adapter injects headers when it enqueues
-   (`inject_trace_headers`, `src/adapters/slack/http_adapter.py`) and the worker re-extracts them
-   (`extract_context`), so `slack.event.received` and `worker.process_event` share one trace.
-4. Our own spans: `slack.event.received`, `worker.process_event`, `conversation.agent_response`, `delegation`,
-   `delegation.loop`, `llm.call` (one leaf per LLM call from `BaseAgent._emit_llm_span`: model, agent type, provider,
+3. Trace context across Cloud Tasks: the Slack adapter calls `inject_trace_headers` when it enqueues and the worker
+   calls `extract_context` (`src/adapters/slack/http_adapter.py`). By code reading, the injection runs after the
+   `slack.event.received` block has closed and no server span is instrumented, so no `traceparent` is injected and
+   `worker.process_event` likely starts a new trace; only the custom `x-trace-id` (`build_trace_id`) crosses. Not
+   confirmed in Logfire: check there before relying on one trace spanning intake and worker.
+4. Our own spans are created with `telemetry.start_span` (grep it for the current set: Slack intake and worker,
+   conversation, delegation, voice, Drive MCP). The one every LLM call adds is `llm.call` (one leaf per LLM call from `BaseAgent._emit_llm_span`: model, agent type, provider,
    turn, tokens, latency; never content).
 
 ### Prompt content (two destinations, one switch)
 
-Every LLM call goes through `BaseAgent._call_llm` (a convention, not enforced by a test: an agent that calls the
-adapter directly leaves no trace). After a successful call it emits the `llm.call` span and then
+LLM calls go through `BaseAgent._call_llm` (a convention, not enforced by a test: a caller that uses the provider
+directly, as `src/services/history_summary_service.py` does, leaves no row and no `llm.call` span). After a successful call it emits the `llm.call` span and then
 `PromptContentStore.record_turn`.
 
 - **BigQuery.** The store is built by `ServiceContainer._init_prompt_content_store` only when `DEBUG_PROMPTS=true` AND
   `BIGQUERY_PROMPT_DATASET` is set; otherwise `_call_llm` skips capture entirely. `record_turn` builds the row and
   writes it in a background task: best-effort, never raises, never blocks the LLM path. `user_id` comes from the
   request context, set by the Slack and voice entry points and, for every other path, by `BaseAgent.process` through
-  `telemetry.request_user_scope`; outside both it is NULL. `request_text` carries text and tool calls/responses only,
+  `telemetry.request_user_scope`. A model call made outside `process()` names its user itself with the same scope
+  (`src/services/consolidation_service.py`, `src/composition/email_classifier_runner.py`,
+  `src/agents/fact_query_slots_agent.py`); where no caller knows the user, it is NULL. `request_text` carries text and tool calls/responses only,
   never file or image bytes (`_render_messages`).
 - **Logfire.** With `LOGFIRE_CAPTURE_CONTENT=true` (kill switch, default off) and a Logfire backend,
   `telemetry._instrument_llm_sdks` attaches the provider-SDK instrumentation, which puts the wire-format prompt and
-  response on the SDK's own span (OpenTelemetry GenAI attributes). So one call yields two spans: the SDK's (content) and
+  response on the SDK's own span (OpenTelemetry GenAI attributes). It is the provider wire format, so it also shows
+  adapter translation and prompt-cache behaviour. So one call yields two spans: the SDK's (content) and
   our `llm.call` (metadata semconv lacks). Instrumentation is on SDK classes, so adapter construction order is
   irrelevant; `instrument_openai` covers Grok.
 - The split is durability versus analysis, not sensitivity: both hold content. BigQuery is the durable, in-perimeter
   store; Logfire is the cascade view (who delegated to whom), which BigQuery cannot express (no parent span).
   Threat model and alternatives: [`logfire_prompt_content_capture.md`](../../04_solution_strategy/decisions/logfire_prompt_content_capture.md).
 - Deep research writes outside `_call_llm`: `job_main.py` calls `record_dr_result`, which is awaited and retried so an
-  expensive result survives a failed delivery (it writes before delivering). Agents that drive a provider SDK
-  directly (the deep-research runner) log only a summary line, `BaseAgent._debug_raw_turn`; their prompts are in neither
-  store.
+  expensive result survives a failed delivery (it writes before delivering). The deep-research runner drives the
+  provider SDK directly and logs only a summary line (`BaseAgent._debug_raw_turn`): its prompts are in no
+  `prompt_content` row, and appear only on Logfire SDK spans where instrumentation is active (the main service's
+  `agent_execution` path, not the Cloud Run Job).
 - Cloud Run throttles CPU after the response, so a request that ends right after capturing awaits
   `PromptContentStore.flush` (`src/services/call_text_file_service.py`, `src/web/voice_control_plane_app.py`).
 
@@ -132,7 +141,7 @@ mechanism and its TTLs are [`worker_task_dedup.md`](../../04_solution_strategy/d
 ## Invariants and traps
 
 - **A failed LLM call has no `prompt_content` row and no `llm.call` span.** Both sit after the success path of
-  `_call_llm`. Failed calls are visible in Logfire (SDK spans) and in logs only. An earlier doc claimed the opposite.
+  `_call_llm`. Failed calls are visible in Logfire (SDK spans) and in logs only.
 - **Capture must never break the request.** `record_turn` and `_store` swallow and log every error; only
   `record_dr_result` retries (`_DURABLE_ATTEMPTS`), and it also returns instead of raising.
 - **File contents never leave the process in a span.** `logfire_redacting_exporter.RedactingExporter` replaces every
@@ -143,11 +152,11 @@ mechanism and its TTLs are [`worker_task_dedup.md`](../../04_solution_strategy/d
   provider calls (`_provider_call_scope` override, `telemetry.sdk_spans_suppressed`; the document reader), leaving only
   its `llm.call` span.
 - **Gemini SDK spans are off on google-genai 3.x.** The vendor instrumentor supports <3 only
-  (`google_genai_instrumentation_decision`); `telemetry` logs `GENAI_SPANS_OFF_WARNING` once at start. Gemini turns keep
+  (`google_genai_instrumentation_decision`); with content capture on, `telemetry` logs `GENAI_SPANS_OFF_WARNING` once at start. Gemini turns keep
   `llm.call` spans and full BigQuery rows. Gemini goes through the vendor instrumentor on purpose, not Logfire's wrapper
   ([`gemini_logfire_instrumentation.md`](../../04_solution_strategy/decisions/gemini_logfire_instrumentation.md)); its
   content env var takes `SPAN_ONLY`, not a boolean, or content is silently empty.
-- **Secrets and message text stay out of log lines.** `domain/log_redaction.py` (`redact_for_log`, `redact_exception`,
+- **Secrets stay out of log lines, and so do exception messages that may hold paths or URLs** (agent hooks do log the first 60 characters of the user text). `domain/log_redaction.py` (`redact_for_log`, `redact_exception`,
   `redact_traceback`) removes given secrets (and a token's payload/signature segments), JWT-shaped strings, `Bearer`
   and `authorization` values and every URL, and truncates; use it for text from a provider or a library.
   `src/utils/logger.py::exc_brief` logs an exception as type plus a digest of its message when the message may hold paths or URLs.
@@ -158,8 +167,9 @@ mechanism and its TTLs are [`worker_task_dedup.md`](../../04_solution_strategy/d
   are optional knobs read with `os.getenv`.
 - **The row's model and provider name what served the call**, not what was asked: after a cross-provider fallback
   `_call_llm` passes the served request and provider to `record_turn`.
-- **Two context-variable sets.** `logging_context` feeds log labels; `telemetry.set_request_context` feeds the
-  prompt-content row. Setting only one leaves the other stream without the id.
+- **Two context-variable sets.** `logging_context` feeds the log labels `session_id`, `event_id` and `user_id`;
+  `telemetry.set_request_context` feeds the prompt-content row's `user_id` (and `trace_id` for both). Setting only one
+  leaves the other stream without that id.
 - **Dedup limitation.** `try_mark_processed` can return a false duplicate when the SDK retries a commit whose first write
   landed (documented on the port); `is_duplicate` has no caller in `src/`.
 - **Anthropic wire debug** (`ANTHROPIC_LOG` set on Cloud Run) gives the `anthropic` logger its own DEBUG handler with
