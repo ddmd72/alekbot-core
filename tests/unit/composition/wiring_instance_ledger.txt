@@ -92,6 +92,7 @@ src.adapters.sandbox_client.sandbox_tunnel_client.SandboxTunnelClient 1  # by-de
 src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, and one shared by the skill and note services (service_container.py shared_security_port, prompt_assembly_setup.py:29)
 src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
+src.adapters.slack.command_route.SlackCommandRoute 1  # by-design the one POST /slack/commands, built by the one HTTPModeAdapter over the Slack events queue (http_adapter.py)
 src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
 src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1  # by-design the slack entry of the one InteractiveMessageRouter, over the Slack app's client (memory_setup.py, Facts S4 T10a)
 src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)

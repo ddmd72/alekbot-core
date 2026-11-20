@@ -93,6 +93,7 @@ POST /auth/logout
 POST /auth/refresh
 POST /geo/<link_id>
 POST /mcp/consent
+POST /slack/commands
 POST /slack/events
 POST /slack/interactivity
 POST /telegram/webhook
