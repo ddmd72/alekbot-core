@@ -8,7 +8,7 @@ covers:
 
 Why memory search fuses ranks, not scores, from several vector queries, and how near-duplicates are judged. The
 engines that use these two pieces are described in
-[search enrichment](../05_building_blocks/search_enrichment/README.md) and the
+[search enrichment](../05_building_blocks/memory/README.md) and the
 [memory map](../05_building_blocks/memory/README.md); this page holds the reasoning behind them.
 
 ## Why ranks, not scores
@@ -131,4 +131,4 @@ collapses the same fact id, which is enough there.
 ## Further reading
 
 - Reciprocal Rank Fusion: Cormack, Clarke and Büttcher, SIGIR 2009.
-- [Search enrichment](../05_building_blocks/search_enrichment/README.md), [memory](../05_building_blocks/memory/README.md).
+- [Search enrichment](../05_building_blocks/memory/README.md), [memory](../05_building_blocks/memory/README.md).
