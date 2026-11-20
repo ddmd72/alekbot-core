@@ -38,19 +38,18 @@ the reviewer rule, where a test goes): [`tests/CLAUDE.md`](../../tests/CLAUDE.md
 | Timing tests | wall-clock and CPU thresholds are flaky under load, so they are off the PR gate | `Makefile` (`test-timing`) |
 
 Floor rule (`scripts/check_coverage_layers.py` docstring): a floor rises; it may be lowered only in the PR that needs it,
-with a one-line reason next to the value, so the owner sees the lowering in the diff. When measured coverage is clearly
+with a one-line reason next to the value and the reviewer's OK, so the owner sees the lowering in the diff. When measured coverage is clearly
 above a floor the script says so, and the floor is raised in the same change.
 
 ## What CI runs
 
 `.github/workflows/ci.yml`:
-- **`check` job:** `make ci` on every push and PR, then a pass/fail post to Slack. It is the source of the coverage numbers.
+- **`check` job:** `make ci` on every PR and every push to `main`, then a pass/fail post to Slack. It is the source of the coverage numbers.
 - **`timing` job:** `make test-timing` after a merge to `main`, never on a PR (owner decision: it fails on a loaded runner).
-- **Docs-only rule.** `scripts/ci/docs_only.py::is_docs_only` is the one definition of "documentation": everything under
-  `docs/`, root `*.md`, Markdown under `.github/`, and `CLAUDE.md` files in code trees, but not `src/skills/`, which the skill
-  loader bundles into prompts. A docs-only change skips `make ci` (also on a push to `main`, and in the `timing` job) but
+- **Docs-only rule.** `scripts/ci/docs_only.py::is_docs_only` is the one definition of "documentation"; the trap is that
+  `src/skills/` Markdown is not docs, because the skill loader bundles it into prompts. A docs-only change skips `make ci` (also on a push to `main`, and in the `timing` job) but
   still runs the doc-reading tests, `scripts/ci/docs_only.py::DOC_READING_TESTS`. An empty change list is not docs-only
-  (fail safe). A test that starts reading docs must join that tuple; `tests/unit/scripts/test_docs_only.py` fails otherwise.
+  (fail safe). A test that starts reading `docs/` must join that tuple (`tests/unit/scripts/test_docs_only.py` fails otherwise); a test reading a root `*.md` or a `CLAUDE.md` is a known gap the scan cannot see.
 
 `.github/workflows/render.yml` (after a merge to `main`, on a PR that touches its inputs, and by hand): ci.yml installs no
 node modules or browser, so the DOCX / PDF / HTML render tests skip there. This workflow installs them on a plain runner,
@@ -59,7 +58,7 @@ job builds both targets of `Dockerfile.sandbox` locally (never pushed) and runs 
 No secrets, no Slack.
 
 Weekly cloud workflows (`mutation.yml`, `parity.yml`, `spec_drift.yml`) never post to Slack and do not go red on findings:
-the result is data in an artifact that a scheduled routine reads. `spec_drift.yml` diffs the providers' published specs
+the result is an artifact and also check-run annotations, which the scheduled routines read (a cloud session cannot download artifacts). `spec_drift.yml` diffs the providers' published specs
 against `contracts/spec_drift/` and is read by the provider-contract review.
 
 ## Mutation check
