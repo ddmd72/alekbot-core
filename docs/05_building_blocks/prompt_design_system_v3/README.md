@@ -141,10 +141,11 @@ after the upload (`email_card_agent.py`, `fact_profiler_agent.py`, `src/infrastr
 
 ## Invariants and traps
 
-- **A token that cannot be loaded is silently left out.** Step 3 captures exceptions: a missing token, or one that fails
-  `SecurityPort` validation on read (`FirestoreTokenRepository.get` runs `Token.create` on every read, rejecting HIGH and
-  CRITICAL risk), becomes a warning log and the section renders without it. A profile that lists a typo gives a prompt
-  missing a rule, with no error. Check the warning `Agent token ... not found` after an upload.
+- **A token that cannot be loaded is silently left out.** Step 3 captures exceptions: a token that is missing or whose
+  document lacks `token_id` becomes a warning log and the section renders without it. A profile that lists a typo gives a
+  prompt missing a rule, with no error. Check the warning `Agent token ... not found` after an upload.
+  `FirestoreTokenRepository.get` also runs `Token.create` on every read, but in the TRUSTED zone, which the regex
+  adapter returns unscanned (`src/adapters/security/regex_adapter.py`), so a read does not reject a token for risk.
 - **A missing profile degrades, a missing blueprint raises.** `get_agent_profile` returns an empty profile with
   `blueprint_id = {agent_id}_agent_v1` when the document is absent; `FirestoreBlueprintRepository.get` raises `KeyError`
   if that blueprint is absent, and a profile with no tokens assembles to an empty outer class. The no-fallback-prompt
