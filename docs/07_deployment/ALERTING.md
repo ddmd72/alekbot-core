@@ -1,5 +1,6 @@
 <!-- living-doc
-covers: none
+covers:
+  src/ports/alert_sink.py
 -->
 
 # Alerting (dev)

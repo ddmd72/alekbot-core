@@ -3,6 +3,8 @@ covers:
   src/handlers/conversation_handler.py
   src/handlers/command_services.py
   src/ports/conversation_handler_port.py
+  src/services/history_summary_service.py
+  src/domain/history_context_block.py
 -->
 
 # 06 Runtime View

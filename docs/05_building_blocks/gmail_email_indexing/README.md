@@ -34,6 +34,7 @@ covers:
   src/composition/email_card_setup.py
   src/composition/email_search_setup.py
   scripts/email/
+  src/domain/daily_review_window.py
 -->
 # Gmail Email Indexing
 

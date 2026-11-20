@@ -66,6 +66,7 @@ covers:
   scripts/infrastructure/drive_*.py
   scripts/infrastructure/create_drive_*.sh
   scripts/validation/drive_*
+  src/domain/run_deadline.py
 -->
 # User Drive (Building Block)
 

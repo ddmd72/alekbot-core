@@ -36,6 +36,12 @@ current) is in [`../README.md`](../README.md#living-docs).
 - [Prompt Cache Strategy](./prompt_cache_strategy/README.md) — which requests ask the provider for prompt caching.
 - [Security Validation](./security_validation/README.md) — keeping written text from being read as a system instruction.
 - [Localization System](./localization_system/README.md) — response language versus UI language.
+- [Companion Agents and Bound Channels](./companion_agents/README.md) — a channel bound straight to one agent, and the companions' session-scoped memory.
+- [Long-running Turns](./long_running_turns/README.md) — a turn that outlives the 90 s mark: the clock, the registry record, the late answer.
+- [Agent Skills and Workspace](./agent_skills_workspace/README.md) — Smart's own procedures and versioned files.
+- [Self-Reminders](./self_reminders/README.md) — deferred instructions the notes agent writes and the scheduler fires as system turns.
+- [Deep Research](./deep_research/README.md) — background research runs in a Cloud Run Job and the delivery of the report.
+- [Media Generation](./media_generation/README.md) — image and video generation and editing through Grok Imagine.
 
 ### Memory and search
 
@@ -51,6 +57,10 @@ current) is in [`../README.md`](../README.md#living-docs).
 - [OAuth Web API](./oauth_web_api/README.md) — signing in to the web side.
 - [OAuth Multi-Tenant](./oauth_multi_tenant/README.md) — who a person is and whether they may be here.
 - [User Cabinet](./user_cabinet/README.md) — the owner's web page for what chat is a poor place for.
+- [Voice Companion](./voice_companion/README.md) — Lelik, the realtime voice conversation, its modes and what a call leaves behind.
+- [Voice Call Transport](./voice_call_transport/README.md) — how a call's audio and control reach Lelik: Twilio, the web call, the relay.
+- [Geo Marks](./geo_marks/README.md) — a position the owner shares on purpose, and why nothing tracks location otherwise.
+- [Secrets at Rest](./secrets_at_rest/README.md) — the Cloud KMS cipher, keyed digests and the fail-closed boot.
 
 ### Files, drive and documents
 
@@ -58,6 +68,7 @@ current) is in [`../README.md`](../README.md#living-docs).
 - [File Conversion](./file_conversion/README.md) — from a file ref to what a model can read.
 - [Document Generation](./document_generation/README.md) — DOCX, PDF and single-page documents from a chat request.
 - [User Drive](./user_drive/README.md) — the file area, its index and search.
+- [Untrusted-Content Sandbox](./untrusted_content_sandbox/README.md) — the out-of-process service that parses and renders untrusted content.
 
 ### External services
 
@@ -71,4 +82,5 @@ current) is in [`../README.md`](../README.md#living-docs).
 - [Provider Resolution](./provider_resolution/README.md) — performance tier to provider and model.
 - [OpenAI Integration](./openai_integration/README.md) — OpenAI behind the LLM port.
 - [Grok Integration](./grok_integration/README.md) — xAI Grok behind the LLM port.
+- [Billing and Quota](./billing_and_quota/README.md) — what every billed call costs and where it is counted.
 - [Observability](./observability_strategy/README.md) — what the system records about itself, and why.

@@ -3,6 +3,9 @@ covers:
   src/web/main_service_routes.py
   src/web/landing_app.py
   src/web/static/landing.html
+  src/web/static/alek-logo.png
+  src/web/static/alek.jpg
+  src/web/static/og.png
 -->
 # API Reference
 

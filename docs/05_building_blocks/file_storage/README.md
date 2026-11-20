@@ -10,6 +10,11 @@ covers:
   src/services/file_link_service.py
   src/domain/file_access.py
   src/composition/file_delivery_setup.py
+  src/domain/short_link.py
+  src/ports/short_link_repository_port.py
+  src/adapters/firestore_short_link_repository.py
+  src/services/short_link_service.py
+  src/web/short_link_app.py
 -->
 # File Storage (Building Block)
 

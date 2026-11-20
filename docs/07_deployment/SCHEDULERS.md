@@ -16,6 +16,7 @@ covers:
   src/services/geo_mark_turn_task.py
   scripts/infrastructure/cloudbuild_scheduler_jobs.sh
   scripts/infrastructure/setup-daily-email-review-scheduler.sh
+  src/services/background_empty_answer_reporter.py
 -->
 # Worker hub, Cloud Scheduler jobs and queues
 

@@ -139,21 +139,21 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
 | `/worker` task types, schedulers, queues, task dedup | `docs/07_deployment/SCHEDULERS.md`, `decisions/worker_task_dedup.md` |
 | Deploy units, `.env` deploy keys, standing levers, sandbox deploy | `docs/07_deployment/README.md` |
 | External files: refs, the open path, the document service, caps, untrusted marking | `docs/05_building_blocks/file_conversion/README.md`, `docs/10_rfcs/EXTERNAL_FILES_RFC.md` |
-| Long-running turns | `decisions/long_running_turns.md` |
-| Voice companion (Lelik): phone, web transport, providers | `docs/10_rfcs/VOICE_COMPANION_RFC.md`, `VOICE_WEB_TRANSPORT_RFC.md`, `VOICE_MULTI_PROVIDER_RFC.md`, `decisions/lelik_voice_modes.md` |
+| Long-running turns | `docs/05_building_blocks/long_running_turns/README.md`, `decisions/long_running_turns.md` |
+| Voice companion (Lelik): phone, web transport, providers | `docs/05_building_blocks/voice_companion/README.md`, `docs/05_building_blocks/voice_call_transport/README.md`, `docs/10_rfcs/VOICE_COMPANION_RFC.md`, `VOICE_WEB_TRANSPORT_RFC.md`, `VOICE_MULTI_PROVIDER_RFC.md`, `decisions/lelik_voice_modes.md` |
 | Remote MCP server | `docs/05_building_blocks/remote_mcp_server/README.md`; drive connector `docs/10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md` |
-| Untrusted-content sandbox | `decisions/sandbox_render_service.md`, `docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md` |
-| Secrets at rest, credential store, reconnect notices | `decisions/secrets_at_rest_cipher_and_digest.md`, `decisions/credential_store_cutover.md`, `decisions/reconnect_notice_r1.md` |
+| Untrusted-content sandbox | `docs/05_building_blocks/untrusted_content_sandbox/README.md`, `decisions/sandbox_render_service.md`, `docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md` |
+| Secrets at rest, credential store, reconnect notices | `docs/05_building_blocks/secrets_at_rest/README.md`, `decisions/secrets_at_rest_cipher_and_digest.md`, `decisions/credential_store_cutover.md`, `decisions/reconnect_notice_r1.md` |
 | Access control (one whitelist, chat + Cabinet gates) | `decisions/cabinet_oauth_whitelist_gate.md` |
-| Billing: ledger, per-model pricing, cache legs, budget alert | `decisions/billing_execution_scoped_ledger.md`, `billing_per_model_pricing.md`, `billing_cache_write_and_voice_seconds.md` |
+| Billing: ledger, per-model pricing, cache legs, budget alert | `docs/05_building_blocks/billing_and_quota/README.md`, `decisions/billing_execution_scoped_ledger.md`, `billing_per_model_pricing.md`, `billing_cache_write_and_voice_seconds.md` |
 | Prompt builder (tokens, blueprints, cache boundary, static blocks) | `docs/05_building_blocks/prompt_design_system_v3/README.md` |
-| Agent skills / agent workspace | `docs/10_rfcs/AGENT_SKILLS_RFC.md` / `docs/10_rfcs/AGENT_WORKSPACE_RFC.md` (+ `decisions/agent_skills.md`, `agent_workspace_storage.md`) |
+| Agent skills / agent workspace | `docs/05_building_blocks/agent_skills_workspace/README.md`, `docs/10_rfcs/AGENT_SKILLS_RFC.md` / `docs/10_rfcs/AGENT_WORKSPACE_RFC.md` (+ `decisions/agent_skills.md`, `agent_workspace_storage.md`) |
 | File storage pipeline, voice messages | `docs/05_building_blocks/file_storage/README.md`, `decisions/voice_message_transcription.md` |
 | Notifications and rich content | `decisions/rich_content_one_delivery_path.md`, `docs/05_building_blocks/rich_content_protocol/README.md` |
 | Sessions (`session_id = f"{user_id}:{channel_id}"`, one history per channel) | `docs/08_concepts/DATABASE_SCHEMA.md` |
 | Localization (response language vs UI language) | `docs/05_building_blocks/localization_system/README.md`, `docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md` |
 | System-turn fingerprint (turn key, provenance rule, scrub) | `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md` |
-| Geo marks (owner-shared position: `$geo`, Telegram pin, Lelik geo button) | `docs/10_rfcs/GEO_MARKS_RFC.md` |
+| Geo marks (owner-shared position: `$geo`, Telegram pin, Lelik geo button) | `docs/05_building_blocks/geo_marks/README.md`, `docs/10_rfcs/GEO_MARKS_RFC.md` |
 | Observability (logs, `prompt_content`, Logfire, memory telemetry) | `docs/05_building_blocks/observability_strategy/README.md`, `docs/07_deployment/LOGGING.md`, `docs/05_building_blocks/memory_telemetry/README.md` |
 
 `decisions/` = `docs/04_solution_strategy/decisions/`. Area traps live in the `CLAUDE.md` of the narrowest folder holding
