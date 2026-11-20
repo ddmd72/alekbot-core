@@ -53,6 +53,7 @@ from twilio.twiml.voice_response import VoiceResponse
 
 from src.domain.secret_digest import fingerprint
 from src.domain.voice_auth_decision import AuthDecision
+from src.domain.voice_callback_ref import CALLBACK_REF_AAD, from_callback_ref, to_callback_ref
 from src.domain.voice_ticket_keys import amd_key, ticket_key
 from src.services.voice_call_setup_service import VoiceCallSetupError, VoiceCallSetupService
 from src.utils.logger import logger
@@ -308,8 +309,9 @@ def create_voice_webhook_blueprint(
             agent = await lelik_agent_provider(pending["user_id"])
             if agent is None:
                 raise RuntimeError("voice companion is not configured on this deployment")
+            callback_ref = to_callback_ref(await cipher.encrypt(pending_ticket, aad=CALLBACK_REF_AAD))
             await agent.execute(
-                purpose="user asked to talk", ticket=pending_ticket,
+                purpose="user asked to talk", callback_ref=callback_ref,
                 answer_url=answer_url, to_number=pending["to_number"],
             )
         except Exception as exc:
@@ -332,6 +334,19 @@ def create_voice_webhook_blueprint(
             text="📞 Calling you back now",
         )
         return Response("", status=200)
+
+    async def _ticket_from_callback() -> Optional[str]:
+        """The ticket behind the `ref` query of a signed callback, or None when it is missing or unreadable."""
+        try:
+            ciphertext = from_callback_ref(request.args.get("ref", ""))
+        except ValueError:
+            logger.warning("voice callback: malformed callback reference")
+            return None
+        try:
+            return await cipher.decrypt(ciphertext, aad=CALLBACK_REF_AAD)
+        except Exception as exc:
+            logger.error(f"voice callback: callback reference did not decrypt ({type(exc).__name__})")
+            return None
 
     @bp.route("/voice/answer", methods=["POST"])
     async def voice_answer():
@@ -383,7 +398,9 @@ def create_voice_webhook_blueprint(
         if forbidden is not None:
             return forbidden
         answered_by = form.get("AnsweredBy", "")
-        ticket = request.args.get("ticket", "")
+        ticket = await _ticket_from_callback()
+        if ticket is None:
+            return _twiml_reject()
 
         redeem_key = ticket_key(digest_key, ticket)
         identity = await ephemeral_store.get(redeem_key)
@@ -432,9 +449,11 @@ def create_voice_webhook_blueprint(
         ticket or the one-call marker and the caller stayed locked out until
         `one_call_ttl_s` (default 3600s) expired.
 
-        The ticket rides in this URL's query string, appended by
-        `LelikAgent.execute` exactly like the answer callback's (and covered by
-        the same Twilio signature, which is computed over the full URL). There
+        The callback reference (the ticket's ciphertext, never the raw ticket)
+        rides in this URL's query string, appended by `LelikAgent.execute`
+        exactly like the answer callback's (and covered by the same Twilio
+        signature, which is computed over the full URL). A missing or
+        unreadable reference answers 200 and releases nothing. There
         is no other correlation path: Twilio's `CallSid` is only known AFTER
         `originate_call` returns, i.e. after the ticket was already minted, and
         mapping it back would need a second store write racing the `initiated`
@@ -451,7 +470,9 @@ def create_voice_webhook_blueprint(
             return forbidden
 
         call_status = (form.get("CallStatus") or "").strip().lower()
-        ticket = request.args.get("ticket", "")
+        ticket = await _ticket_from_callback()
+        if ticket is None:
+            return Response("", status=200)
 
         answered_by = form.get("AnsweredBy")
         if answered_by and not call_status:
@@ -500,7 +521,7 @@ def _external_url() -> str:
     `X-Forwarded-*` headers Cloud Run does set, falling back to the request's
     own scheme/host for local dev.
 
-    The query string is included deliberately: it carries the call ticket, and
+    The query string is included deliberately: it carries the callback reference, and
     Twilio's HMAC covers the full URL, so a swapped ticket invalidates the
     signature.
     """

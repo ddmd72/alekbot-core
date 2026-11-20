@@ -98,20 +98,18 @@ class LelikAgent(BaseAgent):
         # Never a delegation target (internal, no capabilities); satisfies BaseAgent only.
         return False
 
-    async def execute(self, purpose: str, ticket: str, answer_url: str, to_number: str) -> AgentResponse:
-        # Both callback URLs carry the ticket in their QUERY STRING — Twilio
-        # POSTs only its own fields (CallSid, AnsweredBy, CallStatus, ...) in
-        # the body and leaves the configured URL's query string untouched, so
-        # this is the only channel that reaches the webhooks (which read it
-        # back with `request.args`, not `await request.form`).
+    async def execute(self, purpose: str, callback_ref: str, answer_url: str, to_number: str) -> AgentResponse:
+        # Both callback URLs carry the callback REFERENCE (the ticket's ciphertext, `domain/voice_callback_ref.py`)
+        # in their QUERY STRING, never the raw ticket: Cloud Run request logs record full URLs, and the ticket is the
+        # credential that opens a session. Twilio POSTs only its own fields (CallSid, AnsweredBy, CallStatus, ...)
+        # in the body and leaves the configured URL's query string untouched, so the query is the only channel that
+        # reaches the webhooks (which read it back with `request.args`, not `await request.form`).
         #
-        # The status callback needs it for the same reason `/voice/answer`
-        # does: it is the only correlation path from a call-status event back
-        # to the ticket/user whose one-call marker must be released when the
-        # callback rings out, is busy, or fails at the carrier and
-        # `/voice/answer` is therefore never reached at all. CallSid cannot
-        # serve — it only exists once this very call returns.
-        ticket_qs = urlencode({"ticket": ticket})
+        # The status callback needs it for the same reason `/voice/answer` does: it is the only correlation path
+        # from a call-status event back to the ticket/user whose one-call marker must be released when the callback
+        # rings out, is busy, or fails at the carrier and `/voice/answer` is therefore never reached at all.
+        # CallSid cannot serve — it only exists once this very call returns.
+        ticket_qs = urlencode({"ref": callback_ref})
         call_sid = await self._telephony.originate_call(
             to=to_number,
             from_=self._from_number,
