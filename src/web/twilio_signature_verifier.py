@@ -18,14 +18,15 @@ validates: Slack signature, Telegram webhook secret, `/worker` OIDC).
 Signature scheme (Twilio's own, implemented by `twilio.request_validator.
 RequestValidator`): HMAC-SHA1 over the **full request URL including its query
 string**, concatenated with every POST form parameter sorted by name. The URL
-part is load-bearing here: the call ticket rides in the query string
-(`/voice/answer?ticket=...`, `/voice/status?ticket=...`), so a caller cannot
-swap the ticket without invalidating the signature.
+part is load-bearing here: the encrypted call reference rides in the query
+string (`/voice/answer?ref=...`, `/voice/status?ref=...`) and the routes open
+it only after this check passes, so a caller cannot swap the reference
+without invalidating the signature.
 
-This module performs the cryptographic check only. The token source and the
-local-dev bypass policy (`TWILIO_AUTH_TOKEN` unset -> no verification, matching
-`/worker`'s `SERVICE_ACCOUNT_EMAIL` bypass) live in main.py's wiring, and the
-verifier reaches the routes as an injected async callable — same shape and same
+`verify_twilio_signature` performs the cryptographic check only.
+`twilio_signature_gate` adds the token policy: no `TWILIO_AUTH_TOKEN` opens the
+gate locally (matching `/worker`'s bypass) and refuses on Cloud Run. main.py
+injects it into the routes as an async callable — same shape and same
 testability reason as `worker_oidc_verifier`.
 """
 
@@ -73,3 +74,25 @@ def verify_twilio_signature(
     if not valid:
         logger.warning(f"Twilio signature: invalid signature for {url}")
     return bool(valid)
+
+
+def twilio_signature_gate(
+    auth_token: Optional[str],
+    url: str,
+    form_params: Mapping[str, str],
+    signature: Optional[str],
+    *,
+    on_cloud_run: bool,
+) -> bool:
+    """The voice routes' gate: verify, with the local-dev bypass closed on Cloud Run.
+
+    With a token configured this is `verify_twilio_signature`. Without one there
+    is nothing to verify against: locally the gate opens, on Cloud Run it
+    refuses every request (a missing secret must never leave the routes open).
+    """
+    if auth_token:
+        return verify_twilio_signature(auth_token, url, form_params, signature)
+    if on_cloud_run:
+        logger.error("Twilio signature: TWILIO_AUTH_TOKEN is not configured on Cloud Run, refusing voice callbacks")
+        return False
+    return True
