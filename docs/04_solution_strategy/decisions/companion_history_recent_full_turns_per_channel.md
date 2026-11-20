@@ -68,7 +68,7 @@ the new mechanism.
 ## Verification
 
 - `tests/unit/domain/test_companion_config.py` — default value.
-- `tests/unit/adapters/test_firestore_channel_binding_adapter.py` — serialize/deserialize round-trip,
+- `tests/unit/adapters/test_channel_binding_store_kit.py` — serialize/deserialize round-trip,
   including a per-channel override value and backward-compatible fallback for docs written before
   this field existed.
 - `tests/unit/handlers/test_conversation_handler_session_mode.py` — resolved from the current

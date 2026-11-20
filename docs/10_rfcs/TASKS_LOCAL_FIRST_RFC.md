@@ -906,7 +906,7 @@ in Phase 5. No real users on Google Tasks.
 | `tests/unit/ports/test_task_lifecycle_port.py` | ABC contract: `TaskLifecyclePort` |
 | `tests/unit/adapters/test_microsoft_todo_adapter.py` | Wire tests (mock httpx); field mapping; checklist diff logic; `ensure_primary_list` — no Firestore writes; `register_subscription` returns config without persisting |
 | `tests/unit/adapters/test_firestore_task_search_index.py` | Vector wrap/unwrap; RRF; list_id filter; `delete_all_for_user` |
-| `tests/unit/adapters/test_firestore_task_config_repository.py` | `set_primary_list_id_if_absent` transaction; `get_config` missing doc → empty config |
+| `tests/unit/adapters/test_task_config_store_kit.py` | `set_primary_list_id_if_absent` transaction; `get_config` missing doc → empty config |
 | `tests/unit/services/test_task_indexing_service.py` | `index_task` embed+upsert; `deindex_task`; `index_task_by_ref` fetches then indexes; `reindex_list`; `search` embed+find_nearest |
 | `tests/unit/services/test_task_setup_service.py` | `setup`: ensure_primary_list + ensure_subscriptions + enqueue reindex; `disconnect` calls all three cleanup steps; `handle_subscription_renewal` renews only when < 48h; `renew_expiring_subscriptions` |
 | `tests/unit/agents/test_tasks_agent.py` | NEW: `search_tasks` delegates to `task_indexing.search` → `batch_get_tasks`; `create_task` calls `task_indexing.index_task` after Graph; `delete_task` calls `task_indexing.deindex_task` |
