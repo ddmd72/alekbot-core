@@ -6,6 +6,8 @@ covers:
   src/ports/memory_census.py
   src/ports/memory_probe.py
   src/adapters/proc_memory_probe.py
+  src/adapters/tracemalloc_census.py
+  src/utils/memory_scope.py
 -->
 # Memory Telemetry
 
@@ -13,7 +15,7 @@ covers:
 
 Cloud Run kills a container when its metered memory crosses the limit, and a kill leaves no log of what was running.
 This block puts that figure on record: every process samples its own memory, brackets units of work, and writes
-structured log lines that a log sink routes to BigQuery. It answers "how much memory did the container use, and which
+structured log lines that a log sink routes to BigQuery (the research Job is the exception, see Invariants). It answers "how much memory did the container use, and which
 work units were open when it peaked". It is a measurement tool only: it never gates, throttles or restarts anything,
 and it never raises into the code it measures (a failed probe or contributor is logged once and skipped,
 `MemoryTelemetryService._warn_once`).
@@ -24,9 +26,10 @@ It does not attribute memory to a unit exactly (see Invariants), and it is not t
 
 ## Owned data
 
-No Firestore. The block owns a family of records, each a flat `jsonPayload` with `event`, `svc` (service name),
-`rev` (revision) and `boot` (a per-process id), built by pure functions in `src/domain/memory_telemetry.py` and
-logged through `MemoryTelemetryService._safe_emit`. The sink and dataset are infrastructure outside the repo
+No Firestore. The block owns a family of records, each a flat `jsonPayload` with `event`, built by pure functions in
+`src/domain/memory_telemetry.py`. Records written by the service (`MemoryTelemetryService._safe_emit`) also carry `svc`
+(service name), `rev` (revision) and `boot` (a per-process id), added by `MemoryTelemetryService._with_identity`.
+`memory.payload` is the exception: the OpenAI adapter logs it directly, with none of those three. The sink and dataset are infrastructure outside the repo
 (`docs/07_deployment/README.md` § Memory telemetry sink).
 
 | `event` | Written | Fields that matter |
@@ -35,7 +38,7 @@ logged through `MemoryTelemetryService._safe_emit`. The sink and dataset are inf
 | `memory.sample` | every tick (`sample_fields`) | `usage_mb`, `limit_mb`, `usage_pct`, `cache_mb`, `rss_mb`, `rss_peak_mb`, `tmp_mb`, `threads`, `fds`, `tasks`, `n_children`, `children[]`, `n_scopes`, `scopes[]`, `contrib{}` |
 | `memory.scope` | when a work unit ends (`scope_fields`) | `kind`, `name`, `trace_id`, `user_id`, `dur_s`, `usage_start_mb`, `usage_end_mb`, `usage_peak_mb`, `delta_mb`, `concurrent`, `outcome` (`ok`, `error`, `cancelled`) |
 | `memory.payload` | an OpenAI request carries file parts (`payload_fields`, emitted by `src/adapters/openai_adapter.py`) | `provider`, `model`, `n_items`, `n_file_parts`, `file_mb` (base64 characters, so bytes on the wire) |
-| `memory.census` | opt-in, see Flows (`census_fields`) | `phase`, `traced_mb`, `traced_peak_mb`, `sites[]` (`site`, `mb`, `n`, `stack` for the heaviest), and for `released`: `usage_before_mb`, `usage_after_mb`, `gc_collected`, `trimmed` |
+| `memory.census` | opt-in, see Flows (`census_fields`) | `phase`, `traced_mb`, `traced_peak_mb`, `sites[]` (`site`, `mb`, `n`, `stack` for the heaviest), `usage_before_mb`, and for `released` also `usage_after_mb`, `gc_collected`, `trimmed` |
 
 - `usage_mb` is the container's metered memory (cgroup), the figure Cloud Run kills on. It includes the in-memory
   writable layer (`/tmp`, reported as `tmp_mb`), which `rss_mb` does not.
@@ -43,9 +46,7 @@ logged through `MemoryTelemetryService._safe_emit`. The sink and dataset are inf
   `n_children` / `n_scopes` for the true count.
 - `kind` is one of the `SCOPE_*` constants in `src/domain/memory_telemetry.py` (`worker_task`, `chat_turn`,
   `agent_execution`, `subprocess`); a fixed set keeps the column groupable.
-- `contrib{}` holds named numbers registered with `MemoryTelemetryService.register_contributor`. Nothing registers one
-  today.
-- `EVENT_PRESSURE` and `is_pressure_dump_due` are defined, but nothing emits `memory.pressure`.
+- `contrib{}` holds named numbers registered with `MemoryTelemetryService.register_contributor`.
 
 ## Flows
 
@@ -71,9 +72,8 @@ Knobs are optional and read with `os.getenv` at the call site (the repo rule for
 
 `src/utils/memory_scope.py::memory_scope` is a context manager that call sites wrap around a unit of work. It is a
 no-op until the service installs its hooks, so call sites need no guard and tests and `MEMORY_TELEMETRY=off` pay
-nothing. Call sites: the worker route (`src/web/main_service_routes.py`, `worker_task`), the conversation handler
-(`src/handlers/conversation_handler.py`, `chat_turn`), `BaseAgent` execution (`agent_execution`), and the drive-parser
-and sandbox child launchers (`subprocess`). On entry a scope reads container usage; on exit it emits `memory.scope`
+nothing. Call sites are found by searching for `memory_scope(`; they nest (a worker task wraps a chat turn, which wraps
+agent executions, which may wrap subprocesses). On entry a scope reads container usage; on exit it emits `memory.scope`
 through `MemoryTelemetryService.on_scope_end`.
 
 ### Census (opt-in diagnostic)
@@ -83,35 +83,43 @@ start, so only allocations made afterwards are attributed. After a `chat_turn` s
 at most once per `CENSUS_COOLDOWN_S` (`is_census_due`), `MemoryTelemetryService._census_cycle` emits three records:
 
 - `turn_end`: which lines still hold memory the moment the turn finishes.
-- `idle`: the same after `CENSUS_IDLE_DELAY_S` with nothing running. Sites that stay are referenced, not free.
+- `idle`: the same after `CENSUS_IDLE_DELAY_S`; the cycle only waits, it does not check that no scope is open. Sites
+  that stay after a quiet period are referenced, not free.
 - `released`: after `MemoryCensusPort.release` (`gc.collect()` then `malloc_trim(0)`). If `usage_after_mb` falls well
   below `usage_before_mb`, the process held free allocator pages. If it does not fall and `traced_mb` stays high, a
   live reference holds the memory and `sites[0]` names the allocating line.
 
 ## Invariants and traps
 
-- **`delta_mb` is the container's change, not the unit's.** It includes everything that ran alongside. It is the
-  unit's own cost only when `concurrent = 1`; otherwise read the overlapping `memory.sample` rows. Overlap is counted
-  by `src/utils/memory_scope.py::_Open.concurrent_peak`.
+- **`delta_mb` is the container's change, not the unit's.** It includes everything that ran alongside.
+  `concurrent` (`src/utils/memory_scope.py::_Open.concurrent_peak`) counts every scope open at the busiest moment,
+  including the unit's own enclosing and nested scopes. So `concurrent = 1` proves nothing else overlapped, but a chat
+  turn that ran an agent has `concurrent >= 2` even when it ran alone. For such units read the overlapping
+  `memory.sample` rows (their `scopes[]`).
 - **`usage_peak_mb` can miss a spike shorter than the sample interval.** It is the highest sample a tick saw while the
   scope was open, plus its start and end reads.
-- **`memory.payload` covers OpenAI only.** Claude, Gemini and Grok requests are not measured. It joins to
-  `memory.scope` by `trace_id`, which for a payload row is in the log labels, not in `jsonPayload`.
+- **`memory.payload` covers OpenAI only.** Claude, Gemini and Grok requests are not measured. It can be joined to
+  `memory.scope` by `trace_id`, which for a payload row is in the log labels, not in `jsonPayload`; both ids come from
+  the request's tracing context and are not guaranteed equal.
+- **The research Job's records do not reach the sink today.** `src/utils/logger.py` installs the structured JSON
+  handler only when `K_SERVICE` is set (line 82); a Cloud Run Job sets `CLOUD_RUN_JOB`, so its logs go through the
+  console handler, which drops `json_fields`, and the sink filter (`jsonPayload.event:"memory."`) never matches.
+  `job_main.py` still builds the service and brackets `deep_research_job`.
 - **The census is slow by design.** `tracemalloc` slows the process and holds bookkeeping memory: switch it on for one
   investigation window and off after. `traced_mb` counts Python allocations since tracing started; `usage_mb` is the
   whole container, so the two differ by the interpreter, native libraries and the tracing bookkeeping.
-- **Cloud Run throttles CPU outside requests** (request-based billing). The sampler then runs in bursts (observed
-  earlier: 10-24 s gaps at a 5 s interval) and a census, which needs tens of seconds of CPU after the response has
-  gone out, never completes. For a census window turn CPU throttling off on the service (instance-based billing while
+- **Cloud Run throttles CPU outside requests** (request-based billing). The sampler then runs in bursts and a census, which needs CPU after the response has gone
+  out, may never complete. For a census window turn CPU throttling off on the service (instance-based billing while
   it is off) and restore it afterwards. That is a live Cloud Run change: the owner decides it.
 - **Rows are not time.** The sampling interval depends on pressure and on `MEMORY_SAMPLE_INTERVAL_S`, so weight rows by
-  their interval when computing a duration (third query below). `boot` separates processes of one revision.
+  their interval when computing a duration (third query below; under throttling real gaps are longer, so that figure
+  is a lower bound). `boot` separates processes of one revision.
 
 ## Queries
 
 BigQuery, dataset `alek_memory_dev`, table `run_googleapis_com_stdout`, date-partitioned (retention: the deployment
-doc). Replace `<PROJECT_ID>`. The columns are fields of `jsonPayload`; numeric fields may arrive as strings, hence the
-`CAST`s.
+doc). Replace `<PROJECT_ID>`. The columns are fields of `jsonPayload`; the `CAST`s guard against numeric fields typed as
+strings.
 
 Peak container memory per hour, per service:
 
@@ -132,9 +140,10 @@ WHERE jsonPayload.event = 'memory.sample' AND CAST(jsonPayload.usage_pct AS FLOA
 ORDER BY timestamp DESC LIMIT 50
 ```
 
-How long memory stayed above a level, per process. A sample stands for its sleep interval: one second at or above
-`PRESSURE_SAMPLE_AT_PCT` (75), otherwise the base interval, 15 s unless `MEMORY_SAMPLE_INTERVAL_S` changed it
-(`memory.boot` carries `interval_s`):
+How long memory stayed above a level, per process. The query hardcodes each sample's sleep interval: 1 s at or above
+75% usage (`PRESSURE_SAMPLE_AT_PCT`), otherwise 15 s (`BASE_SAMPLE_INTERVAL_S`). Change the 15 if a process ran with
+`MEMORY_SAMPLE_INTERVAL_S` (`memory.boot` carries `interval_s`). A CPU-throttled sampler stalls, so the result is a
+lower bound:
 
 ```sql
 SELECT jsonPayload.svc AS svc, jsonPayload.boot AS boot,
@@ -144,7 +153,9 @@ WHERE jsonPayload.event = 'memory.sample' AND CAST(jsonPayload.usage_mb AS FLOAT
 GROUP BY svc, boot ORDER BY minutes_over_500mb DESC
 ```
 
-Heaviest work units by memory growth, alone only:
+Heaviest work units by memory growth, among units that overlapped no other scope (`concurrent = 1`). This keeps
+leaf scopes (agent executions without nested scopes, subprocesses) and drops most chat turns and worker tasks, which
+nest others; for those read the samples instead:
 
 ```sql
 SELECT jsonPayload.kind AS kind, jsonPayload.name AS name, COUNT(*) AS n,
