@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_drive_index_repo import (
-    record_from_doc, record_to_doc, state_from_doc, state_to_doc,
+    record_from_doc, record_to_doc, state_to_doc,
 )
 from src.domain.drive_index import (
-    DocumentBrief, DriveIndexRecord, DriveSyncState, Reason, RecordState, TriageVerdict,
+    DocumentBrief, DriveIndexRecord, DriveSyncState, RecordState, TriageVerdict,
 )
 
 T = datetime(2026, 10, 12, 9, 15, 30, 250000, tzinfo=timezone.utc)
@@ -57,12 +57,6 @@ class TestRecordCodec:
         assert type(back.brief.doc_date) is datetime and back.brief.doc_date.utcoffset() == timedelta(0)
         assert isinstance(back.brief.parties, tuple) and back.triage_verdict is TriageVerdict.TEXT
 
-    def test_photo_round_trip(self):
-        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="p", kind="image", state=RecordState.METADATA_ONLY,
-                               reason=Reason.PHOTOGRAPH, triage_verdict=TriageVerdict.PHOTO, triage_version=1,
-                               triaged_content_version="c9", caption="a cathedral at night")
-        assert record_from_doc(stored(record_to_doc(rec))) == rec
-
     def test_brief_without_a_date(self):
         rec = content_record(brief=DocumentBrief(doc_type="receipt"))
         assert record_from_doc(stored(record_to_doc(rec))).brief == DocumentBrief(doc_type="receipt")
@@ -71,27 +65,6 @@ class TestRecordCodec:
         rec = record_from_doc({"user_id": "u", "item_id": "i", "brief": None, "triage_verdict": None})
         assert (rec.brief, rec.triage_verdict) == (None, None)
         assert record_from_doc({"user_id": "u", "item_id": "i", "brief": {}}).brief is None
-
-    def test_slice1_document_reads_with_content_defaults(self):
-        rec = record_from_doc({"user_id": "u", "item_id": "i", "name": "a.pdf"})
-        assert (rec.lead_text, rec.brief, rec.triage_verdict, rec.triage_version, rec.triaged_content_version,
-                rec.caption) == ("", None, None, 0, "", "")
-
-
-class TestStateCodec:
-    def test_round_trip(self):
-        state = DriveSyncState(user_id="u", connection_id="u", model_backoff_until=T, model_failures=3, usage_month="2026-10",
-                               model_pages_used=120, triage_images_used=48)
-        doc = state_to_doc(state)
-        assert (doc["usage_month"], doc["model_pages_used"], doc["triage_images_used"], doc["model_failures"]) == \
-            ("2026-10", 120, 48, 3)
-        back = state_from_doc("u", stored(doc))
-        assert back == state and type(back.model_backoff_until) is datetime
-
-    def test_slice1_state_reads_with_defaults(self):
-        state = state_from_doc("u", {"user_id": "u", "epoch": 1})
-        assert (state.model_backoff_until, state.model_failures, state.usage_month, state.model_pages_used,
-                state.triage_images_used) == (None, 0, "", 0, 0)
 
 
 def test_the_sdk_encodes_the_content_fields():

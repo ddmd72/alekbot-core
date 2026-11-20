@@ -1,11 +1,12 @@
 """The owner-notes fields of the sync state (DRIVE_FILE_NOTES_RFC §3.4) through the Firestore codec: `note_checks` (a
 list of maps whose `last_seen_at` is a timestamp) and `notes_audited_at` read back as written, both are saved by
-`save_sync_state` (STATE_FIELDS), and an old document without them reads the neutral defaults."""
+`save_sync_state` (STATE_FIELDS, pinned in the every-field case), an old document without them reads the neutral
+defaults, and a malformed entry is skipped."""
 from datetime import datetime, timezone
 
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
-from src.adapters.firestore_drive_index_repo import STATE_FIELDS, state_from_doc, state_to_doc
+from src.adapters.firestore_drive_index_repo import state_from_doc, state_to_doc
 from src.domain.drive_index import DriveSyncState
 from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
 
@@ -31,10 +32,6 @@ def test_round_trip():
     back = state_from_doc("u", doc)
     assert back.note_checks == checks and back.notes_audited_at == T
     assert type(back.note_checks[0].last_seen_at) is datetime and type(back.notes_audited_at) is datetime
-
-
-def test_saved_with_the_state():
-    assert {"note_checks", "notes_audited_at"} <= set(STATE_FIELDS)
 
 
 def test_an_old_document_reads_the_defaults():

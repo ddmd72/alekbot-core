@@ -1,27 +1,14 @@
-"""`DriveSyncState.applied_scope` (MULTI_DRIVE_RFC §11.3): the scope key the stored records were enumerated under is stored
-and read by both index repositories; a state stored before 2b has none and reads the default scope ("")."""
+"""`DriveSyncState.applied_scope` (MULTI_DRIVE_RFC §11.3): the scope key the stored records were enumerated under is kept
+by the in-memory repository; the Firestore codec's round trip and the default scope ("") of a state stored before 2b are
+in the every-field case (test_firestore_drive_index_repo_serialization.py)."""
 import pytest
 
-from src.adapters.firestore_drive_index_repo import state_from_doc, state_to_doc
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveSyncState
 
 KEY = "0123456789abcdef"
 SCOPE = ConnectionScope(user_id="usr-1", connection_id="conn-1")
-
-
-def test_firestore_document_round_trip():
-    state = DriveSyncState(user_id="usr-1", connection_id="conn-1", applied_scope=KEY)
-    doc = state_to_doc(state)
-    assert doc["applied_scope"] == KEY
-    assert state_from_doc("usr-1", doc).applied_scope == KEY
-
-
-def test_a_document_stored_before_2b_reads_the_default_scope():
-    doc = state_to_doc(DriveSyncState(user_id="usr-1", connection_id="conn-1"))
-    del doc["applied_scope"]
-    assert state_from_doc("usr-1", doc).applied_scope == ""
 
 
 @pytest.mark.parametrize("key", [KEY, ""])
