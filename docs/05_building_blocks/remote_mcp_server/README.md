@@ -102,7 +102,7 @@ both and the Quart app in one plain ASGI callable (`src/web/mcp_dispatcher.py::b
 `build_mcp_parent_asgi`). `mcp_owner` decides by path: drive paths first (`/drive-mcp`, its protected-resource
 metadata), then the facts set (`/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, the two `.well-known` families),
 everything else to Quart, including `/mcp/consent`, `/d/<id>` and `/auth/*`. The lifespan enters every built FastMCP
-session manager. `McpErrorLogger` wraps each app and logs why `/mcp` answered a 4xx, without the `Authorization`
+session manager. `McpErrorLogger` wraps each app but acts only on `/mcp` and `/mcp/`: it logs why they answered 400 or above (401 excluded), without the `Authorization`
 header.
 
 The authorization-server endpoints sit at the server root and `issuer_url` is the root, because the SDK registers its
@@ -173,7 +173,7 @@ registered tool must match `src/domain/drive_connector_contract.py` exactly (`_c
 **Texts come from tokens.** Every word the drive tools say to a client (server instructions, tool and parameter
 descriptions, result lines) is in two Firestore prompt tokens, `MCP_DRIVE_TOOL_TEXTS` and `MCP_DRIVE_RESULT_TEXTS`
 (`TOOL_TEXTS_TOKEN`, `RESULT_TEXTS_TOKEN`), never inline. `ConnectorTextService` loads and validates them (risk level
-`safe` or `low`), caches them for 60 s and, when a refresh fails, keeps serving the last good value. A first load that
+`safe` or `low`), caches them for the `ConnectorTextService` `ttl_s` and, when a refresh fails, keeps serving the last good value. A first load that
 fails raises, posts one ops alert and the drive app is not built. `ConnectorTexts.parse_bodies` fails on a missing
 key and on a tool text over `MAX_TOOL_DESCRIPTION_CHARS`; an unknown key is dropped with one warning, so a token
 uploaded ahead of a deploy does not break the running revision. `TokenTextFastMCP.list_tools` fills the descriptions on
@@ -227,7 +227,7 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
   in the log). `isError` is only for authentication, a backend fault, or no phrases at all.
   `decisions/mcp_tool_schema_liberal_input.md`.
 - **claude.ai caches `tools/list` at registration.** A changed facts tool schema or description needs the connector
-  removed and re-added. (The drive texts are read from tokens on each listing.)
+  removed and re-added. A client that caches `tools/list` needs the same re-add to see new drive texts, which the server reads from tokens on each listing.
 - **No `Mount`.** Starlette's `Mount("/mcp")` does not match an exact `POST /mcp` and strips the prefix, which breaks
   the SDK's absolute routes; that is why the dispatcher is plain ASGI. `/mcp/consent` reaches Quart only because the
   facts matcher is exact on `/mcp` and `/mcp/`: a new FastMCP path under `/mcp/` would shadow it. The drive checks run
