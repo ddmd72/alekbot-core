@@ -20,13 +20,13 @@ item is fixed, delete it; a new item takes the next free id.
 - No per-user limit on `/api/user/*` and the other Cabinet routes (`src/web/user_cabinet_app.py`). Harmless for one
   user; enumeration and spam become possible once the whitelist admits others.
 - Fix: a token bucket per `user_id` on those routes. `src/utils/rate_limiter.py::RateLimiter` is a token bucket, but no
-  module imports it.
+  module under `src/` imports it (only its own unit test).
 
 ### SEC-3: Error responses carry exception text [P2]
 
-- No `errorhandler` is registered in `src/web/` or `main.py`, and Cabinet routes return `{"error": str(e)}`, one of
-  them as a 500 (`src/web/user_cabinet_app.py`, `unlink_platform`); `src/web/oauth_app.py` does the same with a 400.
-  Exception text can name internals.
+- The Cabinet, OAuth and main apps register no `errorhandler` (only `src/web/sandbox_app.py` does), and Cabinet routes
+  return `{"error": str(e)}`, one of them as a 500 (`src/web/user_cabinet_app.py`, `unlink_platform`);
+  `src/web/oauth_app.py` does the same with a 400. Exception text can name internals.
 - Fix: a fixed message for every 5xx (the detail goes to the log) and explicit 401/403/500 handlers in the Quart apps.
 
 ### R-1: Every service assumes a single instance
@@ -40,20 +40,19 @@ item is fixed, delete it; a new item takes the next free id.
 ### R-4: Session writes soft-fail by default
 
 - `FirestoreSessionStore.append_message*` (`src/adapters/firestore_session_store.py`) logs a failed write and returns,
-  unless the caller passes `raise_on_error=True` (contract: `src/ports/session_store.py`). The chat-turn save
-  (`src/handlers/conversation_handler.py`, through `retry_store_write`), the long-turn saves and the memory-confirm,
-  fact-review and fact-answer paths pass it. Any other caller's failed write drops that pair from history, and with it
-  from consolidation, while the user sees a normal answer.
+  unless the caller passes `raise_on_error=True`. Which callers must pass it is stated in the port contract
+  (`src/ports/session_store.py`); a caller that does not drops that pair from history, and with it from
+  consolidation, while the user sees a normal answer.
 - Deliberate: an append failure must not break the reply, so a chat-turn save that fails every retry is logged, not
   answered with an error.
 
 ### R-5: Many dependencies are unpinned
 
-- `anthropic` and `openai` are pinned (`decisions/openai_cache_write_tokens_location.md`); other lines of
-  `requirements.txt` have no pin or only a floor (`slack_bolt`, `google-cloud-firestore`, `aiohttp`, ...). The image
-  installs with `pip install -r requirements.txt` (`Dockerfile`), with no lock or constraints file, so every deploy
-  takes the newest release and the suite that gates a change can run on different versions than production. Wire
-  tests mock at the SDK boundary, so they cannot see the gap.
+- Many lines of `requirements.txt` are exact pins, but others have no pin or only a floor (`slack_bolt`,
+  `google-cloud-firestore`, `aiohttp`, ...). The image installs with `pip install -r requirements.txt` (`Dockerfile`),
+  with no lock or constraints file, so every deploy takes the newest release of the unpinned ones and the suite that
+  gates a change can run on different versions than production. Wire tests mock at the SDK boundary, so they cannot
+  see the gap (`decisions/openai_cache_write_tokens_location.md` records one such drift).
 
 ---
 
@@ -81,7 +80,7 @@ item is fixed, delete it; a new item takes the next free id.
   then delete the constant and the whitelist entry.
 - Constraint: the prompt serves two request shapes (`query` + URL, and a bare URL). Wording that covers only the first
   regresses bare-URL fetches; tune with `scripts/websearch/tune_fetch_prompt.py`.
-- Owner ruling: deferred, wording stays fixed in place for now (`decisions/websearch_per_intent_tier.md`).
+- The saving from a per-intent tier needs this prompt fix to ship with it (`decisions/websearch_per_intent_tier.md`).
 
 ### TD-9: `edit_video` is billed at `generate_video`'s rate [P3]
 
@@ -90,19 +89,16 @@ item is fixed, delete it; a new item takes the next free id.
   (`src/adapters/grok_video_adapter.py::_EDIT_MODEL`) that has no entry in the pricing table. The internal ledger
   charges edits at the generation rate.
 - Fix: a `VIDEO_EDIT_MODEL` constant and rate in `src/domain/billing.py` (as `IMAGE_GENERATE_MODEL` /
-  `IMAGE_EDIT_MODEL` already are), passed by the delivery for whichever operation ran. Owner ruling: deferred.
+  `IMAGE_EDIT_MODEL` already are), passed by the delivery for whichever operation ran.
 
 ### TD-10: Retire `DomainResearcherAgent` [P3]
 
 - The `domain-competency-research` system skill (`src/skills/smart/domain-competency-research/SKILL.md`) does the same
   job in Smart, with web search and memory. The agent is still wired.
-- Scope: `src/agents/domain_researcher_agent.py`; `DOMAIN_RESEARCHER` and `Intent.DOMAIN_RESEARCH`
-  (`src/infrastructure/agent_manifest.py`); `DomainResearcherAgentConfig` (`src/infrastructure/agent_config.py`); its
-  provider strategy (`src/services/agent_context_builder.py`) and tier entry (`src/domain/user.py`); the factory
-  builder (`src/composition/user_agent_factory.py`); the Firestore profile and token; the live channel binding (unbind
-  first); mentions in `src/agents/CLAUDE.md` and `docs/how_to/NEW_AGENT_PLAYBOOK.md`.
-- Tests use `domain_researcher` as the example of a non-companion binding (`grep -rl domain_researcher tests`); a
-  reviewer decides each edit.
+- Scope: everything `grep -rn "DomainResearcher\|DOMAIN_RESEARCH" src docs` finds (agent, manifest intent, config,
+  provider strategy, tier entry, factory builder, docs), plus the live Firestore profile, token and channel binding
+  (unbind first).
+- Tests use `domain_researcher` as the example of a non-companion binding; a reviewer decides each edit.
 
 ### TD-11: No async delegation whose result returns to the orchestrator [P3] (needs an RFC)
 
@@ -113,10 +109,10 @@ item is fixed, delete it; a new item takes the next free id.
   machinery); what the user sees meanwhile; the turn clock; what the orchestrator receives (a reference, never
   document content).
 
-### TD-12: `prompt_builder` is optional in most agent constructors [P2]
+### TD-12: `prompt_builder` is optional in some agent constructors [P2]
 
-- Eleven files under `src/agents/` declare `prompt_builder: Optional[PromptBuilderPort] = None` (grep that
-  annotation). Production always injects it, but some guard with `if self.prompt_builder:` and run on an empty prompt
+- About a dozen agents under `src/agents/` declare `prompt_builder` as `Optional[PromptBuilderPort] = None` (grep
+  `prompt_builder: Optional`, which also matches the quoted form in `drive_agent.py`). Production always injects it, but some guard with `if self.prompt_builder:` and run on an empty prompt
   when it is missing (`src/agents/compute_agent.py`, `ComputeAgent.execute`), which hides misconfiguration and
   contradicts the "fail fast on missing prompts" rule.
 - Fix per agent: make the parameter required, call it unconditionally, return `AgentResponse.failure()` when the build
@@ -162,13 +158,16 @@ item is fixed, delete it; a new item takes the next free id.
   soft-delete the binding, and whether its companion records stay. A one-time cleanup of existing orphans is a
   separate, smaller task.
 
-### TD-20: `_migrate_ownership_fields` can overwrite `account_id` [P3]
+### TD-20: `_migrate_ownership_fields` can overwrite `account_id`; `write_superseding` has no tenancy check [P3]
 
 - `FirestoreFactRepository._migrate_ownership_fields` (`src/adapters/firestore_repo.py`) takes the legacy branch
   whenever either of `account_id` / `created_by_user_id` is missing and `owner_id` exists, and then overwrites a stored
-  `account_id` with `owner_id`. No stored document is known to hit this.
-- Fix: migrate only the missing field. (The write path is guarded separately: `_require_stored_account` checks the
-  stored `account_id` inside the transaction.)
+  `account_id` with `owner_id`.
+- `write_superseding` checks only the update-time preconditions: no stored-account check and no check that the new
+  version's account matches the documents it closes. `update_fact_fields` and `archive_and_add` do check
+  (`_require_stored_account`, whose docstring names the legacy-`owner_id` case). Its callers
+  (`src/adapters/fact_management_adapter.py`) resolve the facts by account first, so the gap is at the store level.
+- Fix: migrate only the missing field; check that a superseding write stays inside one account.
 
 ### TD-21: The user-facing apology on an agent failure is hard-coded English [P3]
 
@@ -203,7 +202,8 @@ item is fixed, delete it; a new item takes the next free id.
 
 - Step 1 of `docs/10_rfcs/DRIVE_SCOPE_WALK_RFC.md` is built: a scope change is applied as a diff
   (`DriveIndexingService._apply_scope_change`). A full re-enumeration remains for a scope that covers everything, an
-  unfinished enumeration or an invalid stored state (`DriveIndexingService._restart_for_scope`).
+  unfinished enumeration, an invalid stored state or the diff's own restart verdict
+  (`DriveIndexingService._restart_for_scope`).
 - Step 2 (a folder scope built by walking, each feed item judged locally against the stored folder set) is not
   built; the RFC holds the design and its status.
 
@@ -212,9 +212,9 @@ item is fixed, delete it; a new item takes the next free id.
 - The late answer of a long turn (`src/domain/turn_clock.py::render_late_answer_note`, saved as a user message by
   `src/services/long_turn_service.py`), call events, drive-note receipts (`src/domain/drive_note_receipt.py`) and the
   async-document-ready note (`src/services/user_notification_service.py`) are saved as user-role messages starting
-  with `[System: ...`. `src/domain/consolidation_serialization.py::serialize_messages_for_consolidation` sends the
-  role and text only, no author.
-- To check first: whether the consolidator turns a late answer's content into the owner's facts (not observed). If it
+  with `[System: ...`. `src/domain/consolidation_serialization.py::serialize_messages_for_consolidation` sends role,
+  time and text, no author.
+- To check first: whether the consolidator turns a late answer's content into the owner's facts . If it
   does, give the `[System:` frames an explicit rule in the consolidation tokens; the constraint is the "bot never
   writes to memory itself" rule in the root `CLAUDE.md`.
 
@@ -227,20 +227,30 @@ item is fixed, delete it; a new item takes the next free id.
 
 ### TD-29: Telegram replies drop the forum-topic id [P3]
 
-- `TelegramResponseChannel.send_reply`, `send_literal` and `send_late_answer`
-  (`src/adapters/telegram/response_channel.py`) pass no `message_thread_id`, while `send_message`, `send_file` and the
-  chunked senders carry `thread_id`. Harmless while the bot's chats have no forum topics.
+- `TelegramResponseChannel.send_reply`, `send_literal`, `send_late_answer`, the final fallback of `update_message`
+  and the follow-up chunks of `send_flat_response` (`src/adapters/telegram/response_channel.py`) pass no
+  `message_thread_id`, while `send_message`, `send_file` and the chunked senders carry `thread_id`.
 - Fix: carry `thread_id` through every send path.
+
+### TD-30: The drive parser child sometimes aborts at start (SIGABRT, cause unknown) [P3]
+
+- Reported from `[DriveExtract]` logs: extractions ending with exit code -6 after no measurable time, before any
+  parsing. The files are retried, so none is lost. The in-process child's stderr is only hashed (`_stderr_digest`,
+  `src/adapters/subprocess_content_extractor.py`), so the cause is not in the logs.
+- Suspect: the resource limits applied before the interpreter starts. Next step: check whether the abort persists in
+  the deployed path (the sandbox parse engine, `src/adapters/sandbox_engine/parse_engine.py`; nothing in `src/`
+  constructs `SubprocessContentExtractor` any more), and if it does, reproduce with the same limits and read stderr.
 
 ### TD-31: Per-user agents built outside the factory each repeat the billing and capture wiring [P3]
 
-- `DriveReaderRunner`, `CompanionExtractorRunner`, `EmailClassifierRunner` and `EmailCardRunner` (`src/composition/`)
-  each build the execution context through `AgentContextBuilder`, construct the agent and call
+- `DriveReaderRunner`, `CompanionExtractorRunner`, `EmailClassifierRunner`, `EmailCardRunner` and
+  `FactProfilerRunner` (`src/composition/`) each build the execution context through `AgentContextBuilder`, construct the agent and call
   `bind_runtime(AgentRuntime(...))` themselves, as `UserAgentFactory` does for its agents. A runner that forgets the
   call bills nothing or records nothing, silently (`_flush_billing` is a no-op without the quota service). Only the
   drive Search v2 runners share a helper, `src/composition/drive_agent_build.py::build_drive_agent`.
-- `DriveReaderRunner` and `CompanionExtractorRunner` do not enter `request_user_scope` (only `EmailClassifierRunner`
-  does), so their rows carry no `user_id` in telemetry.
+- `DriveReaderRunner` calls the agent's `read()` directly, not `BaseAgent.process` (which enters `request_user_scope`),
+  and binds no prompt-content store, so it writes no `prompt_content` rows today; a rows-with-no-`user_id` gap appears
+  the moment one is wired.
 - Trigger: the next per-user agent that is not a delegation agent, or any change to how billing or capture is attached
   to an agent.
 - Fix: one composition helper that builds a per-user agent with billing, capture and the user scope, used by all

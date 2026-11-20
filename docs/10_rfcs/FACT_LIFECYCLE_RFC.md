@@ -10,7 +10,7 @@ TTL by class), §4.5 (state transition rules), §5.3 "Update Modes", §7.1 `Fact
 **Related:** `MEMORY_FACT_CONFIRMATION_RFC.md` (owner-in-the-loop precedent, echo trap),
 `STANDING_DIRECTIVES_RFC.md` (Stage 2b: a review pass over a record set),
 `docs/04_solution_strategy/decisions/fact_s1_defects.md` (what S1 fixed, what it left for S2),
-`docs/12_risks/IMPLEMENTATION_ROADMAP.md` TD-4 (in-place `update_fact`).
+`docs/12_risks/IMPLEMENTATION_ROADMAP.md` TD-4 (in-place `update_fact`; closed by S2, `docs/04_solution_strategy/decisions/fact_versions_one_writer.md`).
 
 Decision numbers changed in rev 2. Map from rev 1: D1 → D1; D2 → D2; (new) D3 validation; D3 janitor → D4; D4
 visibility → D5; D5 review → D6; D6 questions → D7; D7 versions → D8; (new) D9 one writer; (new) D10 observability;
