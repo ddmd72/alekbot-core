@@ -470,7 +470,6 @@ NOTES = AgentDescriptor(
 | `src/adapters/firestore_agent_note_adapter.py` | Firestore CRUD + in-Python active filter |
 | `src/agents/notes_agent.py` | No LLM; dispatches on intent |
 | `tests/unit/agents/test_notes_agent.py` | AsyncMock(spec=AgentNotePort) |
-| `tests/unit/ports/test_agent_note_port.py` | ABC contract test |
 
 ### Modified files (5)
 

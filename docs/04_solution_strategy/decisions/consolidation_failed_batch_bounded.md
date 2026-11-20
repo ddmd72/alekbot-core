@@ -30,7 +30,7 @@ pending the hourly sweep did the same, 3 paid attempts every hour forever.
 
 ## Rejected
 
-- A separate new port method for the sweep path: `test_port_contracts` pins the abstract set, and one flag is enough.
+- A separate new port method for the sweep path: `mypy --strict` on `src/ports` guards the abstract set, and one flag is enough.
 - A `given_up` marker written by the sweep: the terminal failure is already seen by the service, so the log line
   needs no extra write and fires exactly once.
 - Cooldown timestamps per batch (backoff between revivals): the hourly sweep already spaces rounds; more state, no gain.

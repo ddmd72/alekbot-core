@@ -541,7 +541,6 @@ These change per request:
 
 **Test coverage:**
 - `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` — unit (assembly logic, overrides, cache)
-- `tests/unit/ports/test_prompt_v3_contracts.py` — port contracts
 - `tests/unit/adapters/prompt_v3/test_firestore_repositories.py` — adapter unit tests
 - `tests/integration/test_prompt_4level_assembly.py` — integration (real Firestore)
 

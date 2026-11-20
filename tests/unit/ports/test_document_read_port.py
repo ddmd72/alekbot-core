@@ -1,26 +1,8 @@
-"""DocumentReadPort (EXTERNAL_FILES_RFC §4.4): one abstract async method, `read(request) -> ReadOutcome`."""
-import inspect
-from abc import ABC
+"""DocumentReadPort (EXTERNAL_FILES_RFC §4.4): `read(request) -> ReadOutcome` carries every outcome."""
 
-import pytest
 
 from src.domain.document_read import ReadOutcome, ReadRequest, ReadStatus
 from src.ports.document_read_port import DocumentReadPort
-
-
-def test_the_port_is_abstract_with_one_method():
-    assert issubclass(DocumentReadPort, ABC)
-    with pytest.raises(TypeError):
-        DocumentReadPort()
-    assert DocumentReadPort.__abstractmethods__ == frozenset({"read"})
-
-
-def test_read_takes_a_request_and_returns_an_outcome():
-    assert inspect.iscoroutinefunction(DocumentReadPort.read)
-    sig = inspect.signature(DocumentReadPort.read)
-    assert list(sig.parameters) == ["self", "request"]
-    assert sig.parameters["request"].annotation in (ReadRequest, "ReadRequest")
-    assert sig.return_annotation in (ReadOutcome, "ReadOutcome")
 
 
 async def test_a_still_working_adapter_answers_through_the_port():

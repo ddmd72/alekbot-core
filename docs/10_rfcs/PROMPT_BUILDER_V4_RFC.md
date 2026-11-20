@@ -420,7 +420,6 @@ Changes implemented:
 ### 5.5 Tests ✅ DONE
 
 - `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` — updated for v4 (profile mock → `AgentProfile`, override side_effects updated)
-- `tests/unit/ports/test_prompt_v3_contracts.py` — updated signatures (`get_agent_profile`, `get_override_tokens` without blueprint_id)
 - `tests/unit/adapters/prompt_v3/test_firestore_repositories.py` — updated for `get_agent_profile()`, added `blueprint_id` assertion
 - All 1198 unit tests passing (1 xfailed)
 

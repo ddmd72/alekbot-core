@@ -406,7 +406,7 @@ All tests are SDK-light — we do not test the SDK itself, only our integration 
 
 | Layer | File | Coverage |
 |-------|------|----------|
-| Port contract | `tests/unit/ports/test_mcp_client_repository_port.py` | ABC contract, in-memory fake roundtrip for all three entity types, one-shot consume enforcement, revoke idempotency |
+| Port contract | `tests/unit/ports/test_mcp_client_repository_port.py` | In-memory fake roundtrip for all three entity types, one-shot consume enforcement, revoke idempotency |
 | Service | `tests/unit/services/test_mcp_authorization_service.py` | DCR host allowlist (claude.ai / subdomain / localhost / rejected hosts / http-on-public), consent JWT roundtrip, PKCE rejection, auth code mint + one-shot consume, refresh rotation, JWT aud/type/expiry rejection |
 | SDK adapter | `tests/unit/composition/test_mcp_sdk_oauth_provider.py` | Domain↔SDK type translation roundtrip, provider method delegation, error → TokenError/RegistrationError mapping |
 | Consent blueprint | `tests/unit/web/test_mcp_consent_app.py` | GET with/without cookie (redirect vs HTML), POST approve → 302 with code + state, POST deny → 302 with error, bad JWT → 400 |
