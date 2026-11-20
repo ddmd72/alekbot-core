@@ -85,7 +85,7 @@ class EnvironmentConfig:
         return os.getenv("USE_OAUTH_COLLECTIONS", "false").lower() == "true"
 
     # =========================================================================
-    # Semantic Collection Names (ADR-006)
+    # Semantic Collection Names (decisions/collection_prefix_retained.md)
     # =========================================================================
 
     # --- Domain Collections (Versioned) ---

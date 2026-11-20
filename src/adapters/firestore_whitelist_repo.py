@@ -48,7 +48,7 @@ class FirestoreWhitelistRepository(WhitelistRepository):
         self.db = db_client
         self.env_config = env_config
         
-        # ADR-006: Use semantic collection naming
+        # collection naming (decisions/collection_prefix_retained.md): Use semantic collection naming
         # Dev: development_domain_whitelist_v1
         # Prod: domain_whitelist_v1
         collection_name = env_config.domain_whitelist_collection

@@ -12,7 +12,7 @@ TIMESTAMP=$(date +"%Y-%m-%d-%H%M")
 BACKUP_PATH="$BACKUP_BUCKET/legacy-cleanup-$TIMESTAMP"
 
 # List of collections to archive (Legacy & Deprecated)
-# Based on migration to Semantic Naming (ADR-006)
+# Based on migration to Semantic Naming (decisions/collection_prefix_retained.md)
 LEGACY_COLLECTIONS=(
   "development_users"
   "development_users_oauth"

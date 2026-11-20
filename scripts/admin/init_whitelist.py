@@ -32,10 +32,10 @@ INITIAL_WHITELIST = {
 
 
 async def init_whitelist(env: str = "dev"):
-    """Initialize whitelist in Firestore using ADR-006 semantic naming."""
+    """Initialize whitelist in Firestore using the semantic collection naming (decisions/collection_prefix_retained.md)."""
     db = sync_client()
     
-    # ADR-006: Semantic Collection Naming
+    # Semantic collection naming: decisions/collection_prefix_retained.md
     # Dev: development_domain_whitelist_v1
     # Prod: domain_whitelist_v1
     prefix = "development_" if env == "dev" else ""

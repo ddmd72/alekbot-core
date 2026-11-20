@@ -139,11 +139,11 @@ class FirestoreFactRepository(FactRepository):
         self._embedding_service = embedding_service
         self._dedup_service = dedup_service or SmartDeduplication()
 
-        # Environment-aware collection names (ADR-006 Semantic Naming)
-        # ADR-006: Use semantic domain_facts_v2
+        # Environment-aware collection names (decisions/collection_prefix_retained.md)
+        # collection naming (decisions/collection_prefix_retained.md): Use semantic domain_facts_v2
         self.facts_col = self.db.collection(env_config.domain_facts_collection)
         
-        # ADR-006: Infra collection (stable name)
+        # collection naming (decisions/collection_prefix_retained.md): Infra collection (stable name)
         self.user_context_col = self.db.collection(env_config.user_context_collection)
         
         # Pre-computed biographical query vector
