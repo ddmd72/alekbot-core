@@ -1,88 +1,133 @@
-# Slack Integration (Building Block)
+<!-- living-doc
+covers:
+  src/adapters/slack/
+  src/composition/slack_adapter_factory.py
+-->
+# Slack Integration
 
-## 1. Overview
+## Purpose
 
-Slack reaches Alek-Core over the **HTTP Events API** — one transport, on Cloud Run.
+This block is how a Slack message reaches the chat turn and how the answer gets back. Slack talks to the main service
+over the **HTTP Events API** only; there is no other transport (`decisions/slack_socket_mode_removal.md`). The block
+turns a signed Slack request into a Cloud Task, turns the task into a platform-neutral `MessageContext`, hands it to
+the shared `ConversationHandler`, and renders the reply in Slack (mrkdwn, chunking, status message, buttons).
 
-A second transport (Socket Mode, a persistent WebSocket for local development) existed
-until 2026-08-16 and was removed: it was never used once development moved to the cloud, and
-it was the only path that ran without session persistence. See
-[`decisions/slack_socket_mode_removal.md`](../../04_solution_strategy/decisions/slack_socket_mode_removal.md).
+What it is not: it holds no business logic (the turn is `ConversationHandler`, see `docs/06_runtime/README.md`), does
+not decide who may talk to the bot (`IAMService`), and does not pick agents. Telegram is a sibling block with the same
+shape ([telegram_integration](../telegram_integration/README.md)). The same directory also holds three smaller Slack
+adapters used elsewhere: `SlackMediaAdapter` (uploads for notifications), `SlackWebhookAdapter` (the ops alert sink,
+`src/composition/operations_setup.py`) and `SlackChannelHistorySource` (see Invariants).
 
----
+## Owned data
 
-## 2. Architecture
+None of its own. What it leans on:
 
-To handle Slack's strict 3-second timeout and prevent double-processing, the HTTP mode uses an asynchronous worker pattern.
+- **Cloud Tasks** — the Slack intake queue `alek-bot-tasks-{queue_suffix}` in `DeployTopology.slack_intake_region`
+  (not the main region). A task name derived from the Slack `event_id` is the only dedup of Slack's retries.
+- **Task claims** — `/worker` claims every delivery by task name (`decisions/worker_task_dedup.md`).
+- **Slack itself as a session store** — for a channel bound with `$agent`/`$primary` the history is read back from the
+  channel (`SlackChannelHistorySource.fetch`), not from Firestore.
 
-### 2.1 Event Pipeline
+## Flows
 
-1. **Ingress:** Slack sends a webhook to `/slack/events`.
-2. **Verification:** `HTTPModeAdapter` reads the raw body (capped at 1 MiB, else 413), verifies the `X-Slack-Signature` on those bytes using HMAC-SHA256 for every request type, `url_verification` included, and only then parses it (a body that is not a JSON object is 400).
-3. **Enqueue:** The event is enqueued to **Google Cloud Tasks** under a deterministic task name derived from the `event_id`; `ALREADY_EXISTS` (Slack's retry) means it is already queued. There is no separate dedup store.
-4. **Response:** The adapter immediately returns `200 OK` to Slack.
-5. **Worker:** Cloud Tasks triggers the `/worker` endpoint; `WorkerHandler` claims the delivery by task name (a redelivery is skipped, `decisions/worker_task_dedup.md`) and executes the `ConversationHandler`. The lock key is the Slack thread (`thread_ts`, else the message `ts`), released by a first turn at the 90 s long-turn mark. A busy thread waits up to 100 s, then the event is re-queued under a named task (max 12 x 15 s), then a "resend" notice is posted; a redelivery that finds the lock busy re-queues at once.
+### Inbound event
 
-### 2.2 Blueprint Pattern
+1. Slack posts to `/slack/events` (`src/adapters/slack/http_adapter.py::HTTPModeAdapter._handle_slack_event`). The
+   blueprint is registered with prefix `/slack` on the Quart app shared with OAuth, Cabinet and Telegram (`main.py`).
+2. The raw body is read with a cap (`request_body.py::read_capped_body`, `MAX_BODY_BYTES`; over it: 413), the signature
+   is verified on those bytes (`signature.py::verify_slack_signature`; failure: 401), and only then is the body parsed
+   (not a JSON object: 400). This holds for `url_verification` too, so a forged challenge is never echoed.
+3. The event is enqueued (`src/adapters/gcp_task_queue.py::GcpTaskQueue.enqueue_slack_event`) under
+   `http_adapter.py::_task_name(event_id)`. `AlreadyExists` is Slack's retry and counts as enqueued. The route answers
+   200 and does nothing else: Cloud Run throttles CPU once the response is sent.
+4. Cloud Tasks calls `/worker`. `WorkerHandler` claims the delivery, recognises a payload with `event` and `session_id`
+   and no `task_type` as a Slack event (`src/handlers/worker_handler.py::WorkerHandler._dispatch`) and calls
+   `HTTPModeAdapter.handle_queued_event` (wired in `src/composition/application_graph.py`).
+5. `handle_queued_event` drops what the processing path ignores (`_ignored_before_lock`: bot messages, messages without
+   a user, subtypes other than plain and `file_share`), takes the lock, then `_process_message_event` or
+   `_process_mention_event`: `iam_service.authorize("slack", ...)`, a `reject` posts the IAM message and ends the turn;
+   otherwise `_run_authorized_turn` resolves the language, builds `SlackResponseChannel` and either dispatches a `$`
+   command (`handle_command`) or runs `handle_message`.
 
-The Slack adapter implements the **Blueprint Pattern** (Quart), allowing it to share port 8080 with other services (OAuth, Telegram, User Cabinet).
+### Session lock and busy events
 
-- **Prefix:** All Slack routes are prefixed with `/slack`.
+The lock is `HTTPModeAdapter._session_locks`, keyed by the event's `thread_ts`, else its `ts` (not by the chat session
+id). It orders turns inside one instance only.
 
-### 2.3 Interactive Messages
+1. A busy lock is waited for `BUSY_WAIT_S`; a redelivery (Cloud Tasks retry count above 0) finds a busy lock and
+   re-queues at once.
+2. `_requeue_busy` enqueues the same event again, `BUSY_REQUEUE_DELAY_S` later, under a new deterministic name
+   (`_task_name(event_id, requeues)`), counting in `busy_requeues`, up to `BUSY_MAX_REQUEUES`. Then
+   `_notify_busy_drop` posts `UIMessage.MESSAGE_NOT_PROCESSED_BUSY` and the message is dropped.
+3. A turn that passes the long-turn mark releases the lock early: `ConversationHandler._watch_long_turn` calls
+   `SlackResponseChannel.on_long_turn`, which fires the `release_lock` hook once
+   (`decisions/long_running_turns.md`).
+4. `handle_geo_mark_turn` (the `geo_mark_turn` worker task) takes the same lock; a lock still held after `BUSY_WAIT_S`
+   answers 503 so the queue retries.
 
-A message with buttons is posted through the platform-neutral `InteractiveMessagePort` (`SlackInteractiveMessageAdapter`: section blocks for the prompt and the quote, an actions block of buttons whose `block_id` carries the binding, a context line with the reply hint). The memory review's question is the one user (`memory/README.md` §5.6). A press arrives at `POST /slack/interactivity` (`SlackInteractivityRoute`), which verifies the signature on the raw body before it parses anything, queues an `interactive_choice` Cloud Task and answers 200 at once; the worker applies the choice and re-renders the message with the chosen option and no buttons (`chat.update`). The Slack app needs Interactivity enabled with this route as its Request URL; a thread reply to the message works without it.
+### Button press
 
----
+An interactive message is posted by `interactive_message_adapter.py::SlackInteractiveMessageAdapter` through
+`InteractiveMessagePort`: the binding rides in the actions block's `block_id` (`binding_codec.py::encode`/`decode`, the
+one codec for poster and route). A press arrives at `/slack/interactivity`
+(`interactivity_route.py::SlackInteractivityRoute.handle`): signature on the raw body, then parse, then enqueue an
+`interactive_choice` worker task on the **main** queue (not the Slack intake queue) with a dedup key from the press, and
+answer 200. `WorkerHandler._handle_interactive_choice` applies it and `show_choice` re-renders the message with
+`chat.update`. The Slack app needs Interactivity enabled with this route as Request URL. Who builds the messages: the
+memory review (`memory/README.md` §5.6) and profile questions.
 
-## 3. Security & Authorization
+### Literal text
 
-### 3.1 Signature Verification
+Text the bot did not write goes out through `ResponseChannel.send_literal` (`src/domain/messaging.py`);
+`send_reply` is literal too. On Slack `&`, `<`, `>` are escaped (`mrkdwn_text.py::escape_literal`) and `mrkdwn` is
+off, so `<!channel>` or `<@U1>` is shown, not obeyed. `UserNotificationService.notify_raw(..., literal=True)` is the
+notification path to it. Interactive messages escape the same way before capping to `MAX_TEXT_CHARS`.
 
-Every HTTP request is validated using the `SLACK_SIGNING_SECRET`.
+## Invariants and traps
 
-- **Timestamp Check:** Prevents replay attacks by rejecting requests older than 5 minutes.
-- **HMAC Validation:** Ensures the request originated from Slack. The check precedes any parsing, on `/slack/events` and `/slack/interactivity` alike, and both routes read the body through `request_body.read_capped_body`.
+- **Verify before parse, on raw bytes.** Both routes use `read_capped_body` and `verify_slack_signature`; the window is
+  `MAX_AGE_S` and an empty `SLACK_SIGNING_SECRET` refuses everything (`HTTPModeAdapter.__init__` also refuses to
+  start without it). Tests: `tests/unit/adapters/slack/test_http_adapter_route_signature.py`, `tests/unit/adapters/test_slack_interactivity_route.py`.
+- **Slack's retry must not make a second turn.** The dedup is the named Cloud Task plus the `/worker` claim; there is no
+  Slack-side dedup store. Re-queued copies get their own names (`-r{n}`), so they are not mistaken for the original
+  (`tests/unit/adapters/test_intake_release_and_busy_requeue.py`).
+- **The lock is per process.** `_session_locks` is a `WeakValueDictionary` of `asyncio.Lock`s; two Cloud Run instances
+  do not serialize against each other. Known residuals are listed above `BUSY_CREATE_BACKOFF_S`: a third message
+  behind two long turns can exhaust the re-queues; a Cloud Tasks outage during a re-queue loses the message (ERROR
+  log); a re-queue that was created after its create call failed can run the turn twice.
+- **Do the work before answering 200, or queue it.** Routes only verify and enqueue; anything started after the
+  response is throttled or killed.
+- **Unauthorized users.** `authorize` runs per processed message; a `reject` posts `decision.message` (the registration
+  instruction from `IAMService.get_rejection_message`) and starts no turn. `handle_geo_mark_turn` re-authorizes and
+  refuses a user that is not the link's owner.
+- **Threads.** `_reply_to_metadata` sets `reply_to_message_id` only for a reply inside a thread, never for a thread's
+  own parent message.
+- **Bound channels read history from Slack.** `SlackChannelHistorySource.fetch` maps a message to the `model` role when
+  it has a `bot_id` or its author is `SLACK_BOT_USER_ID` (an optional knob read with `os.getenv` in
+  `SlackAdapterFactory.create_adapter`); `$new`/`$reset` markers cut the history.
+- **Slack's own limits drive the code** (§ Slack platform limits): the immediate 200, `MAX_TEXT_CHARS` in the block
+  builders, `MAX_BLOCK_ID_CHARS` in the codec, chunking in `SlackResponseChannel.send_long_text`
+  (`SLACK_MAX_MESSAGE_LENGTH`, `SLACK_CHUNK_SIZE`).
 
-### 3.1.1 Literal text
+### Slack platform limits
 
-Text the bot did not write (a stored fact quoted in the memory digest, a model-translated acknowledgement) is sent with `ResponseChannel.send_literal` (`send_reply` is literal too): on Slack `&`, `<` and `>` are escaped by `adapters/slack/mrkdwn_text.py` and `mrkdwn` is off, so `<!channel>` or `<@U1>` is shown, not obeyed; on Telegram `parse_mode=None`. `UserNotificationService.notify_raw(..., literal=True)` is the notification path to it.
+External facts. Slack expects the event acknowledgement within 3 seconds (hence the immediate 200 and the Cloud Tasks
+enqueue), allows about 3000 characters of text per block, and asks bots to stay near one message per second per channel
+(status updates are throttled).
 
-### 3.2 IAM Integration
+## Links
 
-Every event (message or mention) triggers an `iam_service.authorize("slack", slack_user_id)` call.
+- [`slack_socket_mode_removal.md`](../../04_solution_strategy/decisions/slack_socket_mode_removal.md)
+- [`worker_task_dedup.md`](../../04_solution_strategy/decisions/worker_task_dedup.md)
+- [`long_running_turns.md`](../../04_solution_strategy/decisions/long_running_turns.md)
+- Interactive messages in the memory review: [`memory/README.md`](../memory/README.md) §5.6.
+- Sibling: [`telegram_integration/README.md`](../telegram_integration/README.md).
 
-- **Unauthorized Users:** Receive a registration link to the Web UI.
-- **Authorized Users:** Proceed to the multi-agent reasoning loop.
+## Where to start reading
 
----
-
-### 3.3 Slack platform limits
-
-Slack expects the event acknowledgement within 3 seconds (hence the immediate 200 and the Cloud Tasks enqueue, §2.1), allows
-about 3000 characters of text per block, and asks bots to stay near one message per second per channel (status updates are throttled).
-
-## 4. Code References
-
-- `src/composition/slack_adapter_factory.py`: Builds the adapter (lives in `composition/` — creates `ConversationHandler` and injects it as a port).
-- `src/adapters/slack/http_adapter.py`: Webhook implementation.
-- `src/adapters/slack/response_channel.py`: Slack-specific message formatting.
-- `src/adapters/gcp_task_queue.py`: Integration with Cloud Tasks.
-
----
-
-## 5. Status & Roadmap
-
-**Status:** ✅ Production Ready
-
-### Planned Enhancements
-
-- **Interactive Components:** menus and modals (buttons exist since the memory review, §2.3).
-- **App Home:** Implement a personalized dashboard within the Slack app.
-- **Slash Commands:** Add native commands for quick actions (e.g., `/remember`, `/search`).
-
----
-
-**Last Updated:** 2026-08-16
-**Status:** ✅ Complete  
-**Phase:** Documentation Audit Phase 3.6
+- `src/adapters/slack/http_adapter.py::HTTPModeAdapter.handle_queued_event` — the worker side of an event.
+- `src/adapters/slack/http_adapter.py::HTTPModeAdapter._handle_slack_event` — the route: verify, enqueue.
+- `src/adapters/slack/response_channel.py::SlackResponseChannel` — rendering, chunking, literal text.
+- `src/adapters/slack/interactivity_route.py::SlackInteractivityRoute` and
+  `src/adapters/slack/interactive_message_adapter.py::SlackInteractiveMessageAdapter` — buttons.
+- `src/composition/slack_adapter_factory.py::SlackAdapterFactory.create_adapter` — wiring.
