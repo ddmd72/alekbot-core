@@ -89,6 +89,32 @@ def living_docs(root: Path) -> list[Path]:
     ]
 
 
+# Living docs by location; decision records and RFCs are never living docs.
+_REQUIRED_GLOBS = (
+    "docs/05_building_blocks/**/*.md",
+    "docs/06_runtime/*.md",
+    "docs/07_deployment/*.md",
+    "docs/11_quality/*.md",
+    "docs/12_risks/*.md",
+    "docs/how_to/*.md",
+)
+_REQUIRED_FILES = (
+    "docs/README.md",
+    "docs/04_solution_strategy/README.md",
+    "docs/08_concepts/README.md",
+    "docs/08_concepts/DATABASE_SCHEMA.md",
+    "docs/08_concepts/multi_vector_rrf_search.md",
+    "docs/08_concepts/groovy_prompt_pattern.md",
+)
+
+
+def required_living_docs(root: Path) -> list[Path]:
+    """The docs that must start with the living-doc header, by location (docs/README.md names the same set)."""
+    found = {p for pattern in _REQUIRED_GLOBS for p in root.glob(pattern) if p.is_file()}
+    found.update(root / f for f in _REQUIRED_FILES if (root / f).is_file())
+    return sorted(found)
+
+
 def covers_conflicts(docs: dict[str, list[str]], files: list[str]) -> list[str]:
     """One owner per file: a message for every file that the covers of two or more docs match."""
     problems: list[str] = []
