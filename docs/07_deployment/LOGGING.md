@@ -20,27 +20,33 @@ The content stores (BigQuery, Logfire) and their sensitivity rules are described
 
 ## How a log line is produced
 
-`src/utils/logger.py::setup_logger` picks the handler by `K_SERVICE` (set by Cloud Run, absent locally):
+`src/utils/logger.py::setup_logger` picks the handler by `K_SERVICE`, which Cloud Run services set and Cloud Run Jobs and local runs do not:
 
-- **Cloud Run:** `StructuredLogHandler` at INFO writes one JSON object per line to stdout. `_CloudContextFilter` adds
+- **Cloud Run service:** `StructuredLogHandler` at INFO writes one JSON object per line to stdout. `_CloudContextFilter` adds
   the labels `user_id`, `session_id`, `event_id`, `trace_id` (from `src/utils/logging_context.py` and the active span),
   so they are filterable as `labels.user_id=...` in Cloud Logging. Only INFO and above reach it.
-- **Local:** INFO to the console through `AlekFormatter`, DEBUG to `alek_debug.log` (truncated on every start).
+- **Otherwise (local, and the deep-research job):** INFO to the console through `AlekFormatter`, DEBUG to `alek_debug.log` (truncated on every start).
 
 Traps:
-- `LOG_TRACE_CONTEXT` (`make logs-mode-clean` / `logs-mode-full`) is read only by the local `AlekFormatter`. On Cloud
-  Run no formatter reads it, so those two targets change nothing in the logs.
-- `make fetch-logs` and the other `fetch-logs*` targets write the `textPayload` of each entry. Once fetched, grep the
-  local file instead of looping `gcloud logging read`.
+- The deep-research job (`job_main.py`) sets `CLOUD_RUN_JOB`, not `K_SERVICE` (`src/utils/cloud_run.py`), so it takes the
+  plain-text branch: no labels and no parsed severity. `labels.user_id=` and `severity>=ERROR` filters miss its lines;
+  find them by resource type and message text.
+- `LOG_TRACE_CONTEXT` (`make logs-mode-clean` / `logs-mode-full`) is read only by `AlekFormatter`. A Cloud Run service
+  uses no such formatter, so on the service those two targets change nothing in the logs.
+- `extra={...}` fields of a log call do not reach Cloud Logging: the handler serializes the message and the labels
+  only. A `jsonPayload.event=...` filter finds nothing; grep message text.
+- `fetch-logs`, `-relay` and `-indexer` write the `textPayload` of each entry; `fetch-logs-job` writes gcloud's default
+  job-log format. Once fetched, grep the local file instead of looping `gcloud logging read`.
 
 ## Cloud Logging
 
 The `Makefile` targets use `SERVICE_NAME`, `RESEARCH_JOB`, `VOICE_RELAY`, `INDEXER` (the `*-dev` names; there is one
-live environment) and `K` (default 300). All run against `<PROJECT_ID>` from `.env`.
+live environment) and `K` (default 300). Most pass `--project=<PROJECT_ID>` from `.env`; `make logs` and the `logs-mode-*` targets use
+gcloud's active project. `logs-job` and `logs-execution` ignore `K` (fixed 100 and 200 entries).
 
 | Workload | View | Fetch to a local file | Live |
 |---|---|---|---|
-| Main service | `make logs` | `make fetch-logs` -> `alek_debug.log` | `make logs-tail` (`logs-perf`: timing lines only) |
+| Main service | `make logs` | `make fetch-logs` -> `alek_debug.log` | `make logs-tail` (`logs-perf`: perf lines only) |
 | Deep-research job | `make logs-job` | `make fetch-logs-job` -> `alek_debug_job.log` | none |
 | Voice relay | `make logs-relay` | `make fetch-logs-relay` -> `alek_debug_relay.log` | none |
 | Drive indexer | `make logs-indexer` | `make fetch-logs-indexer` -> `alek_debug_indexer.log` | none |
@@ -81,7 +87,7 @@ grep 'llm_fallback\|llm_no_fallback\|llm_both_open\|provider_breaker_' alek_debu
 
 ## LLM content: BigQuery `prompt_content`
 
-One row per successful LLM call through `LLMPort`, written by `BaseAgent._call_llm`, day-partitioned with a 30-day
+Rows are one per successful LLM call through `LLMPort`, written by `BaseAgent._call_llm`, day-partitioned with a 30-day
 expiry (`src/adapters/bigquery_prompt_content_adapter.py`). A failed call has no row; look for it in Logfire.
 
 - Capture is on only when `DEBUG_PROMPTS=true` and `BIGQUERY_PROMPT_DATASET` are both set
@@ -89,17 +95,19 @@ expiry (`src/adapters/bigquery_prompt_content_adapter.py`). A failed call has no
   `false` (`src/config/settings.py`); `cloudbuild-dev.yaml` sets both for the service and the job. Locally set both in
   `.env` to capture.
 - Read it with `bq query --project_id=<PROJECT_ID> --use_legacy_sql=false --format=json`. Use JSON: `request_text` is
-  multi-line and breaks CSV. Columns and the recording rules are in the observability block.
+  multi-line and breaks CSV. Columns and the recording rules are in [`observability_strategy`](../05_building_blocks/observability_strategy/README.md).
 - `trace_id` carries a `tr_` prefix (`src/utils/telemetry.py`); strip it before joining to Logfire. The stored
   `span_id` is the enclosing span, and there is no `parent_span_id`, so BigQuery cannot answer relationship questions.
-- The deep-research runner calls the Claude SDK directly, bypasses `LLMPort` and writes no row. It logs a
-  summary-only INFO line per pass (`src/agents/base_agent.py::BaseAgent._debug_raw_turn`), found in the job logs.
+- The deep-research runner calls the Claude SDK directly and bypasses `LLMPort`, so its prompts and per-turn calls are
+  not captured. It logs a summary-only INFO line per pass (`src/agents/base_agent.py::BaseAgent._debug_raw_turn`), found
+  in the job logs. The job does write the query and each pass's result as rows under the same gate
+  (`job_main.py::_capture_research_result`).
 
 ## Logfire: the cascade
 
 Logfire holds the same content plus the call tree. Use it for anything about relationships between calls and for failed
-calls. It is on when `TRACING_BACKEND` is `logfire` or `both` and `LOGFIRE_CAPTURE_CONTENT=true`
-(`src/utils/telemetry.py`; the capture flag is a kill switch that drops back to metadata-only without a deploy). Design
+calls. It is on when `TRACING_BACKEND` is `logfire` or `both` and `LOGFIRE_CAPTURE_CONTENT=true`,
+and `LOGFIRE_TOKEN` is set; without the token tracing degrades to Cloud Trace (`src/utils/telemetry.py`; the capture flag is a kill switch that drops back to metadata-only without a deploy). Design
 and threat model: `docs/04_solution_strategy/decisions/logfire_prompt_content_capture.md`.
 
 Traps:
