@@ -32,8 +32,11 @@ complete week (Monday to Monday, UTC): `drag` (lines changed in existing test fi
 `bookkeeping_per_kloc` (existing ledger lines plus `test(mechanical)` branch-commit test lines per 1000 `src` lines),
 the radius (existing test files modified per `src`-changing unit), the `def test_` lines added and removed and the share
 added in new files, and the most-modified existing test files of the last four weeks; JSON by default, `--format md`
-for one line per week. `fix_units` prints, per unit titled `fix:`/`fix(...)`/`fix!` that changes `src`: the layers
-touched, whether a test came with it, the age of the lines it deleted or replaced (blamed on its first parent) and the
-units that brought those lines in. Both exit 2 on an unknown ref or a shallow history that does not cover the window.
+for one line per week. A squash- or rebase-merged pull request has no branch commits, so it contributes nothing to the
+`test(mechanical)` part of `bookkeeping_per_kloc`. `fix_units` prints, per unit titled `fix` (any case) followed by
+`(`, `:`, `!` or a space that changes `src`: the layers touched, whether a test came with it, the age of the lines it
+deleted or replaced (blamed on its first parent), both from the blamed commit and from the date its pull request
+reached `main`, and the units that brought those lines in. Both exit 2 on an unknown ref, on any shallow clone (run
+`git fetch --unshallow`) and on git output they cannot parse.
 Definitions: the module docstrings in `scripts/quality/`. Who reads it: a weekly routine; its journal is kept outside
 this repository.

@@ -2,16 +2,19 @@
 
 Usage: python -m scripts.quality.fix_units [--ref origin/main] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N]
 
-A fix unit is a first-parent unit (git_units.py) whose title starts with `fix` followed by `(`, `:` or `!`
-(conventional commit, case-sensitive) and that changes at least one src file. The window is half-open in UTC,
-[since 00:00, until 00:00); defaults: until = today, since = until - 7 days. `--limit N` keeps the N oldest.
+A fix unit is a first-parent unit (git_units.py) whose title starts with `fix` (any case) followed by `(`, `:`, `!` or
+whitespace, and that changes at least one src file. The window is half-open in UTC, [since 00:00, until 00:00);
+defaults: until = the last Monday on or before today, since = seven days before it (friction's week). `--limit N`
+keeps the N oldest.
 Per fix: what it touched (`layers`, `src_lines_changed`), whether it came with a test (`tests_added`,
 `existing_test_files_modified`, `has_regression_test`), and `fixed_lines_age_days`: the src lines the fix deleted or
 replaced, blamed on its first parent; `min_age_days` is the age at the fix's date of the most recent commit among
-them (small: the fix follows a change made days ago), `max_age_days` of the oldest (large: the defect lived on the
-ref for long). An add-only fix has null ages. `introduced_by`: up to three first-parent units of the ref that brought
-in the blamed commits, by blamed lines. Exit 0 (an empty list when the window has no fix), 2 when the ref is unknown
-or the history too shallow for the window.
+them, `max_age_days` of the oldest. `min_age_on_main_days` / `max_age_on_main_days` count instead from the date of the
+first-parent unit that brought each blamed commit to the ref (a line written on a branch ten days before its merge
+and fixed a day after the merge is one day on main): small, the fix follows a recent change; large, the defect lived
+on the ref for long. An add-only fix has null ages. `introduced_by`: up to three first-parent units of the ref that brought
+in the blamed commits, by blamed lines. Exit 0 (an empty list when the window has no fix), 2 when the ref is unknown,
+the clone is shallow, or git's text cannot be parsed.
 """
 from __future__ import annotations
 
@@ -24,11 +27,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Sequence
 
 from scripts.quality.git_units import (
-    EXISTING_STATUSES, SRC, TEST, BlameLine, GitHistoryError, Unit, path_class, read_blame, read_commit,
+    EXISTING_STATUSES, SRC, TEST, BlameLine, GitHistoryError, GitParseError, Unit, path_class, read_blame, read_commit,
     read_descendants, read_first_parent_chain, read_hunks, read_units,
 )
 
-_FIX_TITLE = re.compile(r"^fix[(:!]")
+_FIX_TITLE = re.compile(r"^fix[(:!\s]", re.IGNORECASE)
 INTRODUCED_BY = 3
 
 
@@ -60,6 +63,15 @@ def blame_ages(lines: Sequence[BlameLine], at: datetime) -> dict[str, Any]:
     return {"min_age_days": days(newest), "max_age_days": days(oldest), "blamed_lines": len(lines)}
 
 
+def on_main_ages(lines: Sequence[BlameLine], at: datetime, unit_of: Callable[[str], Unit]) -> dict[str, Any]:
+    """Ages counted from the date each blamed commit's first-parent unit reached the ref; null for an add-only fix."""
+    if not lines:
+        return {"min_age_on_main_days": None, "max_age_on_main_days": None}
+    landed = [unit_of(sha).date for sha in {ln.sha for ln in lines}]
+    return {"min_age_on_main_days": round((at - max(landed)).total_seconds() / 86400, 1),
+            "max_age_on_main_days": round((at - min(landed)).total_seconds() / 86400, 1)}
+
+
 def introduced_by(lines: Sequence[BlameLine], unit_of: Callable[[str], Unit]) -> list[dict[str, Any]]:
     """The first-parent units that brought in the blamed lines' commits, most lines first (ties: oldest first)."""
     per_commit = Counter(ln.sha for ln in lines)
@@ -73,7 +85,8 @@ def introduced_by(lines: Sequence[BlameLine], unit_of: Callable[[str], Unit]) ->
     return [{"sha": s, "date": units[s].date.isoformat(), "title": units[s].title} for s in ranked]
 
 
-def fix_record(unit: Unit, blamed: Sequence[BlameLine], introducers: list[dict[str, Any]]) -> dict[str, Any]:
+def fix_record(unit: Unit, blamed: Sequence[BlameLine], introducers: list[dict[str, Any]],
+               on_main: dict[str, Any] | None = None) -> dict[str, Any]:
     src = [f for f in unit.files if path_class(f.path) == SRC]
     tests = [f for f in unit.files if path_class(f.path) == TEST]
     tests_added = sum(f.test_defs_added for f in tests)
@@ -87,7 +100,8 @@ def fix_record(unit: Unit, blamed: Sequence[BlameLine], introducers: list[dict[s
         "tests_added": tests_added,
         "existing_test_files_modified": sum(1 for f in tests if f.status in EXISTING_STATUSES),
         "has_regression_test": tests_added > 0,
-        "fixed_lines_age_days": blame_ages(blamed, unit.date),
+        "fixed_lines_age_days": blame_ages(blamed, unit.date)
+        | (on_main or {"min_age_on_main_days": None, "max_age_on_main_days": None}),
         "introduced_by": introducers,
     }
 
@@ -103,10 +117,12 @@ class _UnitResolver:
 
     def __init__(self, ref: str) -> None:
         self.ref = ref
-        self.index = {sha: i for i, sha in enumerate(read_first_parent_chain(ref))}
+        self.index: dict[str, int] = {}
         self.cache: dict[str, Unit] = {}
 
     def __call__(self, sha: str) -> Unit:
+        if not self.index:  # read on first use: a window without a blamed line needs no chain
+            self.index = {s: i for i, s in enumerate(read_first_parent_chain(self.ref))}
         if sha not in self.cache:
             target = sha
             if sha not in self.index:
@@ -137,6 +153,12 @@ def _day(value: str) -> date:
     return date.fromisoformat(value)
 
 
+def default_window(today: date) -> tuple[date, date]:
+    """(since, until): the last complete Monday-to-Monday week on or before `today`."""
+    until = today - timedelta(days=today.weekday())
+    return until - timedelta(days=7), until
+
+
 def _midnight(d: date) -> datetime:
     return datetime.combine(d, time(0), tzinfo=timezone.utc)
 
@@ -145,23 +167,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--ref", default="origin/main")
     parser.add_argument("--since", type=_day, default=None)
-    parser.add_argument("--until", type=_day, default=datetime.now(timezone.utc).date())
+    parser.add_argument("--until", type=_day, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--format", choices=("json",), default="json")
     args = parser.parse_args(argv)
-    since = args.since or args.until - timedelta(days=7)
+    until = args.until or default_window(datetime.now(timezone.utc).date())[1]
+    since = args.since or until - timedelta(days=7)
     try:
-        units = read_units(args.ref, _midnight(since), _midnight(args.until), branch_commits=False)
+        units = read_units(args.ref, _midnight(since), _midnight(until), branch_commits=False)
         fixes = select_fixes(units, args.limit)
-        resolver = _UnitResolver(args.ref) if fixes else None
+        resolver = _UnitResolver(args.ref)
         records = []
         for u in fixes:
             blamed = blamed_lines(u)
-            records.append(fix_record(u, blamed, introduced_by(blamed, resolver) if resolver else []))
-    except GitHistoryError as exc:
+            records.append(fix_record(u, blamed, introduced_by(blamed, resolver),
+                                      on_main_ages(blamed, u.date, resolver)))
+    except (GitHistoryError, GitParseError) as exc:
         print(f"fix_units: {exc}", file=sys.stderr)
         return 2
-    print(json.dumps({"ref": args.ref, "since": since.isoformat(), "until": args.until.isoformat(),
+    print(json.dumps({"ref": args.ref, "since": since.isoformat(), "until": until.isoformat(),
                       "fix_units": records}, indent=2))
     return 0
 

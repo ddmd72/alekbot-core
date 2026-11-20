@@ -6,13 +6,15 @@ Units are the first-parent commits of the ref (git_units.py). A week runs Monday
 labelled by its Monday, and only complete weeks are reported: the last one is the latest week that ended on or before
 `--until` (default today, UTC). Per week:
 - `drag`: lines changed in existing (M/R) test files / lines changed in src, over the units that change src;
-- `bookkeeping_per_kloc`: (lines changed in existing ledger files + test-file lines of `test(mechanical)` branch
-  commits) x 1000 / src lines, over the same units;
+- `bookkeeping_per_kloc`: (lines changed in existing ledger files + lines of `test(mechanical)` branch commits in
+  the unit's existing test files) x 1000 / src lines, over the same units (a squash- or rebase-merged pull request
+  has no branch commits and adds nothing to the second term);
 - `radius`: existing test files modified per src-changing unit (median, p90 by nearest rank, max, top three);
 - `def test_` lines added/removed in test files over all units, and how many were added in new files.
 `hot_test_files`: the existing test files modified by the most units over the last four reported weeks.
 JSON is for a reading routine; md is one pipe-separated line per week (header first, starting with `#`) for a journal.
-Exit 0 (an empty week is reported with zeros), 2 when the ref is unknown or the history too shallow for the window.
+Exit 0 (an empty week is reported with zeros), 2 when the ref is unknown, the clone is shallow, or git's text cannot be
+parsed.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Sequence
 
 from scripts.quality.git_units import (
-    EXISTING_STATUSES, LEDGER, SRC, TEST, GitHistoryError, Unit, path_class, read_units,
+    EXISTING_STATUSES, LEDGER, SRC, TEST, GitHistoryError, GitParseError, Unit, path_class, read_units,
 )
 
 MECHANICAL_PREFIX = "test(mechanical)"
@@ -67,6 +69,17 @@ def _existing(u: Unit, cls: str) -> list[Any]:
     return [f for f in u.files if f.status in EXISTING_STATUSES and path_class(f.path) == cls]
 
 
+def _mechanical_lines(u: Unit) -> int:
+    """Test lines of the unit's `test(mechanical)` branch commits, in files that existed before the unit (M/R in the
+    unit's own diff); lines in files the pull request created or deleted, or that its net diff leaves untouched, do
+    not count."""
+    existing = {f.path for f in _existing(u, TEST)}
+    return sum(
+        f.lines for c in u.branch_commits if c.subject.startswith(MECHANICAL_PREFIX)
+        for f in c.files if f.path in existing
+    )
+
+
 def _p90(values: list[int]) -> int:
     ordered = sorted(values)
     return ordered[math.ceil(0.9 * len(ordered)) - 1]
@@ -77,10 +90,7 @@ def week_metrics(units: Sequence[Unit]) -> dict[str, Any]:
     src_lines = sum(f.lines for u in src_units for f in u.files if path_class(f.path) == SRC)
     test_lines = sum(f.lines for u in src_units for f in _existing(u, TEST))
     ledger_lines = sum(f.lines for u in src_units for f in _existing(u, LEDGER))
-    mechanical_lines = sum(
-        f.lines for u in src_units for c in u.branch_commits if c.subject.startswith(MECHANICAL_PREFIX)
-        for f in c.files if path_class(f.path) == TEST
-    )
+    mechanical_lines = sum(_mechanical_lines(u) for u in src_units)
     radii = [(len(_existing(u, TEST)), u) for u in src_units]
     values = [r for r, _ in radii]
     top = sorted(radii, key=lambda ru: (-ru[0], ru[1].date))[:TOP_RADIUS]
@@ -170,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     ws = report_weeks(args.weeks, args.until)
     try:
         units = read_units(args.ref, ws[0].start, ws[-1].end) if ws else []
-    except GitHistoryError as exc:
+    except (GitHistoryError, GitParseError) as exc:
         print(f"friction: {exc}", file=sys.stderr)
         return 2
     report = {"ref": args.ref, **weekly_friction(units, args.weeks, args.until)}

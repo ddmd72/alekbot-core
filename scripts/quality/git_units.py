@@ -6,8 +6,10 @@ parent (the whole pull request), a plain commit's against its parent. Renames ar
 
 Layout: `run_git` is the only subprocess call; the parsers take git's text and return frozen dataclasses (pure,
 tested on hand-written text); the readers are thin: they call `run_git` and a parser. Read-only, standard library
-plus the `git` binary. A missing ref or a shallow history that does not reach the window raises `GitHistoryError`
-(the CLIs exit 2 on it: a silent partial week is the one failure a reader of the numbers cannot see).
+plus the `git` binary. A missing ref or a shallow clone raises `GitHistoryError` (blame and `first..second` stop at
+the shallow boundary and would give wrong ages and counts); git text the parsers cannot read raises `GitParseError`.
+The CLIs exit 2 on either: a silently wrong number is the one failure a reader of the output cannot see.
+`run_git` pins the git settings the parsers depend on, so the user's git config cannot change the text.
 """
 from __future__ import annotations
 
@@ -33,7 +35,12 @@ EXISTING_STATUSES = frozenset({"M", "R"})
 
 
 class GitHistoryError(Exception):
-    """The ref does not exist, or the history is too shallow to cover the asked window."""
+    """The ref does not exist, or the clone is shallow."""
+
+
+class GitParseError(Exception):
+    """git printed text the parsers do not understand (a token that does not split, a raw entry without its
+    numstat or the reverse, a blamed commit without a committer time)."""
 
 
 # --------------------------------------------------------------------------------------------------- records
@@ -152,40 +159,45 @@ def _parse_changes(rest: str) -> tuple[FileChange, ...]:
     counts: dict[str, tuple[int, int]] = {}
     order: list[str] = []
     i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        i += 1
-        if not tok:
-            continue
-        if tok.startswith(":"):
-            code = tok.split()[-1]
-            if code[0] in "RC":
-                old, new = tokens[i], tokens[i + 1]
+    try:
+        while i < len(tokens):
+            tok = tokens[i]
+            i += 1
+            if not tok:
+                continue
+            if tok.startswith(":"):
+                code = tok.split()[-1]
+                if code[0] in "RC":
+                    old, new = tokens[i], tokens[i + 1]
+                    i += 2
+                    status[new] = (code[0], old)
+                else:
+                    new = tokens[i]
+                    i += 1
+                    status[new] = (code[0], None)
+                if new not in order:
+                    order.append(new)
+                continue
+            parts = tok.split("\t", 2)
+            if len(parts) != 3:
+                raise GitParseError(f"unreadable change entry: {tok!r}")
+            added, deleted, path = parts
+            if path == "":  # rename/copy: the two paths follow as their own tokens
+                path = tokens[i + 1]
                 i += 2
-                status[new] = (code[0], old)
-            else:
-                new = tokens[i]
-                i += 1
-                status[new] = (code[0], None)
-            if new not in order:
-                order.append(new)
-            continue
-        parts = tok.split("\t", 2)
-        if len(parts) != 3:
-            continue
-        added, deleted, path = parts
-        if path == "":  # rename/copy: the two paths follow as their own tokens
-            path = tokens[i + 1]
-            i += 2
-        counts[path] = (_int(added), _int(deleted))
-        if path not in order:
-            order.append(path)
-    out = []
-    for path in order:
-        code, old_path = status.get(path, ("M", None))
-        a, d = counts.get(path, (0, 0))
-        out.append(FileChange(path=path, status=code, added=a, deleted=d, old_path=old_path))
-    return tuple(out)
+            counts[path] = (_int(added), _int(deleted))
+            if path not in order:
+                order.append(path)
+    except (IndexError, ValueError) as exc:
+        raise GitParseError(f"truncated or unreadable change list: {exc}") from exc
+    if set(status) != set(counts):
+        unmatched = sorted(set(status) ^ set(counts))
+        raise GitParseError(f"raw and numstat entries do not match: {unmatched[:3]}")
+    return tuple(
+        FileChange(path=path, status=status[path][0], added=counts[path][0], deleted=counts[path][1],
+                   old_path=status[path][1])
+        for path in order
+    )
 
 
 def _parse_raw_log(text: str) -> list[_RawCommit]:
@@ -301,7 +313,10 @@ def parse_blame(text: str) -> list[BlameLine]:
             lines.append(current)
         elif line.startswith("committer-time "):
             times[current] = int(line.split()[1])
-    return [BlameLine(sha=s, committer_time=times.get(s, 0)) for s in lines]
+    missing = sorted(set(lines) - set(times))
+    if missing:
+        raise GitParseError(f"blamed commit without a committer-time: {missing[0]}")
+    return [BlameLine(sha=s, committer_time=times[s]) for s in lines]
 
 
 def with_test_defs(units: Sequence[Unit], patches: dict[str, list[FilePatch]]) -> list[Unit]:
@@ -324,35 +339,36 @@ def with_test_defs(units: Sequence[Unit], patches: dict[str, list[FilePatch]]) -
 # --------------------------------------------------------------------------------------------------- readers
 
 
+# Settings the parsers rely on, pinned against the user's git config (colour codes, signature lines, prefix-less
+# diff headers, a rename limit that silently turns renames into add/delete, quoted non-ASCII paths).
+_GIT_CONFIG = (
+    "-c", "color.ui=never", "-c", "log.showSignature=false", "-c", "diff.noprefix=false",
+    "-c", "diff.renameLimit=0", "-c", "core.quotePath=false",
+)
+
+
 def run_git(args: Sequence[str], cwd: str | None = None) -> str:
     """The only subprocess call of the quality scripts."""
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, text=True, capture_output=True, encoding="utf-8", errors="replace",
+        ["git", *_GIT_CONFIG, *args], cwd=cwd, check=True, text=True, capture_output=True, encoding="utf-8", errors="replace",
     ).stdout
 
 
-def check_history(ref: str, since: datetime, cwd: str | None = None) -> None:
-    """Raise GitHistoryError when `ref` is unknown, or the clone is shallow and its first-parent chain does not
-    reach back before `since`."""
+def check_history(ref: str, cwd: str | None = None) -> None:
+    """Raise GitHistoryError when `ref` is unknown or the clone is shallow (whatever the window: blame and the
+    branch-commit ranges stop at the shallow boundary)."""
     try:
         run_git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd)
     except subprocess.CalledProcessError as exc:
         raise GitHistoryError(f"unknown ref: {ref}") from exc
-    if run_git(["rev-parse", "--is-shallow-repository"], cwd).strip() != "true":
-        return
-    times = run_git(["log", "--first-parent", "--format=%ct", ref], cwd).split()
-    oldest = int(times[-1]) if times else 0
-    if oldest >= since.timestamp():
-        when = datetime.fromtimestamp(oldest, tz=timezone.utc).isoformat()
-        raise GitHistoryError(
-            f"shallow history: the oldest reachable commit of {ref} ({when}) does not precede {since.isoformat()}"
-        )
+    if run_git(["rev-parse", "--is-shallow-repository"], cwd).strip() == "true":
+        raise GitHistoryError("shallow clone: the numbers would stop at the shallow boundary; run `git fetch --unshallow`")
 
 
 def read_units(ref: str, since: datetime, until: datetime, *, branch_commits: bool = True,
                cwd: str | None = None) -> list[Unit]:
     """The units of `ref` with since <= committer date < until (UTC), newest first, test-def counts filled."""
-    check_history(ref, since, cwd)
+    check_history(ref, cwd)
     margin = 2 * 86400  # git's own --since/--until are a coarse pre-filter; the window is applied exactly below
     window = [f"--since=@{int(since.timestamp()) - margin}", f"--until=@{int(until.timestamp()) + margin}"]
     text = run_git(["log", "--first-parent", "--diff-merges=first-parent", "-M", "--raw", "--numstat", "-z",
