@@ -45,9 +45,10 @@ level (`src/domain/prompt_v3/slot.py::OwnerType`).
    (`src/domain/prompt_v3/token.py::Token`). Biography, conversation history, date and reminders are injected by code
    after assembly (`PromptAssemblyService._inject_runtime_context`). A variable inside a token would either be
    dead text or break caching.
-2. **Validation runs whenever a `Token` is built.** `Token.create` runs the content through `SecurityPort`, and the
-   repository rebuilds tokens through it on every read (`src/adapters/prompt_v3/firestore_token_repository.py`).
-   Direct construction skips validation and is wrong; the token upload script writes raw content without validating
+2. **`Token.create` calls `SecurityPort` on every token build.** The repository rebuilds tokens through it on every
+   read (`src/adapters/prompt_v3/firestore_token_repository.py`), but in the TRUSTED zone, so the regex adapter skips
+   the scan and token content is in practice not pattern-checked. Direct construction skips the port call
+   altogether and is wrong; the token upload script writes raw content without calling it
    (`firestore_utils/upload.py`).
 3. **Static before the boundary, dynamic after.** `src/domain/llm.py::PROMPT_CACHE_BOUNDARY` splits the system
    instruction. Everything before it is identical across requests of one agent and user, so the Claude adapter marks
