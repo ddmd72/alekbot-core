@@ -200,7 +200,7 @@ The returned `AgentExecutionContext` has the same structure as the standard buil
 SmartResponseAgent applies it as a temporary override for the duration of one request,
 then restores the default context.
 
-See [Smart Agent Execution](../smart_agent_execution/README.md) for the full override/restore
+See [Hybrid Router](../hybrid_router/README.md) for the full override/restore
 pattern and `DEFAULT_COMPLEXITY_SETTINGS`.
 
 ### 3.4 Prompt Cache Strategy (Step 5)

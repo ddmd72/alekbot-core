@@ -59,7 +59,7 @@ The central hub for all agent interactions.
 1. **Ingress:** `ConversationHandler` creates an `AgentMessage` and routes it to the `RouterAgent`.
 2. **Triage:** `RouterAgent` classifies the intent and delegates to `Quick` or `Smart` agents.
 3. **Specialization (Smart path):** `SmartResponseAgent` builds an `LLMRequest` with tools and passes it to `DelegationEngine.execute()`. The engine runs the multi-turn loop: LLM call → tool dispatch via `AgentCoordinator` → history update → repeat. Smart uses `terminal_tool="deliver_response"` to extract structured output. Post-processing converts `DelegationResult` into `SmartResponse`.
-4. **Specialization (Quick path):** Same `DelegationEngine.execute()` — builds `LLMRequest` with `intent_remap={"search_web": "search_web_light"}`. Engine handles loop, dispatch, parallel execution. Quick post-processes `DelegationResult.text` via `parse_llm_response`. See [Quick Agent Delegation](../quick_agent_delegation/README.md).
+4. **Specialization (Quick path):** Same `DelegationEngine.execute()` — builds `LLMRequest` with `intent_remap={"search_web": "search_web_light"}`. Engine handles loop, dispatch, parallel execution. Quick post-processes `DelegationResult.text` via `parse_llm_response`. See [Hybrid Router](../hybrid_router/README.md).
 5. **Specialization (Bound channel path):** `ConversationHandler` calls `coordinator.handle_delegation()` directly with the binding's intent. Bound agents (e.g. `DomainResearcherAgent`) use `DelegationEngine` for tool calling when `allowed_intents` is configured on their descriptor.
 6. **Aggregation:** Results are synthesized and returned to the user.
 
@@ -540,7 +540,7 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 - `src/utils/debug_logger.py`: `PromptDebugLogger` — centralized debug prompt/response/output logging (GCS or local). Used exclusively via `BaseAgent._debug_prompt` / `_debug_response`.
 - `src/handlers/conversation_handler.py`: Fire-and-forget summary task + delegates graceful degradation to `AgentFallbackService`.
 - `src/services/agent_fallback_service.py`: `AgentFallbackService` — three-level fallback chain (QuickAgent → synthetic apology). Guarantees `AgentStatus.SUCCESS` to caller.
-- Building Block: [Quick Agent Delegation](../quick_agent_delegation/README.md)
+- Building Block: [Hybrid Router](../hybrid_router/README.md)
 
 ---
 

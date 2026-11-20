@@ -19,7 +19,7 @@ Quick calls `get_available_intents_for(descriptor)` filtered by its `allowed_int
 applies `intent_remap` at dispatch time (`search_web` → `search_web_light`). `web_search_light_agent`
 is registered with `internal=True` — invisible to LLMs but reachable via remap. Both trees share
 `FactsMemoryAgent`. See [Section 5.3](#53-quick-delegation-path-protocol_quick_agent_selection) and
-[Quick Agent Delegation](../quick_agent_delegation/README.md).
+[Hybrid Router](../hybrid_router/README.md).
 
 ---
 
@@ -610,7 +610,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 - Firestore profile: `universal_agent_v1_SYSTEM_memorysearch` (collection: `development_domain_prompt_profiles_v3`)
 - Firestore blueprint: `compute_agent_v1` (collection: `domain_prompt_blueprints_v3`)
 - Firestore profile: `compute` (collection: `domain_prompt_profiles_v3`) — document ID = `agent_type`
-- Building Block: [Quick Agent Delegation](../quick_agent_delegation/README.md)
+- Building Block: [Hybrid Router](../hybrid_router/README.md)
 
 ---
 
