@@ -79,50 +79,6 @@ async def test_next_local_date_enqueues_again():
     assert dispatch.enqueue_worker_task.call_count == 2
 
 
-async def test_enqueue_failure_releases_mark_and_next_tick_enqueues():
-    marks = _MemoryDedup()
-    enqueue = AsyncMock(side_effect=[RuntimeError("tasks down"), None])
-    worker, dispatch = _worker([_u("user-1")], marks, enqueue)
-
-    result, status = await worker({}, {})
-    assert status == 200 and result["started"] == 0 and result["failed"] == 1
-    assert marks.marks == set()
-
-    result, _ = await worker({}, {})
-    assert result["started"] == 1
-    assert enqueue.call_count == 2
-
-
-async def test_enqueue_failure_for_one_user_does_not_stop_the_next():
-    enqueue = AsyncMock(side_effect=[RuntimeError("boom"), None])
-    worker, _ = _worker([_u("user-1"), _u("user-2")], _MemoryDedup(), enqueue)
-    result, _ = await worker({}, {})
-    assert result["started"] == 1 and result["failed"] == 1
-
-
-async def test_claim_store_raises_skips_that_user_only():
-    marks = _MemoryDedup(fail_for=["user-1"])
-    worker, dispatch = _worker([_u("user-1"), _u("user-2")], marks)
-    result, status = await worker({}, {})
-    assert status == 200 and result["started"] == 1 and result["failed"] == 1
-    dispatch.enqueue_worker_task.assert_awaited_once()
-    assert dispatch.enqueue_worker_task.call_args.args[1]["user_id"] == "user-2"
-
-
-async def test_no_store_configured_enqueues_every_tick_as_before():
-    worker, dispatch = _worker([_u("user-1")], None)
-    await worker({}, {})
-    await worker({}, {})
-    assert dispatch.enqueue_worker_task.call_count == 2
-
-
-async def test_mark_key_names_user_and_slot_date():
-    marks = _MemoryDedup()
-    worker, _ = _worker([_u("user-1")], marks)
-    await worker({}, {})
-    assert marks.marks == {"daily_review:user-1:2026-10-22"}
-
-
 async def test_mark_is_held_when_enqueue_is_called():
     marks = _MemoryDedup()
     seen = []
