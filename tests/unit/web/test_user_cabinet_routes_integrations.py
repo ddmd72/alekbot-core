@@ -28,8 +28,8 @@ class _TaskSetup:
 
 class _Lists:
     async def list_task_lists(self, user_id):
-        from types import SimpleNamespace
-        return [SimpleNamespace(id=f"list-of-{user_id}", name="Groceries")]
+        from src.domain.task import TaskList
+        return [TaskList(list_id=f"list-of-{user_id}", name="Groceries")]
 
 
 async def _seed_mails(w: CabinetWorld) -> None:
@@ -102,3 +102,20 @@ class TestMicrosoftTasks:
         assert (await w.client.delete("/api/tasks/microsoft/disconnect", headers=h)).status_code == 501
         assert (await w.client.get("/api/tasks/microsoft/lists", headers=h)).status_code == 501
         assert await (await w.client.get("/api/tasks/microsoft/status", headers=h)).get_json() == {"connected": False}
+
+
+class _RealShapedLists:
+    """Answers with the domain `TaskList` items the real provider returns (`list_id`, no `id`)."""
+
+    async def list_task_lists(self, user_id):
+        from src.domain.task import TaskList
+        return [TaskList(list_id="list-1", name="Inbox list"), TaskList(list_id="list-2", name="Backlog", is_shared=True)]
+
+
+class TestMicrosoftTaskListsPayload:
+    async def test_domain_task_lists_are_served_as_id_and_name(self):
+        w = CabinetWorld(tasks_provider=_RealShapedLists())
+        resp = await w.client.get("/api/tasks/microsoft/lists", headers=w.token(ALEX))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"lists": [{"id": "list-1", "name": "Inbox list"},
+                                                   {"id": "list-2", "name": "Backlog"}]}

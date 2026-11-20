@@ -2112,7 +2112,7 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": "MS Tasks integration not configured"}), 501
         try:
             lists = await tasks_provider.list_task_lists(g.user_id)
-            return jsonify({"lists": [{"id": tl.id, "name": tl.name} for tl in lists]}), 200
+            return jsonify({"lists": [{"id": tl.list_id, "name": tl.name} for tl in lists]}), 200
         except Exception as exc:
             logger.error(f"Error fetching MS task lists: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
