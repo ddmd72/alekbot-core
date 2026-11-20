@@ -1,870 +1,171 @@
-# Document Generation (Building Block)
-
-## 1. Overview
-
-Document generation converts a natural language request ("Write a sales proposal for Acme Corp")
-into a professionally formatted `.docx` file delivered directly in Slack.
-
-**Why two agents:**
-
-| Concern | Agent | Layer |
-|---------|-------|-------|
-| Understanding document structure, selecting sections, deciding layout | `DocPlannerAgent` | LLM reasoning (PERFORMANCE tier) |
-| Writing executable Node.js + `docx` npm script, retrying on errors | `DocGeneratorAgent` | LLM code generation (PERFORMANCE tier) |
-
-Separation keeps each LLM call focused. The planner reasons about *what* the document should
-contain; the generator reasons about *how* to produce it as binary output. Neither knows about
-Slack — delivery is handled by `AgentWorkerHandler`.
-
-**Execution mode:** Both agents run as independent `ASYNC` Cloud Tasks. The orchestrator receives
-an immediate ACK; the planner runs in the background and enqueues the generator as a second Cloud
-Task (fire and forget); the DOCX file is uploaded to the user's channel when the generator
-completes.
-
----
-
-## 2. Architecture
-
-```
-User → Smart/Quick → coordinator.handle_delegation(CREATE_DOCUMENT, ASYNC)
-                              │
-                              └─ Cloud Task #1 enqueued (DocPlannerAgent)
-                                        │
-                              [background: /worker endpoint]
-                                        │
-                              AgentWorkerHandler.handle_task()
-                                        │
-                              DocPlannerAgent.execute()
-                                  │
-                                  ├─ LLM: natural language → JSON layout spec (single call)
-                                  │
-                                  └─ coordinator.handle_delegation(GENERATE_DOCX_CODE, ASYNC)
-                                              │
-                                              └─ Cloud Task #2 enqueued (DocGeneratorAgent)
-                                                        │
-                                              [background: /worker endpoint]
-                                                        │
-                                              AgentWorkerHandler.handle_task()
-                                                        │
-                                              DocGeneratorAgent.execute()
-                                                        │
-                                                        ├─ LLM: spec → Node.js script (tool-calling loop)
-                                                        │
-                                                        └─ DocxRunnerPort.run(js_code, raw_spec)
-                                                              │
-                                                        SandboxDocxRunner (render sandbox, HTTP)
-                                                              │
-                                                        DOCX bytes → DeliveryItem("file_upload")
-                                                              │
-                                              AgentWorkerHandler._deliver_docx_result()
-                                                        │
-                                              UserNotificationService.notify_file_bytes()
-                                                        │
-                                              SlackMediaAdapter.upload_file(channel_id=D...)
-```
-
-**Hexagonal boundaries:**
-
-- `DocxRunnerPort` — system boundary between application and OS subprocess (or future Cloud Function).
-- `PlatformMediaPort` — system boundary between notification service and Slack file API.
-- `NotificationStatePort` — reads stored channel info; no platform coupling.
-
----
-
-## 3. DocPlannerAgent
-
-**File:** `src/agents/doc_planner_agent.py`
-**Intent:** `Intent.CREATE_DOCUMENT`
-**ExecutionMode:** `ASYNC` (always runs as Cloud Task)
-**Tier:** PERFORMANCE (Claude default, resolved by `AgentContextBuilder`)
-
-### 3.1 can_handle
-
-```python
-message.intent in (AgentIntent.QUERY, AgentIntent.DELEGATE)
-and bool(message.payload.get("query", ""))
-```
-
-Accepts both `QUERY` (coordinator's `_execute_sync` path, tests) and `DELEGATE`
-(`AgentWorkerHandler` Cloud Task path). This is the only ASYNC specialist that requires `DELEGATE`
-in its `can_handle` — all SYNC specialists only check `QUERY`.
-
-### 3.2 Execution — Phase 1: Planning
-
-Single LLM call with `response_mime_type="application/json"` and `_RESPONSE_SCHEMA` (enforces
-`{status, task_summary, doc_spec}` envelope at Gemini level; silently ignored by Claude).
-The system prompt is assembled via `PromptBuilder` profile `"doc_planner"`.
-
-**Flow:**
-
-1. LLM call → raw JSON text captured from `response.text`.
-2. Raw text forwarded as-is to `DocGeneratorAgent` via `coordinator.handle_delegation(
-   GENERATE_DOCX_CODE, raw, context)` — no parsing, no status check.
-3. Generator enqueued as a separate ASYNC Cloud Task (fire and forget).
-4. Planner returns `AgentResponse.success` immediately — does not wait for generation.
-
-The planner never parses its own LLM output. If the LLM wraps JSON in a markdown fence, the
-generator's LLM will handle it. This keeps the planner stateless and eliminates a full retry
-cycle just for formatting.
-
-### 3.3 JSON Layout Spec Schema
-
-```json
-{
-  "status": "ready",
-  "task_summary": "Short human-readable description of what will be created",
-  "doc_spec": {
-    "document_type": "report",
-    "title": "Sales Report Q1 2026",
-    ...
-  }
-}
-```
-
-`doc_spec` is an open object — structure is defined by the `doc_planner` Firestore prompt.
-`DocGeneratorAgent` receives the full spec as a raw JSON string (may include markdown wrapper).
-
-### 3.4 Failure Hooks
-
-All failure paths call `_on_agent_error(exc, context_tag)` before returning:
-
-| Path | Tag |
-|------|-----|
-| Empty query | `"empty_query"` |
-| PromptBuilder failure | `"prompt_builder"` |
-
----
-
-## 4. DocGeneratorAgent
-
-**File:** `src/agents/doc_generator_agent.py`
-**Intent:** `Intent.GENERATE_DOCX_CODE`
-**ExecutionMode:** `ASYNC` (runs as an independent Cloud Task dispatched by DocPlannerAgent)
-**Registration:** `internal=True` — never shown to LLM tool selection
-**Tier:** PERFORMANCE (Claude default)
-
-`payload["query"]` is the raw LLM text output from DocPlannerAgent (JSON string). It is prepended
-to the system prompt as a `document_spec { ... }` block (context before rules), and piped to the
-Node.js script's stdin at execution time. The LLM user message is a fixed `"Generate."` string.
-
-### 4.0 can_handle
-
-```python
-message.intent in (AgentIntent.QUERY, AgentIntent.DELEGATE)
-and bool(message.payload.get("query"))
-```
-
-Accepts both `QUERY` (coordinator's direct call, tests) and `DELEGATE`
-(`AgentWorkerHandler` Cloud Task path). Same pattern as `DocPlannerAgent`.
-
-### 4.1 Execution — Phase 2: Code Generation
-
-Tool-calling loop (max `MAX_TURNS = 5`) with a single tool `generate_docx`:
-
-```
-Turn 1..N:
-  LLM call (system prompt via PromptBuilder "doc_generator")
-    │
-    ├─ tool_calls = [ToolCall(name="generate_docx", args={"js_code": "..."})]
-    │      │
-    │      └─ DocxRunnerPort.run(js_code, raw_query, timeout)
-    │              ├─ SUCCESS → capture bytes, send {status:"success", bytes_size:N} back to LLM
-    │              └─ DocxRunnerError → send {status:"error", stderr:"..."} back to LLM → LLM retries
-    │
-    └─ no tool_calls (LLM text only)
-           ├─ bytes already captured → break loop, return success
-           └─ no bytes → DocGeneratorError → failure
-```
-
-**Node.js contract:** The LLM-written script must read the JSON spec from `process.stdin` and
-write raw DOCX bytes to `process.stdout`. Any output to `stderr` is non-fatal and logged as debug.
-
-### 4.2 Result
-
-On success, `DocGeneratorAgent` returns:
-
-```python
-AgentResponse.success(
-    result="docx_generated",
-    delivery_items=[
-        DeliveryItem(
-            type="file_upload",
-            data={
-                "file_bytes_b64": "<base64-encoded DOCX>",
-                "filename": "report-2026-03-12.docx",
-                "title": "Sales Report Q1",
-            },
-        )
-    ],
-)
-```
-
-Filename is generated by `_make_filename(doc_spec)`:
-`{document_type_lowercase}-{YYYY-MM-DD}.docx`.
-`doc_spec` is extracted via best-effort `json.loads(raw_query)` — falls back to
-`"document-{date}.docx"` if parsing fails (e.g., markdown wrapper present).
-
-### 4.3 Failure Hooks
-
-| Path | Hook called |
-|------|-------------|
-| Empty query | `_on_agent_error(ValueError, "empty_query")` |
-| PromptBuilder failure | `_on_agent_error(exc, "prompt_builder")` |
-| LLM no tool call | `_on_agent_error(DocGeneratorError, "docx_generation")` |
-| MAX_TURNS exhausted | `_on_agent_error(RuntimeError, "docx_generation")` |
-
----
-
-## 5. DocxRunnerPort — System Boundary
-
-**File:** `src/ports/docx_runner_port.py`
-
-```python
-class DocxRunnerError(Exception): ...
-
-class DocxRunnerPort(ABC):
-    async def run(self, js_code: str, spec_json: str, timeout: int) -> bytes: ...
-```
-
-**Why a port:** Subprocess execution is a system boundary per the hexagonal rule:
-"Port is justified when: 2+ implementations, testable substitution, system boundary."
-The isolation path is built: the only implementation is `SandboxDocxRunner`, which sends the code to the render sandbox service (§5.1).
-
-### 5.1 SandboxDocxRunner
-
-The main service renders DOCX only through the render sandbox (`SandboxDocxRunner`, `src/adapters/sandbox_client/`, URL from `SANDBOX_RENDER_URL`; an empty URL degrades the feature). The sandbox engine's observable contract is described below.
-
-Writes `js_code` to a temp `.js` file inside `docx_generator/` (project root), launches
-`node <tmp_file>` via `asyncio.create_subprocess_exec`, pipes `spec_json` to stdin, captures
-stdout as raw DOCX bytes.
-
-**Why `docx_generator/` directory:**
-The `docx` npm library must be resolvable via `node_modules/`. Writing the temp file inside
-`docx_generator/` ensures Node.js resolves the package correctly without global install.
-
-**Error cases:**
-- Non-zero exit code → `DocxRunnerError("exit code N\n<stderr>")`
-- Timeout → kills process → `DocxRunnerError("timed out after Ns")`
-- Empty stdout → `DocxRunnerError("stdout is empty")`
-
-**Temp file cleanup:** `finally: os.unlink(tmp.name)` — guaranteed regardless of success or failure.
-
-**Configuration:** `DOC_GENERATOR.node_timeout_s` from `agent_config.py` (default: 60s).
-
-### 5.2 Implementations
-
-| Implementation | When to use |
-|---|---|
-| `SandboxDocxRunner` | The render sandbox over HTTP. Current and only implementation. |
-
-`CloudFunctionDocxRunner` and `CloudRunJobDocxRunner` were once listed as the future isolation path; the render sandbox service replaced them and neither exists.
-
-All implementations raise `DocxRunnerError` on failure. `DocGeneratorAgent` catches only
-`DocxRunnerError` — platform-specific exceptions stay inside the adapter.
-
----
-
-## 6. Async Delivery Flow
-
-### 6.1 Cloud Task Dispatch — Planner
-
-When Smart or Quick delegates `CREATE_DOCUMENT`, `AgentCoordinator.handle_delegation()` sees
-`ExecutionMode.ASYNC` in `DOC_PLANNER` descriptor and calls `_execute_async()`, which enqueues
-Cloud Task #1 with `dispatch_deadline_s=720`:
-
-```json
-{
-  "task_type": "agent_execution",
-  "agent_id": "doc_planner_agent",
-  "intent": "create_document",
-  "query": "<original natural-language request>",
-  "context": {"user_id": "...", "account_id": "...", "session_id": "..."}
-}
-```
-
-The orchestrator returns an immediate ACK: `"Your document is being created. I'll send it when
-it's ready."`.
-
-### 6.2 Cloud Task Dispatch — Generator
-
-Inside its Cloud Task, `DocPlannerAgent` calls `coordinator.handle_delegation(GENERATE_DOCX_CODE, raw)`.
-Coordinator sees `ExecutionMode.ASYNC` in `DOC_GENERATOR` descriptor and enqueues Cloud Task #2
-with `dispatch_deadline_s=720`. The planner returns immediately after enqueuing.
-
-### 6.3 Worker Execution
-
-`AgentWorkerHandler.handle_task()` at `/worker` endpoint handles both Cloud Tasks:
-
-**Planner task:**
-1. Reconstructs `AgentMessage` with `intent=AgentIntent.DELEGATE`.
-2. Routes to `doc_planner_agent_{user_id}` via coordinator (explicit routing).
-3. On `SUCCESS` → no delivery (planner returns no delivery_items).
-4. On `FAILED/CANNOT_HANDLE` → `_notify_docx_failure(context, error)` → QuickAgent informs user.
-
-**Generator task:**
-1. Same flow; routes to `doc_generator_agent_{user_id}`.
-2. On `SUCCESS` → calls `_deliver_docx_result(response, context)`.
-3. On `FAILED/CANNOT_HANDLE` → `_notify_docx_failure(context, error)`.
-
-Both `Intent.CREATE_DOCUMENT` and `Intent.GENERATE_DOCX_CODE` are routed to the same delivery
-and failure handlers in `AgentWorkerHandler`.
-
-### 6.4 DOCX File Delivery
-
-`AgentWorkerHandler._deliver_docx_result()`:
-1. Iterates `response.delivery_items` filtered by `type == "file_upload"`.
-2. Decodes `file_bytes_b64` → raw bytes.
-3. Calls `notification_service.notify_file_bytes(user_id, account_id, bytes, filename, title)`.
-
-`UserNotificationService.notify_file_bytes()`:
-1. Loads `channel_info` from `NotificationStatePort` — may be a Slack user ID (`U...`).
-2. Creates `response_channel` via `NotificationChannelFactoryPort`.
-3. **Channel ID resolution:** Sends `"📎"` placeholder via `response_channel.send_message()`.
-   `SlackResponseChannel.send_message()` normalises `channel_id` from `U...` to `D...` (the real
-   DM channel ID) by reading `response["channel"]` from the Slack API response and updating
-   `self.channel_id`. This is the same established pattern used for `chat.update` in DMs.
-4. Reads resolved `response_channel.channel_id` → passes it to `platform_media.upload_file()`.
-
-**Why channel ID resolution is here (not in SlackMediaAdapter):**
-
-`ConversationHandler` intentionally saves the Slack user ID (`U...`) instead of the DM channel
-ID (`D...`) for DMs — this makes text notifications resilient to stale DM channels after bot
-reinstall. `chat.postMessage` accepts user IDs; `files.completeUploadExternal` does not. The fix
-lives in `notify_file_bytes()` because this is where the platform-agnostic service bridges to
-the platform-specific file upload API, using an already-established platform pattern
-(`send_message` → normalise → resolved channel).
-
----
-
-## 7. Prompt Work
-
-Both agents use Firestore prompt profiles. Blueprint and tokens must be uploaded before the agent
-can produce structured output on Claude.
-
-| Agent | `agent_type` | Blueprint | Profile doc ID |
-|-------|-------------|-----------|----------------|
-| DocPlannerAgent | `"doc_planner"` | `doc_planner_agent_v1` | `doc_planner` |
-| DocGeneratorAgent | `"doc_generator"` | `doc_generator_agent_v1` | `doc_generator` |
-
-**Required token classes in blueprints:**
-- `cognitive_process` — identity, spec format rules, anti-patterns
-- `output_format` — JSON envelope contract (critical for Claude; Gemini uses `response_schema` as backup)
-
-Upload commands (human only, dev first):
-```bash
-python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_DOC_PLANNER --format json
-python firestore_utils/upload.py development_domain_prompt_blueprints_v3 doc_planner_agent_v1 --format json
-python firestore_utils/upload.py development_domain_prompt_profiles_v3 doc_planner --format json
-# repeat for doc_generator
-```
-
----
-
-## 8. Agent Configuration
-
-Both agents read from `src/infrastructure/agent_config.py`:
-
-| Parameter | DocPlannerAgent | DocGeneratorAgent |
-|-----------|-----------------|-------------------|
-| `temperature` | `1.0` (required when thinking is enabled) | `0.5` (balanced: code precision + rendering reasoning) |
-| `max_tokens` | `16_000` | `16_000` |
-| `timeout_ms` | `600_000` (10 min) | `600_000` (10 min) |
-| `thinking_effort` | `"medium"` | `"medium"` |
-| `node_timeout_s` | — | `60` |
-| `dispatch_deadline_s` | `720` (600s + 2 min overhead) | `720` |
-
-Temperature 1.0 on the planner is a hard Claude constraint when `thinking` is enabled.
-Temperature 0.5 on the generator balances deterministic code output with the reasoning needed
-for the pre-submission rendering simulation step.
-
----
-
-## 9. Error Handling Summary
-
-| Layer | Error | User experience |
-|-------|-------|-----------------|
-| `DocPlannerAgent`: PromptBuilder failure | Cannot assemble system prompt | `_notify_docx_failure()` → QuickAgent informs user |
-| `DocGeneratorAgent`: Node.js always fails | Script has bugs LLM cannot fix in 5 turns | Same |
-| `DocGeneratorAgent`: `DocxRunnerError` (timeout) | `node` binary absent or process hung | Same |
-| `notify_file_bytes`: `send_message` fails | Slack API error before file upload | Error logged, silent failure (file not delivered) |
-| `upload_file` fails | Slack file API error | Error logged, silent failure |
-
-**Circuit breaker:** Both agents inherit `CircuitBreaker` from `BaseAgent`. 3 consecutive
-failures open the circuit for 5 minutes — Cloud Tasks will retry the job (exponential backoff),
-by which time the circuit may have recovered.
-
----
-
-## 10. PDF Generation Pipeline
-
-The PDF pipeline uses a **single-ASYNC-task** pattern: one Cloud Task, one LLM call. Unlike the
-DOCX pipeline (two-phase planner → generator), PDF generation is handled by a single
-`PdfGeneratorAgent` that accepts a natural-language request, writes a complete HTML+CSS document
-in one shot, and renders it to PDF via Puppeteer. Both HTML and PDF are stored to GCS via
-`DocumentDeliveryService` before delivery.
-
-### 10.1 Architecture
-
-```
-User → Smart/Quick → coordinator.handle_delegation(CREATE_PDF, ASYNC)
-                              │
-                              └─ Cloud Task enqueued (PdfGeneratorAgent)
-                                        │
-                              [background: /worker endpoint]
-                                        │
-                              AgentWorkerHandler.handle_task()
-                                        │
-                              PdfGeneratorAgent.execute()
-                                  │
-                                  ├─ PromptBuilder → system prompt (agent_type="pdf_generator")
-                                  │
-                                  ├─ Single LLM call: natural language → complete HTML+CSS
-                                  │   (auto-selects design language from embedded style catalogue)
-                                  │
-                                  ├─ _strip_markdown_fences(html)
-                                  │
-                                  ├─ PuppeteerRunnerPort.run(html)
-                                  │        │
-                                  │   SandboxPuppeteerRunner (render sandbox, HTTP)
-                                  │        │
-                                  │   PDF bytes
-                                  │
-                                  ├─ _extract_filename_from_html(html) → (slug, display_name)
-                                  │   (reads <title> tag; falls back to "document")
-                                  │
-                                  └─ DeliveryItem("document") × 2
-                                              │
-                                  AgentWorkerHandler._deliver_item()
-                                              │
-                                  DocumentDeliveryService.store() → GCS: docs/{uuid}-{filename}
-                                              │
-                                  UserNotificationService.notify_document_link()  [HTML + PDF links]
-                                  UserNotificationService.notify_file_bytes()     [PDF upload only]
-```
-
-**Hexagonal boundaries:**
-
-- `PuppeteerRunnerPort` — system boundary between application and Node.js Puppeteer subprocess.
-- `MediaStoragePort` — system boundary between `DocumentDeliveryService` and GCS.
-- `PlatformMediaPort` — system boundary between notification service and Slack file API.
-
-### 10.2 PdfGeneratorAgent
-
-**File:** `src/agents/pdf_generator_agent.py`
-**Intent:** `Intent.CREATE_PDF`
-**ExecutionMode:** `ASYNC` (always runs as Cloud Task)
-**Registration:** `internal=False` — exposed to LLM tool selection (Quick, Smart)
-**Tier:** BALANCED (Gemini, `agent_type="pdf_generator"`)
-
-Single LLM call → complete HTML+CSS document as raw text response. The system prompt embeds a
-design language catalogue (12 styles: Apple Keynote, Economist, Gov.uk, McKinsey/BCG, Stripe,
-Tufte, etc.) and instructs the LLM to auto-select the most appropriate style based on content
-type. The model writes a fully self-contained HTML+CSS page optimised for Puppeteer rendering
-(screen PDF, not print): rich color, generous whitespace, `@page` CSS, `break-inside: avoid` on
-sections, mobile `@media` block for HTML readability.
-
-**Output processing:**
-1. `_strip_markdown_fences(html)` — removes accidental ` ```html ``` ` wrapping.
-2. `PuppeteerRunnerPort.run(html_code)` → PDF bytes. Failure → `AgentResponse.failure`.
-3. `_extract_filename_from_html(html)` — extracts `<title>` text: display name + sanitized slug.
-   Fallback to `("document", "Document")` when `<title>` absent or empty.
-
-**Delivery items returned on success:**
-
-1. HTML source — `content_type="text/html"`, `file_upload=False` → stored to GCS only.
-2. PDF binary — `content_type="application/pdf"`, `file_upload=True` → stored to GCS + uploaded to Slack.
-
-**Known CSS rendering constraints:**
-- CSS Paged Media margin boxes (`@top-left`, `@bottom-center`, etc.) are silently ignored by headless Chromium. Headers and footers must use CSS `position: fixed` elements or `@page` rules for page numbers only.
-- `break-inside: avoid` is mandatory on sections, tables, and callouts to prevent bad page breaks.
-- `NEVER use break-before: page` — causes blank pages in headless Chromium.
-
-**Prompt:** PromptBuilder profile `pdf_generator`, blueprint `pdf_generator_agent_v1`.
-Tokens: `PDF_GENERATOR_COGNITIVE_PROCESS`, `OUTPUT_FORMAT_PDF_GENERATOR`.
-
-**Agent configuration** (from `agent_config.py`):
-
-| Parameter | Value |
-|-----------|-------|
-| `temperature` | `0.5` |
-| `max_tokens` | `64_000` (full HTML+CSS can be large) |
-| `timeout_ms` | `600_000` (10 min) |
-| `node_timeout_s` | `60` |
-
-### 10.3 PuppeteerRunnerPort — System Boundary
-
-**File:** `src/ports/puppeteer_runner_port.py`
-
-```python
-class PuppeteerRunnerError(Exception): ...
-
-class PuppeteerRunnerPort(ABC):
-    async def run(self, html: str, timeout: int) -> bytes: ...
-```
-
-**Why a port:** Subprocess execution is a system boundary. The interface is also testable in
-isolation — `PdfGeneratorAgent` receives a mock port in unit tests without spawning Node.js.
-
-**SandboxPuppeteerRunner** (`src/adapters/sandbox_client/`): sends `html` to the render sandbox's `render.pdf` op and returns the PDF bytes. A failure, timeout or empty output raises `PuppeteerRunnerError`.
-
-**Why `pdf_generator/` is separate from `docx_generator/`:** Each is an independent Node.js
-project with its own `node_modules/`. `docx_generator/` has the `docx` npm library;
-`pdf_generator/` has `puppeteer ^24.x`, which downloads its own bundled Chromium (~170 MB)
-during `npm install`. Mixing them would couple two unrelated dependency trees.
-
-**`pdf_generator/runner.js` contract:** Reads HTML from stdin, renders via Puppeteer headless
-Chrome with `printBackground: true` and the page size/margins from the JSON spec, writes raw
-PDF bytes to stdout, exits 0. No intermediate files — stdin → stdout pipeline.
-
-### 10.4 DocumentDeliveryService
-
-**File:** `src/services/document_delivery_service.py`
-
-Stores document bytes to the **private** bucket via `MediaStoragePort`, then mints a capability
-link via `FileLinkService`. Key format: `{prefix}/{user_id}/{uuid4()}-{filename}` where prefix
-comes from `storage_class` (`docs` default, `email_review` for daily review). Returns
-`DeliveredDocument(link, key)` — `link` is `/f/<token>` for the channel, `key` goes to history for
-agent re-read (file_storage [§2.4](../file_storage/README.md)). Used by `PdfGeneratorAgent` to
-persist both HTML and PDF before the delivery notification is sent.
-
-This service is separate from `RichContentService` — it handles document storage only, with no
-rendering or platform-specific upload logic.
-
-### 10.5 Comparison: DOCX vs PDF Pipeline
-
-| Concern | DOCX pipeline | PDF pipeline |
-|---------|--------------|-------------|
-| Phases | Two tasks (planner → generator) | Single task (one LLM call) |
-| LLM output | Node.js script (docx npm API calls) | Complete HTML+CSS document |
-| Renderer | Node.js process runs `docx` library | Puppeteer (headless Chromium) |
-| Node.js project | `docx_generator/` (`docx` npm) | `pdf_generator/` (`puppeteer` npm) |
-| Port | `DocxRunnerPort` | `PuppeteerRunnerPort` |
-| Adapter | `SandboxDocxRunner` | `SandboxPuppeteerRunner` |
-| GCS storage | Not used (bytes returned inline) | `DocumentDeliveryService` (both HTML + PDF) |
-| DeliveryItem type | `"file_upload"` | `"document"` (two items: HTML + PDF) |
-| Filename source | JSON spec `filename` field | `<title>` tag extracted from HTML |
-| Tier | PERFORMANCE | PERFORMANCE |
-| Orchestrator visibility | `create_document` exposed to LLMs | `create_pdf` exposed to LLMs |
-
----
-
-## 11. HTML Page Pipeline
-
-### 11.1 Architecture Overview
-
-```
-User Request (natural language page description)
-     │
-     ▼
-HtmlPageGeneratorAgent  [ASYNC Cloud Task, PERFORMANCE tier, Gemini]
-     │  1. build_for_agent(account_id, "html_page", user_id)  → system_prompt
-     │  2. Single LLM call  →  HTML+CSS+JS raw text response
-     │     (LLM writes source.unsplash.com/WxH/?keywords placeholder URLs natively)
-     │  3. _strip_markdown_fences(html)
-     │  4. _resolve_unsplash_placeholders(html, image_search)  [if image_search present]
-     │        ├─ Find all source.unsplash.com/... URLs (regex)
-     │        ├─ Parse keywords + dimensions from each URL
-     │        ├─ asyncio.gather → UnsplashAdapter.search(keywords, count=1) per URL
-     │        ├─ Replace placeholders: raw_url?w=W&h=H&fit=crop&auto=format&q=80
-     │        └─ Inject attribution <div> before </body>
-     │  5. _extract_filename_from_html(html)  →  (base_filename, display_name)
-     │
-     ▼
-DeliveryItem("document")
-     content_b64: HTML bytes
-     content_type: text/html; charset=utf-8
-     file_upload: False
-     │
-     ▼
-AgentWorkerHandler._deliver_document_result()
-     │
-     ▼
-DocumentDeliveryService  →  PRIVATE GCS object (key: docs/{user_id}/{uuid}-{filename}.html)
-     │                       returns DeliveredDocument(link=/f/<token>, key)
-     ▼
-UserNotificationService  →  Slack link message (capability link; key saved to history)
-```
-
-### 11.2 HtmlPageGeneratorAgent
-
-**File:** `src/agents/html_page_generator_agent.py`
-**Intent:** `Intent.CREATE_HTML_PAGE`
-**ExecutionMode:** `ASYNC` (always runs as Cloud Task)
-**Registration:** `internal=False` — exposed to LLM tool selection (Quick, Smart)
-**Tier:** PERFORMANCE (Gemini, `agent_type="html_page"`)
-
-Single LLM call → complete HTML+CSS+JS document as raw text response. No Node.js subprocess —
-HTML is the final artifact. The system prompt (assembled via PromptBuilder, profile `html_page`,
-blueprint `html_page_agent_v1`) instructs the LLM to produce a production-grade, mobile-responsive
-single-page layout targeting the visual quality of Stripe, Apple, Linear, or Vercel pages, with
-self-contained CSS and vanilla JS.
-
-**Constructor dependencies:**
-
-| Parameter | Type | Required | Source |
-|-----------|------|----------|--------|
-| `config` | `AgentConfig` | Yes | `agent_config.py` |
-| `execution_context` | `AgentExecutionContext` | Yes | `AgentContextBuilder` |
-| `prompt_builder` | `PromptBuilderPort` | Yes | `ServiceContainer` |
-| `user_id` | `Optional[str]` | No | caller context |
-| `image_search` | `Optional[ImageSearchPort]` | No | `UserAgentFactory` (reads `UNSPLASH_ACCESS_KEY` env var; omitted if key absent) |
-
-**Output processing:**
-1. `_strip_markdown_fences(html)` — removes accidental ` ```html ``` ` wrapping.
-2. Validate non-empty HTML → `AgentResponse.failure` if empty.
-3. `_resolve_unsplash_placeholders(html, image_search)` — if `image_search` is provided, replaces
-   `source.unsplash.com` placeholder URLs with real Unsplash API photos. Graceful degradation:
-   any per-URL fetch failure leaves the placeholder unchanged. Photographer credits injected before
-   `</body>`. No-op when `image_search` is `None`.
-4. `_extract_filename_from_html(html)` — extracts `<title>` text: display name + sanitized slug.
-   Fallback to `("page", "Page")` when `<title>` absent or empty.
-
-**Delivery item returned on success:**
-
-1. HTML source — `content_type="text/html; charset=utf-8"`, `file_upload=False` → stored to the
-   **private** GCS bucket; a capability link (`/f/<token>`) is sent in Slack. No binary render
-   step, no Slack file upload. See file_storage [§2.4](../file_storage/README.md).
-
-**Prompt:** PromptBuilder profile `html_page`, blueprint `html_page_agent_v1`.
-Token: `COGNITIVE_PROCESS_HTML_PAGE` (category: `cognitive_process`, `non_overridable=true`).
-
-Design constraints enforced by prompt (`COGNITIVE_PROCESS_HTML_PAGE`):
-- All CSS in a single `<style>` block; all JS in a single `<script>` block before `</body>`.
-- No external resources except one Google Fonts `<link>` in `<head>` and Unsplash images
-  (`source.unsplash.com`) in `<img src>` and CSS `background-image`. Additional CDN libraries
-  allowed only when genuinely required: Chart.js (data charts), Leaflet (maps), Alpine.js (UI state).
-- Open Graph tags (`og:title`, `og:description`, `og:type`) required in `<head>` for Slack unfurl
-  previews. `og:image` explicitly excluded — Unsplash URLs are replaced post-generation and are
-  not known at prompt time.
-- Mobile-first: base styles target mobile, desktop in `@media (min-width: 768px)`. `width: 100vw`
-  prohibited — causes iOS viewport overflow; `width: 100%` required instead.
-- `IntersectionObserver` scroll-reveal animations + `@media (prefers-reduced-motion)` fallback.
-- Page type routing: landing page, portfolio, dashboard preview, documentation, product showcase —
-  each with a prescribed section set.
-
-**Prompt philosophy (as of 2026-03-16):** Prescriptive design rules (typography scale,
-color system variable names, layout pixel values, visual richness details) were intentionally
-removed. The LLM produces higher-quality, more contextually appropriate designs with freedom
-constrained only by technical contracts and mobile correctness. See § 11.4 for ADR.
-
-**Agent configuration** (from `agent_config.py`):
-
-| Parameter | Value |
-|-----------|-------|
-| `temperature` | `1.2` (high creativity for layout and design decisions) |
-| `max_tokens` | `64_000` (full HTML+CSS+JS document) |
-| `timeout_ms` | `600_000` (10 min) |
-| `thinking_effort` | `"medium"` |
-
-### 11.4 Architecture & Design Decisions (ADR, 2026-03-16)
-
-#### ADR-1: Prompt minimalism — remove prescriptive design rules
-
-**Decision:** Removed all aesthetic micro-constraints from `COGNITIVE_PROCESS_HTML_PAGE`:
-typography scale (specific `clamp()` values, line heights, font weight counts), color system
-variable name requirements, layout pixel values (1200px max-width, 80px section padding),
-visual richness rules (border-radius ranges, box-shadow requirements, hover transform values).
-
-**Rationale:** Prescriptive constraints caused two categories of problems:
-1. **Layout bugs:** `max-width: 65ch` applied to `p`/`ul`/`ol` but not `h2`/`h3` created
-   visual inconsistency (headings full-width, text constrained). Root cause: LLM interprets
-   element-level rules literally, not holistically.
-2. **Design regression:** Specific values constrain the LLM to one aesthetic. Removing them
-   allows the model to select typography, spacing, and color appropriate to each content type.
-
-**Retained:** Technical output contract (DOCTYPE, meta tags, single style/script block),
-quality bar (`Select_Style` — Stripe/Apple/Linear/Vercel level), mobile-first structural rules,
-animation pattern, section catalogue by page type.
-
-**Result:** Immediate quality improvement observed — dark theme, multi-font pairing,
-terminal blocks, contextual layout decisions — none of which the prescriptive prompt allowed.
-
----
-
-#### ADR-2: OG tags in prompt, not in adapter
-
-**Decision:** `og:title`, `og:description`, `og:type` added to `Output_Contract` as required
-`<head>` elements. `og:image` explicitly excluded.
-
-**Rationale:** Slack unfurl bots (not search engine crawlers) fetch pages to display previews.
-They ignore `robots` meta tags — `noindex` and OG tags are fully compatible. The LLM generates
-OG tags from content it has just written, making `og:description` semantically accurate.
-`og:image` excluded because no image source is available; its absence does not degrade Slack
-previews.
-
-**Alternative considered:** Injecting OG tags in `GcsMediaAdapter` from `<title>` — rejected
-because adapter would produce empty `og:description` and would need to parse HTML it shouldn't
-own.
-
----
-
-#### ADR-3: `noindex` injected in adapter, not in prompt
-
-**Decision:** `GcsMediaAdapter._inject_noindex()` injects `<meta name="robots" content="noindex,
-nofollow">` into `<head>` for all `text/html` uploads. Applied before `blob.upload_from_string`.
-
-**Rationale:** Guaranteed injection regardless of LLM compliance. Prompt-level instructions
-for technical meta tags are sometimes omitted. The adapter is the correct enforcement point
-for infrastructure-level concerns (storage, indexing policy) that have nothing to do with
-content generation. Covers both `DocumentDeliveryService` and `RichContentService` upload paths.
-
----
-
-#### ADR-4: GCS bucket is private — capability-token access (supersedes earlier public-ACL model)
-
-**Decision (2026-06-01):** `alek-media-dev` is **private** — `allUsers` removed entirely. Delivered
-documents are reached only through `https://<host>/f/<token>`: a verified HS256 capability token
-→ a fresh 5-min V4 signed URL (IAM signBlob) → 302. Bare `storage.googleapis.com/...` paths
-return 403.
-
-**Supersedes** the earlier step (`objectViewer` → `legacyObjectReader`, which kept objects
-publicly readable to block only enumeration). That was security-by-obscurity on public objects;
-a leaked URL still worked forever. The capability-token model removes public read entirely and
-bounds link lifetime (30d default; 5d + Cabinet-cookie-gated for `email_review/`).
-
-**Why noindex (ADR-3) still matters:** defense in depth for any link shared outside chat; harmless
-now that objects aren't publicly fetchable anyway.
-
-Full rationale + the user-vs-agent access split: file_storage [§2.4](../file_storage/README.md)
-and decision [private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md).
-
----
-
-#### ADR-5: Unsplash integration — post-processing placeholder replacement
-
-**Decision:** The LLM writes `source.unsplash.com/WxH/?keywords` placeholder URLs natively.
-After generation, `_resolve_unsplash_placeholders()` finds all such URLs via regex, fetches
-real Unsplash photos via `UnsplashAdapter` (one API call per unique placeholder URL, parallel),
-and replaces the placeholders with sized `raw_url?w=W&h=H&fit=crop&auto=format&q=80` URLs.
-Attribution credits are injected before `</body>`. If `UNSPLASH_ACCESS_KEY` is absent, the
-agent runs without image resolution (all Unsplash placeholders remain in output, which still
-renders because browsers reject only CDN photo IDs, not the Source API URL format).
-
-**Rationale:**
-
-1. **Conscious image selection:** The LLM decides what images to include, their placement,
-   and their keywords — which matches the content it just wrote. Pre-fetching in Python
-   before the LLM call requires Python to guess what images will be needed, breaking the
-   design feedback loop.
-
-2. **Source API format is native:** The LLM knows `source.unsplash.com` from training data.
-   No new prompt instruction is needed — the LLM writes these URLs organically when given
-   creative latitude. Allowlisting them in `Output_Contract` is sufficient.
-
-3. **Dimensions preserved:** The URL path encodes dimensions (`/1920x1080/`). Post-processing
-   reads them and applies `?w=&h=&fit=crop` to `raw_url`, delivering exactly the pixel size
-   the LLM intended. No information loss compared to a pre-fetch approach.
-
-4. **Graceful degradation:** API failures are per-URL and non-fatal. Failed placeholders are
-   left unchanged. The page always ships — degraded images, never a broken delivery.
-
-5. **Architecture compliance:** `ImageSearchPort` keeps HTTP calls in `adapters/`
-   (REQ-ARCH-18). `UNSPLASH_ACCESS_KEY` is read in `composition/` (REQ-ARCH-17). Agent
-   depends only on the port interface, never on `aiohttp` or `os.getenv`.
-
-**Alternative considered:** Pre-fetch — Python extracts image intent from `raw_query`, fetches
-images, injects URLs into the user prompt before the LLM call. Rejected: LLM doesn't know
-what images it will generate when the query is processed; keyword guessing from natural language
-is unreliable; breaks the creative loop.
-
-**`images.unsplash.com` hallucinations:** The LLM sometimes writes real CDN photo URLs
-(`images.unsplash.com/photo-XXXX`) from training memory. These bypass the regex intentionally
-— the CDN filename does not map to an Unsplash API photo ID, making lookup impossible. They
-remain in the HTML as-is; they often work (the CDN URL is real), but no attribution is
-injected for them.
-
----
-
-### 11.3 Comparison: DOCX vs PDF vs HTML Page
-
-| Concern | DOCX pipeline | PDF pipeline | HTML page pipeline |
-|---------|--------------|-------------|-------------------|
-| Phases | Two tasks (planner → generator) | Single task | Single task |
-| LLM output | Node.js script (docx npm API) | Complete HTML+CSS | Complete HTML+CSS+JS |
-| Renderer | Node.js `docx` library | Puppeteer (headless Chromium) | None — HTML is final |
-| Node.js project | `docx_generator/` | `pdf_generator/` | None |
-| Port | `DocxRunnerPort` | `PuppeteerRunnerPort` | `ImageSearchPort` (optional) |
-| Adapter | `SandboxDocxRunner` | `SandboxPuppeteerRunner` | `UnsplashAdapter` (optional) |
-| Image sourcing | None | None | Unsplash post-processing (placeholder → real URL) |
-| GCS storage | Not used (bytes inline) | `DocumentDeliveryService` (HTML + PDF) | `DocumentDeliveryService` (HTML only) |
-| DeliveryItem type | `"file_upload"` | `"document"` (two items) | `"document"` (one item) |
-| Filename source | JSON spec `filename` field | `<title>` tag | `<title>` tag |
-| Tier | PERFORMANCE | PERFORMANCE | PERFORMANCE |
-| Slack delivery | File upload | Link + file upload (PDF) | Link only |
-
----
-
-## 12. Code References
-
-**DOCX pipeline:**
-- `src/agents/doc_planner_agent.py` — Phase 1: planning, raw forward to generator, fire-and-forget
-- `src/agents/doc_generator_agent.py` — Phase 2: tool-calling loop, `_make_filename`
-- `src/ports/docx_runner_port.py` — `DocxRunnerPort` ABC + `DocxRunnerError`
-- `src/adapters/sandbox_client/sandbox_docx_runner.py` — `SandboxDocxRunner`: HTTP call to the render sandbox
-- `docx_generator/` — project root directory; `node_modules/docx` installed here
-
-**PDF pipeline:**
-- `src/agents/pdf_generator_agent.py` — single LLM call, `_strip_markdown_fences`, Puppeteer rendering, `_extract_filename_from_html`, two DeliveryItems
-- `src/ports/puppeteer_runner_port.py` — `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`
-- `src/adapters/sandbox_client/sandbox_puppeteer_runner.py` — `SandboxPuppeteerRunner`: HTML → PDF bytes through the render sandbox
-- `src/services/document_delivery_service.py` — GCS storage via `MediaStoragePort` (key: `docs/{uuid}-{filename}`)
-- `pdf_generator/runner.js` — Puppeteer wrapper: stdin → headless Chrome → stdout PDF bytes
-- `pdf_generator/package.json` — `puppeteer ^24.x`
-
-**HTML page pipeline:**
-- `src/agents/html_page_generator_agent.py` — single LLM call, `_strip_markdown_fences`, `_resolve_unsplash_placeholders`, `_extract_filename_from_html`, one DeliveryItem (HTML, GCS link)
-- `src/ports/image_search_port.py` — `ImageSearchPort` ABC + `ImageResult` dataclass (system boundary for stock-photo APIs)
-- `src/adapters/unsplash_adapter.py` — `UnsplashAdapter`: GET `/search/photos`, `orientation=landscape`, 5s timeout, silent failure on errors
-- `src/services/document_delivery_service.py` — same service as PDF; stores HTML bytes to GCS
-- `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.groovy` — system prompt source (design rules, mobile-first, animations, section catalogue, Unsplash allowlist)
-- `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.json` — Firestore token upload file
-- `firestore_utils/uploads/html_page_agent_v1.json` — Blueprint (`html_page_agent_v1`, class_order: [cognitive_process])
-- `firestore_utils/uploads/html_page.json` — Agent profile (`agent_id: "html_page"`)
-- `scripts/test_unsplash.py` — diagnostic script: fetch one Unsplash photo by keyword, verify `UNSPLASH_ACCESS_KEY`
-- `tests/unit/agents/test_html_page_generator_agent.py` — 44 tests (can_handle, execute paths, filename extraction, fence stripping, failure paths, LLM call params)
-
-**Shared infrastructure:**
-- `src/infrastructure/agent_manifest.py` — `Intent.CREATE_DOCUMENT`, `Intent.GENERATE_DOCX_CODE`, `Intent.CREATE_PDF`, `Intent.CREATE_HTML_PAGE` and corresponding descriptors
-- `src/infrastructure/agent_config.py` — `DocPlannerAgentConfig`, `DocGeneratorAgentConfig`, `PdfGeneratorAgentConfig`, `HtmlPageGeneratorAgentConfig`
-- `src/infrastructure/agent_coordinator.py` — `_execute_async` receives `deadline_seconds` from descriptor
-- `src/services/agent_context_builder.py` — `"doc_planner"`, `"doc_generator"`, `"pdf_generator"`, `"html_page"` strategy entries
-- `src/composition/user_agent_factory.py` — DOCX agents (planner + generator), PDF generator, and HTML page generator registered and cached per user
-- `src/handlers/agent_worker_handler.py` — `_deliver_docx_result()` (DOCX intents), `_deliver_document_result()` (PDF + HTML page), `_notify_docx_failure()`, handles `CREATE_DOCUMENT`, `GENERATE_DOCX_CODE`, `CREATE_PDF`, `CREATE_HTML_PAGE`
-- `src/services/user_notification_service.py` — `notify_file_bytes()`, channel ID resolution via `send_message`
-- `src/adapters/slack/response_channel.py:155-160` — `send_message` normalises `U...` → `D...`
-- `src/adapters/slack/media_adapter.py` — `SlackMediaAdapter.upload_file()`
-- `tests/unit/agents/test_doc_planner_agent.py` — 21 tests (can_handle, fire-and-forget delegation, failure paths, LLM call params)
-- `tests/unit/agents/test_doc_generator_agent.py` — 19 tests (port mock, tool loop, failure paths, raw query forwarding)
-- `tests/unit/adapters/test_slack_media_adapter.py` — upload_file contract tests
-
----
-
-## 13. File Reference Support (file_ref)
-
-Document generation agents (DocPlanner, PdfGenerator, HtmlPageGenerator) support `file_ref`-based
-source content via `context_schemas`:
-
-**Flow:**
-1. LLM includes `context={"file_ref": "<filename>"}` in `delegate_to_specialist` call
-2. `AgentCoordinator._resolve_file_refs()` downloads the file from GCS via `FileConversionService.resolve_content()`
-3. Resolved text is injected as `file_content` into the agent's payload before dispatch
-4. Agent reads `file_content` from payload and appends to the query
-
-This enables workflows like: "Convert this uploaded DOCX to PDF" where the source file was
-uploaded earlier in the conversation.
-
-**Manifest declarations:** All three generator descriptors in `agent_manifest.py` declare
-`file_ref` in `context_schemas` — the orchestrator can discover and use the parameter.
-
-**Limitation:** Resolution is text-only — binary files (images, PDFs) are converted to text
-via markitdown. For image-heavy source material, the orchestrator should use
-`open_file` intent separately to obtain the binary for LLM vision.
-
-See [File Storage Building Block](../file_storage/README.md) for the full file storage architecture.
-
----
-
-## 14. Status
-
-**Status:** ✅ Production Ready (DOCX, PDF) | ✅ Production Ready (HTML page, with Unsplash integration)
-**Last Updated:** 2026-04-01
+<!-- living-doc
+covers:
+  src/agents/doc_generator_agent.py
+  src/agents/doc_planner_agent.py
+  src/agents/html_page_generator_agent.py
+  src/agents/pdf_generator_agent.py
+  src/ports/docx_runner_port.py
+  src/ports/puppeteer_runner_port.py
+  src/ports/image_search_port.py
+  src/adapters/unsplash_adapter.py
+  src/adapters/sandbox_client/sandbox_docx_runner.py
+  src/adapters/sandbox_client/sandbox_puppeteer_runner.py
+  src/services/document_delivery_service.py
+  src/domain/docx_script_prelude.py
+-->
+# Document Generation
+
+## Purpose
+
+This block turns a chat request into a finished document, in three forms: a Word file (DOCX), a PDF, and a single-page
+HTML page. The model writes the document's source (a Node.js script for DOCX, an HTML document for PDF and page), code
+renders it, and the result goes back to the channel the request came from. All three run as background Cloud Tasks:
+the orchestrator (Smart or Quick) delegates, the user is not kept waiting, and the file or link arrives later.
+
+What it is not: it does not render anything itself (rendering is the render sandbox, see
+[`sandbox_render_service.md`](../../04_solution_strategy/decisions/sandbox_render_service.md)), it does not own file
+storage or link minting (see [file_storage](../file_storage/README.md)), and it does not write memory.
+
+| Form | Intent (`Intent.*` in `src/infrastructure/agent_manifest.py`) | Agents | Output |
+|---|---|---|---|
+| DOCX | `CREATE_DOCUMENT`, then `GENERATE_DOCX_CODE` (internal) | `DocPlannerAgent`, `DocGeneratorAgent` | file uploaded to the chat |
+| PDF | `CREATE_PDF` | `PdfGeneratorAgent` | HTML and PDF as capability links, PDF also uploaded |
+| HTML page | `CREATE_HTML_PAGE` | `HtmlPageGeneratorAgent` | capability link |
+
+DOCX has two agents so that each LLM call has one job: the planner decides what the document contains (JSON layout
+spec), the generator decides how to build it (a script, repaired in a loop against real execution errors). PDF and page
+are one LLM call each, because their source is the document itself.
+
+## Owned data
+
+Nothing in Firestore. Delivered files live in the private media bucket under `docs/{user_id}/{uuid}-{filename}` (or
+`email_review/...`), written by `DocumentDeliveryService.store`; the bucket, capability tokens and link lifetime belong
+to [file_storage](../file_storage/README.md) (private storage and capability access). Prompts are Firestore prompt tokens, blueprints and profiles
+(`agent_type` `doc_planner`, `doc_generator`, `pdf_generator`, `html_page`; sources in `prompts_snapshot/`); there is no
+inline fallback prompt: a `PromptBuilder` failure fails the task.
+
+## Flows
+
+### Dispatch (all forms)
+
+1. The orchestrator calls `AgentCoordinator.handle_delegation` (`src/infrastructure/agent_coordinator.py`). All four
+   descriptors are `ExecutionMode.ASYNC`; `_execute_async` enqueues one Cloud Task with the descriptor's
+   `dispatch_deadline_s` and returns an acknowledgement to the orchestrator (the user-visible wording is the
+   orchestrator's). `handle_delegation` prepends a `[Day DD Mon YYYY, HH:MM UTC]` stamp to the query.
+2. `/worker` runs `AgentWorkerHandler.handle_task` (`src/handlers/agent_worker_handler.py`). It first calls
+   `AgentCoordinator.prefetch_file_ref`, which turns `context.file_ref` into `file_content` (or `file_note` when the file
+   cannot be read), then routes an `AgentIntent.DELEGATE` message to `{agent_id}_{user_id}`.
+3. On success the handler delivers by intent; on a failed status it calls `_notify_docx_failure` (a `DOCUMENT_DELIVERY`
+   system alert carrying the error text). The same failure path serves the image intents.
+
+The three generators accept `file_content` as source text and fail with `file_note` as the user-visible reason when the
+prefetch could not read the file; the note is never used as document text. Text only: a binary source arrives as
+converted text.
+
+### DOCX
+
+1. `DocPlannerAgent.execute`: one LLM call with `response_schema` `{status, task_summary, doc_spec}` (enforced on Gemini;
+   Claude relies on the output-format token). Extra string fields of the payload are appended to the query.
+2. The planner forwards the raw text unparsed through `handle_delegation(GENERATE_DOCX_CODE)` (a second Cloud Task, fire
+   and forget) and returns success at once. A fence or prose around the JSON is the generator's problem by design: the
+   planner never retries over formatting.
+3. `DocGeneratorAgent.execute` strips the delegation timestamp (`domain/delegation_timestamp.py::strip_delegation_timestamp`;
+   it would break `JSON.parse` in the script), puts the spec in the system prompt as a `document_spec { ... }` block, and
+   loops up to `MAX_TURNS` with one tool, `generate_docx(js_code)`. The script reads the spec from stdin and writes DOCX
+   bytes to stdout.
+4. `DocxRunnerPort.run` executes it (`SandboxDocxRunner` → sandbox `render.docx`). A `DocxRunnerError` (script error,
+   timeout, empty output, `sandbox_lost`) goes back to the model as the tool result and the model repairs the script.
+   `SandboxUnavailable` / `SandboxMisconfigured` do not: they are systemic, so the agent fails at once with a "try again
+   later" error (unless a DOCX was already produced in this run, which is kept). Tests:
+   `tests/unit/agents/test_doc_generator_sandbox_failures.py`.
+5. On the first successful run the agent returns a `file_upload` delivery item (`file_bytes_b64`, `filename`, `title`).
+   The filename is `_make_filename`: document type from the spec plus the date; it falls back to a generic name when the
+   spec is not parseable JSON.
+6. `AgentWorkerHandler._deliver_docx_result` decodes it and calls `UserNotificationService.notify_file_bytes`.
+
+### PDF
+
+`PdfGeneratorAgent.execute`: one LLM call returns a full HTML+CSS document (the system prompt embeds the design-language
+catalogue and the print/CSS rules); `_strip_markdown_fences`; `PuppeteerRunnerPort.run` renders it (`SandboxPuppeteerRunner`
+→ sandbox `render.pdf`; any failure, systemic or not, is a `PuppeteerRunnerError` and fails the task: there is no repair
+loop). The filename and label come from the HTML `<title>` (`_extract_filename_from_html`). Two `document` items return:
+the HTML (`file_upload` false) and the PDF (`file_upload` true).
+
+### HTML page
+
+`HtmlPageGeneratorAgent.execute`: one LLM call, no renderer. The user request is placed first and the prompt text last,
+with the prompt-cache boundary and everything after it cut off. The prompt has the model state a design brief before the
+document; `_extract_html_document` drops everything before the first `<!DOCTYPE html`, then fences are stripped. If an
+`ImageSearchPort` is present, `_resolve_unsplash_placeholders` replaces the `source.unsplash.com` URLs the model wrote
+with real photos (one search per distinct URL, in parallel, sized from the `WxH` in the path), and adds credit links
+before `</body>`. One `document` item returns; its `storage_class` is taken from the run context (the daily email review
+sets `email_review`, which picks the prefix, TTL and gating).
+
+### Delivery of `document` items
+
+`AgentWorkerHandler._deliver_document_result`, per item: `DocumentDeliveryService.store` (private object plus capability
+link `/f/<token>`, `DeliveredDocument.key` for history), optional short link (`ShortLinkService`),
+`UserNotificationService.notify_document_link`, and when `file_upload` is set also `notify_file_bytes`. An item that
+fails is logged and skipped, so the others still go.
+
+### Why `notify_file_bytes` posts a placeholder first (Slack)
+
+The stored Slack channel may be a user id (`U...`); `chat.postMessage` accepts that, `files.completeUploadExternal` does
+not. So `notify_file_bytes` first sends a one-emoji message through the response channel, whose
+`SlackResponseChannel.send_message` replaces `channel_id` with the real DM id from the reply, and uploads to that id.
+Other platforms use the stored id as it is; a platform with no media port returns False before posting anything.
+
+## Invariants and traps
+
+- **The planner never parses its output, and the generator receives the spec with no timestamp.** The delegation stamp
+  is added to every delegated query, JSON included; dropping `strip_delegation_timestamp` breaks every DOCX silently.
+- **Systemic render failures are not repair material.** `DocGeneratorAgent` must not feed `SandboxUnavailable` or
+  `SandboxMisconfigured` to the model (the loop would burn turns on an outage). Enforced by
+  `tests/unit/agents/test_doc_generator_sandbox_failures.py`.
+- **Degraded mode.** With `SANDBOX_RENDER_URL` empty, `composition/sandbox_client_setup.py` logs an ERROR once and wires
+  runners that always raise the "unavailable" error: DOCX and PDF fail, the HTML page still works. The variable is an
+  optional knob read with `getenv`, not through `load_settings()`.
+- **Model scripts are untrusted.** `SECURITY_PRELUDE` and `SAFE_ENV_KEYS` (`domain/docx_script_prelude.py`) are applied
+  by the sandbox (`adapters/sandbox_engine/render_docx_child.py`): blocked modules (network, process, filesystem) and a
+  reduced environment. Tested in `tests/unit/domain/test_docx_script_prelude.py`. The two Node projects (`docx_generator/`,
+  `pdf_generator/render_html.js`) exist in the sandbox image only (`Dockerfile.sandbox`).
+- **A script error is the model's to fix; a lost sandbox counts against it too.** `SandboxDocxRunner` maps `sandbox_lost`
+  and an engine `bad_request` to `DocxRunnerError`.
+- **Timeouts.** Each agent's `timeout_ms`, `request_timeout_s` and `node_timeout_s` are in `infrastructure/agent_config.py`
+  (`DOC_PLANNER`, `DOC_GENERATOR`, `PDF_GENERATOR`, `HTML_PAGE_GENERATOR`); the descriptor's `dispatch_deadline_s` must
+  stay above the agent timeout. The DOCX generator is a multi-turn loop and has no per-call request timeout.
+- **No in-process retry.** All four agents set `RETRY_POLICY = NO_RETRY_POLICY`: a retry would repeat the whole
+  generation; retry belongs to the Cloud Task.
+- **Provider and tier per agent** are in `AgentProviderStrategy` (`services/agent_context_builder.py`) and
+  `_DEFAULT_AGENT_TIERS` (`domain/user.py`), not here; the HTML page default provider is an owner decision
+  ([`html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md)).
+- **Headless Chromium ignores CSS Paged Media margin boxes** (`@top-left`, `@bottom-center`) and a forced `break-before`
+  yields blank pages; the PDF prompt token encodes these rules. Prompt text ships by token upload, not by code deploy.
+- **Unsplash is best effort.** `UnsplashAdapter.search` returns `[]` on any failure and a failed placeholder is left as the
+  model wrote it; the page always ships. Placeholders from `images.unsplash.com` are not matched by the regex and get no
+  credit. `UNSPLASH_ACCESS_KEY` is read in `composition/user_agent_factory.py`; without it the agent gets no image port.
+- **`noindex` is injected by the storage adapter, not the prompt** (`adapters/gcs_media_adapter.py::_inject_noindex`, for
+  every `text/html` upload), so it holds whatever the model wrote.
+- **The delivered object is private.** Reachability is the capability link only; a bare storage URL is 403.
+- **A silent delivery failure is possible.** Upload errors in `notify_file_bytes` and per-item errors in the handler are
+  logged and swallowed; the user sees nothing. Only an agent failure produces the failure notice.
+
+## Links
+
+- [`DOCUMENT_DELIVERY_RFC.md`](../../10_rfcs/DOCUMENT_DELIVERY_RFC.md), [`DELIVERY_ITEMS_RFC.md`](../../10_rfcs/DELIVERY_ITEMS_RFC.md)
+- [`sandbox_render_service.md`](../../04_solution_strategy/decisions/sandbox_render_service.md),
+  [`worker_oidc_and_docx_sandbox.md`](../../04_solution_strategy/decisions/worker_oidc_and_docx_sandbox.md)
+- [`private_file_storage_token_redirect.md`](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md),
+  [file_storage](../file_storage/README.md)
+- [`html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md),
+  [`html_page_fallback_context_wiring.md`](../../04_solution_strategy/decisions/html_page_fallback_context_wiring.md),
+  [`html_page_subject_grounded_design.md`](../../04_solution_strategy/decisions/html_page_subject_grounded_design.md)
+
+## Where to start reading
+
+- `src/agents/doc_planner_agent.py::DocPlannerAgent.execute` and `src/agents/doc_generator_agent.py::DocGeneratorAgent.execute` (DOCX)
+- `src/agents/pdf_generator_agent.py::PdfGeneratorAgent.execute`
+- `src/agents/html_page_generator_agent.py::_resolve_unsplash_placeholders`
+- `src/handlers/agent_worker_handler.py::AgentWorkerHandler._deliver_document_result`
+- `src/services/user_notification_service.py::UserNotificationService.notify_file_bytes`
+- `src/adapters/sandbox_client/sandbox_docx_runner.py::SandboxDocxRunner.run`
