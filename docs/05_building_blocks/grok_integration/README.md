@@ -32,41 +32,35 @@ Prices are not here: `src/domain/billing.py::_PRICING_PER_MILLION_TOKENS` holds 
 ## Flows
 
 **Which requests reach Grok.** `src/services/agent_context_builder.py::AgentProviderStrategy.STRATEGIES` lists `grok` in
-`allowed_providers` per agent type and names it `default_provider` for `html_page` only (the image and video entries are
-Grok-only too, but on their own ports). Three ways override a default, resolved by
-`AgentContextBuilder.resolve_provider_name` and `AgentContextBuilder.resolve_for_task`:
+`allowed_providers` per agent type and names it `default_provider` for three agent types: `html_page`, and the
+prompt-crafting calls of `image_generation` and `video_generation` (both Grok-only; their rendering uses separate
+image/video registries and ports, not this adapter). Three things override a default:
 
 1. a per-agent override, `UserBotConfig.agent_providers[agent_type]`;
 2. the global `UserBotConfig.provider_preference`;
-3. a per-complexity `ComplexitySettings.provider_override` (`src/domain/complexity_settings.py`). It is set per task
-   complexity, not per agent, so it can move a whole class of background work onto Grok without touching any agent.
+3. a per-complexity `ComplexitySettings.provider_override` (`src/domain/complexity_settings.py`), applied by
+   `AgentContextBuilder.resolve_for_task`. It is set per task complexity, not per agent, so it can move a whole class of
+   background work onto Grok without touching any agent.
 
-An override naming a provider outside the agent's `allowed_providers` is ignored, not an error. Cross-provider rotation
+Items 1 and 2 (`AgentContextBuilder.resolve_provider_name`) are ignored when the provider is outside the agent's
+`allowed_providers`; item 3 is not checked, so it can put an agent on Grok where `grok` is not allowed. Cross-provider rotation
 (`AgentContextBuilder.resolve_next_provider`, on a terminal `TranscriptLockedError`) walks `allowed_providers` in
 declared order, and `grok` is last for `smart`. Moving a default to Grok needs an eval first
 (`decisions/html_page_grok_default.md` is the precedent).
 
-**One call, `GrokAdapter.generate_content`:**
+**One call, `GrokAdapter.generate_content`.** The steps that are not obvious from the function:
 
-1. Strip `PROMPT_CACHE_BOUNDARY` from the system prompt and derive `prompt_cache_key` from the text before it
-   (`GrokAdapter._prompt_cache_key`). An enabled `cache_config` is ignored with a debug line, never an error.
-2. `GrokAdapter._extract_turn_anchor` lifts `USER_TURN_SYSTEM_ANCHOR` out of the most recent user message that carries
-   it. The anchor and `build_persona_anchor(system_instruction)` (`src/domain/llm.py`) go into **one** `developer` input
-   item placed first.
-3. `GrokAdapter._convert_input` and `GrokAdapter._convert_tools` build the input items and tools. `use_grounding`
-   prepends `{"type": "web_search"}`.
-4. The output format is chosen by this order: grounding sends none; a dict schema together with tools becomes a
-   synthesized `deliver_response` function whose parameters are the schema (`GrokAdapter.TERMINAL_TOOL_NAME`) and forces
-   `tool_choice="required"`; a dict schema alone is `text.format` `json_schema` with `strict=False`; a bare
-   `application/json` mime type is `json_object`.
-5. `request.thinking` becomes `reasoning.effort` (see traps). An explicit `request.timeout` is forwarded to the SDK and
-   also bounds total wall time with `asyncio.wait_for`.
-6. SDK errors map to domain errors (timeout, rate limit, network, 503 unavailable, other 5xx server, 4xx client). A 4xx
-   is deterministic and is not a failover trigger.
-7. `GrokAdapter._parse_response` reads the output items: `function_call` becomes a `ToolCall` (the xAI `call_id` rides in
-   `thought_signature`), `reasoning` summaries become `thought_text`, `url_citation` annotations are appended to the text
-   as a `*Sources:*` block, `web_search_call` items are only logged. `raw_content` keeps the output items, and
-   `_convert_input` replays them verbatim on the next turn so the reasoning and function-call sequence survives.
+1. The system prompt is cut at `PROMPT_CACHE_BOUNDARY`; `prompt_cache_key` derives from the text before it. An enabled
+   `cache_config` is ignored with a debug line, never an error.
+2. `USER_TURN_SYSTEM_ANCHOR` (`GrokAdapter._extract_turn_anchor`) and `build_persona_anchor` (`src/domain/llm.py`) go into
+   **one** `developer` input item placed first.
+3. The output format follows this order: grounding sends none; a dict schema together with tools becomes a synthesized
+   `deliver_response` function (`GrokAdapter.TERMINAL_TOOL_NAME`) and forces `tool_choice="required"`; a dict schema
+   alone is `json_schema` with `strict=False`; a bare `application/json` mime type is `json_object`.
+4. SDK errors map to domain errors; a 4xx is deterministic and not a failover trigger.
+5. `GrokAdapter._parse_response` keeps the xAI `call_id` in `ToolCall.thought_signature`, appends `url_citation`
+   annotations as a `*Sources:*` block, and stores the output items in `raw_content`, which `_convert_input` replays
+   verbatim on the next turn so the reasoning and function-call sequence survives.
 
 ## Invariants and traps
 
@@ -103,8 +97,8 @@ declared order, and `grok` is last for `smart`. Moving a default to Grok needs a
   `cache_read` multiplier. `_parse_response` follows the repo convention that `UsageMetadata.prompt_tokens` is **uncached**
   input only (`input - cached`), with `cache_read_tokens` carrying the rest. Reasoning tokens are billed as output, so
   `total_tokens` is not `prompt + completion`.
-- **Latency is minutes, not seconds, on a long multi-turn run.** The client ceiling is 300 s and `max_retries=2`, so one
-  call can take up to three times that when no `request.timeout` is given; an explicit one bounds the total. A background
+- **Latency is minutes, not seconds, on a long multi-turn run.** The client timeout and `max_retries` are set in the `AsyncOpenAI(...)` call in `GrokAdapter.__init__`; retries multiply
+  the timeout, so one call can take several times the ceiling when no `request.timeout` is given; an explicit one bounds the total. A background
   task needs a Cloud Tasks `dispatch_deadline` that can hold a Grok run: `docs/07_deployment/SCHEDULERS.md`. Tests:
   `test_client_timeout_matches_openai_adapter`, `test_request_timeout_is_forwarded_to_the_sdk`.
 - **No files except images.** `upload_file` raises `NotImplementedError`; `_convert_input` drops non-image binaries with a
@@ -122,8 +116,8 @@ declared order, and `grok` is last for `smart`. Moving a default to Grok needs a
 
 - [`decisions/grok_revival_2026_08.md`](../../04_solution_strategy/decisions/grok_revival_2026_08.md): why the integration
   was dead for months, why the transport moved to Responses.
-- [`decisions/html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md): the one
-  agent that defaults to Grok.
+- [`decisions/html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md): the first
+  agent that defaulted to Grok.
 - [`decisions/delegate_tool_contract_and_strict.md`](../../04_solution_strategy/decisions/delegate_tool_contract_and_strict.md),
   [`decisions/temperature_removed.md`](../../04_solution_strategy/decisions/temperature_removed.md).
 - [`ADAPTER_WIRE_TESTING.md`](../../how_to/ADAPTER_WIRE_TESTING.md): wire tests mock `adapter.client.responses.create`.
