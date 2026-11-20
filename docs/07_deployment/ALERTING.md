@@ -45,7 +45,7 @@ Why these six exist:
   `src/services/authentication_service.py::AuthenticationService._require_allowed_email` (`OAuth sign-in rejected`, kept
   verbatim by its docstring) and the `Registering new user` line in the same file.
 - **A systemic failure must log at ERROR to page; a file's own failure must not.** The document-service path and the
-  drive open path pick the level for this reason (`src/services/document_service.py`, `src/infrastructure/drive_operations.py::_SYSTEMIC`).
+  drive open path pick the level for this reason (`src/services/document_service.py`, `src/domain/document_read.py::SYSTEM_FAULT_STATUSES`).
   A new failure path that logs WARNING for a systemic cause never pages.
 
 ## Logging exclusion
