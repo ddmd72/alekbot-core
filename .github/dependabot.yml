@@ -1,0 +1,22 @@
+# Dependabot here opens SECURITY-update PRs only; version updates stay off
+# (open-pull-requests-limit: 0 disables them without affecting security updates).
+#
+# The file exists for one reason: the OpenTelemetry packages release in lockstep —
+# opentelemetry-sdk pins opentelemetry-api== its own version and
+# opentelemetry-semantic-conventions== its paired beta, which opentelemetry-instrumentation
+# pins too, and logfire bounds the whole set. A PR that bumps one of them alone can never
+# install, so a security alert on any of them opens a single PR for the set.
+# Context: requirements.txt § Observability, decisions/gemini_logfire_instrumentation.md.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      opentelemetry:
+        applies-to: security-updates
+        patterns:
+          - "opentelemetry-*"
+          - "logfire"

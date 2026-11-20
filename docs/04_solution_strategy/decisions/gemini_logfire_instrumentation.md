@@ -115,3 +115,17 @@ logfire 5.0's breaking changes do not reach `telemetry.py`: the removed `configu
 arguments are not ones we pass, and OpenAI/Anthropic are instrumented with an explicit
 `version="latest"`, so the new default version does not apply. Gemini stays on the
 vendor instrumentor.
+
+## Update 2026-11-20 — the set moved to OTel 1.45.2, grouped for Dependabot
+
+A second `opentelemetry-api` security fix (quadratic-time `traceparent` parsing, fixed in
+1.45.2) moved the set again: api/sdk 1.45.2, `opentelemetry-instrumentation` 0.66b2;
+logfire 5.2.0 (`<1.46` / `<0.67b0`), the GCP exporter 1.14.0 and the google-genai
+instrumentor 1.0b1 admit it unchanged.
+
+A Dependabot security PR that bumps `opentelemetry-api` alone can never install: the sdk
+pins `opentelemetry-api==` its own version and `opentelemetry-semantic-conventions==` its
+paired beta, which the instrumentation package pins too. `.github/dependabot.yml` therefore
+groups `opentelemetry-*` (and logfire, which bounds the set) into one security-update PR.
+Version updates stay off (`open-pull-requests-limit: 0`): only security alerts open PRs, as
+before the file existed.
