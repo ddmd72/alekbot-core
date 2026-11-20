@@ -63,6 +63,12 @@ async def test_pending_limit_after_filter_and_other_sessions_excluded(queue):
     assert ids(await queue.get_pending_batches(SID2)) == ["other"]
 
 
+async def test_pending_excludes_a_completed_batch(queue):
+    await put(queue, "done", 0.6, BatchStatus.COMPLETED)
+    await put(queue, "c1", 5.0)
+    assert ids(await queue.get_pending_batches(SID)) == ["c1"]
+
+
 async def test_enqueue_twice_is_one_document_and_delete_is_idempotent(queue):
     await put(queue, "c1", 1.0)
     await put(queue, "c1", 1.0)

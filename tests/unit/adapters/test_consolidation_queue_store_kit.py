@@ -3,9 +3,8 @@
 stored documents and on what readers return.
 
 Not duplicated here (they stay the spec): zombies and lost runs (`test_consolidation_queue_zombie_attempts.py`), bounded
-FAILED revivals (`test_consolidation_queue_failed_bounded.py`), open batches (`test_firestore_consolidation_queue_open_batches.py`),
-the pending order across queues (`test_queue_pending_order.py`). Legacy batches missing a field are not pinned: no writer
-produces one (the data audit settles them).
+FAILED revivals (`test_consolidation_queue_failed_bounded.py`), open batches (`test_firestore_consolidation_queue_open_batches.py`).
+Legacy batches missing a field are not pinned: no writer produces one (the data audit settles them).
 """
 from pathlib import Path
 from types import SimpleNamespace
