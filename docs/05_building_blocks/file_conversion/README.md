@@ -63,21 +63,25 @@ path for a native binary). Nothing is parsed and no content enters history; the 
 
 ### Open (one file, for a model)
 
-Entry: `FileConversionService.open(ref, user_id, account_id, *, consumer, deadline_at, caller)`. `consumer` is the
-consuming model's native declaration (`NativeFormat` tuple; empty means text only); `caller` is one of `CALLER_OPEN`,
-`CALLER_PREFETCH`, `CALLER_CONNECTOR`, `CALLER_INDEX` (`src/domain/document_read.py`).
+Entry: `FileConversionService.open`. It takes the consuming model's native declaration (`consumer`; empty means text
+only), the one absolute `deadline_at`, and a `caller` (`CALLER_OPEN`, `CALLER_PREFETCH` or `CALLER_CONNECTOR`). The email
+index does not come through `open`: it builds its own `ReadRequest` with `CALLER_INDEX` for `DocumentService.read`
+(`src/domain/document_read.py`).
 
 1. `classify_ref` (`src/domain/file_ref.py::classify_ref`) picks the store: email, skill, workspace, delivered, drive,
-   else chat. Prefix decides first, so a chat file whose name contains `drive:` stays chat
-   (`file_conversion_service.py::_is_drive_ref`).
+   else chat. Trap: a skill, workspace or delivered ref whose name contains `drive:` keeps its own store, because those
+   prefixes are decided first (`file_conversion_service.py::_is_drive_ref`); a bare chat name has no prefix, so a chat file
+   whose name contains `drive:<x>` classifies as DRIVE (`src/domain/drive_ref.py` searches anywhere in the string).
 2. The ref is resolved in its store. Delivered keys carry an ownership check (the second path segment must be the
    requesting user; `_download_by_ref`). A drive ref goes through `DriveConnectionService` and the access policy's READ
    check before any download or any text that prints its path (`_drive_item`). Store errors propagate; the callers map
    them.
-3. Size: a drive file and an email part are checked on metadata before download; chat, delivered and workspace bytes
-   are downloaded first and capped by the document service. A drive text file is streamed up to
+3. Size: a drive file and an email part are checked on metadata before download; chat and delivered bytes are
+   downloaded first and capped by the document service. A workspace text file is capped by `OPEN_FILE_MAX_TEXT_BYTES`
+   and decoded as UTF-8 in `_open` itself, and a skill ref is read by the skill resolver: neither reaches the document
+   service. A drive text file is streamed up to
    `MAX_TEXT_EXPORT_BYTES`.
-4. The bytes go to `DocumentService.read` as a `ReadRequest` (bytes and plain values only, `store` = the ref kind).
+4. Every other file's bytes go to `DocumentService.read` as a `ReadRequest` (bytes and plain values only, `store` = the ref kind).
 5. The answer is an `OpenedFile` (`src/domain/document_open.py`): `body` (`[File: <name>]` text, raw, unmarked, uncut),
    a `note`, or a native file (`native_path` + `native_mime`). The opener's presenter marks and cuts the text (see
    Presentation). Folders, recordings, video and the drive's §29 decision stay with the caller.
@@ -102,8 +106,8 @@ themselves). The synchronous path uses `INTERACTIVE_OPEN_S`; the async worker (`
 ### Document service read
 
 Entry: `DocumentService.read` (`src/services/document_service.py`), behind `DocumentReadPort`. It never raises: every
-failure is a `ReadOutcome` status and one log line with the request id, kind and a failure label, never text or a file
-name. In order (`_read`, `_admit`):
+failure is a `ReadOutcome` status, and every status except `TEXT`, `NATIVE` and `NO_TEXT` also gets one log line with the
+request id, kind and a failure label, never text or a file name (the open path logs `NO_TEXT` itself). In order (`_read`, `_admit`):
 
 1. **Kind from bytes.** `sniff_kind` over the first bytes against the declared kind; the name alone is never trusted.
 2. **Audio** goes to the audio path below; PDF and image to step 3; the in-process text kinds
@@ -123,8 +127,8 @@ name. In order (`_read`, `_admit`):
    most `MODEL_EXTRACT_MAX_PAGES` pages per file for every store (`DocumentService.allowance`), a text budget equal to
    the store's presentation cap (`reader_text_budget`), under the open's deadline. If the reader is unavailable for a
    low-density file, the parser's text comes back flagged `may_be_incomplete`.
-7. **Outcome** (`ReadOutcome`): status, raw text, page counts (total, read, skipped, cut within), links
-   (`parser@N`, `reader@N`), model calls and cost (already billed; reported, not booked again).
+7. **Outcome** (`ReadOutcome`): raw, unmarked text with the page and cost facts of the read. Model cost is already billed;
+   it is reported, not booked again.
 
 Who may run the reader (`ReadRequest.caller`): open and prefetch always; `CALLER_CONNECTOR` (the drive connector) never,
 what the router would hand the reader answers `NO_TEXT` with a `READER_SKIPPED` detail; `CALLER_INDEX` (the email index)
@@ -165,13 +169,13 @@ time left. `DocumentService.read` wraps the whole read in it and answers `TIMEOU
 
 ### Resolve bytes for save and send
 
-`FileConversionService.resolve_file(ref, user_id, *, action)` (`ACTION_SAVE` or `ACTION_SEND`) returns bytes, name and
-declared mime of any ref for an action no model reads: nothing is parsed, marked or cut. The cap is `action_cap()`,
+`FileConversionService.resolve_file` returns the bytes, name and declared mime, for the action `save` or `send`, of any ref for an action no model reads: nothing is parsed, marked or cut. The cap is `action_cap()`,
 checked on metadata where the store has it (drive, email) and on the bytes elsewhere. A Google native file is named by
 its export (`DriveItem.exported`, `export_file_name`). What the service decides itself raises `FileNotResolved`, whose
 `line` is the honest note; callers answer with it. Callers: `DriveOperations.copy` (the `copy_file_to_drive` tool) and
 `FileManagementAgent._send` (`send_file_to_user`, SYNC, delivery through `UserNotificationService.notify_file_bytes`).
-`resolve_bytes` is the older bytes path for editing and copying; it refuses `email:` refs.
+`resolve_bytes` is the plain bytes path of other callers (video re-send, image and video generation inputs, skill and
+workspace services); it refuses `email:` refs.
 
 ### Active kinds from email (D13)
 
@@ -205,13 +209,14 @@ not.
   system tags in the text are neutralised (`src/domain/untrusted_text.py::wrap_untrusted`). A new opener that skips the
   presenter hands the model unmarked file text.
 - **Every failure is a note, never an exception, and never in the system's voice.** Notes read `[Tool note: ...]` and tell
-  the model what to say; technical detail stays in logs (root `CLAUDE.md`, "Code-written text never claims the system's
+  the model what to say; technical detail stays in logs. The rejected alternatives were an empty response, a bot-level
+  error message and silent data loss (root `CLAUDE.md`, "Code-written text never claims the system's
   voice"). `DocumentService.read` and `prefetch` never raise; `open` lets store errors propagate by design.
 - **An outage is not the file's outcome.** A parser or reader outage is `PARSER_UNAVAILABLE` / `MODEL_UNAVAILABLE`, so a
   caller never records "unreadable file" for an outage (the email index keeps the mail pending). Never add an in-process
   parser to a deployed composition (`src/services/CLAUDE.md`).
 - **Log levels feed alerting.** `DocumentService` logs ERROR for `ERROR`, `MEMORY`, `MODEL_UNAVAILABLE`,
-  `PARSER_UNAVAILABLE` and WARNING otherwise; the open path (`file_conversion_service.py::_log_unread`) also counts
+  `PARSER_UNAVAILABLE`, WARNING for other failures, nothing for `NO_TEXT`; the open path (`file_conversion_service.py::_log_unread`) also counts
   `TIMEOUT` and `STILL_WORKING` as ERROR. Alerting reads severity, so a deadline timeout on an open pages.
 - **Fail closed on D13.** No container-facts reader, an outage, a run failure, `error` or `too_large` leaves the container
   unchecked, and `active_kind` answers `UNCHECKED`: the file is refused with a "could not be checked" note, never sent.

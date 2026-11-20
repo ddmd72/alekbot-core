@@ -228,7 +228,7 @@ path at any date. *Rejected:* every printed number as a key (phone and card frag
 3. **Read as text:** PDF, DOCX/DOC/ODT/RTF, XLSX/XLS/CSV (the drive's sheet rule). Kind from the bytes, never the
    declared MIME.
 4. **Through the document service, never in process:** `DocumentService.read`, store `email`, a new caller `index`
-   (`file_conversion/README.md` §DocumentService.read steps 4–6). The light parser takes **one request at a time per
+   (`file_conversion/README.md` § Document service read, steps 5–6). The light parser takes **one request at a time per
    instance** (§Parser service), so the job reads attachments at a small fixed concurrency and backs off on busy;
    `PARSER_UNAVAILABLE` is an outage — the mail stays pending, never "no attachment".
 5. **Caps:** the 5 MiB parse cap; at most 3 read attachments per mail; per attachment head 6 000 + tail 1 500 characters;
