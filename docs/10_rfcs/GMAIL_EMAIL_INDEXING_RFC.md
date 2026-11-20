@@ -2043,7 +2043,7 @@ Mark items `✅` as completed.
 - **Gmail REST Messages:** https://developers.google.com/gmail/api/reference/rest/v1/users.messages
 - **Firestore Vector Search:** https://firebase.google.com/docs/firestore/vector-search
 - **OAuth Multi-Tenant:** [../05_building_blocks/oauth_multi_tenant/README.md](../05_building_blocks/oauth_multi_tenant/README.md)
-- **Search Enrichment Building Block:** [../05_building_blocks/search_enrichment/README.md](../05_building_blocks/search_enrichment/README.md)
+- **Memory building block (search engines, §4.3):** [../05_building_blocks/memory/README.md](../05_building_blocks/memory/README.md)
 
 ### POC Scripts
 
