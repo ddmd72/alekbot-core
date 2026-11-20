@@ -38,7 +38,7 @@ are one LLM call each, because their source is the document itself.
 
 ## Owned data
 
-Nothing in Firestore. Delivered files live in the private media bucket under `docs/{user_id}/{uuid}-{filename}` (or
+Nothing in Firestore. Delivered `document` items (PDF, HTML) live in the private media bucket under `docs/{user_id}/{uuid}-{filename}` (or
 `email_review/...`), written by `DocumentDeliveryService.store`; the bucket, capability tokens and link lifetime belong
 to [file_storage](../file_storage/README.md) (private storage and capability access). Prompts are Firestore prompt tokens, blueprints and profiles
 (`agent_type` `doc_planner`, `doc_generator`, `pdf_generator`, `html_page`; sources in `prompts_snapshot/`); there is no
@@ -51,15 +51,17 @@ inline fallback prompt: a `PromptBuilder` failure fails the task.
 1. The orchestrator calls `AgentCoordinator.handle_delegation` (`src/infrastructure/agent_coordinator.py`). All four
    descriptors are `ExecutionMode.ASYNC`; `_execute_async` enqueues one Cloud Task with the descriptor's
    `dispatch_deadline_s` and returns an acknowledgement to the orchestrator (the user-visible wording is the
-   orchestrator's). `handle_delegation` prepends a `[Day DD Mon YYYY, HH:MM UTC]` stamp to the query.
+   orchestrator's). `handle_delegation` prepends a UTC date stamp to the query (format mirrored by
+   `src/domain/delegation_timestamp.py`).
 2. `/worker` runs `AgentWorkerHandler.handle_task` (`src/handlers/agent_worker_handler.py`). It first calls
-   `AgentCoordinator.prefetch_file_ref`, which turns `context.file_ref` into `file_content` (or `file_note` when the file
+   `AgentCoordinator.prefetch_file_ref`, which turns the task's `params["file_ref"]` (the LLM-facing `context.file_ref`) into `file_content` (or `file_note` when the file
    cannot be read), then routes an `AgentIntent.DELEGATE` message to `{agent_id}_{user_id}`.
 3. On success the handler delivers by intent; on a failed status it calls `_notify_docx_failure` (a `DOCUMENT_DELIVERY`
    system alert carrying the error text). The same failure path serves the image intents.
 
-The three generators accept `file_content` as source text and fail with `file_note` as the user-visible reason when the
-prefetch could not read the file; the note is never used as document text. Text only: a binary source arrives as
+The planner, PDF and HTML agents accept `file_content` as source text (the planner through its generic
+extra-string-field loop) and fail with `file_note` as the user-visible reason when the prefetch could not read the file;
+the note is never used as document text. `DocGeneratorAgent` takes no file input. Text only: a binary source arrives as
 converted text.
 
 ### DOCX
@@ -69,12 +71,12 @@ converted text.
 2. The planner forwards the raw text unparsed through `handle_delegation(GENERATE_DOCX_CODE)` (a second Cloud Task, fire
    and forget) and returns success at once. A fence or prose around the JSON is the generator's problem by design: the
    planner never retries over formatting.
-3. `DocGeneratorAgent.execute` strips the delegation timestamp (`domain/delegation_timestamp.py::strip_delegation_timestamp`;
+3. `DocGeneratorAgent.execute` strips the delegation timestamp (`src/domain/delegation_timestamp.py::strip_delegation_timestamp`;
    it would break `JSON.parse` in the script), puts the spec in the system prompt as a `document_spec { ... }` block, and
    loops up to `MAX_TURNS` with one tool, `generate_docx(js_code)`. The script reads the spec from stdin and writes DOCX
    bytes to stdout.
 4. `DocxRunnerPort.run` executes it (`SandboxDocxRunner` → sandbox `render.docx`). A `DocxRunnerError` (script error,
-   timeout, empty output, `sandbox_lost`) goes back to the model as the tool result and the model repairs the script.
+   timeout, empty output, too large, `sandbox_lost`) goes back to the model as the tool result and the model repairs the script.
    `SandboxUnavailable` / `SandboxMisconfigured` do not: they are systemic, so the agent fails at once with a "try again
    later" error (unless a DOCX was already produced in this run, which is kept). Tests:
    `tests/unit/agents/test_doc_generator_sandbox_failures.py`.
@@ -122,30 +124,32 @@ Other platforms use the stored id as it is; a platform with no media port return
 - **Systemic render failures are not repair material.** `DocGeneratorAgent` must not feed `SandboxUnavailable` or
   `SandboxMisconfigured` to the model (the loop would burn turns on an outage). Enforced by
   `tests/unit/agents/test_doc_generator_sandbox_failures.py`.
-- **Degraded mode.** With `SANDBOX_RENDER_URL` empty, `composition/sandbox_client_setup.py` logs an ERROR once and wires
+- **Degraded mode.** With `SANDBOX_RENDER_URL` empty, `src/composition/sandbox_client_setup.py` logs an ERROR once per runner (DOCX, PDF) and wires
   runners that always raise the "unavailable" error: DOCX and PDF fail, the HTML page still works. The variable is an
   optional knob read with `getenv`, not through `load_settings()`.
-- **Model scripts are untrusted.** `SECURITY_PRELUDE` and `SAFE_ENV_KEYS` (`domain/docx_script_prelude.py`) are applied
-  by the sandbox (`adapters/sandbox_engine/render_docx_child.py`): blocked modules (network, process, filesystem) and a
+- **Model scripts are untrusted.** `SECURITY_PRELUDE` and `SAFE_ENV_KEYS` (`src/domain/docx_script_prelude.py`) are applied
+  by the sandbox (`src/adapters/sandbox_engine/render_docx_child.py`): blocked modules (network, process, filesystem) and a
   reduced environment. Tested in `tests/unit/domain/test_docx_script_prelude.py`. The two Node projects (`docx_generator/`,
-  `pdf_generator/render_html.js`) exist in the sandbox image only (`Dockerfile.sandbox`).
+  `pdf_generator/render_html.js`) are installed and runnable only in the sandbox image (`Dockerfile.sandbox`).
 - **A script error is the model's to fix; a lost sandbox counts against it too.** `SandboxDocxRunner` maps `sandbox_lost`
   and an engine `bad_request` to `DocxRunnerError`.
-- **Timeouts.** Each agent's `timeout_ms`, `request_timeout_s` and `node_timeout_s` are in `infrastructure/agent_config.py`
+- **Timeouts.** Each agent's `timeout_ms`, `request_timeout_s` and `node_timeout_s` are in `src/infrastructure/agent_config.py`
   (`DOC_PLANNER`, `DOC_GENERATOR`, `PDF_GENERATOR`, `HTML_PAGE_GENERATOR`); the descriptor's `dispatch_deadline_s` must
   stay above the agent timeout. The DOCX generator is a multi-turn loop and has no per-call request timeout.
-- **No in-process retry.** All four agents set `RETRY_POLICY = NO_RETRY_POLICY`: a retry would repeat the whole
-  generation; retry belongs to the Cloud Task.
-- **Provider and tier per agent** are in `AgentProviderStrategy` (`services/agent_context_builder.py`) and
-  `_DEFAULT_AGENT_TIERS` (`domain/user.py`), not here; the HTML page default provider is an owner decision
+- **No in-process retry, and a failed generation is not retried at all.** All four agents set
+  `RETRY_POLICY = NO_RETRY_POLICY`. An agent failure or exception becomes a failure response, the worker answers 200 and
+  the user gets the failure notice (`src/infrastructure/agent_coordinator.py::AgentCoordinator.route_message`,
+  `src/handlers/worker_handler.py`). Cloud Tasks repeat the whole generation only after a crash, a non-2xx answer or a
+  deadline overrun.
+- **Provider and tier per agent** are in `AgentProviderStrategy` (`src/services/agent_context_builder.py`) and
+  `_DEFAULT_AGENT_TIERS` (`src/domain/user.py`), not here; the HTML page default provider is an owner decision
   ([`html_page_grok_default.md`](../../04_solution_strategy/decisions/html_page_grok_default.md)).
-- **Headless Chromium ignores CSS Paged Media margin boxes** (`@top-left`, `@bottom-center`) and a forced `break-before`
-  yields blank pages; the PDF prompt token encodes these rules. Prompt text ships by token upload, not by code deploy.
 - **Unsplash is best effort.** `UnsplashAdapter.search` returns `[]` on any failure and a failed placeholder is left as the
   model wrote it; the page always ships. Placeholders from `images.unsplash.com` are not matched by the regex and get no
-  credit. `UNSPLASH_ACCESS_KEY` is read in `composition/user_agent_factory.py`; without it the agent gets no image port.
-- **`noindex` is injected by the storage adapter, not the prompt** (`adapters/gcs_media_adapter.py::_inject_noindex`, for
-  every `text/html` upload), so it holds whatever the model wrote.
+  credit. `UNSPLASH_ACCESS_KEY` is read in `src/composition/user_agent_factory.py`; without it the agent gets no image port.
+- **`noindex` is injected by the storage adapter, not the prompt** (`src/adapters/gcs_media_adapter.py::_inject_noindex`,
+  for every `text/html` upload), but only after a literal lower-case `<head>`: a `<head lang=...>` or a page with no
+  `<head>` is stored unchanged, silently.
 - **The delivered object is private.** Reachability is the capability link only; a bare storage URL is 403.
 - **A silent delivery failure is possible.** Upload errors in `notify_file_bytes` and per-item errors in the handler are
   logged and swallowed; the user sees nothing. Only an agent failure produces the failure notice.
