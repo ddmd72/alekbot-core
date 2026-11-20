@@ -27,8 +27,10 @@ None. The block stores nothing: tool schemas are cached in memory per `MCPClient
 
 **Wiring.** `UserAgentFactory` (`src/composition/user_agent_factory.py`) builds one `MCPClient` pointing at the Maps MCP
 URL with the API key, wraps it in `MCPMapsAdapter`, and injects that as `maps_port` into `MapsSearchAgent`. The agent
-sees only `MapsToolsPort`. The agent is declared as `MAPS_SEARCH` in `src/infrastructure/agent_manifest.py` (intent
-`Intent.MAPS_QUERY`), and Quick, Smart and Lelik reach it through `SEARCH_WEB_MAPS_FANOUT` in the same file.
+sees only `MapsToolsPort`. The agent is declared as `MAPS_SEARCH` in `src/infrastructure/agent_manifest.py` (intent `Intent.MAPS_QUERY`) and is
+internal: `maps_query` is never offered to an LLM as a tool. The only way in is `SEARCH_WEB_MAPS_FANOUT` in the same
+file, carried by Quick and Smart: whenever they call `search_web`, Maps runs alongside web search with the same query
+(`src/infrastructure/delegation_engine.py`). Lelik has no fanout and never reaches Maps.
 
 **Tool discovery.** `MCPClient.get_tool_declarations` sends `tools/list` (it skips the MCP `initialize` handshake; the
 server is stateless), converts each tool with `MCPClient._convert_tool_schema` (`inputSchema` becomes `parameters`,
@@ -36,8 +38,7 @@ server is stateless), converts each tool with `MCPClient._convert_tool_schema` (
 the instance's life. Tool names therefore come from the server, not from this repo.
 
 **Tool call.** `MCPClient.call_tool` sends `tools/call`. `MCPClient._parse_tool_result` returns the first text content
-item parsed as JSON; a non-JSON text becomes `{"text": ...}`, a JSON non-object becomes `{"result": ...}`, an
-unexpected shape `{"raw": ...}`. `MCPMapsAdapter.call_tool` first normalises the arguments (see Invariants), then
+item parsed as JSON, with a wrapping for non-JSON or unexpected results. `MCPMapsAdapter.call_tool` first normalises the arguments (see Invariants), then
 turns `MCPToolError` into `MapsToolError`.
 
 **Agent loop** (`MapsSearchAgent._run_tool_loop`):
@@ -56,29 +57,33 @@ turns `MCPToolError` into `MapsToolError`.
   `MCPMapsAdapter` (there is no Gemini-native adapter in the tree, despite the port docstring).
 - **A tool failure does not fail the turn.** `MapsSearchAgent._execute_tool_call` turns `MapsToolError` into an
   `{"error": ...}` tool response so the model can retry or answer from the rest. Calls run concurrently, which is safe
-  because `MCPClient._post` opens its own `aiohttp` session per call (30 s timeout, `X-Goog-Api-Key` header).
+  because `MCPClient._post` opens its own `aiohttp` session per call (fixed timeout, `X-Goog-Api-Key` header).
 - **Placeholder zeros are removed before the wire** (`MCPMapsAdapter._normalize_arguments`). The Google tool schemas
   flatten protobuf `oneof` and "zero means unspecified" into plain objects, and weaker models fill them with `{0,0}`
   coordinates or a `{0,0,0}` date. The weather tool rejects a zero date, so it is dropped (with the hour) to get current
   weather; a location is collapsed to its best field (`latLng`, then `placeId`, then `address`). The tool names are
   matched by `MCPMapsAdapter._WEATHER_TOOL` and `_ROUTES_TOOL`; a renamed server tool silently skips normalisation.
   The input dict is never mutated. Enforced by `tests/unit/adapters/test_mcp_maps_adapter.py`.
-- **Schema conversion is load-bearing for Gemini.** A leftover `$ref`, `format` or `x-google-enum-descriptions` causes
-  `MALFORMED_FUNCTION_CALL`; that is why `_deref_schema` strips them.
+- **Schema conversion is load-bearing for Gemini.** `_deref_schema` inlines `$ref` and strips `format`,
+  `x-google-enum-descriptions` and similar fields; per the code comment, leaving them in causes `MALFORMED_FUNCTION_CALL`.
 - **Model messages carry both `raw_content` and `parts`.** Gemini thought signatures live on the SDK `Part` and must
   round-trip intact, so `GeminiAdapter` replays `raw_content` (`src/adapters/gemini_adapter.py`) while other providers
   read `parts`. Keep both when appending the model turn.
 - **No biographical facts.** The prompt is built with `include_biographical=False`: spatial queries do not need them and
   a tool-calling agent should not leak them. Location comes from the user config, time from the prepended line.
 - **Known gap against the no-fallback-prompt rule:** if prompt assembly fails, `_build_system_instruction` logs and uses
-  an empty instruction instead of failing the response.
-- **`MCPMapsAdapter.CAPABILITY_DESCRIPTION` and the manifest text are two copies.** The manifest description
-  (`MAPS_SEARCH` in `src/infrastructure/agent_manifest.py`) is what routes to the agent and is not generated from the
-  constant; change a backend and update both.
+  an empty instruction instead of failing the response. A test pins this
+  (`tests/unit/agents/test_maps_search_agent.py::TestPromptBuilder.test_fallback_to_empty_on_prompt_build_failure`), so fixing the code
+  goes through the reviewer rule.
+- **The routing lever is the fanout, not the description.** Because `MAPS_SEARCH` is internal, its
+  `capability_descriptions` text is never shown to a model, and `MCPMapsAdapter.CAPABILITY_DESCRIPTION` is read only by a
+  test. To change when Maps runs, change `SEARCH_WEB_MAPS_FANOUT` and who carries it.
 
 **Adding another MCP server:** a port in `src/ports/` if the capability is new, an adapter in `src/adapters/mcp/` that
-wraps an `MCPClient` and maps `MCPToolError` to the port's error, an agent that runs a tool loop, and wiring in
-`UserAgentFactory`. `MCPClient` hardcodes the `X-Goog-Api-Key` header, so a server with another auth scheme needs the
+wraps an `MCPClient` and maps `MCPToolError` to the port's error, an agent that runs a tool loop, wiring in
+`UserAgentFactory`, a provider entry in `AgentProviderStrategy.STRATEGIES` (`src/services/agent_context_builder.py`) and,
+if the default tier is wrong, a pin in `_DEFAULT_AGENT_TIERS` (`src/domain/user.py`). An agent type with no `STRATEGIES`
+entry silently gets the `quick` strategy (`AgentProviderStrategy.get_strategy`). `MCPClient` hardcodes the `X-Goog-Api-Key` header, so a server with another auth scheme needs the
 client generalised first.
 
 ## Links
