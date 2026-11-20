@@ -195,8 +195,10 @@ def _no_ambient_credentials(*args, **kwargs):
 async def test_signed_url_is_the_url_the_client_minted(monkeypatch, fake, store, default):
     monkeypatch.setattr(google.auth, "default", default)
     url = await store.generate_signed_url(KEY, 300)
-    assert url == fake.client().bucket(BUCKET).blob(KEY).generate_signed_url(
-        timedelta(seconds=300), method="GET", version="v4")
+    [request] = fake.signed_urls
+    minted = FakeGcs(buckets={BUCKET: "plain"}).client().bucket(BUCKET).blob(KEY).generate_signed_url(   # deterministic
+        request["expiration"], method=request["method"], version=request["version"])
+    assert url == minted
 
 
 @pytest.mark.gcs_fake_only("pins the signing request made with stand-in credentials (the fake's signed_urls); "
