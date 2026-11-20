@@ -452,7 +452,7 @@ Code:
   src/utils/capabilities.py                  user-facing capabilities entry
   tests/unit/agents/test_video_generation_agent.py       NEW
   tests/unit/adapters/test_grok_video_adapter.py         NEW — wire test, mock at SDK boundary
-  tests/unit/handlers/test_worker_handler.py             + video_generation_polling coverage
+  tests/unit/services/test_video_generation_polling_task.py  video_generation_polling coverage
   tests/unit/domain/test_user.py                         video_generation tier coverage
   tests/contracts/adapter_contracts.py                   new ContractRule for VideoGenerationPort
 
@@ -575,8 +575,8 @@ Mock at the `AsyncOpenAI` SDK boundary + the `httpx` download boundary, not the 
 `done`/`failed`/`expired`), video-bytes download on `done`, `task_queue.enqueue_video_generation_polling`
 called exactly once per submission (not per poll).
 
-### Worker handler tests (`tests/unit/handlers/test_worker_handler.py`)
-`_handle_video_generation_polling`: `pending` → re-enqueue with delay; `done` → `deliver_video()`
+### Video polling tests (`tests/unit/services/test_video_generation_polling_task.py`)
+`VideoGenerationPollingTask`: `pending` → re-enqueue with delay; `done` → `deliver_video()`
 called, no re-enqueue; `failed`/`expired` → `notification.notify()` called, no re-enqueue;
 max-attempts exhaustion → timeout notification, matching `_handle_deep_research_polling`'s shape.
 
