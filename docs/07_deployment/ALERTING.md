@@ -44,6 +44,9 @@ Why these six exist:
   changing the wording or level of these lines silently disables the alert:
   `src/services/authentication_service.py::AuthenticationService._require_allowed_email` (`OAuth sign-in rejected`, kept
   verbatim by its docstring) and the `Registering new user` line in the same file.
+- **A text filter reads `jsonPayload.message`, never `textPayload`.** On Cloud Run the logger writes one JSON object per
+  line (`docs/07_deployment/LOGGING.md`), so the message lands in `jsonPayload.message` and `textPayload` stays empty: a
+  `textPayload:"..."` condition is valid, saves, and never trips.
 - **A systemic failure must log at ERROR to page; a file's own failure must not.** The document-service path and the
   drive open path pick the level for this reason (`src/services/document_service.py`, `src/domain/document_read.py::SYSTEM_FAULT_STATUSES`).
   A new failure path that logs WARNING for a systemic cause never pages.
