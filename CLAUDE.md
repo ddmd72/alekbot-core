@@ -87,7 +87,7 @@ make check-pricing     # audit src/domain/billing.py against two price catalogs
 - `@pytest.mark.slow` (over 0.5 s with coverage on) is skipped unless `RUN_SLOW_TESTS=1`, so a bare `pytest <file>` skips it
   silently. `@pytest.mark.timing` (any wall-clock/CPU threshold) is skipped unless `RUN_TIMING_TESTS=1`; a new time
   threshold gets the marker, and a suite is never re-run because a timing test failed.
-- **CI** (`.github/workflows/ci.yml`) runs `make ci` on every push/PR and posts ✅/❌ to Slack. A docs-only change skips it
+- **CI** (`.github/workflows/ci.yml`) runs `make ci` on every pull request and every push to `main` and posts ✅/❌ to Slack. A docs-only change skips it
   but still runs the doc-reading tests; "docs" is defined in `scripts/ci/docs_only.py`. More: `docs/11_quality/README.md`.
 
 ## Code Navigation (CodeGraph)
