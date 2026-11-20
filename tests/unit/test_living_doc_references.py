@@ -1,24 +1,32 @@
-"""Building-block READMEs must not reference code that no longer exists.
+"""Living docs and CLAUDE.md files must not reference code that no longer exists.
 
-Every `docs/05_building_blocks/*/*.md` that starts with the `<!-- block` header is checked: each `covers:` line
-matches a tracked file, each backticked repository path exists, each `path::Symbol` / `path::Class.member` names
-a real definition (Python files are parsed with `ast`), and relative `.md` links resolve. A stale reference
-misleads the reader the README exists to orient (docs/04_solution_strategy/decisions/building_block_docs_contract.md).
-READMEs without the header are in the old format and are skipped on purpose.
+Every `docs/**/*.md` that starts with the `<!-- living-doc` header is checked: each `covers:` line matches a tracked
+file (or the header says `covers: none`), each backticked repository path exists, each `path::Symbol` /
+`path::Class.member` names a real definition (Python files are parsed with `ast`), and relative `.md` links resolve.
+No tracked file is covered by two docs. Every tracked `CLAUDE.md` gets the path and symbol checks. A stale reference
+misleads the reader the doc exists to orient (docs/04_solution_strategy/decisions/living_docs_contract.md).
+Docs without the header are in the old format and are skipped on purpose.
 """
 import ast
 import fnmatch
 import glob
 import re
-import subprocess
-from datetime import date
 from pathlib import Path
 
 import pytest
 
+from scripts.ci.living_docs import (
+    cover_matches,
+    covers_conflicts,
+    effective_covers,
+    living_docs,
+    parse_header,
+    tracked_files,
+    valid_iso_date,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
-BLOCKS_DIR = ROOT / "docs" / "05_building_blocks"
-HEADER = "<!-- block"
+DOCS_DIR = ROOT / "docs"
 
 # Real repository trees; a word in backticks starting with one of these is a path.
 PATH_PREFIXES = (
@@ -29,66 +37,6 @@ PATH_PREFIXES = (
 UNTRACKED_PREFIXES = ("scripts/memory/", "docs/superpowers/", "firestore_utils/uploads/")
 
 _SYMBOL = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)?$")
-
-
-def tracked_files(root: Path) -> list[str]:
-    """Repository files as posix paths: `git ls-files`, or a filesystem walk when git is unavailable."""
-    try:
-        out = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True, timeout=30
-        ).stdout
-        files = [line for line in out.splitlines() if line]
-        if files:
-            return files
-    except (OSError, subprocess.SubprocessError):
-        pass
-    skip = {".git", "node_modules", "__pycache__", ".venv", "venv", ".codegraph"}
-    return [
-        p.relative_to(root).as_posix()
-        for p in root.rglob("*")
-        if p.is_file() and not skip.intersection(p.relative_to(root).parts)
-    ]
-
-
-def parse_header(text: str) -> tuple[list[str], str | None, str] | None:
-    """(covers lines, audited value or None, body without the header) for a README with the block header; else None.
-
-    The optional `audited: YYYY-MM-DD` line ends the covers list wherever it sits and is never a covers path.
-    """
-    if not text.startswith(HEADER):
-        return None
-    end = text.find("-->")
-    if end == -1:
-        return [], None, text
-    header, body = text[:end], text[end + 3:]
-    covers: list[str] = []
-    audited: str | None = None
-    in_covers = False
-    for line in header.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("audited:"):
-            audited = stripped[len("audited:"):].strip()
-            in_covers = False
-            continue
-        if stripped.startswith("covers:"):
-            in_covers = True
-            stripped = stripped[len("covers:"):].strip()
-        if in_covers and stripped:
-            covers.append(stripped)
-    return covers, audited, body
-
-
-def valid_iso_date(value: str) -> bool:
-    try:
-        return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)) and bool(date.fromisoformat(value))
-    except ValueError:
-        return False
-
-
-def cover_matches(line: str, files: list[str]) -> bool:
-    if line.endswith("/"):
-        return any(f.startswith(line) for f in files)
-    return line in files or any(fnmatch.fnmatchcase(f, line) for f in files)
 
 
 def _without_fences(body: str) -> str:
@@ -144,24 +92,19 @@ def _path_exists(path: str, root: Path) -> bool:
     return (root / path).exists()
 
 
-def check_readme(readme: Path, text: str, root: Path, files: list[str]) -> list[str]:
-    """Problems of one headed README; empty when it has no header or everything resolves."""
-    parsed = parse_header(text)
-    if parsed is None:
-        return []
-    covers, audited, body = parsed
-    name = readme.name
+def _check_refs(name: str, body: str, root: Path, files: list[str] | None = None) -> list[str]:
+    """Problems of the backticked paths and `path::Symbol` refs of `body`.
+
+    With `files` (the tracked list) a glob must match a tracked file; without it, a file on disk.
+    """
     problems: list[str] = []
-    if audited is not None and not valid_iso_date(audited):
-        problems.append(f"{name}: header `audited: {audited}` is not a valid YYYY-MM-DD date")
-    if not covers:
-        problems.append(f"{name}: header has no `covers:` lines")
-    for line in covers:
-        if not cover_matches(line, files):
-            problems.append(f"{name}: covers line {line!r} matches no tracked file")
     for path, symbol in sorted(cited_refs(body), key=lambda r: (r[0], r[1] or "")):
         ref = path if symbol is None else f"{path}::{symbol}"
-        if not _path_exists(path, root):
+        if files is not None and "*" in path:
+            exists = any(fnmatch.fnmatchcase(f, path) for f in files)
+        else:
+            exists = _path_exists(path, root)
+        if not exists:
             problems.append(f"{name}: `{ref}` - path does not exist")
             continue
         if symbol is None or not path.endswith(".py") or not (root / path).is_file():
@@ -175,6 +118,25 @@ def check_readme(readme: Path, text: str, root: Path, files: list[str]) -> list[
             continue
         if not found:
             problems.append(f"{name}: `{ref}` - {symbol} is not defined in {path}")
+    return problems
+
+
+def check_readme(readme: Path, text: str, root: Path, files: list[str]) -> list[str]:
+    """Problems of one headed doc; empty when it has no header or everything resolves."""
+    parsed = parse_header(text)
+    if parsed is None:
+        return []
+    covers, audited, body = parsed
+    name = readme.name
+    problems: list[str] = []
+    if audited is not None and not valid_iso_date(audited):
+        problems.append(f"{name}: header `audited: {audited}` is not a valid YYYY-MM-DD date")
+    if not covers:
+        problems.append(f"{name}: header has no `covers:` lines (an index doc owning no code writes `covers: none`)")
+    for line in effective_covers(covers):
+        if not cover_matches(line, files):
+            problems.append(f"{name}: covers line {line!r} matches no tracked file")
+    problems += _check_refs(name, body, root)
     for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", _without_fences(body)):
         if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
             continue
@@ -184,18 +146,42 @@ def check_readme(readme: Path, text: str, root: Path, files: list[str]) -> list[
     return problems
 
 
-def block_docs() -> list[Path]:
-    """Markdown files of block folders that start with the block header."""
-    return [p for p in sorted(BLOCKS_DIR.glob("*/*.md")) if p.read_text(encoding="utf-8").startswith(HEADER)]
+def check_claude_md(rel: str, text: str, root: Path, files: list[str]) -> list[str]:
+    """Problems of one CLAUDE.md: a backticked repository path or `path::Symbol` that does not exist."""
+    return _check_refs(rel, text, root, files)
+
+
+def claude_mds() -> list[str]:
+    return sorted(f for f in tracked_files(ROOT) if f == "CLAUDE.md" or f.endswith("/CLAUDE.md"))
+
+
+def doc_headers() -> dict[str, list[str]]:
+    docs: dict[str, list[str]] = {}
+    for path in living_docs(ROOT):
+        parsed = parse_header(path.read_text(encoding="utf-8"))
+        if parsed is not None:
+            docs[path.relative_to(ROOT).as_posix()] = parsed[0]
+    return docs
 
 
 # ------------------------------------------------------------------ the check on the tree
 
 
-@pytest.mark.parametrize("readme", block_docs(), ids=lambda p: p.relative_to(BLOCKS_DIR).as_posix())
-def test_block_readme_references_exist(readme):
+@pytest.mark.parametrize("readme", living_docs(ROOT), ids=lambda p: p.relative_to(DOCS_DIR).as_posix())
+def test_living_doc_references_exist(readme):
     problems = check_readme(readme, readme.read_text(encoding="utf-8"), ROOT, tracked_files(ROOT))
-    assert not problems, "stale references in a building-block README:\n" + "\n".join(problems)
+    assert not problems, "stale references in a living doc:\n" + "\n".join(problems)
+
+
+def test_every_tracked_file_has_at_most_one_owning_doc():
+    problems = covers_conflicts(doc_headers(), tracked_files(ROOT))
+    assert not problems, "a file covered by two living docs:\n" + "\n".join(problems)
+
+
+@pytest.mark.parametrize("rel", claude_mds())
+def test_claude_md_references_exist(rel):
+    problems = check_claude_md(rel, (ROOT / rel).read_text(encoding="utf-8"), ROOT, tracked_files(ROOT))
+    assert not problems, "stale references in a CLAUDE.md:\n" + "\n".join(problems)
 
 
 # ------------------------------------------------------------------ the checker's own tests
@@ -213,23 +199,23 @@ def _repo(tmp_path: Path) -> Path:
 
 
 def _readme(root: Path, covers: str, body: str) -> tuple[Path, str]:
-    text = f"<!-- block\ncovers:\n{covers}\n-->\n{body}\n"
+    text = f"<!-- living-doc\ncovers:\n{covers}\n-->\n{body}\n"
     path = root / "docs" / "block" / "README.md"
     path.write_text(text)
     return path, text
 
 
 def test_parse_header_reads_covers_lines_and_skips_old_format():
-    covers, audited, body = parse_header("<!-- block\ncovers:\n  src/a/\n  src/b/*.py\n-->\nbody `x`\n")
+    covers, audited, body = parse_header("<!-- living-doc\ncovers:\n  src/a/\n  src/b/*.py\n-->\nbody `x`\n")
     assert covers == ["src/a/", "src/b/*.py"]
     assert audited is None
     assert body.strip() == "body `x`"
-    assert parse_header("# Old format\n<!-- block\ncovers:\n a\n-->\n") is None
+    assert parse_header("# Old format\n<!-- living-doc\ncovers:\n a\n-->\n") is None
 
 
 def test_audited_line_is_parsed_before_or_after_covers_and_must_be_an_iso_date(tmp_path):
-    before = parse_header("<!-- block\naudited: 2026-11-20\ncovers:\n  src/a/\n-->\n")
-    after = parse_header("<!-- block\ncovers:\n  src/a/\naudited: 2026-11-20\n-->\n")
+    before = parse_header("<!-- living-doc\naudited: 2026-11-20\ncovers:\n  src/a/\n-->\n")
+    after = parse_header("<!-- living-doc\ncovers:\n  src/a/\naudited: 2026-11-20\n-->\n")
     assert before is not None and after is not None
     assert before[:2] == after[:2] == (["src/a/"], "2026-11-20")
     assert valid_iso_date("2026-11-20")
@@ -312,3 +298,62 @@ def test_readme_without_header_is_skipped(tmp_path):
     root = _repo(tmp_path)
     readme = root / "docs" / "block" / "README.md"
     assert check_readme(readme, "# Old\n`src/gone.py`\n", root, tracked_files(root)) == []
+
+
+def test_covers_none_is_a_valid_header_with_no_covers(tmp_path):
+    root = _repo(tmp_path)
+    path, text = _readme(root, "  none", "An index with no code, `docs/other.md`.")
+    parsed = parse_header(text)
+    assert parsed is not None and parsed[0] == ["none"]
+    assert effective_covers(parsed[0]) == []
+    assert check_readme(path, text, root, tracked_files(root)) == []
+    assert covers_conflicts({"docs/index.md": ["none"], "docs/x.md": ["none"]}, ["none", "src/a/x.py"]) == []
+
+
+def test_header_without_covers_lines_or_none_is_an_error(tmp_path):
+    root = _repo(tmp_path)
+    path, text = _readme(root, "", "body")
+    problems = check_readme(path, text, root, tracked_files(root))
+    assert len(problems) == 1 and "no `covers:` lines" in problems[0]
+
+
+def test_two_docs_covering_one_file_conflict_and_name_both():
+    docs = {"docs/a.md": ["src/a/x.py"], "docs/b.md": ["src/a/*.py"]}
+    problems = covers_conflicts(docs, ["src/a/x.py", "src/a/y.py"])
+    assert len(problems) == 1
+    assert "src/a/x.py" in problems[0] and "docs/a.md" in problems[0] and "docs/b.md" in problems[0]
+
+
+def test_disjoint_covers_have_no_conflict():
+    docs = {"docs/a.md": ["src/a/"], "docs/b.md": ["src/b/*.py", "src/c.py"]}
+    assert covers_conflicts(docs, ["src/a/x.py", "src/b/y.py", "src/c.py", "src/d.py"]) == []
+
+
+def test_directory_cover_and_exact_file_cover_overlap_is_a_conflict():
+    docs = {"docs/a.md": ["src/a/"], "docs/b.md": ["src/a/x.py"]}
+    problems = covers_conflicts(docs, ["src/a/x.py", "src/a/y.py"])
+    assert len(problems) == 1 and "src/a/x.py" in problems[0]
+
+
+def test_claude_md_missing_path_and_missing_symbol_are_both_reported(tmp_path):
+    root = _repo(tmp_path)
+    text = "See `src/services/gone_service.py` and `src/services/example_service.py::Missing` and `src/services/example_service.py::start`."
+    problems = check_claude_md("src/CLAUDE.md", text, root, tracked_files(root))
+    joined = "\n".join(problems)
+    assert len(problems) == 2, joined
+    assert "`src/services/gone_service.py` - path does not exist" in joined
+    assert "Missing is not defined" in joined
+    assert all(p.startswith("src/CLAUDE.md:") for p in problems)
+
+
+def test_claude_md_glob_matching_nothing_is_reported_and_matching_one_is_fine(tmp_path):
+    root = _repo(tmp_path)
+    files = tracked_files(root)
+    assert check_claude_md("CLAUDE.md", "`src/services/*_service.py`", root, files) == []
+    problems = check_claude_md("CLAUDE.md", "`src/services/*_gone.py`", root, files)
+    assert problems == ["CLAUDE.md: `src/services/*_gone.py` - path does not exist"]
+
+
+def test_claude_md_ignores_untracked_prefixes(tmp_path):
+    root = _repo(tmp_path)
+    assert check_claude_md("CLAUDE.md", "`scripts/memory/x.json` `docs/superpowers/y.md`", root, tracked_files(root)) == []
