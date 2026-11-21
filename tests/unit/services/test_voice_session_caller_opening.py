@@ -30,8 +30,7 @@ async def _call(caller_opening):
         yield  # pragma: no cover
 
     service = VoiceSessionService(realtime_session_factory=MagicMock(return_value=session),
-                                  control_plane=control, alert_sink=AsyncMock(),
-                                  caller_opening=caller_opening)
+                                  control_plane=control, alert_sink=AsyncMock())
     await service.handle_call(ticket="t1", inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
                               clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
     return session
@@ -52,3 +51,4 @@ async def test_no_caller_opening_means_no_user_item():
     session = await _call(None)
 
     assert all(role != "user" for role, _ in (c.args for c in session.submit_message.await_args_list))
+

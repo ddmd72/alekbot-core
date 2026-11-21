@@ -37,7 +37,7 @@ async def _call(instructions, voice=_PROVIDER, resumed=False, resume=False, call
         yield  # pragma: no cover
 
     service = VoiceSessionService(realtime_session_factory=MagicMock(return_value=session), control_plane=control,
-                                  alert_sink=AsyncMock(), caller_opening=caller_opening)
+                                  alert_sink=AsyncMock())
     await service.handle_call(ticket="ticket-0001-invented", inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
                               clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
     return [c.args for c in session.submit_message.await_args_list]
