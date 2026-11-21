@@ -28,23 +28,28 @@ automatic link copy of §4.10 rule 2 filled the chat with every search's links. 
 wants something in chat, Lelik calls send_to_chat, and Alek decides what is worth posting.
 """
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
+from ..domain.language import LanguageCode
 from ..domain.messaging import session_id_for
 from ..domain.remote_tool_server import RemoteToolServer
+from ..domain.system_fingerprint import wrap_system
 from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
+from ..domain.user import UserBotConfig
 from ..domain.voice_errand import SEND_TO_CHAT, SEND_TO_CHAT_REQUEST
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
 from ..domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD
 from ..domain.voice_mcp_token import voice_mcp_eligible
 from ..domain.voice_mode import VoiceMode
+from ..domain.voice_opening import VOICE_OPENING_FIELD, voice_opening_text
 from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import ALEK, LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
+from ..infrastructure.turn_key import TurnKeySource, draw_turn_key
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.telephony_port import TelephonyPort
 from ..utils.logger import logger
@@ -74,6 +79,9 @@ class LelikAgent(BaseAgent):
         voice_profile: VoiceProviderProfile,
         native_web_search: bool = False,
         mcp_servers: Sequence[RemoteToolServer] = (),
+        user_config: Optional[UserBotConfig] = None,
+        system_default_language: LanguageCode = LanguageCode.EN,
+        turn_key_source: Optional[TurnKeySource] = None,
     ) -> None:
         """voice_profile: the user's realtime provider — which prompt profile the session
         instructions are built from, and the spec the relay runs the call with
@@ -82,8 +90,15 @@ class LelikAgent(BaseAgent):
         builtin_web_search, the session offers the provider's own search instead of search_web_light.
         mcp_servers: the drive MCP server descriptor (no token), given when the VOICE_MCP_TOOLS knob is on
         (LELIK_VOICE_MCP_RFC §4). Only an eligible call carries it (the plain companion call on xAI, O6/O7); it keeps
-        its search_memory delegation."""
+        its search_memory delegation.
+        user_config / system_default_language: the language rule of the call-opening note (`voice_opening_text`): mirror
+        mode, else the preferred language, else the deployment default (as `LANG_FIXED_*` is chosen). No config = mirror.
+        turn_key_source: draws the key of a LELIK-mode call's opening note and `session_key` block
+        (SYSTEM_TURN_FINGERPRINT_RFC §4.1); tests inject their own."""
         super().__init__(config)
+        self._user_config = user_config
+        self._system_default_language = system_default_language
+        self._turn_key_source: TurnKeySource = turn_key_source or draw_turn_key
         self._native_web_search = native_web_search
         self._mcp_servers = tuple(mcp_servers)
         self._telephony = telephony
@@ -124,6 +139,8 @@ class LelikAgent(BaseAgent):
         """Instructions + tools for the realtime session. Raises on failure: no call
         opens on an empty context."""
         context = await self._persona.assemble(user_id, account_id)
+        # Only a LELIK-mode call has the opening note, and so the key that marks it (local: never self.*).
+        key = self._turn_key_source() if mode is VoiceMode.LELIK else None
         instructions = await self._prompt_builder.build_for_agent(
             agent_type=self._voice_profile.prompt_profile_for(mode),
             user_id=user_id,
@@ -133,6 +150,7 @@ class LelikAgent(BaseAgent):
             include_biographical=True,
             include_directives=False,
             include_datetime=True,
+            session_key=key,
         )
         available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
         native_search = self._native_search_active()
@@ -146,7 +164,19 @@ class LelikAgent(BaseAgent):
         if mcp_servers:
             # Descriptors only: the tokens are minted at ticket redemption and never stored (O1).
             config[VOICE_MCP_SERVERS_FIELD] = [server.to_dict() for server in mcp_servers]
+        if key is not None:
+            config[VOICE_OPENING_FIELD] = wrap_system(self._opening_text(context.conversation_history), key)
         return config
+
+    def _opening_text(self, history: List[Dict[str, Any]]) -> str:
+        user_config = self._user_config
+        mirror = user_config.agent_mirror if user_config is not None else True
+        preferred = user_config.preferred_language if user_config is not None else None
+        return voice_opening_text(
+            mirror=mirror,
+            language=preferred or self._system_default_language,
+            has_caller_message=any(entry.get("role") == "user" for entry in history),
+        )
 
     def _tool_declarations(self, mode: VoiceMode, available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The session's tools. An interpreter call opens with none (owner rule, 2026-11-11): it only translates, with

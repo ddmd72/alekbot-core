@@ -124,6 +124,19 @@ class TestProviderOwnedTurns:
         realtime_session.request_response.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_a_config_opening_follows_the_anchor_as_a_user_item_with_no_pickup_note(self):
+        realtime_session = AsyncMock()
+        anchor = build_persona_anchor(_PERSONA)
+        service = _service(realtime_session, voice=_XAI)
+        service._control_plane.fetch_session_config.return_value["opening"] = "<system_note key=\"x\">note</system_note>"
+
+        await _call(service, realtime_session, _no_events)
+
+        assert [c.args for c in realtime_session.submit_message.await_args_list] == [
+            ("system", anchor), ("user", "<system_note key=\"x\">note</system_note>")]
+        realtime_session.request_response.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_a_committed_turn_does_not_start_a_reply(self):
         realtime_session = AsyncMock()
 

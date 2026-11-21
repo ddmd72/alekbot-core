@@ -8,6 +8,9 @@ tokens:
   LANG_MIRROR:
     non_overridable: false
     order: 300
+  POLICY_SYSTEM_PROVENANCE:
+    non_overridable: true
+    order: 5
   PROTOCOL_LELIK_DELEGATION_BARE:
     non_overridable: true
     order: 200

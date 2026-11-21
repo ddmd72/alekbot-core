@@ -37,6 +37,7 @@ from src.ports.call_control_plane_port import CallControlPlanePort
 from src.ports.reverse_geocoding_port import ReverseGeocodingPort
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.domain.secret_digest import fingerprint
+from src.domain.voice_opening import VOICE_OPENING_FIELD
 from src.utils.logger import logger
 
 if TYPE_CHECKING:  # type-only: services/ do not import each other at runtime (REQ-ARCH-22)
@@ -259,7 +260,7 @@ class VoiceSessionService:
         cue_grace_s: float = 0.7,
         barge_in_min_speech_s: float = 0.0,
         hangup_after_silence_s: Optional[float] = None,
-        caller_opening: Optional[str] = None,
+        web_opening_enabled: bool = True,
         waiting_gap_max_s: Optional[float] = None,
         greeting_guard_s: float = 0.0,
         control: Optional["VoiceControl"] = None,
@@ -275,9 +276,11 @@ class VoiceSessionService:
         overrides the spec's.
 
         Under PROVIDER turn ownership the provider replies to the caller and stops when talked
-        over. The relay then places no persona anchor, sends no caller opening and no silence or
-        waiting notes, and on barge-in only drops the queued audio. It still starts the greeting
-        and delivers delegation answers.
+        over. The relay then places no per-turn anchor, sends no silence or waiting notes, and on barge-in only drops
+        the queued audio. It still starts the greeting and delivers delegation answers.
+
+        `web_opening_enabled`: False = a web call ignores the call-opening note its session config carries and starts
+        with the pickup note (the VOICE_WEB_CALLER_OPENING rollback lever); phone calls always use the opening.
 
         `control` (web calls only; its `hub` is VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): a call whose session config carries
         `control_token_sha256` opens its control link there for the call's life. An interpreter call's link offers
@@ -308,7 +311,7 @@ class VoiceSessionService:
         self._cue_grace_s = cue_grace_s
         self._barge_in_min_speech_s = barge_in_min_speech_s
         self._hangup_after_silence_s = hangup_after_silence_s
-        self._caller_opening = caller_opening
+        self._web_opening_enabled = web_opening_enabled
         self._waiting_gap_max_s = waiting_gap_max_s
         self._greeting_guard_s = greeting_guard_s
         self._control_hub = control.hub if control is not None else None
@@ -501,13 +504,16 @@ class VoiceSessionService:
                 if state.turn_ownership is TurnOwnership.PROVIDER:
                     if state.persona_anchor is not None:
                         await self._system_note(session, state, state.persona_anchor)
-                if self._caller_opening:
-                    # A user turn, not system text: live, the caller's own request changed how
-                    # Lelik spoke where the same rule as system text did not (2026-09-25).
-                    # Provider-owned turns too: without a user turn Grok remarked on a silent line (2026-11-21).
-                    await session.submit_message("user", self._caller_opening)
-                pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
-                await self._system_note(session, state, pickup_note)
+                opening = config.get(VOICE_OPENING_FIELD)
+                if opening and (self._web_opening_enabled or config.get("call_kind") != "web"):
+                    # The main service's keyed call-opening note, as a user turn: a call has no user turn of its
+                    # own, and a user item steered Lelik where system text did not (2026-09-25, 2026-11-21).
+                    # It replaces the pickup note: the two would contradict (the pickup's "one short sentence").
+                    await session.submit_message("user", opening)
+                    self._debug(state, "opening inserted")
+                else:
+                    pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
+                    await self._system_note(session, state, pickup_note)
             state.inbound_started_at = asyncio.get_running_loop().time()
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio, state))
             consume_task = asyncio.ensure_future(

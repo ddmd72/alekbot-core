@@ -197,8 +197,8 @@ relay; only the main service needs credentials, to mint SFU sessions.
    path in `main.py` applies only to a run without them or without `VOICE_RELAY_STREAM_URL`.
 4. Optional relay knobs, read with `os.getenv` at the relay's entry point (`relay_main.py`), never in `load_settings()`:
    `VOICE_WEB_REASONING_EFFORT` (unset = each call's own spec; set, it overrides every web call whatever the provider, so
-   it must be a value that provider accepts); `VOICE_WEB_CALLER_OPENING` (`off` drops the owner's-first-turn opening on web
-   calls only); `VOICE_DEAD_PEER_TIMEOUT_S` (`relay_main._dead_peer_timeout_s`, default
+   it must be a value that provider accepts); `VOICE_WEB_CALLER_OPENING` (`off`: web calls ignore the call-opening note the main service puts in the session config and start with the
+   pickup note); `VOICE_DEAD_PEER_TIMEOUT_S` (`relay_main._dead_peer_timeout_s`, default
    `src/handlers/sfu_stream_handler.py::DEAD_PEER_TIMEOUT_S`: a web call with no inbound audio packet for that long ends
    itself, `VOICE_CALL_CONTROL_CHANNEL_RFC.md` §7.4; a value that is not a positive number keeps the default; lowering it
    far risks ending backgrounded calls, because iOS pauses the web app's audio in the background); `LIVE_TEXT_LAG_MS`
