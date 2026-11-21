@@ -7,7 +7,8 @@ the stored documents unchanged, and a positive control keeps a route that refuse
 import pytest
 
 from tests.support.firestore_eval import eval_transactions
-from tests.unit.web.cabinet_routes_world import ALEX, CLARA, CabinetWorld
+from tests.support.redelivery_world import Rendezvous, require
+from tests.unit.web.cabinet_routes_world import ALEX, CLARA, CabinetWorld, race
 
 
 @pytest.fixture(autouse=True)
@@ -228,6 +229,26 @@ class TestJoinTeam:
         assert resp.status_code == 400
         (stored,) = world.db.collection("invites").docs.values()
         assert "used_by_user_id" not in stored
+
+
+class TestJoinKeepsAConcurrentProfileChange:
+    async def test_a_join_during_a_timezone_save_keeps_both(self, world):
+        """The join writes only the user's `account_id`, so a Cabinet save that read the profile first is kept."""
+        await world.allow("alex@example.com")
+        invite = await world.client.post("/api/user/invite-codes", headers=world.token(CLARA),
+                                         json={"email": "alex@example.com", "role": "MEMBER"})
+        code = (await invite.get_json())["code"]
+        rv = Rendezvous()
+        rv.wrap(world.users, "get_user")
+        h = world.token(ALEX)
+        joined, saved = await race(
+            rv,
+            lambda: world.client.post("/api/user/join-team", headers=h, json={"code": code}),
+            lambda: world.client.put("/api/user/timezone", headers=h, json={"timezone": "Europe/Lisbon"}))
+        require(rv.met and not rv.stalled, "the join and the save read the profile before either wrote it")
+        assert (joined.status_code, saved.status_code) == (200, 200)
+        stored = world.user_doc("usr-1")
+        assert (stored["account_id"], stored["config"]["timezone"]) == ("acc-2", "Europe/Lisbon")
 
 
 class TestJoinLink:
