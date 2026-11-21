@@ -139,6 +139,7 @@ refuses).
 |---|---|---|
 | `SERVICE_URL_DEV` | `_SERVICE_URL`, `_OAUTH_REDIRECT_URI` | `make deploy` refuses when empty |
 | `VOICE_RELAY_URL_DEV` | `_VOICE_RELAY_URL` → `VOICE_RELAY_STREAM_URL` (main) | `https://` form; the Makefile turns it into `wss://`. Two-pass, below |
+| `GCS_MEDIA_BUCKET_DEV` | `_GCS_MEDIA_BUCKET` → `GCS_MEDIA_BUCKET` (main service and research job) | **required**; `make deploy` refuses when empty |
 | `INDEXER_URL_DEV` | `_INDEXER_URL` → `DRIVE_INDEXER_URL` (both services) | no trailing slash; `make deploy` refuses when empty unless `DRIVE_FIRST_PASS=1`. Two-pass, below |
 | `DRIVE_TRANSCRIBE_ENABLED_DEV` | `_DRIVE_TRANSCRIBE_ENABLED` → `DRIVE_TRANSCRIBE_ENABLED` | **required**, exactly `on` or `off` (below) |
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the monthly cap (below) |
