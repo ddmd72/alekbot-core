@@ -22,8 +22,12 @@ def consolidation_agent_id(user_id: str) -> str:
 def handoff_key(session_id: str, messages: Sequence[Message]) -> str:
     """A stable key of a run of session messages handed off to a queue: the same messages (role, created_at, texts) of
     the same session give the same key. A batch whose hand-off is repeated (its cut from the session failed, so the next
-    append hands it off again) then carries the same id, and the queue (create-if-absent) keeps the first record."""
-    identity = (session_id, [(m.role, m.created_at, [(p.text, p.full_text, p.consolidation_text) for p in m.parts])
+    append hands it off again) then carries the same id, and the queue (create-if-absent) keeps the first record.
+
+    An empty text counts as no text, as the store does not write one, so a message gives the same key live and as read
+    back from the store."""
+    identity = (session_id, [(m.role, m.created_at,
+                              [(p.text or None, p.full_text or None, p.consolidation_text or None) for p in m.parts])
                              for m in messages])
     return hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()[:24]
 
