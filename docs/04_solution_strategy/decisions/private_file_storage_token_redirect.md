@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-01
 **Status:** Accepted (code on `feature/private-file-storage`; infra pending — see Trigger)
-**Context:** Pre-public-release security hardening. The `alek-media-dev` GCS bucket was public
+**Context:** Pre-public-release security hardening. The media GCS bucket was public
 (`allUsers:objectViewer`) and held every user artifact — uploads, generated HTML/PDF/DOCX,
 deep-research reports, and the daily **email review** (a summary of the user's inbox = PII).
 Protection rested only on unguessable UUID paths (security-by-obscurity): a leaked link
@@ -63,7 +63,7 @@ services with only the GCS SDK mocked, and is mutation-verified to fail on a con
 
 **Trigger to complete / revisit:** the bucket is still public until the infra step runs —
 (1) `serviceAccountTokenCreator` on the runtime SA (signBlob for keyless V4 signing),
-(2) remove `allUsers` from `alek-media-dev`, (3) lifecycle rules (email_review/ → 5d, else → 30d).
+(2) remove `allUsers` from the media bucket, (3) lifecycle rules (email_review/ → 5d, else → 30d).
 Order matters: grant signBlob and deploy BEFORE removing `allUsers`, or `/f` links break.
 (The old `alek-docs-*` GCS buckets and the `alek-docs-dev` Cloud Run docs site were a dead
 MkDocs deployment — UI long removed, no uploads, unreferenced by code — and were deleted as part

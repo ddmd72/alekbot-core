@@ -360,7 +360,7 @@ not just `file_data` presence.
 
 ## 6. GCS bucket configuration
 
-- Bucket: `alek-media-{env}` (existing, shared with deep research / documents)
+- Bucket: the media bucket (`GCS_MEDIA_BUCKET`), existing, shared with deep research / documents
 - Prefix: `{user_id}/files/`
 - Lifecycle rule: delete objects older than 30 days (the bucket's rule for everything but `email_review/`; see `docs/05_building_blocks/file_storage/README.md`)
 - Key format: `{user_id}/files/{filename}` (may include `(N)` dedup suffix)
@@ -368,7 +368,7 @@ not just `file_data` presence.
 **Bucket structure convention:**
 
 ```
-alek-media-{env}/
+<media bucket>/
   {user_id}/
     files/           ← user file attachments (this RFC)
     deep_research/   ← research reports (existing, to be migrated)
