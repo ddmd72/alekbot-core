@@ -187,7 +187,9 @@ buttons, live call text and `listening`. Frames, versions, features and limits: 
    the same token replaces the old; `welcome` carries feature state so a reconnect re-syncs.
 4. `listening`: the page has subscribed to Lelik's track. The web greeting waits for it (capped), because `/connect` takes
    seconds and an earlier greeting would be over before the browser listened. A web call without a link waits the whole
-   cap; a phone call never waits.
+   cap; a phone call never waits. Until the greeting is requested the relay drops the caller's audio (consumed, never
+   buffered, never forwarded to the provider), so Lelik always opens the call
+   (`decisions/voice_greeting_holds_caller_audio.md`).
 
 ## Invariants and traps
 
