@@ -45,7 +45,7 @@ from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
 from ..domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD
 from ..domain.voice_mcp_token import voice_mcp_eligible
 from ..domain.voice_mode import VoiceMode
-from ..domain.voice_opening import VOICE_OPENING_FIELD, voice_opening_text
+from ..domain.voice_opening import VOICE_OPENING_FIELD, is_caller_message, voice_opening_text
 from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import ALEK, LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
@@ -175,7 +175,7 @@ class LelikAgent(BaseAgent):
         return voice_opening_text(
             mirror=mirror,
             language=preferred or self._system_default_language,
-            has_caller_message=any(entry.get("role") == "user" for entry in history),
+            has_caller_message=any(is_caller_message(entry) for entry in history),
         )
 
     def _tool_declarations(self, mode: VoiceMode, available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -25,3 +25,14 @@ def test_the_four_languages_have_four_different_texts():
 def test_mirror_mode_is_english_with_the_tail_only_after_a_caller_message(language):
     assert voice_opening_text(True, language, True) == f"{_EN} {MIRROR_TAIL}"
     assert voice_opening_text(True, language, False) == _EN
+
+
+@pytest.mark.parametrize("entry,expected", [
+    ({"role": "user", "content": "hello"}, True),
+    ({"role": "user", "content": "  [System: web call with Lelik]"}, False),
+    ({"role": "alek", "content": "hello"}, False),
+])
+def test_only_a_user_entry_the_caller_wrote_counts_as_a_caller_message(entry, expected):
+    from src.domain.voice_opening import is_caller_message
+
+    assert is_caller_message(entry) is expected

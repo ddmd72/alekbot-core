@@ -497,7 +497,7 @@ class VoiceSessionService:
                     # An unknown or expired id raises no error on the provider: the call is simply fresh.
                     logger.warning(f"voice call {fingerprint(ticket)}: resume: not honoured, opening fresh")
             if resumed:
-                # The earlier conversation, caller opening included, is already in the provider's context.
+                # The earlier conversation, the opening note included, is already in the provider's context.
                 await self._system_note(session, state, _RESUME_NOTE)
             else:
                 # Provider-owned turns get no per-turn anchor, so the persona anchor goes in once at the start.

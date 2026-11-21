@@ -16,7 +16,8 @@ answer, so the two never go in together.
 
 **Language rule.** Fixed-language user: the note in that language (preferred, else `SYSTEM_DEFAULT_LANGUAGE`, as the
 `LANG_FIXED_*` token is chosen), no language sentence. Mirror user: the English text, plus one sentence naming the
-language of the caller's latest message, only when the history holds one.
+language of the caller's latest message, only when the history holds one the caller wrote (the code-written
+`[System: …]` records, such as call summaries, do not count).
 
 **Rejected.** A system-role note (did not help). The relay's English constant as a user turn (in mirror mode it was
 mirrored as the caller's language). A localized opening without the key (nothing marks it as the system's).

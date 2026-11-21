@@ -115,3 +115,15 @@ async def test_a_mirror_user_with_a_message_in_the_history_gets_the_language_sen
 
     assert MIRROR_TAIL in (await agent.session_config("u1", "a1"))[VOICE_OPENING_FIELD]
     assert MIRROR_TAIL not in (await without.session_config("u1", "a1"))[VOICE_OPENING_FIELD]
+
+
+@pytest.mark.asyncio
+async def test_code_written_system_records_in_the_history_are_not_a_caller_message():
+    from src.domain.voice_opening import MIRROR_TAIL, VOICE_OPENING_FIELD
+
+    record = {"role": "user", "content": "  [System: web call with Lelik, 3 min]"}
+    only_records, _ = _opening_agent(history=[record, {"role": "alek", "content": "summary"}])
+    with_message, _ = _opening_agent(history=[record, {"role": "user", "content": "yo"}])
+
+    assert MIRROR_TAIL not in (await only_records.session_config("u1", "a1"))[VOICE_OPENING_FIELD]
+    assert MIRROR_TAIL in (await with_message.session_config("u1", "a1"))[VOICE_OPENING_FIELD]
