@@ -173,7 +173,8 @@ class InviteCodeService:
         # If user had their own account with data, that data becomes "orphaned" or inaccessible
         # unless we migrate it. For MVP, we assume joining a team switches context.
         new_member.account_id = invite.account_id
-        await self.user_repo.update_user(new_member)
+        # Field-level: a concurrent change of another field (a language switch, a Cabinet setting) is kept.
+        await self.user_repo.update_user_fields(new_member, ("account_id",))
 
         # Written last and durable: once stamped, the code resumes nothing, whatever account the user is in later.
         invite.completed_at = datetime.now(timezone.utc)
