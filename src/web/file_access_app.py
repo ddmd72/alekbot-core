@@ -99,14 +99,14 @@ def create_file_access_blueprint(
         if error:
             return error
 
-        if access.key.startswith(_VIDEO_KEY_PREFIX):
-            return Response(_video_landing_page(token, access.key), mimetype="text/html")
-
         try:
             if not await media_storage.exists(access.key):
-                # The token outlived the object (the bucket's lifecycle deleted it): gone, not an outage.
+                # The token outlived the object (the bucket's lifecycle deleted it): gone, not an outage. A video
+                # key gets the same answer instead of a landing page whose player has nothing to play.
                 logger.info("[FileAccess] %s is no longer stored", access.key)
                 return Response("This file has expired.", status=410)
+            if access.key.startswith(_VIDEO_KEY_PREFIX):
+                return Response(_video_landing_page(token, access.key), mimetype="text/html")
             signed = await media_storage.generate_signed_url(access.key, _SIGNED_URL_TTL)
         except Exception as e:  # noqa: BLE001
             logger.error("[FileAccess] signing failed for %s: %s", access.key, e, exc_info=True)
