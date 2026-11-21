@@ -163,6 +163,10 @@ class _CallState:
     persona_anchor: Optional[str] = None
     # Per call (VOICE_MULTI_PROVIDER_RFC §4.3): one relay serves users on different providers.
     turn_ownership: TurnOwnership = TurnOwnership.RELAY
+    # The caller's audio reaches the provider only once the greeting is requested: Lelik always speaks first.
+    inbound_open: bool = False
+    inbound_dropped: int = 0  # frames dropped while the gate was shut (logged when it opens)
+    inbound_started_at: float = 0.0
     caller_turns: int = 0  # speech_started count: "did the caller speak since dispatch?"
     # A tool result (a delegation answer, a remote MCP call) is in the provider's context and no reply has started
     # since: the loop time it landed; None when nothing is owed. No provider speaks a tool result by itself, so an owed
@@ -503,7 +507,8 @@ class VoiceSessionService:
                     await session.submit_message("user", self._caller_opening)
                 pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
                 await self._system_note(session, state, pickup_note)
-            forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
+            state.inbound_started_at = asyncio.get_running_loop().time()
+            forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio, state))
             consume_task = asyncio.ensure_future(
                 self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state,
                                      secrets=secrets)
@@ -512,13 +517,14 @@ class VoiceSessionService:
             if config.get("call_kind") == "web" and self._web_pickup_max_wait_s > 0:
                 # The browser subscribes to Lelik's track via /renegotiate after /connect; audio the relay sends
                 # earlier is paced in real time and lost, and a greeting is shorter than /connect takes. The loops
-                # above already run, so caller audio keeps flowing and a provider-owned reply that starts meanwhile
-                # is seen by the consumer (response_active), which makes the pickup below a no-op instead of a
-                # second response.
+                # above already run: the inbound loop consumes and drops caller audio until the greeting is requested
+                # below, and a provider-owned reply that starts meanwhile is seen by the consumer (response_active),
+                # which makes the pickup below a no-op instead of a second response.
                 pick_up = await self._wait_for_web_listener(
                     ticket, control_link, [task for task in (forward_task, consume_task) if task is not None])
             if pick_up:
                 await self._reply_to_turn(session, state, "pickup")
+            self._open_inbound(ticket, state)
             # The watchdog never ends on its own; the call ends with the audio streams.
             if state.turn_ownership is TurnOwnership.RELAY:
                 watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
@@ -1284,9 +1290,22 @@ class VoiceSessionService:
                 position = (position + _CUE_FRAME_BYTES) % len(clip)
                 state.cue_tail_until = started_at + sent / _MULAW_BYTES_PER_S
 
-    async def _forward_inbound(self, session: RealtimeSessionPort, inbound_audio: AsyncIterator[AudioFrame]) -> None:
+    async def _forward_inbound(self, session: RealtimeSessionPort, inbound_audio: AsyncIterator[AudioFrame],
+                               state: _CallState) -> None:
+        """Forward the caller's audio to the provider once the gate is open. Until the greeting is requested the stream
+        is still consumed (the call's end shows as this task finishing, the transport must not back up) but its frames
+        are dropped, never buffered: flushed audio would land during the greeting and could interrupt it."""
         async for frame in inbound_audio:
-            await session.send_audio(frame)
+            if state.inbound_open:
+                await session.send_audio(frame)
+            else:
+                state.inbound_dropped += 1
+
+    def _open_inbound(self, ticket: str, state: _CallState) -> None:
+        state.inbound_open = True
+        held_ms = (asyncio.get_running_loop().time() - state.inbound_started_at) * 1000
+        logger.info(f"voice call {fingerprint(ticket)}: caller audio forwarded from the greeting on "
+                    f"({held_ms:.0f} ms held, {state.inbound_dropped} frames dropped)")
 
     def _start_delegation(
         self, ticket: str, config: dict, session: RealtimeSessionPort, state: _CallState,

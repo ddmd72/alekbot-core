@@ -108,6 +108,10 @@ the one-call marker and revokes the call's MCP tokens.
   start (and again after a mid-call note, `_mid_call_note`), starts only the greeting and replies to delegation answers,
   and on barge-in only drops queued audio. The debounce `barge_in_min_speech_s` and the silence watchdog do not apply.
 
+On every call (web, phone, resumed; either ownership) `_forward_inbound` drops the caller's audio until the relay has
+requested the greeting, so the provider never takes the silent line before it as input and Lelik always speaks first
+(`decisions/voice_greeting_holds_caller_audio.md`).
+
 No `if provider ==` lives in the service. What differs is declared on the class: `supported_turn_ownership` and
 `late_tool_result_after_caller_turn` on `RealtimeSessionPort`, and the `update_session` and `mcp_servers` capabilities,
 which an adapter that cannot do them refuses (`NotImplementedError`, `ValueError`).
