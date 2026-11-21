@@ -2,6 +2,7 @@
 covers:
   .github/workflows/ci.yml
   .github/workflows/render.yml
+  .github/workflows/widget_renderer.yml
   .github/workflows/mutation.yml
   .github/workflows/parity.yml
   .github/workflows/living_docs.yml
@@ -56,6 +57,11 @@ node modules or browser, so the DOCX / PDF / HTML render tests skip there. This 
 runs exactly those tests and goes red when one skips for a missing prerequisite (`scripts/ci/check_junit_ran.py`). A second
 job builds both targets of `Dockerfile.sandbox` locally (never pushed) and runs the `docker`-marked tests; red on a skip.
 No secrets, no Slack.
+
+`.github/workflows/widget_renderer.yml` (on a PR that touches the in-process widget renderer, its tests or
+`requirements.txt`, and by hand): the renderer production uses (`PlaywrightHtmlRenderer`) against a real Playwright
+Chromium, whose version `requirements.txt` pins; red when one of its tests skips. It does not test the main image's own
+system libraries (the runner is `ubuntu-latest`). No secrets, no Slack.
 
 Weekly cloud workflows (`mutation.yml`, `parity.yml`, `spec_drift.yml`) never post to Slack and do not go red on findings:
 the result is an artifact and also check-run annotations, which the scheduled routines read (a cloud session cannot download artifacts). `spec_drift.yml` diffs the providers' published specs

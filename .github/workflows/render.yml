@@ -97,7 +97,7 @@ jobs:
 
       - name: Fail when a render test was skipped or a file ran nothing
         # A skipped render test is the failure this job exists to catch (a missing install must not read as green). Only
-        # the in-process renderer case may skip: it needs Playwright Chromium, which no job installs.
+        # the in-process renderer case may skip: it needs Playwright Chromium, which widget_renderer.yml installs and runs.
         if: always()
         run: python scripts/ci/check_junit_ran.py junit-render.xml $(cat render-tests.txt) --allow-skip "Playwright Chromium"
 

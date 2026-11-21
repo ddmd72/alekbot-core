@@ -1,0 +1,77 @@
+name: Widget renderer
+
+# The in-process widget renderer (PlaywrightHtmlRenderer: production renders widgets with it, ENABLE_HTML_RENDERER) against a
+# real Playwright Chromium. ci.yml and render.yml install no Playwright browser, so these tests skip there (the `widget-job`
+# rows of tests/skip_ledger.txt; tests/unit/test_widget_job_covers_ledger.py keeps both lists equal). Runs on a PR that
+# touches the renderer, its tests or the requirements that pin its browser, and by hand; red when one of its tests skips.
+# Not covered: the main image itself (its slim base and system libraries); this runner is ubuntu-latest.
+# No secrets, no registry login, no cloud credentials, no Slack.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/widget_renderer.yml"
+      - "src/adapters/playwright_html_renderer.py"
+      - "src/ports/html_renderer_port.py"
+      - "tests/unit/adapters/test_playwright_html_renderer_filter.py"
+      - "tests/unit/adapters/sandbox_client/test_html_renderer_contract.py"
+      - "requirements.txt"
+      - "scripts/ci/check_junit_ran.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: widget-renderer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  widget-renderer:
+    name: real Playwright Chromium widget tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Every test of these files is slow-marked.
+      RUN_SLOW_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright Chromium
+        id: browser-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright Chromium
+        # No --with-deps: the runner image already carries Chrome's system libraries, and --with-deps runs apt-get, which
+        # once took 31-39 min on these runners (ci.yml, ffmpeg). A missing library fails the launch, so the tests go red.
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: python -m playwright install chromium
+
+      - name: Widget renderer tests
+        env:
+          TESTS: >-
+            tests/unit/adapters/test_playwright_html_renderer_filter.py
+            tests/unit/adapters/sandbox_client/test_html_renderer_contract.py
+        run: |
+          echo "$TESTS" > widget-tests.txt
+          python -m pytest -p no:cacheprovider --asyncio-mode=auto -q -rs --junitxml=junit-widget.xml $TESTS
+
+      - name: Fail when a widget test was skipped or a file ran nothing
+        # Only the contract's sandbox case may skip: it needs node and Puppeteer, which render.yml provides.
+        if: always()
+        run: python scripts/ci/check_junit_ran.py junit-widget.xml $(cat widget-tests.txt) --allow-skip "needs node, puppeteer, headless shell, non-root"
