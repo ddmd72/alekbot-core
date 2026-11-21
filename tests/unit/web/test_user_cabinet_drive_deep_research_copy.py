@@ -28,6 +28,7 @@ def _users(enabled=False, missing=False):
     profile = SimpleNamespace(config=SimpleNamespace(drive_copy_deep_research=enabled))
     repo.get_user = AsyncMock(return_value=None if missing else profile)
     repo.update_user = AsyncMock()
+    repo.update_user_fields = AsyncMock()
     return repo, profile
 
 
@@ -73,7 +74,8 @@ class TestPut:
             resp = await client.put(_URL, headers=_AUTH, json={"enabled": enabled})
         assert resp.status_code == 200 and (await resp.get_json()) == {"enabled": enabled}
         assert profile.config.drive_copy_deep_research is enabled
-        repo.update_user.assert_awaited_once_with(profile)
+        repo.update_user_fields.assert_awaited_once_with(profile, ("config.drive_copy_deep_research",))
+        repo.update_user.assert_not_called()
 
     @pytest.mark.parametrize("body", [{}, {"enabled": "yes"}, {"enabled": 1}])
     async def test_bool_required(self, body):
@@ -81,6 +83,7 @@ class TestPut:
         async with _app(repo).test_client() as client:
             assert (await client.put(_URL, headers=_AUTH, json=body)).status_code == 400
         repo.update_user.assert_not_called()
+        repo.update_user_fields.assert_not_called()
 
     async def test_unknown_user(self):
         repo, _ = _users(missing=True)
@@ -89,9 +92,10 @@ class TestPut:
 
     async def test_store_error(self):
         repo, _ = _users()
-        repo.update_user.side_effect = RuntimeError("firestore down")
+        repo.update_user_fields.side_effect = RuntimeError("firestore down")
         async with _app(repo).test_client() as client:
             assert (await client.put(_URL, headers=_AUTH, json={"enabled": True})).status_code == 500
+        repo.update_user_fields.assert_awaited_once()             # the 500 is the injected store error
 
 
 def _dicts():

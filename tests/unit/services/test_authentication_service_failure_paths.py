@@ -4,6 +4,7 @@ Real service over the real user, account and whitelist repositories on the evalu
 `AuthPort` boundary) is scripted, and a Firestore write outage is scripted at the repository it hits."""
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Sequence
 
 import pytest
 from google.api_core.exceptions import ServiceUnavailable
@@ -54,6 +55,9 @@ class UsersDuringAWriteOutage(FirestoreUserRepository):
     """Reads work; the write the sign-in needs fails the way a Firestore outage does."""
 
     async def update_user(self, user: UserProfile) -> UserProfile:
+        raise ServiceUnavailable("firestore unavailable")
+
+    async def update_user_fields(self, user: UserProfile, fields: Sequence[str]) -> UserProfile:
         raise ServiceUnavailable("firestore unavailable")
 
 

@@ -217,7 +217,8 @@ class AuthenticationService:
                 }
                 
                 try:
-                    user = await self.user_repo.update_user(user)
+                    # Field-level: a concurrent change of another field (a language switch) is kept.
+                    user = await self.user_repo.update_user_fields(user, ("external_user_id", "auth_metadata"))
                     logger.info(f"✅ OAuth linked to existing user: {user.user_id}")
                 except Exception as e:
                     logger.error(f"❌ Failed to link OAuth: {e}", exc_info=True)
@@ -518,7 +519,8 @@ class AuthenticationService:
             "linked_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        user = await self.user_repo.update_user(user)
+        # Field-level: a concurrent change of another field (a language switch) is kept.
+        user = await self.user_repo.update_user_fields(user, ("external_user_id", "auth_metadata"))
 
         logger.info(f"✅ OAuth identity linked: {external_user_id} → user {user_id}")
         return user

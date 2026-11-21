@@ -64,7 +64,7 @@ async def members(store) -> dict:
 async def test_a_failed_move_of_the_user_is_finished_by_the_retry(store, monkeypatch):
     await store.team("usr-new")
     await store.repo.create(invite(role="VIEWER"))
-    fail_once(monkeypatch, store.users, "update_user")
+    fail_once(monkeypatch, store.users, "update_user_fields")
     with pytest.raises(RuntimeError, match="backend down"):
         await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     assert store.docs[key()]["used_by_user_id"] == "usr-new"
@@ -92,7 +92,7 @@ async def test_a_failed_membership_write_is_finished_by_the_retry(store, monkeyp
 async def test_a_code_claimed_by_an_interrupted_accept_is_refused_to_anyone_else(store, monkeypatch):
     await store.team("usr-new", "usr-late")
     await store.repo.create(invite())
-    fail_once(monkeypatch, store.users, "update_user")
+    fail_once(monkeypatch, store.users, "update_user_fields")
     with pytest.raises(RuntimeError):
         await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
 
@@ -107,7 +107,7 @@ async def test_the_claimants_retry_finishes_even_after_the_code_expired(store, m
     """The claim was made while the code was valid: the retry completes that accept, it is not a new one."""
     await store.team("usr-new")
     await store.repo.create(invite())
-    fail_once(monkeypatch, store.users, "update_user")
+    fail_once(monkeypatch, store.users, "update_user_fields")
     with pytest.raises(RuntimeError):
         await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     store.docs[key()] = {**store.docs[key()], "expires_at": NOW - timedelta(seconds=1)}
@@ -171,7 +171,7 @@ async def _interrupted(store, monkeypatch, expires_at) -> None:
     """usr-new's accept claimed the code and failed before the move; the stored code then expires at `expires_at`."""
     await store.team("usr-new")
     await store.repo.create(invite())
-    fail_once(monkeypatch, store.users, "update_user")
+    fail_once(monkeypatch, store.users, "update_user_fields")
     with pytest.raises(RuntimeError):
         await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     store.docs[key()] = {**store.docs[key()], "expires_at": expires_at}

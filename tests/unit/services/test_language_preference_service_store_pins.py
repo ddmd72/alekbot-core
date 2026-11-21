@@ -7,10 +7,15 @@ Each caller reads the profile and changes its own fields. They used to write the
 precondition, so when both read before either wrote, the later write reverted the other's change; now each writes only
 its fields (`update_user_fields`, owner decision O3) and both changes are kept (P11-G2-4 fixed). A `Rendezvous` right
 after each caller's read forces that interleaving (a query never yields on `EvalDb`); a serial run fails `rv.met`.
+
+The OAuth links (a sign-in's by-email attach and `link_oauth_identity`) are pinned the same way against a language
+switch: each writes only `external_user_id` and `auth_metadata`.
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+
+import pytest
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -111,3 +116,44 @@ async def test_a_language_switch_during_a_sign_in_keeps_both_changes():
     require(rv.met and not rv.stalled, "both callers read the profile before either wrote it")
     stored = w.stored()
     assert (stored["config"]["preferred_language"], (stored["auth_metadata"] or {}).get("locale")) == ("fr", "pt-PT")
+
+
+async def _linking_by_email(w: World) -> None:
+    await w.auth.handle_oauth_callback(code="c", redirect_uri="https://app.example/cb")
+
+
+async def _linking_signed_in(w: World) -> None:
+    await w.auth.link_oauth_identity("u1", code="c", redirect_uri="https://app.example/cb")
+
+
+@pytest.mark.parametrize("link", [_linking_by_email, _linking_signed_in], ids=["by-email attach", "link_oauth_identity"])
+async def test_an_oauth_link_during_a_language_switch_keeps_both_changes(link):
+    """Both links write only `external_user_id` and `auth_metadata`, so the language a concurrent switch wrote stays.
+    The link reads first; the switch reads and writes while the link waits, then the link writes: the order in which a
+    whole-profile write reverted the switch."""
+    w = World()
+    await w.seed()
+    await w.users.create_user(UserProfile(user_id="u1", account_id="a1", email=EMAIL, display_name="Alex Doe"))
+    rv = Rendezvous()
+    rv.wrap(w.users, "get_user")                    # the language switch's read and link_oauth_identity's
+    rv.wrap(w.users, "get_user_by_email")           # the by-email attach's read
+
+    async def switch() -> None:
+        try:
+            await rv.reached.wait()
+            await w.language.set_preference("u1", LanguageCode.EN, agent_mirror=False)
+        finally:
+            rv.done()
+
+    async def linking() -> None:
+        try:
+            await link(w)
+        finally:
+            rv.done()
+
+    await asyncio.gather(linking(), switch())
+    require(rv.met and not rv.stalled, "both callers read the profile before either wrote it")
+    stored = w.stored()
+    assert (stored["config"]["preferred_language"], stored["config"]["agent_mirror"]) == ("en", False)
+    assert stored["external_user_id"] == "google|sub-1"
+    assert (stored["auth_metadata"]["provider"], stored["auth_metadata"]["locale"]) == ("google", "pt-PT")

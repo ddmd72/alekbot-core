@@ -37,18 +37,29 @@ T0 = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
 
 
 class Users:
+    """The caller's profile; `stored` is its document, and a write stores only the field paths it names (a field-level
+    update, as `update_user_fields` does)."""
+
     def __init__(self, copy_on: bool = False) -> None:
         self.profile = SimpleNamespace(config=SimpleNamespace(drive_copy_deep_research=copy_on))
+        self.stored: Dict[str, Any] = {"config": {"drive_copy_deep_research": copy_on}}
         self.updates = 0
         self.fail_update = False
 
     async def get_user(self, user_id: str) -> Any:
         return self.profile
 
-    async def update_user(self, profile: Any) -> None:
+    async def update_user_fields(self, profile: Any, fields: Any) -> Any:
         if self.fail_update:
             raise RuntimeError("store down")
+        for path in fields:
+            *parents, leaf = path.split(".")
+            source, target = profile, self.stored
+            for part in parents:
+                source, target = getattr(source, part), target.setdefault(part, {})
+            target[leaf] = getattr(source, leaf)
         self.updates += 1
+        return profile
 
 
 class Search:
@@ -452,16 +463,20 @@ async def test_the_last_drive_turns_the_deep_research_copy_off_and_another_drive
     second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
     await call(w.app(), "delete", f"/api/drive/connections/{first.connection_id}", {"heir_id": second.connection_id})
     assert w.users.profile.config.drive_copy_deep_research is True and w.users.updates == 0
+    assert w.users.stored["config"]["drive_copy_deep_research"] is True
     await call(w.app(), "delete", f"/api/drive/connections/{second.connection_id}")
     assert w.users.profile.config.drive_copy_deep_research is False and w.users.updates == 1
+    assert w.users.stored["config"]["drive_copy_deep_research"] is False
 
 
-async def test_a_failed_copy_reset_does_not_fail_the_disconnect():
+async def test_a_failed_copy_reset_does_not_fail_the_disconnect(caplog):
     w = World(copy_on=True)
     conn = await w.connect()
     w.users.fail_update = True
     status, body = await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}")
     assert (status, body) == (200, {"success": True})
+    assert "store down" in caplog.text                              # the reset reached the injected store failure
+    assert w.users.stored["config"]["drive_copy_deep_research"] is True
 
 
 async def test_disconnect_without_the_flow_is_501_and_an_unknown_connection_404():

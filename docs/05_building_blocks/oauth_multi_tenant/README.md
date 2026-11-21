@@ -114,7 +114,8 @@ create an account.
 exists and is valid (or the same user is resuming), type is a team invite, the joiner is not already a member, the
 joiner's email is whitelisted, the target account exists, the role parses. Then the code is claimed in one transaction
 (`InviteCodeRepository.claim`), the role is written (`AccountRepository.set_member_role`), the user's `account_id` is
-moved, and the code is stamped complete. A failure after the claim leaves the code claimed and unfinished; the same user
+moved (a write of that one field, so a concurrent change of another profile field survives), and the code is stamped
+complete. A failure after the claim leaves the code claimed and unfinished; the same user
 can retry until a grace period past expiry (`_RESUME_GRACE`); a completed code is refused to everyone.
 
 **Connecting an integration** (`services/oauth_connect_service.py::OAuthConnectService`; routes

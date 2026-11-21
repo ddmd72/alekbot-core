@@ -596,7 +596,7 @@ def create_user_cabinet_blueprint(
             if not user:
                 return jsonify({"error": "User not found"}), 404
             user.config.timezone = tz_name
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.timezone",))
             return jsonify({"timezone": tz_name}), 200
         except Exception as e:
             logger.error(f"Error updating timezone: {e}", exc_info=True)
@@ -627,7 +627,7 @@ def create_user_cabinet_blueprint(
             if not user:
                 return jsonify({"error": "User not found"}), 404
             user.config.location = location or None
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.location",))
             return jsonify({"location": location}), 200
         except Exception as e:
             logger.error(f"Error updating location: {e}", exc_info=True)
@@ -670,7 +670,7 @@ def create_user_cabinet_blueprint(
             if not user:
                 return jsonify({"error": "User not found"}), 404
             user.config.voice_languages = codes or None
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.voice_languages",))
             return jsonify({"voice_languages": codes}), 200
         except Exception as e:
             logger.error(f"Error updating voice languages: {e}", exc_info=True)
@@ -1420,7 +1420,7 @@ def create_user_cabinet_blueprint(
 
             user.config.gmail_auto_index = enabled
             user.config.gmail_auto_index_hour = hour
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.gmail_auto_index", "config.gmail_auto_index_hour"))
             return jsonify({"enabled": enabled, "hour": hour}), 200
         except Exception as exc:
             logger.error(f"Error updating auto-index settings: {exc}", exc_info=True)
@@ -1464,7 +1464,7 @@ def create_user_cabinet_blueprint(
 
             user.config.gmail_daily_review = enabled
             user.config.gmail_daily_review_hour = hour
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.gmail_daily_review", "config.gmail_daily_review_hour"))
             return jsonify({"enabled": enabled, "hour": hour}), 200
         except Exception as exc:
             logger.error(f"Error updating daily-review settings: {exc}", exc_info=True)
@@ -1507,7 +1507,7 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": "User not found"}), 404
 
             user.config.deep_research_second_pass = second_pass
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.deep_research_second_pass",))
             return jsonify({"second_pass": second_pass}), 200
         except Exception as exc:
             logger.error(f"Error updating deep-research settings: {exc}", exc_info=True)
@@ -1664,7 +1664,7 @@ def create_user_cabinet_blueprint(
             if not user:
                 return jsonify({"error": "User not found"}), 404
             user.config.drive_copy_deep_research = enabled
-            await user_repo.update_user(user)
+            await user_repo.update_user_fields(user, ("config.drive_copy_deep_research",))
         except Exception as exc:
             logger.error(f"Error updating deep research drive copy setting: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
@@ -2067,7 +2067,7 @@ def create_user_cabinet_blueprint(
                 user = await user_repo.get_user(g.user_id)
                 if user and user.config.drive_copy_deep_research:
                     user.config.drive_copy_deep_research = False
-                    await user_repo.update_user(user)
+                    await user_repo.update_user_fields(user, ("config.drive_copy_deep_research",))
                     logger.info(f"📁 Deep research drive copy turned off by the disconnect for user={g.user_id[:8]}")
         except Exception as exc:
             logger.error(f"Error turning the deep research drive copy off on disconnect: {exc}", exc_info=True)

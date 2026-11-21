@@ -41,9 +41,9 @@ The block owns no Firestore collection of its own. What it writes and holds:
 - **Token claims** (`SessionService.create_access_token`, `create_refresh_token`): the access token carries identity,
   `role` (from the account's `iam_policy`, `viewer` if absent), `tier` and `type: "access"`; the refresh token only
   `sub`, `account_id` and `type: "refresh"`. Both are HS256, signed with `AuthConfig.oauth_session_secret` (`OAUTH_SESSION_SECRET`).
-- **Written on the user and account** through `AuthenticationService`: a sign-in of a known identity rewrites only `auth_metadata`
-  (`update_user_fields`, so a concurrent change of another field survives); the by-email attach and
-  `link_oauth_identity` do a full `update_user` and also set `external_user_id`; a first sign-in
+- **Written on the user and account** through `AuthenticationService`: a sign-in of a known identity rewrites only `auth_metadata`;
+  the by-email attach and `link_oauth_identity` rewrite only `external_user_id` and `auth_metadata` (the whole map). Both
+  are `update_user_fields`, so a concurrent change of another field survives; a first sign-in
   creates a `BillingAccount` (tier FREE, the person as `owner` in `iam_policy`) and then the `UserProfile`;
   `external_user_id` is `"{provider}|{sub}"`. `AuthenticationService.resume_session` writes nothing.
 - **The connect flow record** (`oauth_flow:<digest>`, TTL `src/services/oauth_connect_service.py::_FLOW_TTL_S`) is written by
