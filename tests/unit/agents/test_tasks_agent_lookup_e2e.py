@@ -77,7 +77,8 @@ class Clock:
 class Rig:
     """Tasks behind a real coordinator over the real To Do adapter and task index; Graph holds `graph_tasks`."""
 
-    def __init__(self, llm: Any, monkeypatch: Any, graph_tasks: List[Dict[str, Any]]) -> None:
+    def __init__(self, llm: Any, monkeypatch: Any, graph_tasks: List[Dict[str, Any]],
+                 user_timezone: Optional[str] = None) -> None:
         self.llm = llm
         self.clock = Clock()
         self.fake = http_boundary_fake.install(monkeypatch)
@@ -97,7 +98,8 @@ class Rig:
             config=AgentConfig(agent_id=f"tasks_agent_{USER}", agent_type="tasks", timeout_ms=TASKS_CFG.timeout_ms,
                                capabilities=["task_management"]),
             execution_context=execution_context(self.llm, "tasks"), prompt_builder=StubPromptBuilder(),
-            tasks_provider=self.provider, task_indexing=indexing, user_id=USER, monotonic=self.clock)
+            tasks_provider=self.provider, task_indexing=indexing, user_id=USER, monotonic=self.clock,
+            **({"user_timezone": user_timezone} if user_timezone else {}))
         self.coordinator.register_agent(self.agent)
 
     async def start(self) -> "Rig":
@@ -205,6 +207,57 @@ async def test_a_due_period_keeps_the_tasks_due_in_it_and_a_date_alone_is_the_wh
     assert _titles(listed) == ["Garden chore 3", "Garden chore 4", "Garden chore 5"]   # Dec 5 09:00 is inside
     assert listed["note"] == "These are all 3 open tasks due in that period: there is nothing more to list or search."
     assert rig.finished()
+
+
+# Berlin is UTC+2 on 2026-10-15 (CEST); Graph sends the due times in UTC.
+_BERLIN_TASKS = [
+    {"id": "t1", "title": "Train to the Hamburg conference", "status": "notStarted", "importance": "normal",
+     "createdDateTime": "2026-10-01T08:00:00Z",
+     "dueDateTime": {"dateTime": "2026-10-15T15:00:00.0000000", "timeZone": "UTC"}},      # 17:00 local
+    {"id": "t2", "title": "Hotel for the Hamburg conference", "status": "notStarted", "importance": "normal",
+     "createdDateTime": "2026-10-01T08:00:00Z",
+     "dueDateTime": {"dateTime": "2026-10-15T17:00:00.0000000", "timeZone": "UTC"}},      # 19:00 local
+]
+_BERLIN_LATE = {"id": "t3", "title": "Hotel for the Hamburg conference", "status": "notStarted",
+                "importance": "normal", "createdDateTime": "2026-10-01T08:00:00Z",
+                "dueDateTime": {"dateTime": "2026-10-15T21:30:00.0000000", "timeZone": "UTC"}}   # 23:30 local
+_BERLIN_EARLY = {"id": "t4", "title": "Train to the Hamburg conference", "status": "notStarted",
+                 "importance": "normal", "createdDateTime": "2026-10-01T08:00:00Z",
+                 "dueDateTime": {"dateTime": "2026-10-14T22:30:00.0000000", "timeZone": "UTC"}}   # Oct 15 00:30 local
+_BERLIN_NEXT_DAY = {"id": "t5", "title": "Hotel for the Hamburg conference", "status": "notStarted",
+                    "importance": "normal", "createdDateTime": "2026-10-01T08:00:00Z",
+                    "dueDateTime": {"dateTime": "2026-10-15T22:30:00.0000000", "timeZone": "UTC"}}  # Oct 16 00:30 local
+
+
+async def test_a_date_alone_bound_is_the_users_local_day_not_the_utc_day(monkeypatch):
+    rig = await Rig(ScriptedLLM([tools(("list_tasks", {"due_from": "2026-10-15", "due_to": "2026-10-15"})),
+                                 text("Two tasks.")]), monkeypatch, [_BERLIN_EARLY, _BERLIN_NEXT_DAY],
+                    user_timezone="Europe/Berlin").start()
+
+    await rig.delegate("What is due Oct 15?")
+
+    (listed,) = rig.results_of("list_tasks")
+    assert _titles(listed) == ["Train to the Hamburg conference"]   # 00:30 local Oct 15 in, 00:30 local Oct 16 out
+
+
+async def test_a_task_late_in_the_local_day_is_inside_a_date_alone_due_to(monkeypatch):
+    rig = await Rig(ScriptedLLM([tools(("list_tasks", {"due_from": "2026-10-15", "due_to": "2026-10-15"})),
+                                 text("One task.")]), monkeypatch, [_BERLIN_LATE], user_timezone="Europe/Berlin").start()
+
+    await rig.delegate("What is due Oct 15?")
+
+    (listed,) = rig.results_of("list_tasks")
+    assert _titles(listed) == ["Hotel for the Hamburg conference"]   # 23:30 local is 21:30Z, past UTC midnight-2h
+
+
+async def test_a_naive_due_to_is_the_users_wall_time(monkeypatch):
+    rig = await Rig(ScriptedLLM([tools(("list_tasks", {"due_to": "2026-10-15T18:00"})), text("One task.")]),
+                    monkeypatch, _BERLIN_TASKS, user_timezone="Europe/Berlin").start()
+
+    await rig.delegate("What is due by 18:00 on Oct 15?")
+
+    (listed,) = rig.results_of("list_tasks")
+    assert _titles(listed) == ["Train to the Hamburg conference"]   # 17:00 local in, 19:00 local out
 
 
 async def test_an_unreadable_due_date_is_an_error_not_a_dropped_filter(monkeypatch):

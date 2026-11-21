@@ -746,14 +746,12 @@ class TasksAgent(BaseAgent):
         for key in ("due_from", "due_to"):
             raw = args.get(key)
             try:
-                bounds[key] = self._parse_datetime(raw) if raw else None
+                bounds[key] = self._parse_filter_bound(raw, end_of_day=key == "due_to") if raw else None
             except ValueError:
                 bounds[key] = None
             if raw and bounds[key] is None:
                 return {"error": f"{key} is not an ISO-8601 date or date-time: {raw!r}"}
-        start, stop = _as_utc(bounds["due_from"]), _as_utc(bounds["due_to"])
-        if stop is not None and len(str(args["due_to"]).strip()) == 10:   # a date alone: that whole day
-            stop = stop + timedelta(days=1) - timedelta(microseconds=1)
+        start, stop = bounds["due_from"], bounds["due_to"]
         filtered = start is not None or stop is not None
         def due(t: Task) -> datetime:
             return _as_utc(t.due_datetime) or _EPOCH
@@ -913,6 +911,23 @@ class TasksAgent(BaseAgent):
                 start_date=datetime.now(timezone.utc).date().isoformat(),
             ),
         )
+
+    def _parse_filter_bound(self, value: Any, *, end_of_day: bool) -> Optional[datetime]:
+        """A list_tasks due bound as an aware UTC instant, read in the user's zone like create/update times: a time
+        without an offset is the user's wall time, one with an offset is that instant, and a date alone is the user's
+        whole local day (its first instant, or with `end_of_day` its last microsecond). None when no string is given;
+        a string that does not parse raises ValueError."""
+        parsed = self._parse_datetime(value)
+        if parsed is None:
+            return None
+        text = str(value).strip()
+        if len(text) == 10:   # a date alone
+            day = datetime.combine(date.fromisoformat(text), dtime(0, 0), tzinfo=self._user_tz)
+            if end_of_day:
+                day = datetime.combine(day.date() + timedelta(days=1), dtime(0, 0), tzinfo=self._user_tz)
+                return day.astimezone(timezone.utc) - timedelta(microseconds=1)
+            return day.astimezone(timezone.utc)
+        return wall_time_instant(text, self._user_tz)
 
     def _parse_user_time(self, value: Any) -> Optional[datetime]:
         """A time the model sends for Graph (due, start, reminder). A time of day without an offset is the user's wall
