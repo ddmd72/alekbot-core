@@ -461,3 +461,118 @@ async def test_a_session_whose_hand_offs_succeed_never_reaches_the_ceiling(store
         await settle(store)
     assert len(texts(store)) <= 4 and "🚨" not in caplog.text
     assert [m for _, _, batch in handoffs.calls for m in batch] + texts(store) == numbered(12)
+
+
+# --------------------------------------------------------------------------------------------------- boundaries kept
+
+SERVICE_TEXTS = ["Is the car service still on 2026-11-05?", "Yes, bring the logbook.",
+                 "Bring the logbook to the car service.", "Noted: the logbook.",
+                 "Is the gym membership valid until November?", "Yes, until Nov 2026.",
+                 "Do you still play chess on Sundays?", "No, I play tennis on Sundays now.", "Noted."]
+
+
+class Window:
+    """The threshold resolver whose (window, batch) a test changes between appends, as a Cabinet edit of a companion's
+    window or a deploy of new `ConsolidationSettings` does."""
+
+    def __init__(self, values) -> None:
+        self.values = values
+
+    async def __call__(self, session_id):
+        return self.values
+
+
+class HeldFirst(Handoffs):
+    """The overflow callback whose first hand-off is held until the test releases it: a hand-off still in flight."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, owner, session_id, messages):
+        first = not self.calls
+        await super().__call__(owner, session_id, messages)
+        if first:
+            self.entered.set()
+            await self.release.wait()
+
+
+class FailSecond(Handoffs):
+    """The overflow callback whose second hand-off raises, as a failed enqueue does; the others are recorded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen = 0
+
+    async def __call__(self, owner, session_id, messages):
+        self.seen += 1
+        if self.seen == 2:
+            raise ServiceUnavailable("503 UNAVAILABLE the queue write failed")
+        await super().__call__(owner, session_id, messages)
+
+
+def distinct_batches(handoffs):
+    """The batches handed off, a repeat of the same messages counted once (it carries the same queue record)."""
+    return [list(batch) for batch in dict.fromkeys(tuple(texts_) for _, _, texts_ in handoffs.calls)]
+
+
+async def append_texts(store, texts_):
+    for text in texts_:
+        await store.append_messages_batch(SID, [msg(text)], owner_id="u1")
+
+
+async def test_a_batch_still_in_flight_keeps_its_boundaries_when_the_window_changes(kit_db):
+    handoffs, window = HeldFirst(), Window((4, 2))
+    store = make_store(new_db(kit_db), handoffs=handoffs, threshold_resolver=window)
+    await append_texts(store, SERVICE_TEXTS[:5])
+    await asyncio.wait_for(handoffs.entered.wait(), 1)       # the first batch is being handed off, not yet cut
+    window.values = (3, 3)
+    await append_texts(store, SERVICE_TEXTS[5:6])
+    handoffs.release.set()
+    await settle(store)
+    assert distinct_batches(handoffs) == [SERVICE_TEXTS[:2], SERVICE_TEXTS[2:5]]
+    assert texts(store) == SERVICE_TEXTS[5:6]
+
+
+async def test_a_cut_keeps_the_boundaries_of_the_batches_behind_it(kit_db):
+    handoffs, window = FailSecond(), Window((4, 2))
+    store = make_store(new_db(kit_db), handoffs=handoffs, threshold_resolver=window)
+    await append_texts(store, SERVICE_TEXTS[:1])
+    await store.append_messages_batch(SID, [msg(t) for t in SERVICE_TEXTS[1:8]], owner_id="u1")
+    await settle(store)
+    assert texts(store) == SERVICE_TEXTS[2:8]     # the first batch was cut, the second one's hand-off failed
+    window.values = (4, 3)                                    # a 3-window would put 7 messages past its ceiling of 6
+    await append_texts(store, SERVICE_TEXTS[8:9])
+    await settle(store)
+    assert distinct_batches(handoffs) == [SERVICE_TEXTS[:2], SERVICE_TEXTS[2:4], SERVICE_TEXTS[4:7]]
+    assert texts(store) == SERVICE_TEXTS[7:9]
+
+
+async def test_a_session_stored_without_a_plan_forms_its_batches_from_the_current_window(kit_db, handoffs):
+    store = make_store(new_db(kit_db), handoffs=handoffs, threshold_resolver=Window((3, 3)))
+    docs(store)[SID] = {"history": [raw(t, created_at=float(i)) for i, t in enumerate(SERVICE_TEXTS[:5])],
+                        "owner_id": "u1", "created_at": 1.0, "last_activity": time.time()}
+    await append_texts(store, SERVICE_TEXTS[5:6])
+    await settle(store)
+    assert handoffs.calls == [("u1", SID, SERVICE_TEXTS[:3])]
+    assert texts(store) == SERVICE_TEXTS[3:6]
+
+
+async def test_a_batch_with_an_empty_reply_from_the_appending_call_keeps_its_boundaries(kit_db):
+    handoffs, window = HeldFirst(), Window((5, 6))
+    store = make_store(new_db(kit_db), handoffs=handoffs, threshold_resolver=window)
+    await store.append_messages_batch(SID, [msg(SERVICE_TEXTS[0]), msg(SERVICE_TEXTS[1], "model")], owner_id="u1")
+    await store.append_messages_batch(SID, [msg(SERVICE_TEXTS[2]), msg(SERVICE_TEXTS[3], "model")], owner_id="u1")
+    # the batch is formed from this call's live messages, whose reply has an empty text (only its full text)
+    empty_reply = Message(role="model", parts=[MessagePart(text="", full_text=SERVICE_TEXTS[5])])
+    await store.append_messages_batch(SID, [msg(SERVICE_TEXTS[4]), empty_reply], owner_id="u1")
+    await asyncio.wait_for(handoffs.entered.wait(), 1)       # the batch of six is being handed off, not yet cut
+    window.values = (5, 3)
+    await store.append_messages_batch(SID, [msg(SERVICE_TEXTS[6]), msg(SERVICE_TEXTS[7], "model")], owner_id="u1")
+    handoffs.release.set()
+    await settle(store)
+    # the repeat is read back, so its empty text is None: the same messages, the same key, one queue record
+    batches = list(dict.fromkeys(tuple(text or None for text in batch) for _, _, batch in handoffs.calls))
+    assert batches == [tuple(SERVICE_TEXTS[:5]) + (None,)]
+    assert texts(store) == SERVICE_TEXTS[6:8]

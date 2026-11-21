@@ -118,6 +118,7 @@ Decision records (`docs/04_solution_strategy/decisions/`): `fact_s1_defects.md`,
 | What the weekly digest says and when it is sent | §5.6 |
 | What the Cabinet shows for stale, set-aside and waiting facts, and what it cannot do | §4.8, §5.6 |
 | What the memory-write lease is; why a consolidation task waited or ran twice a few minutes apart | §3 step 3, §6, §7 |
+| Why a batch has another size than the current window, or how a window change treats messages already in a batch | §3 steps 2–3 |
 | What the consolidator sees (whose words, which text of the bot's replies) and how it decides create / update / merge / discard | §3 steps 4–5 |
 | Why the bot remembered something wrong, or something it said itself (echo trap) | §3 step 5, §9.3 |
 | What Stage 2a (cluster review) and Stage 2b (directive review) do and when they run | §3 steps 6–7 |
@@ -420,7 +421,8 @@ until the rest is back under the threshold. The values are `src/domain/settings.
 lowered by `load_settings` only for the `is_production` environment, which is not the live one; they are global:
 `consolidation_batch_size` of the user only sizes the `$consolidate` cut (§5.4). A channel bound to a companion uses that
 binding's own window (`threshold_resolver`) and routes elsewhere. The append is stored whole; a batch leaves the session
-only after it was queued (step 3).
+only after it was queued (step 3). The values are read at every append, but a batch keeps the boundaries it was formed
+with (step 3), so a changed threshold or batch size applies to the messages after the batches already formed.
 
 - **No time trigger.** A channel that never passes the threshold is never consolidated on its own; a session idle for 90
   days is deleted on its next load, unconsolidated messages included (`FirestoreSessionStore.load_session`).
@@ -433,9 +435,18 @@ to `OverflowRoutingService.route_overflow` and then cuts it with `FirestoreSessi
 removes exactly those messages if they still start the history). If the hand-off raises, that batch and the later ones stay
 in the session and the next append over the window hands them off again. The batch id is `handoff_key` of the messages
 (`src/domain/consolidation.py::handoff_key`) and the queue stores a batch only if its id is absent, so a repeat finds the
-first record and leaves it as it is. **A hand-off that fails every time** is bounded by
-`src/adapters/firestore_session_store.py::OVERFLOW_CEILING_WINDOWS`: past it each append cuts its oldest batches without
-a hand-off and logs a 🚨 ERROR; those messages are lost to memory (the only lossy path).
+first record and leaves it as it is. **A repeat is the same batch even when the window changed in between** (a Cabinet
+edit of a companion's `window_threshold`/`batch_size`, new `ConsolidationSettings` on a deploy): the append's transaction
+also stores `handoff_plan` on the session, the size and `handoff_key` of each batch it formed, and the next append forms
+those batches first, as recorded, before it applies the current values to the rest
+(`src/domain/consolidation_window.py::overflow_window`). `remove_head` drops the cut batches from the plan in its own
+transaction; a cut that does not end on a recorded boundary (`$consolidate` cuts its own size) drops the whole plan. A
+planned batch no longer found at its place (`save_session` replaced the history) ends the plan there, and a session
+stored before the plan existed forms its batches from the current values. **A hand-off that fails every time** is bounded by
+`src/adapters/firestore_session_store.py::OVERFLOW_CEILING_WINDOWS`: past it each append cuts its oldest batches (a
+planned one by its own size) without a hand-off and logs a 🚨 ERROR; those messages are lost to memory (the only lossy
+path). The ceiling follows the current window, so lowering the threshold can bring a session with failing hand-offs past
+it at once.
 
 `route_overflow` (`src/services/overflow_routing_service.py::OverflowRoutingService._route_to_alek`):
 1. `serialize_messages_for_consolidation` (`src/domain/consolidation_serialization.py`): **user parts** → the user's text;
@@ -1207,7 +1218,7 @@ open question never has one; the state document has none.
 | baseline refresh fails | logged, swallowed; the old baseline stays until the next run | — |
 | enqueue of the batch fails at overflow, or the Cloud Task enqueue fails | logged; the messages stay in the session | yes: the next append hands the same batch off again (same id, create-if-absent) |
 | an overflow hand-off fails every time | past `OVERFLOW_CEILING_WINDOWS` the oldest batches are cut without a hand-off: **lost to memory** (§3 step 3) | no |
-| the cut after a successful hand-off fails | the next append hands the same batch off again. **Accepted residual:** if a run finished and deleted the batch before the repeat, the repeat stores it again and those messages are consolidated a second time | yes |
+| the cut after a successful hand-off fails, or the next append runs while the hand-off is in flight | the next append hands the same batch off again, with its recorded boundaries even if the window changed meanwhile (`handoff_plan`, §3 step 3). **Accepted residual:** if a run finished and deleted the batch before the repeat, the repeat stores it again and those messages are consolidated a second time | yes |
 | two runs of one account at once | prevented by the lease: the second defers itself (§3 step 3) | yes, by the deferral |
 | lease acquire, open-batch check or deferral enqueue fails | propagates, the worker answers 5xx | yes, Cloud Tasks |
 | lease release fails | WARNING; the lease expires on its own | — |
@@ -1469,7 +1480,7 @@ vocabulary and the echo-trap exception. The review pass cannot run without its p
 |---|---|
 | The fact and its rules | `src/domain/entities.py::FactEntity`, `src/domain/fact_lifecycle.py` (states, forward resolution, expiry computation, `born_due`), `src/domain/fact_update.py`, `src/domain/fact_update_plan.py`, `src/domain/fact_expiry.py`, `src/domain/fact_write_context.py`, `src/domain/pass_actor.py::PassActor` |
 | Fact writes | `src/adapters/fact_management_adapter.py::FactManagementAdapter`, `src/services/fact_write_service.py::FactWriteService`, `src/adapters/firestore_repo.py::FirestoreFactRepository` (queries, version, merge and in-place transactions, `resolve_current`, the cache document, the janitor's reads), `src/ports/repository.py` |
-| Sessions, overflow, queue, lease | `src/adapters/firestore_session_store.py::FirestoreSessionStore`, `src/services/overflow_routing_service.py::OverflowRoutingService`, `src/adapters/firestore_consolidation_queue.py`, `src/services/consolidation_service.py::ConsolidationService`, `src/adapters/firestore_memory_write_lease.py`, `src/domain/memory_write_lease.py`, `src/domain/consolidation.py` |
+| Sessions, overflow, queue, lease | `src/adapters/firestore_session_store.py::FirestoreSessionStore`, `src/services/overflow_routing_service.py::OverflowRoutingService`, `src/adapters/firestore_consolidation_queue.py`, `src/services/consolidation_service.py::ConsolidationService`, `src/adapters/firestore_memory_write_lease.py`, `src/domain/memory_write_lease.py`, `src/domain/consolidation.py`, `src/domain/consolidation_window.py` |
 | The consolidator | `src/agents/consolidation_agent.py::ConsolidationAgent`, `src/domain/consolidation_pass_stats.py`, `src/infrastructure/agent_config.py::ConsolidationAgentConfig`, `prompts_snapshot/tokens/system/CONSOLIDATION_*.groovy` |
 | The baseline and directives | `src/services/biographical_context_service.py::BiographicalContextService`, `src/services/prompt_builder.py`, `src/services/prompt_v3/biographical_formatter.py`, `src/domain/settings.py::SearchConfig` |
 | Search | `src/services/fact_search_service.py::FactSearchService`, `src/services/search_enrichment_service.py::SearchEnrichmentService`, `src/agents/memory_search_agent.py::FactsMemoryAgent`, `src/agents/core/router_agent.py::RouterAgent`, `src/domain/rrf.py`, `src/composition/memory_search_setup.py` |

@@ -46,7 +46,8 @@ class SessionStore(ABC):
         """Cut `messages` from the start of the history if it still starts with them; True when they were cut.
 
         Used after a batch was handed off to a queue (the overflow window, `$consolidate`). The head is compared as
-        stored (role, parts, created_at), so a batch another caller cut meanwhile is not cut twice (False).
+        stored (role, parts, created_at), so a batch another caller cut meanwhile is not cut twice (False). The
+        recorded batches behind a cut that ends on a batch boundary keep their boundaries; any other cut drops them.
         Atomicity: one atomic read-and-write; a message appended meanwhile is kept.
         Errors: logged and re-raised.
         """
@@ -73,8 +74,11 @@ class SessionStore(ABC):
         The append is stored whole; then each batch is handed to the overflow callback, oldest first, and cut from the
         session only after its hand-off returned (owner decision O2): a hand-off that raises leaves that batch and the
         later ones stored, and the next append over the window hands them off again, so the callback must accept a
-        repeated batch. Ceiling: a history past a store-defined multiple of the window (hand-offs failing every time)
-        has its oldest batches cut with the append without a hand-off; they are lost to memory and logged.
+        repeated batch. A batch is repeated with the boundaries it was formed with: batches formed by an earlier append
+        and still at the head of the history come first, as they were, even if the window values changed since (a
+        session stored before batches were recorded forms them from the current values). Ceiling: a history past a
+        store-defined multiple of the window (hand-offs failing every time) has its oldest batches cut with the append
+        without a hand-off; they are lost to memory and logged.
         Without a callback the batches are cut with the append. The first append to a new session is stored whole.
         Atomicity: concurrent appends to one session are all kept; the cut is a separate atomic step (remove_head).
         Idempotency: none; a repeated call appends the messages again.
