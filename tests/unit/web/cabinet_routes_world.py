@@ -6,8 +6,9 @@ repositories, `InviteCodeService`. Only the collaborators the tests script are s
 phone routes answer 501 here (`test_user_cabinet_app_phone_binding.py` owns them), and `task_setup` where a test needs one.
 Examples come from the invented cast (usr-1/acc-1 `alex@example.com`, usr-2/acc-2 `clara@example.com`).
 """
+import asyncio
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from quart import Quart
 
@@ -24,6 +25,7 @@ from src.services.session_service import SessionService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_store import FactStore
 from tests.support.firestore_eval import EvalDb
+from tests.support.redelivery_world import Rendezvous
 from src.composition.connector_registry import ConnectorRegistry
 
 SECRET = "p19-session-secret-0123456789abcdef-xyz"
@@ -74,3 +76,15 @@ class CabinetWorld:
 
     def user_doc(self, user_id: str) -> dict:
         return self.db.collection(USERS).docs[user_id]
+
+
+async def race(rv: Rendezvous, *calls: Callable[[], Awaitable[Any]]) -> List[Any]:
+    """Run `calls` concurrently, each marking `rv` done when it ends (so a call that never reaches the race point
+    cannot hold the others); their results in order."""
+    async def party(call: Callable[[], Awaitable[Any]]) -> Any:
+        try:
+            return await call()
+        finally:
+            rv.done()
+
+    return list(await asyncio.gather(*(party(c) for c in calls)))

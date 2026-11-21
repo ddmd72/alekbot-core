@@ -5,13 +5,19 @@ The user record, the notes and the whole Cabinet run on stores that evaluate; ev
 document of the token's user, never of another, and a refused request leaves the stored document unchanged.
 """
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import jwt.api_jwt
 import pytest
 
 import src.services.session_service as session_module
+from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
+from src.domain.language import LanguageCode
+from src.services.language_preference_service import LanguagePreferenceService
+from src.services.language_resolver import LanguageResolver
 from tests.support.clock_instants import pin_datetime
-from tests.unit.web.cabinet_routes_world import ALEX, CLARA, CabinetWorld
+from tests.support.redelivery_world import Rendezvous, require
+from tests.unit.web.cabinet_routes_world import ALEX, CLARA, CabinetWorld, race
 from tests.unit.web.gate_fakes import expired_token, forged_token
 
 T0 = datetime(2026, 10, 27, 9, 0, 0, tzinfo=timezone.utc)
@@ -121,6 +127,49 @@ class TestSettingsReads:
         await world.client.put("/api/gmail/auto-index", headers=world.token(CLARA), json={"enabled": True, "hour": 3})
         read = await world.client.get("/api/gmail/auto-index", headers=world.token(ALEX))
         assert await read.get_json() == {"enabled": False, "hour": 8}
+
+
+class TestASaveKeepsAConcurrentChangeOfAnotherField:
+    """Each save writes only the config fields it changes (`update_user_fields`): when another writer read the same
+    profile before either wrote, both changes are kept. A `Rendezvous` right after each writer's profile read forces
+    that interleaving (a read never yields on `EvalDb`); a serial run fails `rv.met`."""
+
+    async def test_a_timezone_save_during_a_chat_language_switch_keeps_the_language(self, world):
+        """The save reads first; the switch reads and writes the language while the save waits, then the save writes:
+        the order in which a whole-profile write reverted the switch."""
+        language = LanguagePreferenceService(
+            world.users, FirestoreAgentProfileRepository(world.db, "profiles", "overrides"),
+            SimpleNamespace(invalidate_cache=lambda: None), LanguageResolver(world.users, world.accounts))
+        rv = Rendezvous()
+        rv.wrap(world.users, "get_user")
+        h = world.token(ALEX)
+
+        async def switch_after_the_save_read():
+            await rv.reached.wait()
+            await language.set_preference("usr-1", LanguageCode.EN, agent_mirror=False)
+
+        resp, _ = await race(
+            rv,
+            lambda: world.client.put("/api/user/timezone", headers=h, json={"timezone": "Europe/Lisbon"}),
+            switch_after_the_save_read)
+        require(rv.met and not rv.stalled, "both writers read the profile before either wrote it")
+        assert resp.status_code == 200
+        config = _config(world)
+        assert (config["timezone"], config["preferred_language"], config["agent_mirror"]) == ("Europe/Lisbon", "en", False)
+
+    async def test_two_cabinet_saves_at_once_keep_both(self, world):
+        rv = Rendezvous()
+        rv.wrap(world.users, "get_user")
+        h = world.token(ALEX)
+        tz, review = await race(
+            rv,
+            lambda: world.client.put("/api/user/timezone", headers=h, json={"timezone": "Europe/Lisbon"}),
+            lambda: world.client.put("/api/gmail/daily-review", headers=h, json={"enabled": True, "hour": 21}))
+        require(rv.met and not rv.stalled, "both saves read the profile before either wrote it")
+        assert (tz.status_code, review.status_code) == (200, 200)
+        config = _config(world)
+        assert (config["timezone"], config["gmail_daily_review"], config["gmail_daily_review_hour"]) == (
+            "Europe/Lisbon", True, 21)
 
 
 # --------------------------------------------------------------------------- reminders
