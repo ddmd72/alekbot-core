@@ -111,6 +111,7 @@ FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "_DRIVE_TRANSCRIBE_USD_CAP": Substitution("", "Makefile: DRIVE_TRANSCRIBE_USD_CAP_DEV, empty = the $20 maximum"),
     "_SANDBOX_RENDER_URL": Substitution("https://alek-sandbox-render.test.example", "Makefile: SANDBOX_RENDER_URL_DEV, a fake, non-empty (DOCX/PDF render only in the sandbox, §4.12)"),
     "_SANDBOX_LIGHT_URL": Substitution("https://alek-sandbox-light.test.example", "Makefile: SANDBOX_LIGHT_URL_DEV, a fake, non-empty"),
+    "_GCS_MEDIA_BUCKET": Substitution("p9-test-media-bucket", "Makefile deploy: GCS_MEDIA_BUCKET_DEV, a fake, non-empty as `make deploy` requires"),
 }
 
 
