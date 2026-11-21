@@ -173,7 +173,7 @@ after the upload (`email_card_agent.py`, `fact_profiler_agent.py`, `src/infrastr
 - **Untrusted text is validated at injection.** Biography, directives, query-specific context and history pass
   `SecurityPort` in the UNTRUSTED zone; reminders and `extra_static_blocks` are orchestrator-built and are not.
 - **`provenance` is a snapshot fact, not a live one.** `POLICY_SYSTEM_PROVENANCE` is assigned in `prompts_snapshot/profiles/`
-  for Smart and Quick (`non_overridable`); the live store does **not** hold the token, the class or the assignments (not
+  for Smart and Quick, and for Lelik's `lelik` and `lelik_xai` (`non_overridable`; `decisions/lelik_call_opening.md`); the live store does **not** hold the token, the class or the assignments (not
   uploaded, by owner decision, `SYSTEM_TURN_FINGERPRINT_RFC.md` §7), so the live prompt has no provenance head. A blueprint without the class, or a profile without the token, renders no head.
 - **Prompt wording lives in Firestore, not in this repo's code.** Tokens ship by upload, not by deploy
   (root `CLAUDE.md`). A change to prompt text is a token edit in `prompts_snapshot/tokens/` plus an owner-run upload;

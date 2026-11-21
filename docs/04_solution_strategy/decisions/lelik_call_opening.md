@@ -6,7 +6,8 @@ Status (2026-11-21): decided, built.
 `src/domain/voice_opening.py`), wrapped with `wrap_system` under a per-call key that is also rendered into the
 instructions as `session_key`. The relay sends it as the first user item and then no pickup note. The rule that reads
 the key is `POLICY_SYSTEM_PROVENANCE` in the `lelik` and `lelik_xai` profiles (`provenance` first in the Lelik
-blueprint). Interpreter and tutor get no key and no note; a config without the note keeps the pickup note; a resumed call
+blueprint) — a snapshot fact, not uploaded, as for Smart (`SYSTEM_TURN_FINGERPRINT_RFC.md` §7): the note says itself that
+it is the system's, and a probe without the rule opened the same way. Interpreter and tutor get no key and no note; a config without the note keeps the pickup note; a resumed call
 gets neither. `VOICE_WEB_CALLER_OPENING=off` (relay) makes web calls ignore the note.
 
 **Why.** A call has no user turn and its history holds summaries of earlier, mostly silent calls, so the model took the

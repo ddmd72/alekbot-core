@@ -345,7 +345,8 @@ Persisted text is not rewritten.
   class-B RFC is written.
   **Delta (2026-11-21):** voice now uses one keyed note, the call opening, built by the main service
   (`LelikAgent.session_config`, key in the instructions' `session_key`); the relay inserts it as the first user item.
-  The rule is in Lelik's LELIK-mode profiles (`decisions/lelik_call_opening.md`). The relay's own anchors stay unkeyed.
+  The rule is assigned in Lelik's LELIK-mode snapshot profiles and, as for Smart (§7), not uploaded
+  (`decisions/lelik_call_opening.md`). The relay's own anchors stay unkeyed.
 - **Specialists get no key:** their input is a commission the orchestrator wrote (scrubbed of the key), and their reply
   returns to the orchestrator as a tool result; they have no user channel of their own and no rule to read a key with.
 - **`active_reminders`** (§2.1(e)): reminder texts the model wrote earlier, in the dynamic system part; class B.
