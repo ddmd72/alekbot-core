@@ -886,6 +886,21 @@ class BaseAgent(ABC):
         """
         return contextlib.nullcontext()
 
+    def _record_primary_success(self, resilience: Any, primary_name: str) -> None:
+        """Record a primary-provider success, unless the breaker is open by now.
+
+        Other calls can trip the breaker while this one was in flight; a success admitted before the trip is older
+        evidence than the failures that tripped it, so it must not close the breaker. Used by the first attempt and
+        by the same-provider retry, so the rule has one home.
+        """
+        if resilience.is_provider_open(primary_name):
+            logger.info(
+                "provider_breaker_stale_success provider=%s agent=%s: the breaker tripped during the call; "
+                "it stays open", primary_name, self.config.agent_type,
+            )
+        else:
+            resilience.record_success(primary_name)
+
     async def _call_llm(
         self,
         request: "LLMRequest",
@@ -974,14 +989,7 @@ class BaseAgent(ABC):
             with self._provider_call_scope():
                 response = await llm.generate_content(request=request)
             if resilience and primary_name:
-                if resilience.is_provider_open(primary_name):
-                    # Admitted while closed (the check above), tripped while in flight: a stale success.
-                    logger.info(
-                        "provider_breaker_stale_success provider=%s agent=%s: the breaker tripped during the call; "
-                        "it stays open", primary_name, self.config.agent_type,
-                    )
-                else:
-                    resilience.record_success(primary_name)
+                self._record_primary_success(resilience, primary_name)
         except failover_tuple as e:
             # Account real failures only. ProviderBreakerOpenError is the
             # consequence of past record_failure calls; counting it again
@@ -1074,7 +1082,7 @@ class BaseAgent(ABC):
                             with self._provider_call_scope():
                                 response = await llm.generate_content(request=retry_request)
                             if resilience and primary_name:
-                                resilience.record_success(primary_name)
+                                self._record_primary_success(resilience, primary_name)
                             retried_ok = True
                             break
                         except failover_tuple as retry_e:
