@@ -106,8 +106,9 @@ per question; one failure shows as `"error"` for that question and does not stop
   `LANG_*` prompt-override token, invalidates the prompt cache and notifies the bot, so the change is seen in chat.
   A code that is not a supported language (or not a string) is refused with 400 and nothing is stored.
   Details: [localization_system](../localization_system/README.md). A POST without `agent_mirror` means mirror.
-- Timezone, location, voice languages, deep-research second pass: plain `UserBotConfig` writes. Timezone is validated as
-  an IANA name.
+- Timezone, location, voice languages, the Gmail schedules, the deep-research switches: `UserBotConfig` writes of only
+  the fields the route changes (`UserRepository.update_user_fields`), so a concurrent change of another field (a language
+  switch in chat, another Cabinet save) survives. Timezone is validated as an IANA name.
 - Reminders (`/api/user/reminders`): a `due` without an offset is a wall time in the user's timezone
   (`src/domain/local_time.py::wall_time_instant`) and is stored as UTC; the list answers in the user's timezone. A
   recurrence rule is normalized and phrased by `RecurrencePort`, so the page never parses a rule. An explicit empty
