@@ -33,7 +33,11 @@ beautifulsoup4==4.15.0  # HTML → plain text for Gmail email bodies
 aiofiles  # Async file I/O for Claude vision support
 openpyxl==3.1.5  # CSV → xlsx conversion in RichContentService
 python-docx>=1.1.0  # Markdown → docx conversion in RichContentService
-playwright>=1.40.0  # HTML → PNG rendering for widget rich content (ENABLE_HTML_RENDERER)
+# HTML → PNG rendering for widget rich content (ENABLE_HTML_RENDERER). Pinned: it was `>=1.40.0`, so every image build took
+# the newest release and its Chromium (the Dockerfile installs the browser of whatever this resolves; 1.65 already needed a
+# new system library there). 1.65.2 = the newest release when pinned, the one the next build would have taken. Bumps are deliberate: the PR runs
+# .github/workflows/widget_renderer.yml (the renderer against real Chromium).
+playwright==1.65.2
 google-cloud-secret-manager
 google-cloud-kms==3.18.0  # stored secrets encrypted by Cloud KMS (SECRETS_AT_REST_RFC §2.2)
 google-crc32c==1.8.0  # the KMS CRC32C integrity fields, sent and checked both ways
