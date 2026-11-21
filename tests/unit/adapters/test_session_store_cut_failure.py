@@ -70,3 +70,44 @@ async def test_remove_head_re_raises_a_backend_error_and_cuts_nothing():
     with pytest.raises(ServiceUnavailable):
         await store.remove_head(SID, head)
     assert texts(db) == TEXTS[:3]
+
+
+SERVICE_TEXTS = ["Is the car service still on 2026-11-05?", "Yes, bring the logbook.",
+                 "Bring the logbook to the car service.", "Noted: the logbook.",
+                 "Is the gym membership valid until November?", "Yes, until Nov 2026."]
+
+
+class Window:
+    """The threshold resolver whose (window, batch) the test changes between appends, as a Cabinet edit does."""
+
+    def __init__(self, values) -> None:
+        self.values = values
+
+    async def __call__(self, session_id):
+        return self.values
+
+
+@pytest.mark.h1_only("queues a read error with raise_on_txn_read")
+@pytest.mark.parametrize("resized, handed_off, kept", [
+    ((3, 3), [SERVICE_TEXTS[:2], SERVICE_TEXTS[2:5]], SERVICE_TEXTS[5:6]),     # smaller: the batch, then new ones of 3
+    ((6, 3), [SERVICE_TEXTS[:2]], SERVICE_TEXTS[2:6]),                         # larger: the batch is still handed off
+])
+async def test_a_batch_whose_cut_failed_keeps_its_boundaries_when_the_window_changes(resized, handed_off, kept):
+    db = EvalDb()
+    handoffs = CutFailsOnce(db)
+    window = Window((4, 2))
+    store = FirestoreSessionStore(db, SESS, overflow_callback=handoffs, threshold_resolver=window)
+    for text in SERVICE_TEXTS[:5]:
+        await store.append_messages_batch(SID, [Message(role="user", parts=[MessagePart(text=text)])], owner_id="u1")
+    await settle(store)
+    assert [[m.parts[0].text for m in call] for call in handoffs.calls] == [SERVICE_TEXTS[:2]]
+    assert texts(db) == SERVICE_TEXTS[:5]               # handed off, but the cut failed
+
+    window.values = resized
+    await store.append_messages_batch(SID, [Message(role="model", parts=[MessagePart(text=SERVICE_TEXTS[5])])],
+                                      owner_id="u1")
+    await settle(store)
+    # a repeat of the same messages carries the same key, so the queue keeps its first record: count it once
+    batches = {handoff_key(SID, call): [m.parts[0].text for m in call] for call in handoffs.calls}
+    assert list(batches.values()) == handed_off
+    assert texts(db) == kept

@@ -11,6 +11,7 @@ import datetime
 from datetime import datetime as dt_class, timedelta
 from google.cloud import firestore
 
+from ..domain.consolidation_window import PlannedBatch, overflow_window, plan_after_cut
 from ..domain.session import SessionState
 from ..ports.session_store import SessionStore
 from ..ports.llm_port import Message, MessagePart, ToolCall
@@ -23,6 +24,10 @@ from ..utils.logger import logger
 # messages live) is about 35 turns of consecutive failed hand-offs, far past a transient outage that the next appends
 # heal, while keeping the document within twice its normal size, well clear of the limit even with long replies.
 OVERFLOW_CEILING_WINDOWS = 2
+
+# The session field holding the hand-off plan: one {"size", "key"} per batch formed and not yet cut, oldest first
+# (`src/domain/consolidation_window.py`).
+HANDOFF_PLAN_FIELD = "handoff_plan"
 
 
 class FirestoreSessionStore(SessionStore):
@@ -42,7 +47,12 @@ class FirestoreSessionStore(SessionStore):
       Without a callback the batches are cut inside the append's transaction. With one, a history past
       `OVERFLOW_CEILING_WINDOWS` windows (hand-offs failing every time) has its oldest batches cut inside the append's
       transaction without a hand-off, logged 🚨 after the commit.
-    - `remove_head` reads the document in a transaction and writes back the stored history after the head (`update`).
+    - With a callback the append's transaction also writes `handoff_plan` (`HANDOFF_PLAN_FIELD`): the size and
+      `handoff_key` of each batch it formed, so a batch that is formed again before its cut (a failed cut, a hand-off
+      still in flight) keeps its boundaries when the window values changed meanwhile. A document without the field, or
+      whose planned head no longer matches the history (`save_session` replaced it), forms its batches as before.
+    - `remove_head` reads the document in a transaction and writes back the stored history after the head and the
+      plan after it (`update`): the batches behind a cut that ends on a batch boundary, else an empty plan.
     - `save_session` is a `set(merge=True)` with no precondition.
     - `get_latest_session_id` needs the composite index (owner_id ASC, last_activity DESC).
     - `delete_session` and `cleanup_expired_sessions` are not on the port and have no caller in src/.
@@ -228,7 +238,8 @@ class FirestoreSessionStore(SessionStore):
             async def _batch_append(transaction: firestore.AsyncTransaction) -> Optional[Tuple[str, List[List[Message]]]]:
                 doc = await doc_ref.get(transaction=transaction)
                 nonlocal resolved_owner_id
-                extracted_batches = []
+                extracted_batches: List[List[Message]] = []
+                plan: Optional[List[PlannedBatch]] = None
                 dropped.clear()
 
                 if not doc.exists:
@@ -249,24 +260,24 @@ class FirestoreSessionStore(SessionStore):
                     history = self._deserialize_history(data.get("history", []))
                     history.extend(messages)
 
-                    if self.overflow_callback is not None:
-                        while len(history) > ceiling:
-                            dropped.append(len(history[:effective_batch_size]))
-                            history = history[effective_batch_size:]
-
-                    # OVERFLOW: the oldest batches past the window. With a callback they stay stored until their
-                    # hand-off succeeded (cut afterwards by remove_head); without one they are cut here.
-                    rest = history
-                    while len(rest) > effective_max_history_length:
-                        batch = rest[:effective_batch_size]
-                        rest = rest[effective_batch_size:]
-                        extracted_batches.append(batch)
+                    # OVERFLOW: the oldest batches past the window, the planned ones first. With a callback they stay
+                    # stored until their hand-off succeeded (cut afterwards by remove_head); without one they are cut here.
+                    with_callback = self.overflow_callback is not None
+                    window = overflow_window(
+                        session_id, history, self._read_plan(data) if with_callback else [],
+                        effective_max_history_length, effective_batch_size, ceiling if with_callback else None,
+                    )
+                    dropped.extend(window.dropped)
+                    extracted_batches = window.batches
+                    remaining = len(window.history)
+                    for number, batch in enumerate(extracted_batches, 1):
+                        remaining -= len(batch)
                         logger.info(
-                            f"❄️ Overflow batch #{len(extracted_batches)} for {session_id[:8]}... "
-                            f"(extracted={len(batch)}, remaining={len(rest)}, max={effective_max_history_length})"
+                            f"❄️ Overflow batch #{number} for {session_id[:8]}... "
+                            f"(extracted={len(batch)}, remaining={remaining}, max={effective_max_history_length})"
                         )
-                    if self.overflow_callback is None:
-                        history = rest
+                    history = window.history if with_callback else window.rest
+                    plan = window.plan if with_callback else None
 
                     state = SessionState(
                         history=history,
@@ -283,6 +294,8 @@ class FirestoreSessionStore(SessionStore):
                     "updated_at": firestore.SERVER_TIMESTAMP,
                     "expires_at": dt_class.now(datetime.UTC) + timedelta(hours=self.ttl_hours),
                 }
+                if plan is not None:
+                    data[HANDOFF_PLAN_FIELD] = [{"size": size, "key": key} for size, key in plan]
 
                 transaction.set(doc_ref, data, merge=True)
 
@@ -354,11 +367,17 @@ class FirestoreSessionStore(SessionStore):
             doc = await doc_ref.get(transaction=transaction)
             if not doc.exists:
                 return False
-            stored = (doc.to_dict() or {}).get("history", [])
+            data = doc.to_dict() or {}
+            stored = data.get("history", [])
             head = self._serialize_history(self._deserialize_history(stored[: len(expected)]))
             if head != expected:
                 return False
-            transaction.update(doc_ref, {"history": stored[len(expected):], "updated_at": firestore.SERVER_TIMESTAMP})
+            plan = plan_after_cut(self._read_plan(data), len(expected))
+            transaction.update(doc_ref, {
+                "history": stored[len(expected):],
+                HANDOFF_PLAN_FIELD: [{"size": size, "key": key} for size, key in plan],
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
             return True
 
         try:
@@ -366,6 +385,20 @@ class FirestoreSessionStore(SessionStore):
         except Exception as e:
             logger.error(f"❌ Error cutting the head of {session_id[:16]}...: {e}")
             raise
+
+    @staticmethod
+    def _read_plan(data: Dict[str, Any]) -> List[PlannedBatch]:
+        """The stored hand-off plan; a missing or malformed one reads as no plan (the batches are formed as before)."""
+        raw = data.get(HANDOFF_PLAN_FIELD)
+        if not isinstance(raw, list):
+            return []
+        plan: List[PlannedBatch] = []
+        for entry in raw:
+            size, key = (entry.get("size"), entry.get("key")) if isinstance(entry, dict) else (None, None)
+            if not isinstance(size, int) or not isinstance(key, str):
+                break
+            plan.append((size, key))
+        return plan
 
     def _on_overflow_done(self, task: "asyncio.Task") -> None:
         """Log an error that escaped the overflow hand-off task. Nothing is lost: `_hand_off` cuts a batch only after
