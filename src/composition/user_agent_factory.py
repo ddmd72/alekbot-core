@@ -662,25 +662,7 @@ class UserAgentFactory(AgentFactoryPort):
         for agent in [*agents_to_register, router_slots_agent, slots_agent]:
             if agent is not None:
                 agent.bind_runtime(runtime)
-        registered_ids = self._register_agents(agents_to_register)
-
-        # Between registration and the cache write a cancel (or any error) would leave agents the entry does not
-        # list: `_evict_user` could not unregister them and the next build's registrations would be refused as
-        # duplicates. Unregister exactly the agents just registered, then re-raise.
-        try:
-            # Preload prompt assembly cache (warm-up optimization, non-critical)
-            if self.assembly_service and hasattr(self.assembly_service, "preload_cache"):
-                try:
-                    await asyncio.gather(*(
-                        self.assembly_service.preload_cache(agent_type, account_id, user_id)
-                        for agent_type in self._preload_agent_types()
-                    ))
-                except Exception as e:
-                    logger.warning(f"Failed to preload prompt cache for user {user_id[:8]}: {e}")
-        except BaseException:
-            for agent_id in registered_ids:
-                self.coordinator.unregister_agent(agent_id)
-            raise
+        await self._register_and_preload(agents_to_register, account_id, user_id)
 
         cached = {
             "last_used": time.time(),
@@ -706,6 +688,29 @@ class UserAgentFactory(AgentFactoryPort):
         self._cache[user_id] = cached
         self._start_search_warmup(account_id)
         return cached
+
+    async def _register_and_preload(self, agents_to_register: List[object], account_id: str, user_id: str) -> None:
+        """Register the eager agents, then warm the prompt cache.
+
+        Between registration and the cache write (the caller's) a cancel or any error would leave agents the entry does
+        not list: `_evict_user` could not unregister them and the next build's registrations would be refused as
+        duplicates. So on any exception exactly the agents this call registered are unregistered, then it re-raises.
+        """
+        registered_ids = self._register_agents(agents_to_register)
+        try:
+            # Preload prompt assembly cache (warm-up optimization, non-critical)
+            if self.assembly_service and hasattr(self.assembly_service, "preload_cache"):
+                try:
+                    await asyncio.gather(*(
+                        self.assembly_service.preload_cache(agent_type, account_id, user_id)
+                        for agent_type in self._preload_agent_types()
+                    ))
+                except Exception as e:
+                    logger.warning(f"Failed to preload prompt cache for user {user_id[:8]}: {e}")
+        except BaseException:
+            for agent_id in registered_ids:
+                self.coordinator.unregister_agent(agent_id)
+            raise
 
     def _start_search_warmup(self, account_id: str) -> None:
         """Load the account's fact-search snapshot in the background (it took 5 s on a fresh instance). Never awaited:

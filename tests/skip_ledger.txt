@@ -122,6 +122,7 @@ tests/unit/agents/test_tasks_agent.py :: marker :: slow  # ci-slow: skipped unle
 tests/unit/architecture/test_arch_constructor_arity_cap.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/architecture/test_arch_every_injected_dep_is_read.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/architecture/test_arch_no_foreign_private_writes.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
+tests/unit/composition/test_agent_build_cancelled_in_preload.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_agent_registration_window.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_agent_services.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_application_graph_chat_bundle.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
