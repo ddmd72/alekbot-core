@@ -16,7 +16,8 @@ from src.services.voice_session_service import VoiceSessionService
 _PERSONA = "identity {\n  role: x\n}\nvoice {\n  tone: y\n}\nhumor_engine {\n  style: z\n}\n"
 _XAI = VOICE_PROVIDER_PROFILES["xai"].session
 _OPENAI = VOICE_PROVIDER_PROFILES["openai"].session
-_OPENING = "Welcome the user."
+# The main service's keyed call-opening note (decisions/lelik_call_opening.md).
+_OPENING = "<system_note key=\"able-acorn-absorb\">\nthe call has just connected\n</system_note>"
 
 
 async def _idle(seconds: float):
@@ -86,14 +87,17 @@ class TestSpecPerCall:
 
 class TestRelayOwnedTurns:
     @pytest.mark.asyncio
-    async def test_greeting_is_anchored_after_the_caller_opening(self):
+    async def test_greeting_is_anchored_after_the_config_opening_with_no_pickup_note(self):
         realtime_session = AsyncMock()
+        service = _service(realtime_session, voice=_OPENAI)
+        service._control_plane.fetch_session_config.return_value["opening"] = _OPENING
 
-        await _call(_service(realtime_session, voice=_OPENAI, caller_opening=_OPENING), realtime_session, _no_events)
+        await _call(service, realtime_session, _no_events)
 
         notes = _notes(realtime_session)
-        assert notes[0] == _OPENING
-        assert any("identity" in note for note in notes)
+        assert realtime_session.submit_message.await_args_list[0].args == ("user", _OPENING)
+        assert any("identity" in note for note in notes[1:])
+        assert not any("picked up" in note for note in notes)
 
     @pytest.mark.asyncio
     async def test_a_committed_turn_starts_a_reply(self):
@@ -111,15 +115,16 @@ class TestRelayOwnedTurns:
 
 class TestProviderOwnedTurns:
     @pytest.mark.asyncio
-    async def test_greeting_has_the_anchor_once_first_and_no_caller_opening(self):
+    async def test_a_config_opening_follows_the_anchor_as_a_user_item_with_no_pickup_note(self):
         realtime_session = AsyncMock()
         anchor = build_persona_anchor(_PERSONA)
-        assert anchor is not None
+        service = _service(realtime_session, voice=_XAI)
+        service._control_plane.fetch_session_config.return_value["opening"] = "<system_note key=\"x\">note</system_note>"
 
-        await _call(_service(realtime_session, voice=_XAI, caller_opening=_OPENING), realtime_session, _no_events)
+        await _call(service, realtime_session, _no_events)
 
         assert [c.args for c in realtime_session.submit_message.await_args_list] == [
-            ("system", anchor), ("system", "[The caller has just picked up the phone you called. Speak first.]")]
+            ("system", anchor), ("user", "<system_note key=\"x\">note</system_note>")]
         realtime_session.request_response.assert_awaited_once()
 
     @pytest.mark.asyncio

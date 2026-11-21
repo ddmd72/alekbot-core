@@ -27,6 +27,7 @@ from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 from .consolidation_model_setup import consolidation_context as build_consolidation_context
 from ..domain.agent import AgentConfig
 from ..domain.exceptions import UnsupportedProviderError
+from ..domain.language import LanguageCode
 from ..domain.user import UserProfile
 from ..domain.voice_provider_profile import (
     DEFAULT_VOICE_PROVIDER,
@@ -1104,6 +1105,9 @@ class UserAgentFactory(AgentFactoryPort):
             voice_profile=_voice_profile_for(user_id, ctx.user_profile.config),
             native_web_search=_lelik_xai_native_search(),
             mcp_servers=voice_mcp_servers(self.config),
+            user_config=ctx.user_profile.config,
+            system_default_language=LanguageCode.from_str(
+                self.config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN),
         )
 
     def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:

@@ -1,4 +1,5 @@
-"""The interpreter and tutor profiles are lelik_xai with exactly two token swaps, minus the plain call's MCP tokens."""
+"""The interpreter and tutor profiles are lelik_xai with exactly two token swaps, minus the plain call's MCP tokens and
+the provenance rule."""
 import pytest
 
 from tests.support import prompt_vocabulary as pv
@@ -6,6 +7,9 @@ from tests.support import prompt_vocabulary as pv
 BASE = pv.load_profile("lelik_xai")
 # Tokens that serve only the plain call's MCP tools; the modes get no MCP (LELIK_VOICE_MCP_RFC O7).
 PLAIN_CALL_ONLY = ("VOICE_TOOL_DATA_LELIK",)
+# The provenance rule reads the keyed call-opening note, which only a LELIK-mode call carries
+# (decisions/lelik_call_opening.md).
+LELIK_MODE_ONLY = ("POLICY_SYSTEM_PROVENANCE",)
 
 
 @pytest.mark.parametrize("name,persona", [("lelik_xai_interpreter", "VOICE_PERSONA_INTERPRETER"),
@@ -13,7 +17,7 @@ PLAIN_CALL_ONLY = ("VOICE_TOOL_DATA_LELIK",)
 def test_profile_is_lelik_xai_with_the_persona_and_language_swaps(name, persona):
     profile = pv.load_profile(name)
     expected = {k: v for k, v in BASE["tokens"].items()
-                if k not in ("VOICE_PERSONA_LELIK", "LANG_MIRROR", *PLAIN_CALL_ONLY)}
+                if k not in ("VOICE_PERSONA_LELIK", "LANG_MIRROR", *PLAIN_CALL_ONLY, *LELIK_MODE_ONLY)}
     expected[persona] = {"order": 20, "non_overridable": True}
     expected["LANG_ROLE_FIRST"] = {"order": 300, "non_overridable": True}
 

@@ -88,3 +88,5 @@ contains no quoted phrases, because Grok recites quoted lines.
 guide's second-person Role & Persona and Voice & Communication Style sections. It adds the
 guide's variety rule and uses the familiar address once or twice a call. The owner is open to a
 non-hexagonal xAI-format prompt if this pays off.
+
+**Call opening (2026-11-21).** Provider-owned calls opened by remarking on the silent line; the fix is the keyed opening note, see `lelik_call_opening.md`.

@@ -13,7 +13,7 @@ HANDLE = "conv-0001-invented"
 _VOICE = {"provider": "xai", "turn_ownership": "provider", "voice": "rex", "reasoning_effort": "low"}
 
 
-async def _call(config_extra, resumed=False, handle_event=HANDLE, caller_opening=None):
+async def _call(config_extra, resumed=False, handle_event=HANDLE):
     session = AsyncMock()
     session.resumed = resumed
 
@@ -37,7 +37,7 @@ async def _call(config_extra, resumed=False, handle_event=HANDLE, caller_opening
         yield  # pragma: no cover
 
     service = VoiceSessionService(realtime_session_factory=MagicMock(return_value=session), control_plane=control,
-                                  alert_sink=AsyncMock(), caller_opening=caller_opening)
+                                  alert_sink=AsyncMock())
     await service.handle_call(ticket="ticket-0001-invented", inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
                               clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
     return session, control
@@ -90,21 +90,29 @@ async def test_a_not_honoured_handle_opens_fresh_with_the_ordinary_pickup_note()
 
 
 _RELAY_VOICE = {"voice": {**_VOICE, "turn_ownership": "relay"}}
-_OPENING = "Interpret between two languages."
+# The main service's keyed call-opening note (decisions/lelik_call_opening.md).
+_OPENING = {"opening": "<system_note key=\"able-acorn-absorb\">\nthe call has just connected\n</system_note>"}
+
+
+def _user_items(session):
+    return [c.args for c in session.submit_message.await_args_list if c.args[0] == "user"]
 
 
 @pytest.mark.asyncio
-async def test_a_resumed_call_does_not_repeat_the_caller_opening():
-    session, _ = await _call({"resume": {"handle": HANDLE}, **_RELAY_VOICE}, resumed=True, caller_opening=_OPENING)
+async def test_a_resumed_call_sends_neither_the_opening_nor_the_pickup_note():
+    session, _ = await _call({"resume": {"handle": HANDLE}, **_RELAY_VOICE, **_OPENING}, resumed=True)
 
-    assert [c.args for c in session.submit_message.await_args_list if c.args[0] == "user"] == []
+    assert _user_items(session) == []
+    notes = _system_notes(session)
+    assert len(notes) == 1 and "dropped" in notes[0]
 
 
 @pytest.mark.asyncio
-async def test_a_not_honoured_resume_still_sends_the_caller_opening():
-    session, _ = await _call({"resume": {"handle": HANDLE}, **_RELAY_VOICE}, resumed=False, caller_opening=_OPENING)
+async def test_a_not_honoured_resume_opens_with_the_opening_and_no_pickup_note():
+    session, _ = await _call({"resume": {"handle": HANDLE}, **_RELAY_VOICE, **_OPENING}, resumed=False)
 
-    assert [c.args for c in session.submit_message.await_args_list if c.args[0] == "user"] == [("user", _OPENING)]
+    assert _user_items(session) == [("user", _OPENING["opening"])]
+    assert not any("connected to you from the web page" in note or "dropped" in note for note in _system_notes(session))
 
 
 @pytest.mark.asyncio

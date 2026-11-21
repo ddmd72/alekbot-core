@@ -32,9 +32,10 @@ Environment variables (static — set at relay deploy time, Task 14):
                            (CLAUDE.md: optional knobs, not secrets/required
                            config, are os.getenv'd at their call site).
   VOICE_WEB_CALLER_OPENING
-                           Optional knob (default "on"); "off" disables the
-                           owner's-first-turn opening on web calls only, same
-                           text as the phone path (_CALLER_OPENING).
+                           Optional knob (default "on"); rollback lever: "off"
+                           makes web calls ignore the call-opening note the main
+                           service puts in the session config and start with the
+                           pickup note instead (phone calls always use the note).
   VOICE_DEAD_PEER_TIMEOUT_S
                            Optional knob (default 600): seconds without an inbound
                            packet after which a web call ends itself
@@ -89,11 +90,6 @@ logging.getLogger("websockets.client").setLevel(logging.INFO)
 # Breath-pulse filler played while Lelik thinks or waits (owner pick B2, 2026-09-24).
 _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"
 
-# The owner's first turn of every call: only a cue for Lelik to speak first (owner's wording,
-# 2026-09-28). Delivery rules no longer ride here — one place for them, not three. "One short
-# sentence" because the greeting's first seconds cannot be interrupted (greeting_guard_s). The language
-# reminder matters: this English item is the first input, and LANG_MIRROR would otherwise mirror it.
-_CALLER_OPENING = "Welcome the user in one short sentence. Do not forget to follow language settings"
 # A web call's greeting waits for the page's `listening` (it has subscribed to Lelik's track after /connect and
 # /renegotiate; VOICE_CALL_CONTROL_CHANNEL_RFC §4.4), at most this long: /connect alone takes several seconds, and a
 # fixed short delay sent the whole greeting before the browser listened. A page without the channel waits all of it.
@@ -216,7 +212,6 @@ async def main() -> None:
         barge_in_min_speech_s=1.0,
         # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
         hangup_after_silence_s=20.0,
-        caller_opening=_CALLER_OPENING,
         # Owner's call 2026-09-28: while a delegation is out, each "still waiting" note comes after
         # a random 8-15 s of quiet (silence_timeout_s is the floor), not on a fixed beat.
         waiting_gap_max_s=15.0,
@@ -241,7 +236,7 @@ async def main() -> None:
     # Unset = the call's own spec. Set, it overrides the effort of every web call, whichever
     # provider it runs on, and must be a value that provider accepts.
     web_reasoning = os.environ.get("VOICE_WEB_REASONING_EFFORT") or None
-    web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on" else None
+    web_opening_enabled = os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on"
     control_hub = CallControlHub()
     web_session_service = VoiceSessionService(
         realtime_session_factory=_realtime_session_factory(api_keys, PCM16_24K),
@@ -250,7 +245,7 @@ async def main() -> None:
         reasoning_effort=web_reasoning,
         barge_in_min_speech_s=1.0,
         hangup_after_silence_s=20.0,
-        caller_opening=web_opening,
+        web_opening_enabled=web_opening_enabled,
         waiting_gap_max_s=15.0,
         greeting_guard_s=3.0,
         # Owner's call 2026-09-28: same 300 s as the phone path.

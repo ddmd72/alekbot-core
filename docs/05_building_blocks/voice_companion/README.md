@@ -103,10 +103,20 @@ the one-call marker and revokes the call's MCP tokens.
 **Turn ownership** (`TurnOwnership`, per call, from the spec) decides who speaks when:
 - *RELAY* (OpenAI): the provider never replies by itself (`create_response` off). The relay starts every reply in
   `_start_response` right after the caller's turn with the persona anchor (`build_persona_anchor`) ahead of it, owns
-  barge-in, sends the caller opening and the silence and waiting notes.
+  barge-in, sends the silence and waiting notes.
 - *PROVIDER* (xAI, the default): the provider replies and stops when talked over. The relay places the anchor once at the
   start (and again after a mid-call note, `_mid_call_note`), starts only the greeting and replies to delegation answers,
   and on barge-in only drops queued audio. The debounce `barge_in_min_speech_s` and the silence watchdog do not apply.
+
+**The start of a call.** A LELIK-mode call has no user turn, and its history holds summaries of earlier calls, so the
+model read the silence as the subject. `LelikAgent.session_config` therefore draws a turn key, renders it into the
+instructions (`session_key`) and puts a keyed opening note in the config (`opening`, `domain/voice_opening.py`,
+`wrap_system`). The rule that reads the key is `POLICY_SYSTEM_PROVENANCE` in the two LELIK-mode profiles. On a fresh call
+the relay sends the note as the first user item, after the provider-owned anchor, and no pickup note; a config without it
+(interpreter, tutor, an older ticket) gets the pickup note as before, and a resumed call neither. Language: a fixed-language
+user gets the note in that language (preferred language, else the deployment default); a mirror-mode user gets the English
+text, plus one sentence naming the language of their latest message when the history holds one. `VOICE_WEB_CALLER_OPENING=off`
+makes web calls ignore the note (`decisions/lelik_call_opening.md`).
 
 On every call (web, phone, resumed; either ownership) `_forward_inbound` drops the caller's audio until the relay has
 requested the greeting, so the provider never takes the silent line before it as input and Lelik always speaks first
