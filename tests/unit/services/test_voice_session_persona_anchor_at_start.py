@@ -1,4 +1,4 @@
-"""On a provider-owned fresh call the persona anchor is submitted once as a system item, before the caller opening and
+"""On a provider-owned fresh call the persona anchor is submitted once as a system item, before the call-opening note or
 the pickup note; relay-owned calls (anchor on every response) and resumed calls get no start item."""
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -15,7 +15,7 @@ _PROVIDER = {"provider": "xai", "turn_ownership": "provider", "voice": "rex", "r
 _RELAY = {**_PROVIDER, "turn_ownership": "relay"}
 
 
-async def _call(instructions, voice=_PROVIDER, resumed=False, resume=False, caller_opening=None):
+async def _call(instructions, voice=_PROVIDER, resumed=False, resume=False):
     session = AsyncMock()
     session.resumed = resumed
 
