@@ -5,4 +5,4 @@
 main.py::main  # 632  # composition-root refactor (assessment D6)
 src/composition/mcp_setup.py::build_mcp_components  # 171  # composition-root refactor (assessment D6)
 src/composition/service_container.py::ServiceContainer.__init__  # 394  # composition-root refactor (assessment D6)
-src/composition/user_agent_factory.py::UserAgentFactory._create_and_cache_agents  # 351  # composition-root refactor (assessment D6)
+src/composition/user_agent_factory.py::UserAgentFactory._create_and_cache_agents  # 340  # composition-root refactor (assessment D6)

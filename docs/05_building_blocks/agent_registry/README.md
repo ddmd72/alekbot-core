@@ -107,6 +107,8 @@ The execution mode is the manifest's. The caller cannot choose it (`decisions/de
 3. Eviction (`$admin_cache_reset`, the TTL sweep) takes no lock, so it bumps the user's generation. The eager build
    (`_build_unless_overtaken`) is redone when an eviction overtook it, at most `_MAX_BUILD_ATTEMPTS` times, keeping the last.
    The lazy build re-reads the cache entry under the lock instead and returns `False` after `_MAX_BUILD_ATTEMPTS` evictions.
+   An eager build that is cancelled (or fails) after registering its agents and before writing the cache entry unregisters
+   exactly the agents it registered and re-raises, so no orphan registration blocks the next build.
 4. A turn that was delegating during an eviction finds its eager agents unregistered. `_try_lazy_load` sees an eager
    descriptor and calls `restore_agents_for_user`, which rebuilds the set, instead of answering "Unknown recipient".
 

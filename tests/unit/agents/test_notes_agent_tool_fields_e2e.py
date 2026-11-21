@@ -9,11 +9,11 @@ document, the delegation's response or a posted text.
 Every script is `[tools(<call>), text("<summary>")]`: after any create/update/delete the agent makes a second,
 tool-less request and only then returns (`notes_agent.py:466-480`), so a script of one item would run out.
 
-Two defects are pinned as strict xfails, each beside a passing control:
-- P14-D2: an unknown `complexity` on create is dropped, the reminder is stored without it and reported "created".
-  Fix: return an error when `args.get("complexity")` is set and `_parse_complexity` gives None.
-- P14-D3: an unparsable `due` on update is dropped and the update is reported done. Fix: after `_parse_dt`, return an
-  error when `args.get("due")` is set and the result is None.
+Two bad-value cases are pinned as plain tests, each beside a passing control (both were defects, now fixed):
+- P14-D2: an unknown `complexity` on create is refused with an error and nothing is stored
+  (`test_an_unknown_complexity_is_refused_not_dropped`).
+- P14-D3: an unparsable `due` on update is refused with an error and the update is not reported done
+  (`test_an_unparsable_due_on_update_is_refused_not_dropped`).
 """
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional

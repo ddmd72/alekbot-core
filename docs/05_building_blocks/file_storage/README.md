@@ -137,11 +137,11 @@ Entry: `src/services/document_delivery_service.py::DocumentDeliveryService.store
    file.
 3. A click on `/f/<token>` (`src/web/file_access_app.py::create_file_access_blueprint`): verify signature, expiry and
    type, answering 401 on failure; for a gated token require the Cabinet cookie, else redirect to `/auth/login`, and
-   answer 403 when the cookie's user is not the token's. A `video_generation/` key then renders a landing page
-   (Download, Share); any other key gets a fresh signed URL of `_SIGNED_URL_TTL` and a 302.
+   answer 403 when the cookie's user is not the token's. The object must still be stored (else 410, below); a `video_generation/`
+   key then renders a landing page (Download, Share); any other key gets a fresh signed URL of `_SIGNED_URL_TTL` and a 302.
 4. `/f/<token>/raw` streams the bytes through `MediaStoragePort.fetch` with Range support (a Safari video needs it).
-5. An object the lifecycle already deleted answers **410**, a storage failure **503**
-   (`tests/unit/web/test_file_access_app.py`).
+5. An object the lifecycle already deleted answers **410** (a video key too, before its landing page), a storage failure
+   **503** (`tests/unit/web/test_file_access_app.py`).
 
 ## Invariants and traps
 

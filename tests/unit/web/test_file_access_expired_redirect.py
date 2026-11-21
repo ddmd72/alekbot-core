@@ -20,6 +20,7 @@ from tests.unit.adapters.test_media_store_kit import _KeyCredentials
 
 BUCKET = "media-test"
 KEY = "email_review/u1/5d2e-review.html"
+VIDEO_KEY = "video_generation/u1/1760000000.mp4"
 
 
 @pytest.fixture
@@ -51,6 +52,23 @@ async def test_an_expired_object_answers_410_and_signs_nothing(tokens, fake, cap
     assert await resp.get_data(as_text=True) == "This file has expired."
     assert fake.signed_urls == []
     assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+async def test_an_expired_video_object_answers_410_not_a_player_page(tokens, fake):
+    """Flips when a video key gets the landing page without the existence check other keys get."""
+    token = tokens.mint(key=VIDEO_KEY, user_id="u1")
+    resp = await _client(tokens).get(f"/f/{token}")
+    assert resp.status_code == 410
+    assert await resp.get_data(as_text=True) == "This file has expired."
+    assert fake.signed_urls == []
+
+
+async def test_a_stored_video_object_still_gets_the_player_page(tokens, fake):
+    await GcsMediaAdapter(BUCKET).store(b"video bytes", VIDEO_KEY, "video/mp4")
+    token = tokens.mint(key=VIDEO_KEY, user_id="u1")
+    resp = await _client(tokens).get(f"/f/{token}")
+    assert resp.status_code == 200
+    assert f'<video controls playsinline src="/f/{token}/raw">' in await resp.get_data(as_text=True)
 
 
 async def test_a_stored_object_still_redirects_to_its_signed_url(tokens, fake):

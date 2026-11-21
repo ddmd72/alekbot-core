@@ -33,7 +33,7 @@ The self-tests at the end run the checker on in-memory ledgers and in-memory tes
 
 What this meta-test does not see: keys a model sends that no declaration names (P14-D1, an update of undeclared keys);
 the flat union of every delegate intent's context fields that a provider may merge (only each intent's own schema is
-enumerated); a bad value of a declared field (P14-D2..D5: those are the cards' strict xfails, beside the `stored` test
+enumerated); a bad value of a declared field (P14-D2..D5: the e2e files pin each as a plain test, beside the `stored` test
 of the same field); whether the referenced test really asserts the field's effect (the leaf-name check proves the test
 sends the field, the reviewer of the e2e file proves the assertion).
 
