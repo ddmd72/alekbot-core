@@ -7,12 +7,11 @@ boundary fake (`tests/support/http_boundary_fake.py`) with its own task routes; 
 `TaskIndexingService` over `FirestoreTaskSearchIndex` on `EvalDb`. Every assertion reads a request body Graph received,
 a stored index document or a tool result the model was given.
 
-Two defects are pinned as strict xfails, each beside a passing control:
-- P14-D4: an explicit `is_reminder_on: false` is overwritten when the update also sets a due date on a task that had
-  none. Fix: `and is_reminder_on is not False` at the auto-reminder branch of `update_task` (`tasks_agent.py:528`).
-- P14-D5: an unparsable `due_datetime` is dropped with a log line and the task is created without a due date. Fix:
-  `_parse_datetime` (`tasks_agent.py:712-720`) raises `ValueError` on a non-empty value it cannot read; `execute`
-  turns the raise into `{"error": ...}` before the POST.
+Two bad-value cases are pinned as plain tests, each beside a passing control (both were defects, now fixed):
+- P14-D4: an explicit `is_reminder_on: false` survives an update that also sets a due date on a task that had none
+  (`test_an_explicit_reminder_off_survives_a_new_due`).
+- P14-D5: an unparsable `due_datetime` is refused with `{"error": ...}` before anything is posted to Graph
+  (`test_an_unparsable_due_is_refused_not_dropped`).
 """
 import hashlib
 from datetime import datetime, timedelta, timezone
