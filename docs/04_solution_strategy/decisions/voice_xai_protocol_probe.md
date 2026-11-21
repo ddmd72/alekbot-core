@@ -88,3 +88,8 @@ contains no quoted phrases, because Grok recites quoted lines.
 guide's second-person Role & Persona and Voice & Communication Style sections. It adds the
 guide's variety rule and uses the familiar address once or twice a call. The owner is open to a
 non-hexagonal xAI-format prompt if this pays off.
+
+**Caller opening restored (2026-11-21).** The bare test dropped the caller opening, and provider-owned calls then opened
+by remarking on the silent line instead of greeting. A probe of start variants showed that a system note explaining the
+pickup did not fix it, while the caller opening as a user item did. It now goes in on provider-owned calls as well,
+ahead of the pickup note.

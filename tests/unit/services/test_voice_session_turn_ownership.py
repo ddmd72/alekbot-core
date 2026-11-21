@@ -123,6 +123,32 @@ class TestProviderOwnedTurns:
         realtime_session.request_response.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_a_fresh_call_sends_the_caller_opening_between_the_anchor_and_the_pickup_note(self):
+        realtime_session = AsyncMock()
+        anchor = build_persona_anchor(_PERSONA)
+        assert anchor is not None
+
+        await _call(_service(realtime_session, voice=_XAI, caller_opening=_OPENING), realtime_session, _no_events)
+
+        assert [c.args for c in realtime_session.submit_message.await_args_list] == [
+            ("system", anchor), ("user", _OPENING),
+            ("system", "[The caller has just picked up the phone you called. Speak first.]")]
+        realtime_session.request_response.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_web_call_sends_the_caller_opening_before_the_web_pickup_note(self):
+        realtime_session = AsyncMock()
+        service = _service(realtime_session, voice=_XAI, caller_opening=_OPENING)
+        service._control_plane.fetch_session_config.return_value["call_kind"] = "web"
+
+        await _call(service, realtime_session, _no_events)
+
+        sent = [c.args for c in realtime_session.submit_message.await_args_list]
+        assert [kind for kind, _ in sent] == ["system", "user", "system"]
+        assert sent[1] == ("user", _OPENING)
+        assert sent[2] == ("system", voice_session_module._WEB_PICKUP_NOTE)
+
+    @pytest.mark.asyncio
     async def test_a_committed_turn_does_not_start_a_reply(self):
         realtime_session = AsyncMock()
 

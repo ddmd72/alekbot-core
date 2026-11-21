@@ -103,10 +103,13 @@ the one-call marker and revokes the call's MCP tokens.
 **Turn ownership** (`TurnOwnership`, per call, from the spec) decides who speaks when:
 - *RELAY* (OpenAI): the provider never replies by itself (`create_response` off). The relay starts every reply in
   `_start_response` right after the caller's turn with the persona anchor (`build_persona_anchor`) ahead of it, owns
-  barge-in, sends the caller opening and the silence and waiting notes.
+  barge-in, sends the silence and waiting notes.
 - *PROVIDER* (xAI, the default): the provider replies and stops when talked over. The relay places the anchor once at the
   start (and again after a mid-call note, `_mid_call_note`), starts only the greeting and replies to delegation answers,
   and on barge-in only drops queued audio. The debounce `barge_in_min_speech_s` and the silence watchdog do not apply.
+
+On every fresh call of either ownership the caller opening goes in as a user item before the pickup note (without a user
+turn xAI reads "speak first" as a silent caller and remarks on the line instead of greeting).
 
 On every call (web, phone, resumed; either ownership) `_forward_inbound` drops the caller's audio until the relay has
 requested the greeting, so the provider never takes the silent line before it as input and Lelik always speaks first

@@ -501,9 +501,10 @@ class VoiceSessionService:
                 if state.turn_ownership is TurnOwnership.PROVIDER:
                     if state.persona_anchor is not None:
                         await self._system_note(session, state, state.persona_anchor)
-                if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
+                if self._caller_opening:
                     # A user turn, not system text: live, the caller's own request changed how
                     # Lelik spoke where the same rule as system text did not (2026-09-25).
+                    # Provider-owned turns too: without a user turn Grok remarked on a silent line (2026-11-21).
                     await session.submit_message("user", self._caller_opening)
                 pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
                 await self._system_note(session, state, pickup_note)
