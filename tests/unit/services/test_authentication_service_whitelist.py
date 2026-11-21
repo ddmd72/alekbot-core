@@ -97,6 +97,7 @@ def _assert_no_user_access(user_repo, account_repo):
     user_repo.get_user_by_email.assert_not_called()
     user_repo.get_user.assert_not_called()
     user_repo.update_user.assert_not_called()
+    user_repo.update_user_fields.assert_not_called()
     user_repo.create_user.assert_not_called()
     account_repo.create_account.assert_not_called()
 
@@ -253,4 +254,6 @@ async def test_link_oauth_allows_whitelisted_google_identity(service, provider, 
     user = await service.link_oauth_identity(user_id="u1", code="c", redirect_uri="https://x/cb")
 
     assert user.external_user_id == "firebase|sub-1"
-    user_repo.update_user.assert_awaited_once()
+    user_repo.update_user_fields.assert_awaited_once()
+    written, fields = user_repo.update_user_fields.await_args[0]
+    assert written is user and set(fields) == {"external_user_id", "auth_metadata"}

@@ -342,13 +342,16 @@ async def test_email_link_existing_user_by_email(
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=None)  # no external_id match
     existing = UserProfile(user_id="u-existing", email="known@example.com", account_id="acc2")
     mock_user_repo.get_user_by_email = AsyncMock(return_value=existing)
-    mock_user_repo.update_user = AsyncMock(return_value=existing)
+    mock_user_repo.update_user_fields = AsyncMock(return_value=existing)
     account = BillingAccount(account_id="acc2", tier=AccountTier.FREE, iam_policy={})
     mock_account_repo.get_account = AsyncMock(return_value=account)
 
     user, _, _ = await auth_service.handle_oauth_callback("code", "http://cb")
     assert user.user_id == "u-existing"
-    mock_user_repo.update_user.assert_called_once()
+    mock_user_repo.update_user_fields.assert_called_once()
+    written, fields = mock_user_repo.update_user_fields.call_args[0]
+    assert written is existing and written.external_user_id == "firebase|s2"
+    assert set(fields) == {"external_user_id", "auth_metadata"}
 
 
 @pytest.mark.asyncio
@@ -413,11 +416,15 @@ async def test_link_oauth_identity_success(
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=None)
     user = UserProfile(user_id="u-target", email="linked@example.com", account_id="acc1")
     mock_user_repo.get_user = AsyncMock(return_value=user)
-    mock_user_repo.update_user = AsyncMock(return_value=user)
+    mock_user_repo.update_user_fields = AsyncMock(return_value=user)
 
     svc = _make_auth_svc(mock_auth_registry, mock_user_repo, mock_account_repo)
     result = await svc.link_oauth_identity("u-target", "code", "http://cb")
     assert result.user_id == "u-target"
+    mock_user_repo.update_user_fields.assert_awaited_once()
+    written, fields = mock_user_repo.update_user_fields.await_args[0]
+    assert written.external_user_id == "firebase|s99"
+    assert set(fields) == {"external_user_id", "auth_metadata"}
 
 
 @pytest.mark.asyncio

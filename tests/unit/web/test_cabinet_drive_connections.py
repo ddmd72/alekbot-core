@@ -46,10 +46,11 @@ class Users:
     async def get_user(self, user_id: str) -> Any:
         return self.profiles.get(user_id)
 
-    async def update_user(self, profile: Any) -> None:
+    async def update_user_fields(self, profile: Any, fields: Any) -> Any:
         if self.fail_update:
             raise RuntimeError("store down")
         self.updates += 1
+        return profile
 
 
 class Router:
