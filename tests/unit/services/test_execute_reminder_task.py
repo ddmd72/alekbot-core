@@ -218,6 +218,33 @@ async def test_a_delivered_recurring_fire_is_stamped_and_kept(monkeypatch):
     assert rig.doc(note_id).get("last_delivered_due") == T0
 
 
+class SelfDeletingNotifier(Notifier):
+    """The turn deletes its own reminder (the "until X" case) before it reports delivery."""
+    notes: Any = None
+    note_id: str = ""
+
+    async def notify(self, **kwargs: Any) -> NotifyResult:
+        await self.notes.delete_note(note_id=self.note_id, user_id=USER)
+        return await super().notify(**kwargs)
+
+
+@pytest.mark.parametrize("recurrence", [None, "FREQ=DAILY"])
+async def test_a_turn_that_deletes_its_own_reminder_still_ends_ok(monkeypatch, caplog, recurrence):
+    rig = Rig()
+    note_id = await rig.seed(monkeypatch, recurrence=recurrence)
+    rig.notifier = SelfDeletingNotifier(DELIVERED, rig.order)
+    rig.notifier.notes, rig.notifier.note_id = rig.notes, note_id
+    rig.task = ExecuteReminderTask(
+        notes_port=rig.notes, user_repo=rig.users, ensure_agents=rig._ensure,
+        notification_service=rig.notifier, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
+
+    with caplog.at_level(logging.INFO):
+        assert await rig.run(note_id) == ({"status": "ok"}, 200)
+
+    assert rig.doc(note_id) is None
+    assert f"[AgentNote] mark_fire_delivered: note={note_id} gone before the stamp; nothing to stamp" in caplog.messages
+
+
 async def test_the_sla_tier_follows_the_users_override_of_the_notes_complexity(monkeypatch):
     rig = Rig()
     rig.users.put(UserProfile(user_id=USER, account_id=ACCOUNT, config=UserBotConfig(complexity_settings_overrides={

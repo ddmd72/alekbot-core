@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import uuid4
 
+from google.api_core.exceptions import NotFound
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -314,12 +315,21 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         idempotent (final state identical), and a stamp newer than the
         worker's view (e.g. next fire arriving while we mark this one)
         is fine: we only ever advance the value forward in callers.
+
+        An absent note is a no-op: the fire's own turn may have deleted the
+        reminder, so there is nothing left to stamp.
         """
         if not note_id:
             return
-        await self._col.document(note_id).update({
-            "last_delivered_due": due_at,
-        })
+        try:
+            await self._col.document(note_id).update({
+                "last_delivered_due": due_at,
+            })
+        except NotFound:
+            logger.info(
+                "[AgentNote] mark_fire_delivered: note=%s gone before the stamp; nothing to stamp",
+                note_id,
+            )
 
     # ------------------------------------------------------------------
     # Helpers

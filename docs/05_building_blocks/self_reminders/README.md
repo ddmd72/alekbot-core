@@ -115,6 +115,8 @@ reads its `text`, and the removed `visible_after` / `expires_after` fields are i
 4. Outcome by HTTP status: only "the turn never started" (`is_retryable_failure`) answers 500 and is retried. Every
    outcome once the turn started is final and 200: ok, `empty_answer_final`, `turn_cap_final`, `failed_final`. A retry
    would repeat the actions the turn already took.
+   A turn may delete its own note (the "until X" case); the stamp then finds no note and is a no-op, so the outcome stays
+   final and 200.
 5. Final outcomes stamp `last_delivered_due` first, then tell the owner once that the reminder did not run when nothing
    was sent (`UIMessage.REMINDER_NOT_RUN`), then delete a one-time note.
 

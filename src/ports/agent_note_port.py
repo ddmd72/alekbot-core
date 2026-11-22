@@ -164,9 +164,9 @@ class AgentNotePort(ABC):
         ``last_delivered_due == due_at`` before invoking ``notify``).
 
         Idempotent: calling twice with the same ``due_at`` is safe.
-        Errors: an absent note raises the backend's not-found error (NotFound today) (the execute worker's retry
-        then finds the note gone and acks). An empty id is a no-op. No
-        ownership check.
+        An absent note is a no-op: the turn may have deleted its own
+        reminder, so there is nothing left to stamp, and a retry finds the
+        note gone anyway. An empty id is a no-op. No ownership check.
 
         See: docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 7 D.3.
         """
