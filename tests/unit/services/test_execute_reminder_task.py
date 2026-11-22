@@ -242,7 +242,7 @@ async def test_a_turn_that_deletes_its_own_reminder_still_ends_ok(monkeypatch, c
         assert await rig.run(note_id) == ({"status": "ok"}, 200)
 
     assert rig.doc(note_id) is None
-    assert f"[AgentNote] mark_fire_delivered: note={note_id} gone (deleted during its turn); nothing to stamp" in caplog.messages
+    assert f"[AgentNote] mark_fire_delivered: note={note_id} gone before the stamp; nothing to stamp" in caplog.messages
 
 
 async def test_the_sla_tier_follows_the_users_override_of_the_notes_complexity(monkeypatch):
