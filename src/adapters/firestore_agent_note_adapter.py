@@ -327,7 +327,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             })
         except NotFound:
             logger.info(
-                "[AgentNote] mark_fire_delivered: note=%s gone (deleted during its turn); nothing to stamp",
+                "[AgentNote] mark_fire_delivered: note=%s gone before the stamp; nothing to stamp",
                 note_id,
             )
 
