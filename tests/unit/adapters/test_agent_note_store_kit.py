@@ -467,11 +467,11 @@ async def test_a_naive_stored_last_delivered_due_reads_as_utc_defensive_branch(n
     assert note.last_delivered_due == T0 - timedelta(days=1) and note.last_delivered_due.tzinfo is timezone.utc
 
 
-async def test_mark_fire_delivered_on_a_deleted_note_raises_not_found(notes):
+async def test_mark_fire_delivered_on_a_deleted_note_is_a_no_op(notes):
+    """The reminder's own turn may delete its note before the stamp: nothing to stamp, nothing recreated, no error."""
     note = await create(notes, due=T0)
     await notes.port.delete_note(note.note_id, "u1")
-    with pytest.raises(NotFound):
-        await notes.port.mark_fire_delivered(note.note_id, T0)
+    assert await notes.port.mark_fire_delivered(note.note_id, T0) is None
     assert notes.docs == {}
 
 
