@@ -356,6 +356,34 @@ class FirestoreFactRepository(FactRepository):
         return results, next_cursor
 
     @log_execution_time
+    async def count_facts_by_domain(
+        self, owner_id: str, state: str, domain_keys: Sequence[str],
+    ) -> Tuple[int, Dict[str, int]]:
+        """Count aggregations over get_paginated_facts' own query (same filters, same ordering, no cursor or limit):
+        one for the total and one per key, run concurrently. The ordering on created_at is kept on purpose: it leaves
+        out a document without created_at exactly as the listing does, and it makes each count use the listing's own
+        indexes, (account_id, state, created_at DESC) and (account_id, state, domain_keys CONTAINS, created_at DESC)."""
+        if state not in LISTABLE_STATES:
+            raise ValueError(f"count_facts_by_domain reads state one of {LISTABLE_STATES}, not {state!r}")
+        listing = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", owner_id))
+            .where(filter=FieldFilter("state", "==", state))
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+        )
+
+        async def count(domain_key: Optional[str]) -> int:
+            query = listing
+            if domain_key:
+                query = query.where(filter=FieldFilter("domain_keys", "array_contains", domain_key))
+            result = await query.count(alias="n").get()
+            return int(result[0][0].value)
+
+        keys = list(domain_keys)
+        total, *per_key = await asyncio.gather(count(None), *(count(key) for key in keys))
+        return total, dict(zip(keys, per_key))
+
+    @log_execution_time
     async def search_facts(
         self,
         query_vector: List[float],

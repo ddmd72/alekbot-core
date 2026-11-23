@@ -81,7 +81,7 @@ def test_the_memory_tab_enters_through_the_gate_and_leaving_relocks():
 
 def test_every_facts_call_goes_through_the_guarded_fetch():
     calls = re.findall(r"(\w+)\(\s*`\$\{API\}/api/user/fact(?!s-pin)", _HTML)
-    assert sorted(calls) == ["factsFetch"] * 7, calls
+    assert sorted(calls) == ["factsFetch"] * 8, calls
 
 
 def test_the_pin_code_never_reaches_the_dom_as_markup_or_a_url():
