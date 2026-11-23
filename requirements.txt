@@ -45,6 +45,9 @@ cryptography==50.0.0  # AES-GCM test cipher (tests/support/aes_gcm_cipher.py); a
 google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
+# Passkey ceremonies (CABINET_DEVICE_SESSIONS_RFC §7.3, F8): imported only by src/adapters/webauthn_signer_verifier.py.
+# Pinned: it is security code whose checks the adapter's wire tests pin; a bump re-runs them (3.0.1 = the latest 3.x).
+webauthn==3.0.1
 hypercorn>=0.18,<0.19
 httpx==0.28.1  # sandbox client (HTTP/2); declared explicitly, not only as a transitive dependency of the LLM SDKs
 h2==4.4.1  # HTTP/2 for httpx; declared explicitly, not only as a transitive dependency of hypercorn

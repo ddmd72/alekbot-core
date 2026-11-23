@@ -520,6 +520,24 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}auth_device_sessions_v1"
 
     @property
+    def passkeys_collection(self) -> str:
+        """
+        Cabinet passkeys, doc id = the SHA-256 hex of the credential id (CABINET_DEVICE_SESSIONS_RFC §7.3): the public
+        key and its signature counter, never a secret; queried by `user_id` equality only; no TTL (a revoked passkey
+        stays as a record). Dev: development_auth_passkeys_v1
+        """
+        return f"{self.firestore_collection_prefix}auth_passkeys_v1"
+
+    @property
+    def passkey_challenges_collection(self) -> str:
+        """
+        Pending passkey ceremonies under `passkey_challenge:<SHA-256 of the nonce>`, single use, five minutes
+        (CABINET_DEVICE_SESSIONS_RFC §7.3; a TTL policy on `expires_at` sweeps the abandoned ones).
+        Dev: development_auth_passkey_challenges
+        """
+        return f"{self.firestore_collection_prefix}auth_passkey_challenges"
+
+    @property
     def geo_mark_links_collection(self) -> str:
         """
         Pending `$geo` links under `geo_link:<keyed digest of the link id>`, single use, ten minutes (GEO_MARKS_RFC

@@ -1,12 +1,14 @@
 """`build_identity`: one account, user and whitelist repository shared by IAM, invites and the Cabinet's sign-in, the
-sign-in over the AuthConfig it is given, and the phone-binding client only with all three Twilio settings."""
+sign-in over the AuthConfig it is given, and the phone-binding client only with all three Twilio settings.
+`build_device_auth`: one device store under the sessions and the passkeys, the passkey relying party taken from the
+sign-in callback, the challenges in their own collection."""
 import dataclasses
 from types import SimpleNamespace
 
 import pytest
 
 from src.composition import identity_setup
-from src.composition.identity_setup import build_identity
+from src.composition.identity_setup import build_device_auth, build_identity, passkey_relying_party
 from src.config.environment import EnvironmentConfig
 from tests.support.firestore_eval import EvalDb
 
@@ -84,3 +86,38 @@ def test_the_bundle_is_frozen(env):
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         identity.user_repo = None  # type: ignore[misc]
+
+
+def test_the_device_sessions_and_passkeys_share_one_store_and_the_rp_is_the_callback_host(env):
+    db = EvalDb()
+    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+
+    auth = build_device_auth(db, env, session_service=identity.session_service, notification_service="notices",  # type: ignore[arg-type]
+                             oauth_redirect_uri="https://cabinet.example.com/auth/callback")
+
+    sessions, passkeys = auth.sessions, auth.passkeys
+    assert passkeys._repo is sessions._repo
+    assert (sessions._repo._col.name, sessions._repo._passkeys.name) == (env.device_sessions_collection,
+                                                                       env.passkeys_collection)
+    assert (sessions._sessions, sessions._notifications, passkeys._notifications) == (
+        identity.session_service, "notices", "notices")
+    assert (passkeys._verifier._rp_id, passkeys._verifier._origin, passkeys._verifier._rp_name) == (
+        "cabinet.example.com", "https://cabinet.example.com", "Alek")
+    assert (passkeys._challenges._db, passkeys._challenges._collection) == (db, env.passkey_challenges_collection)
+    assert env.passkeys_collection.endswith("auth_passkeys_v1")
+    assert env.passkey_challenges_collection.endswith("auth_passkey_challenges")
+
+
+@pytest.mark.parametrize("uri, rp", [
+    ("https://cabinet.example.com/auth/callback", ("cabinet.example.com", "https://cabinet.example.com")),
+    ("https://Cabinet.Example.com:8443/auth/callback", ("cabinet.example.com", "https://cabinet.example.com:8443")),
+    ("http://localhost:8080/auth/callback", ("localhost", "http://localhost:8080")),
+])
+def test_the_relying_party_is_the_callbacks_host_and_origin(uri, rp):
+    assert passkey_relying_party(uri) == rp
+
+
+@pytest.mark.parametrize("uri", ["", "/auth/callback", "cabinet.example.com/auth/callback"])
+def test_a_callback_without_scheme_or_host_refuses_the_start(uri):
+    with pytest.raises(ValueError, match="no scheme or host"):
+        passkey_relying_party(uri)

@@ -103,6 +103,7 @@ src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single i
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
 src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
+src.adapters.webauthn_signer_verifier.WebAuthnSignerVerifier 1  # by-design the one passkey verifier, its relying party from OAUTH_REDIRECT_URI, held by PasskeyService (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.3)
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
@@ -185,6 +186,7 @@ src.services.memory_fact_service.MemoryFactService 1  # by-design single instanc
 src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one connect flow behind the generic connect routes (integrations_setup.py, MULTI_DRIVE_RFC 5.2)
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
 src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as owner_zones in memory_setup.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
+src.services.passkey_service.PasskeyService 1  # by-design the one passkey ceremony service over the device session store (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.3)
 src.services.profile_question_answers.ProfileQuestionAnswers 1  # by-design single instance, built once in memory_setup.py and held by the one FactAnswerService (FACT_PROFILE_RFC 4.7, PR 5d)
 src.services.prompt_builder.PromptBuilder 5  # by-design five plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:377), FactProfilerRunner's (service_container.py:395, FACT_PROFILE_RFC 4.1), CompanionExtractorRunner's (companion_setup.py:63), the document service reader's (document_service_setup.py:62) and EmailCardRunner's (email_card_setup.py:37; its invalidate_agent_prompt drops only the card writer's own key, prompt_builder.py:285-292); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance

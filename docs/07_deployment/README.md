@@ -360,6 +360,7 @@ are never deleted (nothing breaks).
 | `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
 | `<prefix>geo_mark_links` | one-time `$geo` location links (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps unused links |
 | `<prefix>event_dedup` | inbound event dedup claims (1 h); reads check expiry themselves |
+| `<prefix>auth_passkey_challenges` | pending passkey ceremonies (5 minutes, single use); the ephemeral store reads the expiry itself, the policy only sweeps abandoned ones |
 | `<prefix>drive_note_erase_requests` | pending drive-note erase requests |
 | `<prefix>short_links` | short links (`resolve` re-checks expiry itself, the sweep lags) |
 | `<prefix>mcp_auth_codes` | MCP authorization codes (about 10 minutes) |

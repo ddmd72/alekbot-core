@@ -16,8 +16,9 @@ from pydantic import BaseModel, ConfigDict
 
 
 class SessionAuthKind(str, Enum):
-    """How the session was signed in."""
+    """How the session was signed in: a Google OAuth login, or a passkey assertion (§7.3)."""
     GOOGLE = "google"
+    PASSKEY = "passkey"
 
 
 class SessionRevokeReason(str, Enum):

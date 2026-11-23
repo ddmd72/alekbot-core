@@ -266,4 +266,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — inicio {created}, último uso {last_used}",
     UIMessage.DEVICES_OFF_DONE.value: "Sesión cerrada en {count} dispositivo(s). El próximo acceso al Cabinet requiere un nuevo inicio de sesión con Google.",
     UIMessage.DEVICES_CHECKLIST.value: "Si se pierde un teléfono:\n1. Envía `$devices off` (hecho).\n2. Quita el teléfono de tu cuenta de Apple o Google.\n3. Cierra las sesiones de Telegram y Slack del teléfono en esas aplicaciones.",
+    UIMessage.PASSKEY_ADDED_NOTICE.value: "Llave de acceso añadida: {label}, {time}. Ahora inicia sesión en tu Cabinet. ¿No fuiste tú? Envía `$devices off`.",
+    UIMessage.PASSKEY_REMOVED_NOTICE.value: "Llave de acceso eliminada: {label}, {time}. Ya no inicia sesión en tu Cabinet.",
 }

@@ -213,3 +213,7 @@ class UIMessage(Enum):
     DEVICES_LIST_LINE = "devices_list_line"
     DEVICES_OFF_DONE = "devices_off_done"
     DEVICES_CHECKLIST = "devices_checklist"
+    # A passkey added to or removed from the user's Cabinet sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5); {label} is
+    # untrusted text.
+    PASSKEY_ADDED_NOTICE = "passkey_added_notice"
+    PASSKEY_REMOVED_NOTICE = "passkey_removed_notice"

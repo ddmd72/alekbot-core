@@ -35,7 +35,7 @@ from src.composition.background_jobs_setup import BackgroundJobs, build_backgrou
 from src.composition.boot_setup import BootChecks, build_boot_checks
 from src.composition.companion_setup import Companions, build_companions
 from src.composition.file_delivery_setup import FileDelivery, build_file_delivery
-from src.composition.identity_setup import Identity, build_device_sessions, build_identity
+from src.composition.identity_setup import Identity, build_device_auth, build_identity
 from src.composition.integrations_setup import Integrations, build_integrations
 from src.composition.language_setup import Languages, build_languages
 from src.composition.memory_search_setup import build_memory_search
@@ -69,6 +69,7 @@ from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.device_session_service import DeviceSessionService
+from src.services.passkey_service import PasskeyService
 from src.services.call_text_file_service import CallTextFileService
 from src.services.fact_answer_service import FactAnswerService
 from src.services.file_access_token_service import FileAccessTokenService
@@ -115,6 +116,7 @@ class ApplicationGraph:
     alert_sink: Optional[SlackWebhookAdapter]
     session_service: SessionService
     device_sessions: DeviceSessionService    # revocable Cabinet sessions (CABINET_DEVICE_SESSIONS_RFC §7.1)
+    passkeys: PasskeyService                 # passkey enrolment and sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3)
     auth_service: AuthenticationService
     auth_registry: AuthProviderRegistry
     auth_config: AuthConfig
@@ -201,8 +203,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     notifications = build_notifications(config, db_client, env_config, coordinator=coordinator,
                                         session_store=container.session_store, media_storage=delivery.media_storage,
                                         link_service=delivery.link_service, languages=languages)
-    device_sessions = build_device_sessions(db_client, env_config, session_service=identity.session_service,
-                                            notification_service=notifications.service)
+    device_auth = build_device_auth(db_client, env_config, session_service=identity.session_service,
+                                    notification_service=notifications.service,
+                                    oauth_redirect_uri=boot.auth_config.oauth_redirect_uri)
+    device_sessions = device_auth.sessions
     jobs = build_background_jobs(container=container, coordinator=coordinator,
                                  notification_service=notifications.service, task_queue=ops.task_queue,
                                  delivery=delivery, user_repo=identity.user_repo, languages=languages)
@@ -241,7 +245,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         user_repo=identity.user_repo, whitelist_repo=identity.whitelist_repo, account_repo=identity.account_repo,
         invite_service=identity.invite_service, cabinet_facts=memory.cabinet_facts, fact_answers=memory.fact_answers,
         quota_service=ops.quota_service, alert_sink=ops.alert_sink, session_service=identity.session_service,
-        device_sessions=device_sessions,
+        device_sessions=device_sessions, passkeys=device_auth.passkeys,
         auth_service=identity.auth_service, auth_registry=identity.auth_registry, auth_config=boot.auth_config,
         deploy_topology=boot.deploy_topology,
         connect_service=integrations.connect, credential_revocation=integrations.credential_revocation,

@@ -289,4 +289,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — signed in {created}, last used {last_used}",
     UIMessage.DEVICES_OFF_DONE.value: "Signed out of {count} device(s). The next Cabinet access needs a new Google sign-in.",
     UIMessage.DEVICES_CHECKLIST.value: "If a phone is lost:\n1. Send `$devices off` (done).\n2. Remove the phone from your Apple or Google account.\n3. End the phone's Telegram and Slack sessions in those apps.",
+    UIMessage.PASSKEY_ADDED_NOTICE.value: "Passkey added: {label}, {time}. It now signs in to your Cabinet. Not you? Send `$devices off`.",
+    UIMessage.PASSKEY_REMOVED_NOTICE.value: "Passkey removed: {label}, {time}. It no longer signs in to your Cabinet.",
 }

@@ -266,4 +266,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — connecté {created}, dernière utilisation {last_used}",
     UIMessage.DEVICES_OFF_DONE.value: "Déconnexion de {count} appareil(s). Le prochain accès au Cabinet demandera une nouvelle connexion Google.",
     UIMessage.DEVICES_CHECKLIST.value: "Si un téléphone est perdu :\n1. Envoyez `$devices off` (fait).\n2. Retirez le téléphone de votre compte Apple ou Google.\n3. Terminez les sessions Telegram et Slack du téléphone dans ces applications.",
+    UIMessage.PASSKEY_ADDED_NOTICE.value: "Clé d'accès ajoutée : {label}, {time}. Elle permet désormais de se connecter à votre Cabinet. Ce n'est pas vous ? Envoyez `$devices off`.",
+    UIMessage.PASSKEY_REMOVED_NOTICE.value: "Clé d'accès supprimée : {label}, {time}. Elle ne permet plus de se connecter à votre Cabinet.",
 }
