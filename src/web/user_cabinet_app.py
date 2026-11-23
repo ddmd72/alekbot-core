@@ -83,6 +83,7 @@ CABINET_ASSETS: Dict[str, str] = {
     "cabinet-shell.js": "application/javascript",
     "cabinet-sections.js": "application/javascript",
     "cabinet-settings.js": "application/javascript",
+    "cabinet-home.js": "application/javascript",
     "cabinet-reminders.js": "application/javascript",
 }
 

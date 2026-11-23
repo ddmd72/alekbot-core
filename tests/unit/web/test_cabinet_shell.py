@@ -134,12 +134,6 @@ def test_team_shows_for_an_owner_only():
     assert 'return !!currentUser && currentUser.account.role === "owner";' in _SHELL_JS
 
 
-def test_the_phone_redirect_stays_until_step_two():
-    init = re.search(r"\n      async function init\(\) \{.*?\n      \}\n", _SHELL_JS, re.S).group(0)
-    assert init.index("if (redirectPhoneToCall()) return;") < init.index("authFetch(")
-    assert 'if (isPhone && [...qs.keys()].length === 0) {\n          window.location.replace("/cabinet/call");' in _SHELL_JS
-
-
 def test_init_opens_the_section_of_the_address_after_the_connect_return_is_handled():
     init = re.search(r"\n      async function init\(\) \{.*?\n      \}\n", _SHELL_JS, re.S).group(0)
     opened = init.index("navigate(sectionFor(qs, connectReturn ? await loadConnectors() : []));")
@@ -171,7 +165,7 @@ globalThis.history = { state: null, replaceState: (state, title, url) => address
 globalThis.IntersectionObserver = class { observe() {} unobserve() {} };
 const LANG_DICT = { en: {} };
 let _driveStatusTimer = null, _driveStatusSnapshot = null;
-for (const name of ["relockFacts", "enterMemory", "loadDriveStatus", "loadReminders", "loadSettings",
+for (const name of ["loadHome", "relockFacts", "enterMemory", "loadDriveStatus", "loadReminders", "loadSettings",
                     "loadFactsPinSettings", "loadPlatforms", "loadGmailStatus", "loadTasksStatus", "loadDevices",
                     "loadPasskeys", "loadCodes"]) {
   globalThis[name] = () => calls.push(name);
@@ -189,10 +183,10 @@ def _run(body: str) -> object:
 
 @_node
 @pytest.mark.parametrize(("tab", "section"), [
-    (None, "drives"), ("", "drives"), ("home", "home"), ("memory", "memory"), ("drives", "drives"),
+    (None, "home"), ("", "home"), ("home", "home"), ("memory", "memory"), ("drives", "drives"),
     ("reminders", "reminders"), ("settings", "settings"),
     ("integrations", "drives"), ("devices", "settings"), ("team", "settings"),
-    ("nonsense", "drives"), ("constructor", "drives"), ("__proto__", "drives"),
+    ("nonsense", "home"), ("constructor", "home"), ("__proto__", "home"),
 ])
 def test_tab_values_and_old_aliases_open_their_section(tab, section):
     qs = "" if tab is None else f"tab={tab}"
@@ -221,7 +215,7 @@ def test_a_connect_return_opens_the_place_of_its_connector_whatever_the_tab(quer
 
 @_node
 @pytest.mark.parametrize(("name", "opened", "loads"), [
-    ("home", "home", []),
+    ("home", "home", ["loadHome"]),
     ("memory", "memory", ["enterMemory"]),
     ("drives", "drives", ["loadDriveStatus"]),
     ("integrations", "drives", ["loadDriveStatus"]),
