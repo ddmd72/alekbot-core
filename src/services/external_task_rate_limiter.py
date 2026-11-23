@@ -5,7 +5,8 @@ Public interface:
         .unauthorized_retry_after(address) -> Optional[int]     memory only: seconds to wait, None = open
         .count_unauthorized(address) -> Optional[int]            one `401` answer: counted per address and globally,
                                                                  in memory only (an anonymous call writes nothing)
-        .hit(scope, worker_key, limit) -> Optional[int]          one authorised call of a worker; seconds to wait or None
+        .key_retry_after(key_digest, scopes) -> Optional[int]    memory only: a key whose limit tripped this window
+        .hit(scope, worker_key, limit, key_digest) -> Optional[int]  one authorised call of a worker; seconds to wait or None
 
 Per-worker counts live in a store every instance sees (`WindowCounter`). `401` counts never touch it: they are fixed
 windows in this instance's memory, bounded in size, so a flood of keyless calls writes nothing. Each instance also remembers the windows it saw
@@ -18,7 +19,7 @@ Over the limit means the (limit + 1)-th hit of a window. A counter failure on an
 """
 import asyncio
 from datetime import datetime
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Iterable, Optional, Tuple
 
 from ..domain.external_task import (
     RATE_WINDOW_S,
@@ -61,7 +62,10 @@ class ExternalTaskRateLimiter:
         end = self._window_end(now)
         async with self._lock:
             self._exhausted = {k: e for k, e in self._exhausted.items() if e > now.timestamp()}
+            self._exhausted.pop(key, None)
             self._exhausted[key] = end
+            while len(self._exhausted) > MAX_TRACKED_UNAUTHORIZED:     # oldest first, as the `401` memo is bounded
+                del self._exhausted[next(iter(self._exhausted))]
         return max(1, int(end - now.timestamp()))
 
     async def _count(self, key: str, limit: int) -> Optional[int]:
@@ -120,11 +124,24 @@ class ExternalTaskRateLimiter:
         while len(self._unauthorized) > MAX_TRACKED_UNAUTHORIZED:
             del self._unauthorized[next(iter(self._unauthorized))]
 
-    async def hit(self, scope: str, worker_key: str, limit: int) -> Optional[int]:
+    async def key_retry_after(self, key_digest: str, scopes: Iterable[str]) -> Optional[int]:
+        """Seconds to wait when a limit this key tripped in the current window covers one of `scopes`; memory only, so
+        the request is refused before any key, worker or user read. It only refuses: a key that is not remembered, or
+        whose window ended, is looked up as usual, so a revocation is never delayed by it."""
+        now = self._clock()
+        waits = [w for w in [await self._remembered(f"key:{scope}:{key_digest}", now) for scope in scopes]
+                 if w is not None]
+        return max(waits) if waits else None
+
+    async def hit(self, scope: str, worker_key: str, limit: int, key_digest: Optional[str] = None) -> Optional[int]:
         """Count one authorised call of one worker under `scope` ('calls', 'claims', 'submits'); seconds to wait when
-        over `limit`. `worker_key` names the worker (user and worker id), never key material."""
+        over `limit`. `worker_key` names the worker (user and worker id); `key_digest` (the stored digest of the key
+        the call came with, never the key) is remembered until the window ends when the limit trips."""
         try:
-            return await self._count(f"{scope}:{worker_key}", limit)
+            wait = await self._count(f"{scope}:{worker_key}", limit)
         except Exception as exc:
             logger.error(f"[TaskAPI] {scope} counter failed: {type(exc).__name__}")
             raise
+        if wait is not None and key_digest is not None:
+            await self._remember(f"key:{scope}:{key_digest}", self._clock())
+        return wait

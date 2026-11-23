@@ -207,6 +207,10 @@ class ExternalTaskService:
     def _key_digest(self, key: str) -> str:
         return keyed_digest(self._digest_key, WORKER_KEY_DIGEST_PURPOSE, key)
 
+    def key_digest(self, raw_key: str) -> str:
+        """The digest a worker key is stored under; pure (no store read), so a surface can name a key in memory."""
+        return self._key_digest(raw_key)
+
     # -- enqueueing -----------------------------------------------------------------------------------------------
 
     async def _enqueue_timer(self, payload: TimerPayload, fire_at: datetime, dedup_key: str) -> None:

@@ -2,7 +2,7 @@
 
 One pure renderer for the delivery item `create_external_task` returns and `ConversationHandler` posts after the
 answer. The task text is appended byte for byte as it was stored, never passed through a template, and never cut: the
-owner must see exactly what leaves the system, or what waits for his command, whatever the model said in its answer.
+owner must see exactly what leaves the system, or what waits for their command, whatever the model said in its answer.
 `TASK_TEXT_MAX_CHARS` is bounded so the whole text fits one literal post.
 
 A queued task gets the receipt alone. A held task gets the receipt and the command to paste, returned apart so the

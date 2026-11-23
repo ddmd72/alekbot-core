@@ -91,6 +91,10 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
         key = _bearer_key()
         if not has_key_shape(key):
             raise _Early(await unauthorized())
+        digest = external_tasks.key_digest(key)
+        wait = await limiter.key_retry_after(digest, [scope for scope, _ in scopes])
+        if wait is not None:     # this key tripped a limit of this route in this window: refused before any read
+            raise _Early(_rate_limited(wait))
         try:
             principal = await external_tasks.resolve_key(key)
         except ExternalTaskRefused as refused:
@@ -104,7 +108,7 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
             raise ExternalTaskRefused(TaskRefusal.NOT_ENABLED)
         worker = f"{principal.user_id}:{principal.worker_id}"
         for scope, limit in scopes:
-            wait = await limiter.hit(scope, worker, limit)
+            wait = await limiter.hit(scope, worker, limit, digest)
             if wait is not None:
                 logger.warning(f"[TaskAPI] rate limited: {scope} worker={fingerprint(principal.worker_id)}")
                 raise _Early(_rate_limited(wait))

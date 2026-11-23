@@ -531,3 +531,42 @@ async def test_no_key_text_result_or_header_is_logged(world, logs):
         assert secret not in text
     assert f"worker={fingerprint(world.research.worker_id)}" in text and "user=usr-1" in text
     assert "[TaskAPI]" in text
+
+
+async def test_a_key_over_its_limit_is_refused_before_any_key_worker_or_user_read(monkeypatch):
+    monkeypatch.setattr(api, "CALLS_PER_WINDOW", 2)
+    world = await World().seed()
+    assert [(await world.call("GET", "/tasks", world.key)).status_code for _ in range(3)] == [200, 200, 429]
+    reads = world.workers.get_key_reads
+    user_reads = []
+    original = world.users.get_user
+
+    async def counting(user_id):
+        user_reads.append(user_id)
+        return await original(user_id)
+    monkeypatch.setattr(world.users, "get_user", counting)
+    worker_reads = []
+    original_worker = world.workers.get_worker
+
+    async def counting_worker(*args):
+        worker_reads.append(args)
+        return await original_worker(*args)
+    monkeypatch.setattr(world.workers, "get_worker", counting_worker)
+    for _ in range(5):
+        refused = await world.call("GET", "/tasks", world.key)
+        assert refused.status_code == 429 and 1 <= int(refused.headers["Retry-After"]) <= RATE_WINDOW_S
+    assert (world.workers.get_key_reads, user_reads, worker_reads) == (reads, [], [])
+    assert (await world.call("GET", "/tasks", world.watch_key)).status_code == 200      # another key is not affected
+    world.at(RATE_WINDOW_S + 1)
+    assert (await world.call("GET", "/tasks", world.key)).status_code == 200
+
+
+async def test_an_exhausted_claims_limit_does_not_refuse_the_listing_early(monkeypatch):
+    monkeypatch.setattr(api, "CLAIMS_PER_WINDOW", 1)
+    world = await World().seed()
+    assert (await world.call("POST", "/claim", world.key)).status_code == 204
+    assert (await world.call("POST", "/claim", world.key)).status_code == 429
+    reads = world.workers.get_key_reads
+    assert (await world.call("POST", "/claim", world.key)).status_code == 429
+    assert world.workers.get_key_reads == reads
+    assert (await world.call("GET", "/tasks", world.key)).status_code == 200
