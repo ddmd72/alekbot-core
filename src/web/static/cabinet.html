@@ -1569,6 +1569,10 @@
               <div id="passkeys-list"></div>
               <div style="margin-top: 12px">
                 <button id="passkeys-add" class="btn btn-secondary" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button>
+                <div id="passkeys-google-proof" class="hidden" style="margin-top: 12px">
+                  <p id="passkeys-google-proof-text" style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px">Your passkey is not on this device. Confirm with Google, then tap again.</p>
+                  <a id="passkeys-google-proof-link" class="btn btn-black" href="/auth/login/google">Confirm with Google</a>
+                </div>
               </div>
             </div>
           </div>
@@ -1962,6 +1966,8 @@
           "passkeys.offer_text": "Sign in faster next time: add Face ID (a passkey) on this device.",
           "passkeys.offer_add": "Add Face ID",
           "passkeys.offer_dismiss": "Not now",
+          "passkeys.google_proof_text": "Your passkey is not on this device. Confirm with Google, then tap again.",
+          "passkeys.google_proof": "Confirm with Google",
           "pin.title": "Facts PIN",
           "pin.desc": "Optional. Asks for a four-digit PIN before the Memory tab shows your facts. The duress code locks your account if someone forces you to open it.",
           "pin.state_none": "No PIN is set: the Memory tab opens without one.",
@@ -2357,6 +2363,8 @@
           "passkeys.offer_text": "Наступного разу входь швидше: додай Face ID (ключ доступу) на цьому пристрої.",
           "passkeys.offer_add": "Додати Face ID",
           "passkeys.offer_dismiss": "Не зараз",
+          "passkeys.google_proof_text": "Твого ключа доступу немає на цьому пристрої. Підтверди через Google і натисни ще раз.",
+          "passkeys.google_proof": "Підтвердити через Google",
           "pin.title": "PIN для фактів",
           "pin.desc": "Необов'язково. Просить чотиризначний PIN, перш ніж вкладка «Пам'ять» покаже твої факти. Код примусу блокує обліковий запис, якщо тебе змушують його відкрити.",
           "pin.state_none": "PIN не задано: вкладка «Пам'ять» відкривається без нього.",
@@ -2752,6 +2760,8 @@
           "passkeys.offer_text": "Connectez-vous plus vite la prochaine fois : ajoutez Face ID (une clé d'accès) sur cet appareil.",
           "passkeys.offer_add": "Ajouter Face ID",
           "passkeys.offer_dismiss": "Plus tard",
+          "passkeys.google_proof_text": "Votre clé d'accès n'est pas sur cet appareil. Confirmez avec Google, puis appuyez à nouveau.",
+          "passkeys.google_proof": "Confirmer avec Google",
           "pin.title": "PIN des faits",
           "pin.desc": "Facultatif. Demande un PIN à quatre chiffres avant que l'onglet Mémoire n'affiche vos faits. Le code de contrainte verrouille votre compte si l'on vous force à l'ouvrir.",
           "pin.state_none": "Aucun PIN n'est défini : l'onglet Mémoire s'ouvre sans.",
@@ -3147,6 +3157,8 @@
           "passkeys.offer_text": "Entra más rápido la próxima vez: añade Face ID (una llave de acceso) en este dispositivo.",
           "passkeys.offer_add": "Añadir Face ID",
           "passkeys.offer_dismiss": "Ahora no",
+          "passkeys.google_proof_text": "Tu llave de acceso no está en este dispositivo. Confirma con Google y vuelve a pulsar.",
+          "passkeys.google_proof": "Confirmar con Google",
           "pin.title": "PIN de los hechos",
           "pin.desc": "Opcional. Pide un PIN de cuatro dígitos antes de que la pestaña Memoria muestre tus hechos. El código de coacción bloquea tu cuenta si alguien te obliga a abrirla.",
           "pin.state_none": "No hay PIN: la pestaña Memoria se abre sin él.",
@@ -3494,6 +3506,8 @@
         "#passkey-offer-text":        "passkeys.offer_text",
         "#passkey-offer-add":         "passkeys.offer_add",
         "#passkey-offer-dismiss":     "passkeys.offer_dismiss",
+        "#passkeys-google-proof-text": "passkeys.google_proof_text",
+        "#passkeys-google-proof-link": "passkeys.google_proof",
         "#pin-title": "pin.title",
         "#pin-desc": "pin.desc",
         "#pin-label-new": "pin.new",
@@ -3829,10 +3843,28 @@
         }
       }
 
+      // A passkey change without a passkey proof (the step-up failed, was cancelled, or this browser holds no passkey
+      // of the user): the page offers a fresh Google sign-in instead, which the server accepts as proof too (RFC §7.3).
+      // It returns here, on the Devices tab, and the user taps the button again.
+      function googleProofUrl() {
+        return "/auth/login/google?next=" + encodeURIComponent("/cabinet?tab=devices");
+      }
+
+      function showGoogleProof() {
+        const box = document.getElementById("passkeys-google-proof");
+        if (!box) return;
+        document.getElementById("passkeys-google-proof-link").href = googleProofUrl();
+        box.classList.remove("hidden");
+      }
+
       async function addPasskeyHere() {
         let outcome = await addPasskey();
-        // The user already has a passkey: adding another needs a fresh assertion on this session. Step up, retry once.
-        if (outcome === "passkey_required") outcome = (await window.alekSession.ensurePasskey()) ? await addPasskey() : "failed";
+        // The user already has a passkey: adding another needs a fresh proof on this session. Step up, retry once;
+        // when the step-up cannot run, offer the Google sign-in.
+        if (outcome === "passkey_required") {
+          if (await window.alekSession.ensurePasskey()) outcome = await addPasskey();
+          else { outcome = "failed"; showGoogleProof(); }
+        }
         rememberPasskeyOffer();
         if (outcome === "added") showToast(t("passkeys.added"));
         else if (outcome === "exists") showToast(t("passkeys.exists"));
@@ -3846,9 +3878,10 @@
         try {
           const url = `${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`;
           let res = await authFetch(url, { method: "POST", credentials: "include" });
-          // A fresh passkey assertion is needed while the user has a passkey: step up, retry once.
-          if (!res.ok && (await window.alekSession.needsPasskey(res.clone())) && (await window.alekSession.ensurePasskey())) {
-            res = await authFetch(url, { method: "POST", credentials: "include" });
+          // A fresh proof is needed while the user has a passkey: step up and retry once, else offer Google.
+          if (!res.ok && (await window.alekSession.needsPasskey(res.clone()))) {
+            if (await window.alekSession.ensurePasskey()) res = await authFetch(url, { method: "POST", credentials: "include" });
+            else showGoogleProof();
           }
           if (!res.ok) throw new Error();
         } catch {
