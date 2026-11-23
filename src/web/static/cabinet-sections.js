@@ -455,7 +455,6 @@
         await loadLanguage();
         await loadVoiceLanguages();
         await loadDeepResearch();
-        await loadReminders();
       }
 
       async function loadDeepResearch() {
@@ -1853,7 +1852,7 @@
       }
 
       // While the first build runs the card's numbers move: re-poll every 2 min, only while the card shows
-      // building, the Integrations section is open and the tab is visible.
+      // building, the Drives section is open and the tab is visible.
       const DRIVE_STATUS_POLL_MS = 120000;
       let _driveStatusSnapshot = null;
       let _driveStatusTimer = null;
@@ -1863,7 +1862,7 @@
         if (!building) return;
         _driveStatusTimer = setTimeout(() => {
           _driveStatusTimer = null;
-          if (document.visibilityState === "visible" && _activeSection === "integrations") {
+          if (document.visibilityState === "visible" && _activeSection === "drives") {
             loadDriveStatus();
           } else {
             scheduleDriveStatusPoll(true);

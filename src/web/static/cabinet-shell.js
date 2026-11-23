@@ -8,19 +8,29 @@
       let currentUser = null;
       let allFacts = [];
 
-
       // Selector → translation key (for static DOM elements)
       const I18N_SELECTORS = {
-        "#nav-integrations":          "nav.integrations",
-        "#nav-mobile-integrations .tab-label":   "nav.integrations",
+        "#nav-home":                  "nav.home",
+        "#nav-mobile-home .c-bar-label":         "nav.home",
         "#nav-memory":                "nav.memory",
-        "#nav-mobile-memory .tab-label":         "nav.memory",
-        "#nav-team":                  "nav.team",
-        "#nav-mobile-team .tab-label":           "nav.team",
+        "#nav-mobile-memory .c-bar-label":       "nav.memory",
+        "#nav-drives":                "nav.drives",
+        "#nav-mobile-drives .c-bar-label":       "nav.drives",
+        "#nav-reminders":             "nav.reminders",
+        "#nav-mobile-reminders .c-bar-label":    "nav.reminders",
         "#nav-settings":              "nav.settings",
-        "#nav-mobile-settings .tab-label":       "nav.settings",
-        "#nav-devices":               "nav.devices",
-        "#nav-mobile-devices .tab-label":        "nav.devices",
+        "#nav-mobile-settings .c-bar-label":     "nav.settings",
+        "#home-call-title":           "home.call_title",
+        "#home-call-sub":             "home.call_sub",
+        "#home-modes-label":          "home.modes",
+        "#home-tile-memory .c-tile-title":       "nav.memory",
+        "#home-tile-drives .c-tile-title":       "nav.drives",
+        "#home-tile-reminders .c-tile-title":    "nav.reminders",
+        "#home-tile-settings .c-tile-title":     "nav.settings",
+        "#drives-title":              "nav.drives",
+        "#reminders-title":           "nav.reminders",
+        "#settings-account-label":    "settings.account",
+        "#settings-logout":           "settings.logout",
         "#devices-title":             "devices.title",
         "#devices-subtitle":          "devices.subtitle",
         "#devices-logout-others":     "devices.logout_others",
@@ -62,10 +72,6 @@
         "#facts-pin-unlock": "pin.unlock",
         "#facts-pin-forgot": "pin.forgot",
         "#facts-pin-reset-cancel": "pin.reset_cancel",
-        "#nav-call":                  "nav.call",
-        "#nav-mobile-call .tab-label":           "nav.call",
-        "#nav-modes":                 "nav.modes",
-        "#nav-mobile-modes .tab-label":          "nav.modes",
         "#memory-title":              "memory.title",
         "#memory-subtitle":           "memory.subtitle",
         "#memory-search-btn":         "memory.search_btn",
@@ -113,6 +119,7 @@
           const browser = (navigator.language || "").slice(0, 2).toLowerCase();
           resolved = LANG_DICT[browser] ? browser : "en";
         }
+        const changed = resolved !== _currentLang;
         _currentLang = resolved;
 
         for (const [sel, key] of Object.entries(I18N_SELECTORS)) {
@@ -127,12 +134,14 @@
         // Re-render dynamic sections that are currently visible
         const active = document.querySelector(".section.active");
         if (active && active.id === "section-settings") renderPinSettings();
-        if (active && active.id === "section-integrations") {
+        // The connection cards and the drive card render their text from t(): redraw them only when the language
+        // changed (loadSettings applies the stored language on every visit; that must not read them all again).
+        if (changed && active && active.id === "section-settings") {
           loadPlatforms();
           loadGmailStatus();
           loadTasksStatus();
-          loadDriveStatus();
         }
+        if (changed && active && active.id === "section-drives") loadDriveStatus();
         if (active && active.id === "section-memory" && factDomainsLang !== _currentLang) {
           loadFactDomains().then(() => {
             if (factsMode === "browse" && factsState !== "closed") renderDomainChips();
@@ -160,13 +169,49 @@
           .forEach((el) => observer.observe(el));
       }
 
-      /* ── Navigation ──────────────────────────────────── */
-      let _activeSection = "integrations";
+      /* ── Navigation and addresses (CABINET_REDESIGN_RFC §4) ─────────────────── */
+      // The menu's five sections, in its order (header and phone bar alike).
+      const SECTIONS = ["home", "memory", "drives", "reminders", "settings"];
+      // Old ?tab= values keep working: the call pages' "← Cabinet" link is ?tab=integrations, and bookmarks hold the
+      // rest. Their content now sits in these sections.
+      const SECTION_ALIASES = { integrations: "drives", devices: "settings", team: "settings" };
+      // Drives, today's Integrations through its alias, until Home's status lines land (RFC §8 step 2).
+      const DEFAULT_SECTION = "drives";
+
+      // A section name, an old alias or anything else, as the section to open.
+      function resolveSection(name) {
+        const section = Object.prototype.hasOwnProperty.call(SECTION_ALIASES, name) ? SECTION_ALIASES[name] : name;
+        return SECTIONS.includes(section) ? section : DEFAULT_SECTION;
+      }
+
+      // The section a page load opens. A connect return (?connected=<kind>, ?connect_error=…&kind=<kind>) opens the
+      // place of that connector whatever ?tab= says: Drives for a drive, Settings for any other connection (Gmail,
+      // To Do). `connectors` is GET /api/connectors: the Cabinet holds no kind of its own.
+      function sectionFor(qs, connectors) {
+        if (qs.get("connected") || qs.get("connect_error")) {
+          const kind = qs.get("connected") || qs.get("kind");
+          const connector = connectors.find((c) => c.kind === kind);
+          return connector && connector.integration === "drive" ? "drives" : "settings";
+        }
+        return resolveSection(qs.get("tab"));
+      }
+
+      // The open section goes to the address, so reload and back keep the place. The address keeps only ?tab=: the
+      // one-shot return parameters (connected, connect_error, kind, joined) were read on load and must not fire
+      // their toast again on a reload.
+      function writeAddress(name) {
+        try {
+          history.replaceState(history.state, "", `${window.location.pathname}?tab=${name}${window.location.hash}`);
+        } catch { /* the address stays as it was; the page works the same */ }
+      }
+
+      let _activeSection = "";
       const _visitedSections = new Set();
 
       function navigate(name) {
+        name = resolveSection(name);
         if (_activeSection === "memory" && name !== "memory") relockFacts();
-        if (name !== "integrations" && _driveStatusTimer) {
+        if (name !== "drives" && _driveStatusTimer) {
           clearTimeout(_driveStatusTimer);
           _driveStatusTimer = null;
         }
@@ -174,9 +219,10 @@
         document.querySelectorAll(".section").forEach((s) => {
           s.classList.remove("active");
         });
-        document
-          .querySelectorAll(".nav-item")
-          .forEach((n) => n.classList.remove("active"));
+        document.querySelectorAll(".c-nav-item, .c-bar-item").forEach((n) => {
+          n.classList.remove("active");
+          n.removeAttribute("aria-current");
+        });
 
         const sec = document.getElementById(`section-${name}`);
         if (sec) {
@@ -191,27 +237,36 @@
           }
         }
 
-        // Update Desktop Nav
-        const btnDesktop = document.getElementById(`nav-${name}`);
-        if (btnDesktop) btnDesktop.classList.add("active");
-
-        // Update Mobile Nav
-        const btnMobile = document.getElementById(`nav-mobile-${name}`);
-        if (btnMobile) btnMobile.classList.add("active");
+        // The same item in the header and in the phone bar
+        for (const id of [`nav-${name}`, `nav-mobile-${name}`]) {
+          const item = document.getElementById(id);
+          if (item) {
+            item.classList.add("active");
+            item.setAttribute("aria-current", "page");
+          }
+        }
 
         _activeSection = name;
+        writeAddress(name);
 
         if (name === "memory") enterMemory();
-        if (name === "integrations") {
+        if (name === "drives") loadDriveStatus();
+        if (name === "reminders") loadReminders();
+        if (name === "settings") { loadSettings(); loadFactsPinSettings(); }
+        // What Settings holds since the old Integrations, Devices and Team sections moved in
+        if (name === "settings") {
           loadPlatforms();
           loadGmailStatus();
           loadTasksStatus();
-          loadDriveStatus();
+          loadDevices();
+          loadPasskeys();
+          if (isOwner()) loadCodes();
         }
-        if (name === "team") loadCodes();
-        if (name === "settings") { loadSettings(); loadFactsPinSettings(); }
-        if (name === "devices") loadDevices();
-        if (name === "devices") loadPasskeys();
+      }
+
+      // Team invites are the account owner's (the Team block shows for an owner only).
+      function isOwner() {
+        return !!currentUser && currentUser.account.role === "owner";
       }
 
       /* ── Init ────────────────────────────────────────── */
@@ -237,12 +292,7 @@
           document.getElementById("user-email").textContent =
             currentUser.user.email;
 
-          if (currentUser.account.role === "owner") {
-            document.getElementById("nav-team").classList.remove("hidden");
-            document
-              .getElementById("nav-mobile-team")
-              .classList.remove("hidden");
-          }
+          if (isOwner()) document.getElementById("settings-team").classList.remove("hidden");
 
           // Apply the user's UI language now — previously this only ran when
           // the Settings tab was opened (loadSettings() -> loadLanguage()),
@@ -256,8 +306,8 @@
           await showConnectToasts(qs);
           await finishAddedDrive(qs);
 
-          const tab = qs.get("tab");
-          navigate(tab && document.getElementById(`section-${tab}`) ? tab : "integrations");
+          const connectReturn = qs.get("connected") || qs.get("connect_error");
+          navigate(sectionFor(qs, connectReturn ? await loadConnectors() : []));
           offerPasskey();
         } catch {
           showToast("Please log in first", "error");

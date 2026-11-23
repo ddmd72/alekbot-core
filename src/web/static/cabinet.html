@@ -22,96 +22,44 @@
   </head>
   <body>
     <div class="app">
-      <!-- Mac-like Floating Header -->
-      <header class="header">
-        <div class="logo">
-          <img src="/cabinet/call/icon-192.png" width="28" height="28"
-               style="border-radius: 6px; object-fit: cover;" alt="Alek" />
-          Alek
-        </div>
-
-        <nav class="header-nav">
-          <button
-            class="nav-item active"
-            onclick="navigate('integrations')"
-            id="nav-integrations"
-          >
-            Integrations
-          </button>
-          <button class="nav-item" onclick="navigate('memory')" id="nav-memory">
-            Memory
-          </button>
-          <button
-            class="nav-item hidden"
-            onclick="navigate('team')"
-            id="nav-team"
-          >
-            Team
-          </button>
-          <button class="nav-item" onclick="navigate('settings')" id="nav-settings">
-            Settings
-          </button>
-          <button class="nav-item" onclick="navigate('devices')" id="nav-devices">
-            Devices
-          </button>
-          <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-call">
-            Call
-          </button>
-          <button class="nav-item" onclick="location.href='/cabinet/call/modes'" id="nav-modes">
-            Modes
-          </button>
-        </nav>
-
-        <div class="user-profile">
-          <span id="user-email" class="user-email-display"></span>
-          <button onclick="logout()" class="logout-btn" title="Log out">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16 17 21 12 16 7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
-          </button>
+      <!-- Header: a solid bar at the top; the menu's five items (CABINET_REDESIGN_RFC §4) -->
+      <header class="c-top">
+        <div class="c-top-in">
+          <div class="c-logo">
+            <img class="c-logo-img" src="/cabinet/call/icon-192.png" width="28" height="28" alt="" />
+            Alek
+          </div>
+          <nav class="c-nav" id="nav-desktop">
+            <button type="button" class="c-nav-item" id="nav-home" onclick="navigate('home')">Home</button>
+            <button type="button" class="c-nav-item" id="nav-memory" onclick="navigate('memory')">Memory</button>
+            <button type="button" class="c-nav-item" id="nav-drives" onclick="navigate('drives')">Drives</button>
+            <button type="button" class="c-nav-item" id="nav-reminders" onclick="navigate('reminders')">Reminders</button>
+            <button type="button" class="c-nav-item" id="nav-settings" onclick="navigate('settings')">Settings</button>
+          </nav>
         </div>
       </header>
 
-      <!-- Mobile Bottom Nav -->
-      <nav class="mobile-bottom-nav">
-        <button class="nav-item active" onclick="navigate('integrations')" id="nav-mobile-integrations">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-          <span class="tab-label">Integrations</span>
+      <!-- Phone: the same five items in a bar at the bottom -->
+      <nav class="c-bar" id="nav-phone">
+        <button type="button" class="c-bar-item" id="nav-mobile-home" onclick="navigate('home')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+          <span class="c-bar-label">Home</span>
         </button>
-        <button class="nav-item" onclick="navigate('memory')" id="nav-mobile-memory">
+        <button type="button" class="c-bar-item" id="nav-mobile-memory" onclick="navigate('memory')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
-          <span class="tab-label">Memory</span>
+          <span class="c-bar-label">Memory</span>
         </button>
-        <button class="nav-item hidden" onclick="navigate('team')" id="nav-mobile-team">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.8 0 4.5 1.9 4.5 5"/></svg>
-          <span class="tab-label">Team</span>
+        <button type="button" class="c-bar-item" id="nav-mobile-drives" onclick="navigate('drives')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="c-bar-label">Drives</span>
         </button>
-        <button class="nav-item" onclick="navigate('settings')" id="nav-mobile-settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          <span class="tab-label">Settings</span>
+        <button type="button" class="c-bar-item" id="nav-mobile-reminders" onclick="navigate('reminders')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="c-bar-label">Reminders</span>
         </button>
-        <button class="nav-item" onclick="navigate('devices')" id="nav-mobile-devices">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
-          <span class="tab-label">Devices</span>
-        </button>
-        <button class="nav-item call-tab" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-          <span class="tab-label">Call</span>
-        </button>
-        <button class="nav-item" onclick="location.href='/cabinet/call/modes'" id="nav-mobile-modes">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2" fill="currentColor"/><circle cx="15" cy="12" r="2" fill="currentColor"/><circle cx="8" cy="18" r="2" fill="currentColor"/></svg>
-          <span class="tab-label">Modes</span>
+        <button type="button" class="c-bar-item" id="nav-mobile-settings" onclick="navigate('settings')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg>
+          <span class="c-bar-label">Settings</span>
         </button>
       </nav>
 
@@ -125,6 +73,35 @@
             <button id="passkey-offer-dismiss" class="btn btn-secondary" onclick="dismissPasskeyOffer()">Not now</button>
           </div>
         </div>
+        <!-- Home (CABINET_REDESIGN_RFC §5.0): the call button, the modes link, one tile per section -->
+        <section id="section-home" class="section">
+          <div class="c-page">
+            <a class="c-call" id="home-call" href="/cabinet/call">
+              <span class="c-call-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>
+              <span><span class="c-call-title" id="home-call-title">Call Lelik</span><span class="c-call-sub" id="home-call-sub">Opens the call screen</span></span>
+            </a>
+            <a class="c-lnk c-modes" id="home-modes" href="/cabinet/call/modes"><span id="home-modes-label">Modes: interpreter, tutor</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>
+            <div class="c-tiles">
+              <button type="button" class="c-tile" id="home-tile-memory" onclick="navigate('memory')">
+                <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg></span>
+                <span class="c-tile-title">Memory</span>
+              </button>
+              <button type="button" class="c-tile" id="home-tile-drives" onclick="navigate('drives')">
+                <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+                <span class="c-tile-title">Drives</span>
+              </button>
+              <button type="button" class="c-tile" id="home-tile-reminders" onclick="navigate('reminders')">
+                <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
+                <span class="c-tile-title">Reminders</span>
+              </button>
+              <button type="button" class="c-tile" id="home-tile-settings" onclick="navigate('settings')">
+                <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg></span>
+                <span class="c-tile-title">Settings</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
         <!-- Memory Section -->
         <section id="section-memory" class="section">
           <div class="hero-header reveal">
@@ -241,148 +218,10 @@
           </div>
         </section>
 
-        <!-- Integrations Section -->
-        <section id="section-integrations" class="section active">
-          <div class="hero-header reveal visible">
-            <h1 id="integrations-title">Integrations</h1>
-            <p id="integrations-subtitle">
-              Connect your favorite platforms and let Alek work seamlessly
-              across them.
-            </p>
-          </div>
-
-          <div class="integration-bento">
-            <div id="platforms-container" class="integration-contents">
-              <!-- Rendered via JS -->
-            </div>
-
-            <!-- Specific containers for Data Services to fix race condition -->
-            <div id="gmail-container">
-              <!-- Gmail Skeleton -->
-              <div class="card integration-card gmail-card">
-                <div
-                  class="skeleton"
-                  style="
-                    width: 48px;
-                    height: 48px;
-                    border-radius: 14px;
-                    margin-bottom: 14px;
-                  "
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 24px; width: 120px; margin-bottom: 12px"
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 36px; width: 160px; border-radius: 100px"
-                ></div>
-              </div>
-            </div>
-
-            <div id="tasks-container">
-              <!-- Tasks Skeleton -->
-              <div class="card integration-card tasks-card">
-                <div
-                  class="skeleton"
-                  style="
-                    width: 48px;
-                    height: 48px;
-                    border-radius: 14px;
-                    margin-bottom: 14px;
-                  "
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 24px; width: 140px; margin-bottom: 12px"
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 36px; width: 160px; border-radius: 100px"
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- The drive card: full width below the tiles -->
+        <!-- Drives (CABINET_REDESIGN_RFC §5.4): the drive card, as it was under Integrations -->
+        <section id="section-drives" class="section">
+          <h1 class="c-title" id="drives-title">Drives</h1>
           <div id="drive-container"></div>
-        </section>
-
-        <!-- Team Section -->
-        <section id="section-team" class="section">
-          <div class="hero-header reveal">
-            <h1 id="team-title">Your Team</h1>
-            <p id="team-subtitle">Invite colleagues to collaborate and share knowledge.</p>
-          </div>
-
-          <div class="invite-container reveal">
-            <button
-              id="team-generate-btn"
-              onclick="generateTeamInvite()"
-              class="btn btn-black"
-              style="padding: 16px 32px; font-size: 18px"
-            >
-              Generate New Invite Link
-            </button>
-
-            <div id="generated-code-container" class="hidden"></div>
-          </div>
-
-          <div class="card table-card reveal" style="margin-top: 64px">
-            <div class="card-body" style="padding: 0">
-              <div class="table-container">
-                <div id="codes-list-container">
-                  <div style="padding: 40px">
-                    <div
-                      class="skeleton"
-                      style="height: 60px; width: 100%"
-                    ></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Devices Section (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6) -->
-        <section id="section-devices" class="section">
-          <div class="hero-header reveal">
-            <h1 id="devices-title">Devices</h1>
-            <p id="devices-subtitle">Where you are signed in to the Cabinet.</p>
-          </div>
-
-          <div class="card reveal" style="max-width: 720px">
-            <div class="card-body">
-              <div id="devices-list"></div>
-              <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px">
-                <button id="devices-logout-others" class="btn btn-secondary" onclick="logoutOtherDevices()">Log out all other devices</button>
-                <button id="devices-logout-all" class="btn btn-danger" onclick="logoutAllDevices()">Log out all devices</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
-            <div class="card-body">
-              <h3 id="passkeys-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Face ID and passkeys</h3>
-              <p id="passkeys-subtitle" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px">They sign you in without Google, and confirm a call to Lelik.</p>
-              <div id="passkeys-list"></div>
-              <div style="margin-top: 12px">
-                <button id="passkeys-add" class="btn btn-secondary" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
-            <div class="card-body">
-              <h3 id="devices-lost-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">If a phone is lost</h3>
-              <p id="devices-lost-intro" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px"></p>
-              <ol style="font-size: 14px; color: var(--text-muted); padding-left: 20px; line-height: 1.6">
-                <li id="devices-lost-1"></li>
-                <li id="devices-lost-2"></li>
-                <li id="devices-lost-3"></li>
-              </ol>
-            </div>
-          </div>
         </section>
 
         <!-- Settings Section -->
@@ -390,6 +229,15 @@
           <div class="hero-header reveal">
             <h1 id="settings-title">Settings</h1>
             <p id="settings-subtitle">Preferences that personalise how Alek works for you.</p>
+          </div>
+
+          <!-- Account: the email and Log out, moved out of the header -->
+          <h2 class="c-glabel" id="settings-account-label">Account</h2>
+          <div class="c-group c-narrow">
+            <div class="c-row">
+              <span class="c-row-title" id="user-email"></span>
+              <button type="button" class="c-btn c-sec" id="settings-logout" onclick="logout()">Log out</button>
+            </div>
           </div>
 
           <div class="card reveal" style="max-width: 520px">
@@ -571,6 +419,175 @@
             </div>
           </div>
 
+          <!-- Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7) -->
+          <div class="card reveal" id="pin-card" style="max-width: 640px; margin-top: 20px">
+            <div class="card-body">
+              <h3 id="pin-title" style="font-size:18px;font-weight:600;margin-bottom:6px">Facts PIN</h3>
+              <p id="pin-desc" style="font-size:14px;color:var(--text-muted);margin-bottom:12px"></p>
+              <p id="pin-state" style="font-size:14px;font-weight:600;margin-bottom:12px"></p>
+              <div id="pin-set-form">
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+                  <div style="flex:1;min-width:130px"><label id="pin-label-new" for="pin-new" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2" for="pin-new2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <div style="flex:1;min-width:130px"><label id="pin-label-duress" for="pin-duress" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2" for="pin-duress2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                </div>
+                <button id="pin-set-btn" class="btn btn-primary" onclick="submitPinSet()"></button>
+              </div>
+              <div id="pin-manage" class="hidden">
+                <h4 id="pin-change-title" style="font-size:15px;font-weight:600;margin-bottom:8px"></h4>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+                  <div style="flex:1;min-width:130px"><label id="pin-label-current-change" for="pin-current-change" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-change" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <div style="flex:1;min-width:130px"><label id="pin-label-new-c" for="pin-new-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2-c" for="pin-new2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <div style="flex:1;min-width:130px"><label id="pin-label-duress-c" for="pin-duress-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2-c" for="pin-duress2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                </div>
+                <button id="pin-change-btn" class="btn btn-primary" onclick="submitPinChange()"></button>
+                <h4 id="pin-remove-title" style="font-size:15px;font-weight:600;margin:20px 0 8px"></h4>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
+                  <div style="flex:1;min-width:130px"><label id="pin-label-current-remove" for="pin-current-remove" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-remove" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <button id="pin-remove-btn" class="btn btn-danger" onclick="submitPinRemove()"></button>
+                </div>
+                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+                  <button id="pin-forgot" class="btn btn-secondary" onclick="forgotPin()"></button>
+                  <button id="pin-reset-cancel" class="btn btn-secondary hidden" onclick="cancelPinReset()"></button>
+                </div>
+                <p id="pin-reset-note" class="hidden" style="font-size:14px;color:var(--text-muted);margin-top:12px"></p>
+              </div>
+              <p id="pin-message" role="alert" style="font-size:14px;margin-top:12px"></p>
+              <div id="pin-logout-offer" class="hidden" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                <span id="pin-logout-text" style="font-size:14px"></span>
+                <button id="pin-logout-btn" class="btn btn-secondary" onclick="logoutOtherDevices()"></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Integrations (Telegram, Slack, phone, Gmail, Microsoft To Do), moved from the old Integrations section -->
+          <h2 class="c-glabel" id="integrations-title">Integrations</h2>
+          <p class="c-hint c-glabel-hint" id="integrations-subtitle">Connect your favorite platforms and let Alek work seamlessly across them.</p>
+          <div class="integration-bento">
+            <div id="platforms-container" class="integration-contents">
+              <!-- Rendered via JS -->
+            </div>
+
+            <!-- Specific containers for Data Services to fix race condition -->
+            <div id="gmail-container">
+              <!-- Gmail Skeleton -->
+              <div class="card integration-card gmail-card">
+                <div
+                  class="skeleton"
+                  style="
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 14px;
+                    margin-bottom: 14px;
+                  "
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 24px; width: 120px; margin-bottom: 12px"
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 36px; width: 160px; border-radius: 100px"
+                ></div>
+              </div>
+            </div>
+
+            <div id="tasks-container">
+              <!-- Tasks Skeleton -->
+              <div class="card integration-card tasks-card">
+                <div
+                  class="skeleton"
+                  style="
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 14px;
+                    margin-bottom: 14px;
+                  "
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 24px; width: 140px; margin-bottom: 12px"
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 36px; width: 160px; border-radius: 100px"
+                ></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Devices, passkeys, a lost phone (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6), moved from the old Devices section -->
+          <h2 class="c-glabel" id="devices-title">Devices</h2>
+          <p class="c-hint c-glabel-hint" id="devices-subtitle">Where you are signed in to the Cabinet.</p>
+          <div class="card reveal" style="max-width: 720px">
+            <div class="card-body">
+              <div id="devices-list"></div>
+              <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px">
+                <button id="devices-logout-others" class="btn btn-secondary" onclick="logoutOtherDevices()">Log out all other devices</button>
+                <button id="devices-logout-all" class="btn btn-danger" onclick="logoutAllDevices()">Log out all devices</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
+            <div class="card-body">
+              <h3 id="passkeys-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Face ID and passkeys</h3>
+              <p id="passkeys-subtitle" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px">They sign you in without Google, and confirm a call to Lelik.</p>
+              <div id="passkeys-list"></div>
+              <div style="margin-top: 12px">
+                <button id="passkeys-add" class="btn btn-secondary" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
+            <div class="card-body">
+              <h3 id="devices-lost-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">If a phone is lost</h3>
+              <p id="devices-lost-intro" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px"></p>
+              <ol style="font-size: 14px; color: var(--text-muted); padding-left: 20px; line-height: 1.6">
+                <li id="devices-lost-1"></li>
+                <li id="devices-lost-2"></li>
+                <li id="devices-lost-3"></li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- Team: owners only (init shows it), moved from the old Team section -->
+          <div id="settings-team" class="hidden">
+            <h2 class="c-glabel" id="team-title">Your Team</h2>
+            <p class="c-hint c-glabel-hint" id="team-subtitle">Invite colleagues to collaborate and share knowledge.</p>
+            <div class="invite-container reveal">
+              <button
+                id="team-generate-btn"
+                onclick="generateTeamInvite()"
+                class="btn btn-black"
+                style="padding: 16px 32px; font-size: 18px"
+              >
+                Generate New Invite Link
+              </button>
+
+              <div id="generated-code-container" class="hidden"></div>
+            </div>
+
+            <div class="card table-card reveal" style="margin-top: 64px">
+              <div class="card-body" style="padding: 0">
+                <div class="table-container">
+                  <div id="codes-list-container">
+                    <div style="padding: 40px">
+                      <div
+                        class="skeleton"
+                        style="height: 60px; width: 100%"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Reminders (CABINET_REDESIGN_RFC §5.5): the Bot Reminders card, moved out of Settings unchanged -->
+        <section id="section-reminders" class="section">
+          <h1 class="c-title" id="reminders-title">Reminders</h1>
           <!-- Bot Reminders -->
           <div class="card reveal" style="max-width: 640px; margin-top: 20px">
             <div class="card-body">
@@ -625,45 +642,6 @@
 
               <!-- Reminders list -->
               <div id="reminders-list" style="font-size:14px;color:var(--text-muted)">Loading...</div>
-            </div>
-          </div>
-          <!-- Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7) -->
-          <div class="card reveal" id="pin-card" style="max-width: 640px; margin-top: 20px">
-            <div class="card-body">
-              <h3 id="pin-title" style="font-size:18px;font-weight:600;margin-bottom:6px">Facts PIN</h3>
-              <p id="pin-desc" style="font-size:14px;color:var(--text-muted);margin-bottom:12px"></p>
-              <p id="pin-state" style="font-size:14px;font-weight:600;margin-bottom:12px"></p>
-              <div id="pin-set-form">
-                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-                  <div style="flex:1;min-width:130px"><label id="pin-label-new" for="pin-new" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2" for="pin-new2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <div style="flex:1;min-width:130px"><label id="pin-label-duress" for="pin-duress" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2" for="pin-duress2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                </div>
-                <button id="pin-set-btn" class="btn btn-primary" onclick="submitPinSet()"></button>
-              </div>
-              <div id="pin-manage" class="hidden">
-                <h4 id="pin-change-title" style="font-size:15px;font-weight:600;margin-bottom:8px"></h4>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-                  <div style="flex:1;min-width:130px"><label id="pin-label-current-change" for="pin-current-change" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-change" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <div style="flex:1;min-width:130px"><label id="pin-label-new-c" for="pin-new-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2-c" for="pin-new2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <div style="flex:1;min-width:130px"><label id="pin-label-duress-c" for="pin-duress-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2-c" for="pin-duress2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                </div>
-                <button id="pin-change-btn" class="btn btn-primary" onclick="submitPinChange()"></button>
-                <h4 id="pin-remove-title" style="font-size:15px;font-weight:600;margin:20px 0 8px"></h4>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
-                  <div style="flex:1;min-width:130px"><label id="pin-label-current-remove" for="pin-current-remove" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-remove" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <button id="pin-remove-btn" class="btn btn-danger" onclick="submitPinRemove()"></button>
-                </div>
-                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-                  <button id="pin-forgot" class="btn btn-secondary" onclick="forgotPin()"></button>
-                  <button id="pin-reset-cancel" class="btn btn-secondary hidden" onclick="cancelPinReset()"></button>
-                </div>
-                <p id="pin-reset-note" class="hidden" style="font-size:14px;color:var(--text-muted);margin-top:12px"></p>
-              </div>
-              <p id="pin-message" role="alert" style="font-size:14px;margin-top:12px"></p>
-              <div id="pin-logout-offer" class="hidden" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-                <span id="pin-logout-text" style="font-size:14px"></span>
-                <button id="pin-logout-btn" class="btn btn-secondary" onclick="logoutOtherDevices()"></button>
-              </div>
             </div>
           </div>
         </section>

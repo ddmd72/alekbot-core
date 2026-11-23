@@ -1,5 +1,6 @@
 /* The Cabinet's one stylesheet (CABINET_REDESIGN_RFC §3, §6), loaded by cabinet.html from /cabinet/assets/.
-   The indentation is the old inline block's, kept on purpose. */
+   The brand sheet (tokens and the shared c-* components) comes first after the base; the rest are the old
+   per-feature styles, retired section by section. The indentation is the old inline block's, kept on purpose. */
       /* ─── Tokens & Base ─────────────────────────────────── */
       :root {
         --bg-app: #f2f2f7; /* Apple system grey background */
@@ -171,175 +172,646 @@
         text-decoration: none;
       }
 
-      /* ─── Layout: Mac-like Floating Nav ───────────────── */
+      /* ─── Brand sheet (CABINET_REDESIGN_RFC §3): tokens and the shared components ───────────────
+         New markup is built from the c-* classes below and carries no inline style. The rules after this block are
+         the old per-feature styles, kept until each section moves onto these components (RFC §8). */
+      :root {
+        --c-ground: #f2f2f7;
+        --c-group: #ffffff;
+        --c-bar: #f9f9f9;
+        --c-text: #1d1d1f;
+        --c-text-2: #6e6e73;
+        --c-text-3: #8a8a8e;
+        --c-sep: rgba(60, 60, 67, 0.12);
+        --c-accent: #0071e3;
+        --c-accent-press: #0068d1;
+        --c-on-accent: #ffffff;
+        --c-link: #0066cc;
+        --c-ok: #34c759;
+        --c-ok-text: #1f7a35;
+        --c-ok-tint: rgba(52, 199, 89, 0.14);
+        --c-warn: #ff9500;
+        --c-warn-text: #9a4500;
+        --c-warn-tint: rgba(255, 149, 0, 0.14);
+        --c-warn-edge: rgba(255, 149, 0, 0.45);
+        --c-danger: #ff3b30;
+        --c-danger-text: #c5000f;
+        --c-danger-tint: rgba(255, 59, 48, 0.1);
+        --c-fill: rgba(118, 118, 128, 0.12);
+        --c-fill-text: #5f5f64;
+        --c-hover: rgba(0, 0, 0, 0.04);
+        --c-dark: #1d1d1f;
+        --c-on-dark: #ffffff;
+        --c-icon: #0058b0;
+        --c-icon-tint: rgba(0, 113, 227, 0.1);
+        --c-chev: #aeaeb2;
+        --c-field-edge: rgba(0, 0, 0, 0.14);
+        --c-switch-off: rgba(120, 120, 128, 0.16);
+        --c-knob: #ffffff;
+        --c-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        --c-shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.08);
+        --c-shadow-on: 0 1px 3px rgba(0, 0, 0, 0.08);
+
+        --c-s1: 4px;
+        --c-s2: 8px;
+        --c-s3: 12px;
+        --c-s4: 16px;
+        --c-s5: 24px;
+        --c-s6: 32px;
+        --c-r1: 10px;
+        --c-r2: 12px;
+        --c-r3: 16px;
+        --c-round: 100px;
+        --c-column: 760px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --c-ground: #000000;
+          --c-group: #1c1c1e;
+          --c-bar: #121214;
+          --c-text: #f5f5f7;
+          --c-text-2: #a1a1a6;
+          --c-text-3: #8e8e93;
+          --c-sep: rgba(84, 84, 88, 0.5);
+          --c-accent: #0a84ff;
+          --c-accent-press: #0077ed;
+          --c-link: #4da3ff;
+          --c-ok: #30d158;
+          --c-ok-text: #30d158;
+          --c-ok-tint: rgba(48, 209, 88, 0.16);
+          --c-warn: #ff9f0a;
+          --c-warn-text: #ffb340;
+          --c-warn-tint: rgba(255, 159, 10, 0.18);
+          --c-warn-edge: rgba(255, 159, 10, 0.55);
+          --c-danger: #ff453a;
+          --c-danger-text: #ff6961;
+          --c-danger-tint: rgba(255, 69, 58, 0.18);
+          --c-fill: rgba(118, 118, 128, 0.24);
+          --c-fill-text: #c7c7cc;
+          --c-hover: rgba(255, 255, 255, 0.06);
+          --c-dark: #f5f5f7;
+          --c-on-dark: #1d1d1f;
+          --c-icon: #409cff;
+          --c-icon-tint: rgba(10, 132, 255, 0.18);
+          --c-chev: #636366;
+          --c-field-edge: rgba(255, 255, 255, 0.16);
+          --c-switch-off: rgba(120, 120, 128, 0.32);
+          --c-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+          --c-shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.6);
+          --c-shadow-on: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+      }
+
       .app {
         display: flex;
         flex-direction: column;
         min-height: 100vh;
-        padding-top: 100px; /* Space for fixed header */
       }
 
-      .header {
-        position: fixed;
-        top: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: calc(100% - 40px);
-        max-width: 800px;
-        height: 64px;
-        background-color: var(--bg-panel);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid var(--border-light);
-        border-radius: 100px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 12px 0 24px;
+      /* Page header: a solid bar at the top; content scrolls under it, never shows through */
+      .c-top {
+        position: sticky;
+        top: 0;
         z-index: 50;
-        box-shadow: var(--shadow-md);
+        background: var(--c-ground);
+        border-bottom: 1px solid var(--c-sep);
+        padding-top: env(safe-area-inset-top);
       }
-
-      .logo {
-        font-weight: 700;
-        font-size: 20px;
-        letter-spacing: -0.05em;
+      .c-top-in {
+        max-width: 1040px;
+        margin: 0 auto;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 20px;
+        padding: 0 var(--c-s5);
+        min-height: 60px;
       }
-
-      /* Segmented Control Navigation */
-      .header-nav {
+      .c-logo {
         display: flex;
-        background: rgba(0, 0, 0, 0.04);
-        border-radius: 100px;
-        padding: 4px;
-        position: relative;
+        align-items: center;
+        gap: var(--c-s2);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--c-text);
+      }
+      .c-logo-img {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        object-fit: cover;
       }
 
-      .nav-item {
-        padding: 8px 20px;
+      /* Menu: the desktop row in the header, the phone bar at the bottom; the same five items */
+      .c-nav {
+        display: flex;
+        gap: 2px;
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+      }
+      .c-nav-item {
+        font: inherit;
         font-size: 15px;
         font-weight: 500;
-        color: var(--text-muted);
-        border: none;
+        color: var(--c-text-2);
         background: transparent;
-        border-radius: 100px;
+        border: 0;
+        border-radius: var(--c-round);
+        padding: var(--c-s2) 14px;
+        white-space: nowrap;
         cursor: pointer;
-        transition: var(--transition-fast);
-        z-index: 1;
       }
-      .nav-item:hover {
-        color: var(--text-main);
+      .c-nav-item:hover {
+        color: var(--c-text);
+        background: var(--c-hover);
       }
-      .nav-item.active {
-        color: var(--text-main);
-        background: var(--bg-panel-solid);
-        box-shadow: var(--shadow-sm);
-        font-weight: 600;
+      .c-nav-item.active {
+        color: var(--c-text);
+        background: var(--c-group);
+        box-shadow: var(--c-shadow-on);
       }
-
-      .user-profile {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-
-      .logout-btn {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        background: var(--bg-hover);
-        border: none;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 18px;
-        transition: var(--transition-fast);
-      }
-      .logout-btn:hover {
-        background: var(--accent-danger);
-        color: white;
-      }
-      .user-email-display {
+      .c-bar {
         display: none;
       }
-
-      @media (min-width: 768px) {
-        .user-email-display {
-          display: block;
-          font-size: 14px;
-          color: var(--text-muted);
-          font-weight: 500;
-        }
-      }
-
-      /* Mobile Nav Overrides */
       @media (max-width: 767px) {
-        .header {
-          top: 10px;
-          width: calc(100% - 20px);
-          padding: 0 8px 0 16px;
+        .c-top-in {
+          padding: 0 var(--c-s4);
+          min-height: 52px;
         }
-        .header-nav {
-          display: none; /* Hide top nav on very small screens, make bottom bar */
+        .c-nav {
+          display: none;
         }
-
-        /* A real tab bar: spans the viewport, equal columns, icon + short label. Always fits,
-           whatever the language — the old max-content pill ran off both screen edges. */
-        .mobile-bottom-nav {
+        .c-bar {
           display: grid;
-          grid-auto-flow: column;
-          grid-auto-columns: 1fr;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
           position: fixed;
-          left: 10px;
-          right: 10px;
-          bottom: calc(10px + env(safe-area-inset-bottom));
-          background: var(--bg-panel);
-          border: 1px solid var(--border-light);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          border-radius: 24px;
-          padding: 6px;
-          box-shadow: var(--shadow-lg);
+          left: 0;
+          right: 0;
+          bottom: 0;
           z-index: 50;
+          background: var(--c-bar);
+          border-top: 1px solid var(--c-sep);
+          padding: 6px var(--c-s1) calc(10px + env(safe-area-inset-bottom));
         }
-
-        .mobile-bottom-nav .nav-item {
+        .c-bar-item {
+          font: inherit;
+          font-size: 10px;
+          font-weight: 500;
+          color: var(--c-text-3);
+          background: none;
+          border: 0;
           min-width: 0;
-          padding: 6px 2px;
-          border-radius: 18px;
+          min-height: 44px;
+          padding: var(--c-s1) 0;
           display: flex;
           flex-direction: column;
           align-items: center;
+          justify-content: center;
           gap: 2px;
+          cursor: pointer;
           -webkit-tap-highlight-color: transparent;
         }
-        .mobile-bottom-nav .nav-item svg {
-          width: 24px;
-          height: 24px;
+        .c-bar-item svg {
+          width: 22px;
+          height: 22px;
         }
-        .mobile-bottom-nav .tab-label {
+        .c-bar-item.active {
+          color: var(--c-icon);
+        }
+        .c-bar-label {
           max-width: 100%;
-          font-size: 11px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .mobile-bottom-nav .nav-item.call-tab {
-          color: var(--accent-success);
-        }
-
         /* `.app` raises specificity: the base .main-content rule comes later in the file. */
         .app .main-content {
-          padding-bottom: calc(110px + env(safe-area-inset-bottom));
+          padding-bottom: calc(96px + env(safe-area-inset-bottom));
         }
       }
-      @media (min-width: 768px) {
-        .mobile-bottom-nav {
-          display: none;
+
+      /* One column per section; page title; group label; group of rows; row and its body */
+      .c-page {
+        width: 100%;
+        max-width: var(--c-column);
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--c-s4);
+      }
+      .c-title {
+        font-size: 34px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1.15;
+        color: var(--c-text);
+        margin: 0 0 var(--c-s5);
+      }
+      .c-lead {
+        font-size: 15px;
+        color: var(--c-text-2);
+        margin: 0 0 var(--c-s2);
+      }
+      .c-hint.c-glabel-hint {
+        margin: calc(-1 * var(--c-s1)) var(--c-s4) var(--c-s3);
+      }
+      /* A group among the old cards of a section: as wide as the widest of them and spaced like them (step 3
+         moves Settings onto the one column). */
+      .c-narrow {
+        max-width: 640px;
+        margin-bottom: 20px;
+      }
+      .c-glabel {
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--c-text-2);
+        margin: var(--c-s6) var(--c-s4) var(--c-s2);
+      }
+      .c-group {
+        background: var(--c-group);
+        border-radius: var(--c-r3);
+        overflow: hidden;
+        box-shadow: var(--c-shadow);
+      }
+      .c-group > * + * {
+        border-top: 1px solid var(--c-sep);
+      }
+      .c-row {
+        display: flex;
+        align-items: center;
+        gap: var(--c-s3);
+        width: 100%;
+        min-height: 54px;
+        padding: var(--c-s3) var(--c-s4);
+        background: none;
+        border: 0;
+        font: inherit;
+        color: var(--c-text);
+        text-align: left;
+        text-decoration: none;
+        box-sizing: border-box;
+      }
+      button.c-row,
+      a.c-row {
+        cursor: pointer;
+      }
+      button.c-row:hover,
+      a.c-row:hover {
+        background: var(--c-hover);
+        color: var(--c-text);
+      }
+      .c-row-title {
+        flex: 1;
+        min-width: 0;
+        font-size: 16px;
+        font-weight: 500;
+        overflow-wrap: anywhere;
+      }
+      .c-row-value {
+        font-size: 15px;
+        color: var(--c-text-2);
+        text-align: right;
+      }
+      .c-chev {
+        flex: none;
+        color: var(--c-chev);
+        transition: transform 0.2s;
+      }
+      .c-row.open .c-chev {
+        transform: rotate(90deg);
+      }
+      .c-row-body {
+        padding: 2px var(--c-s4) 18px;
+        display: flex;
+        flex-direction: column;
+        gap: var(--c-s3);
+      }
+      .c-hint {
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--c-text-2);
+        margin: 0;
+      }
+      .c-step {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--c-text);
+        margin: 0;
+      }
+      .c-box {
+        background: var(--c-warn-tint);
+        border-radius: var(--c-r2);
+        padding: var(--c-s3) 14px;
+        font-size: 14px;
+        line-height: 1.5;
+        color: var(--c-text);
+      }
+
+      /* Buttons: primary, neutral, dark (search), danger, link; a row of buttons */
+      .c-btns {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--c-s2);
+      }
+      .c-btn {
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        border: 0;
+        border-radius: var(--c-round);
+        padding: 10px 18px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .c-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .c-pri {
+        background: var(--c-accent);
+        color: var(--c-on-accent);
+      }
+      .c-pri:hover {
+        background: var(--c-accent-press);
+        color: var(--c-on-accent);
+      }
+      .c-sec {
+        background: var(--c-fill);
+        color: var(--c-text);
+      }
+      .c-sec:hover {
+        color: var(--c-text);
+      }
+      .c-blk {
+        background: var(--c-dark);
+        color: var(--c-on-dark);
+      }
+      .c-blk:hover {
+        color: var(--c-on-dark);
+      }
+      .c-dng {
+        background: var(--c-danger-tint);
+        color: var(--c-danger-text);
+      }
+      .c-dng:hover {
+        color: var(--c-danger-text);
+      }
+      .c-lnk {
+        font: inherit;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--c-link);
+        background: none;
+        border: 0;
+        padding: 10px var(--c-s1);
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        gap: var(--c-s1);
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      /* Status chip: works, off, needs attention, error */
+      .c-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: var(--c-round);
+        white-space: nowrap;
+      }
+      .c-chip-ok {
+        background: var(--c-ok-tint);
+        color: var(--c-ok-text);
+      }
+      .c-chip-off {
+        background: var(--c-fill);
+        color: var(--c-fill-text);
+      }
+      .c-chip-warn {
+        background: var(--c-warn-tint);
+        color: var(--c-warn-text);
+      }
+      .c-chip-bad {
+        background: var(--c-danger-tint);
+        color: var(--c-danger-text);
+      }
+      .c-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        flex: none;
+      }
+
+      /* Segmented control (up to four options); switch; field (label above input) */
+      .c-seg {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        padding: 3px;
+        background: var(--c-fill);
+        border-radius: var(--c-r1);
+      }
+      .c-seg button {
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--c-fill-text);
+        background: transparent;
+        border: 0;
+        border-radius: 8px;
+        padding: var(--c-s2) 14px;
+        min-height: 36px;
+        cursor: pointer;
+      }
+      .c-seg button.on {
+        background: var(--c-group);
+        color: var(--c-text);
+        box-shadow: var(--c-shadow-on);
+      }
+      .c-switch {
+        appearance: none;
+        -webkit-appearance: none;
+        flex: none;
+        position: relative;
+        width: 51px;
+        height: 31px;
+        margin: 0;
+        border-radius: 31px;
+        background: var(--c-switch-off);
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .c-switch::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 27px;
+        height: 27px;
+        border-radius: 50%;
+        background: var(--c-knob);
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
+        transition: transform 0.2s;
+      }
+      .c-switch:checked {
+        background: var(--c-ok);
+      }
+      .c-switch:checked::after {
+        transform: translateX(20px);
+      }
+      .c-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .c-field label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--c-text-2);
+      }
+      .c-input {
+        font: inherit;
+        font-size: 16px;
+        width: 100%;
+        max-width: 360px;
+        padding: 10px 14px;
+        border-radius: var(--c-r2);
+        border: 1px solid var(--c-field-edge);
+        background: var(--c-group);
+        color: var(--c-text);
+        box-sizing: border-box;
+      }
+      .c-input:focus {
+        outline: none;
+        border-color: var(--c-accent);
+      }
+
+      /* Home: the call button, the link under it, the section tiles (two columns at every width) */
+      .c-call {
+        display: flex;
+        align-items: center;
+        gap: var(--c-s4);
+        min-height: 96px;
+        padding: var(--c-s5);
+        border-radius: var(--c-s5);
+        background: var(--c-accent);
+        color: var(--c-on-accent);
+        text-decoration: none;
+        box-sizing: border-box;
+      }
+      .c-call:hover {
+        background: var(--c-accent-press);
+        color: var(--c-on-accent);
+      }
+      .c-call-icon {
+        flex: none;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.18);
+        display: grid;
+        place-items: center;
+      }
+      .c-call-title {
+        display: block;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .c-call-sub {
+        display: block;
+        font-size: 15px;
+        opacity: 0.85;
+        margin-top: 2px;
+      }
+      .c-modes {
+        align-self: flex-start;
+        padding: 6px var(--c-s2);
+        min-height: 0;
+      }
+      .c-tiles {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: var(--c-s4);
+      }
+      .c-tile {
+        font: inherit;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        min-height: 150px;
+        padding: 20px;
+        border-radius: 20px;
+        border: 2px solid transparent;
+        background: var(--c-group);
+        color: var(--c-text);
+        box-shadow: var(--c-shadow);
+        text-align: left;
+        text-decoration: none;
+        box-sizing: border-box;
+        cursor: pointer;
+      }
+      .c-tile:hover {
+        color: var(--c-text);
+        box-shadow: var(--c-shadow-raised);
+      }
+      .c-tile-warn {
+        border-color: var(--c-warn-edge);
+      }
+      .c-tile-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: var(--c-r2);
+        display: grid;
+        place-items: center;
+        background: var(--c-icon-tint);
+        color: var(--c-icon);
+      }
+      .c-tile-warn .c-tile-icon {
+        background: var(--c-warn-tint);
+        color: var(--c-warn-text);
+      }
+      .c-tile-title {
+        margin-top: auto;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .c-tile-status {
+        font-size: 14px;
+        line-height: 1.35;
+        color: var(--c-text-2);
+      }
+      .c-tile-warn .c-tile-status {
+        color: var(--c-warn-text);
+        font-weight: 600;
+      }
+      @media (max-width: 767px) {
+        .c-tiles {
+          gap: var(--c-s3);
+        }
+        .c-tile {
+          min-height: 132px;
+          padding: var(--c-s4);
+          border-radius: 18px;
+        }
+        .c-tile-title {
+          font-size: 18px;
         }
       }
 
