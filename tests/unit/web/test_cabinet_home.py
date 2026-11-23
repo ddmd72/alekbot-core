@@ -257,7 +257,10 @@ def test_the_home_script_is_served_and_loaded_after_the_sections():
     assert CABINET_ASSETS["cabinet-home.js"] == "application/javascript"
     shell = (STATIC / "cabinet.html").read_text(encoding="utf-8")
     order = [m for m in re.findall(r'<script src="/cabinet/assets/([\w.-]+)"></script>', shell)]
-    assert order == ["cabinet-strings.js", "cabinet-shell.js", "cabinet-sections.js", "cabinet-home.js"]
+    # Home calls the shell's and the sections' functions, so it loads after them; other section scripts (Settings,
+    # CABINET_REDESIGN_RFC §6) neither use Home nor are used by it, and their place is their own tests'.
+    assert order[:3] == ["cabinet-strings.js", "cabinet-shell.js", "cabinet-sections.js"]
+    assert order.count("cabinet-home.js") == 1 and order.index("cabinet-home.js") > order.index("cabinet-sections.js")
     assert 'style="' not in _element_markup("home-tile-memory")
 
 
