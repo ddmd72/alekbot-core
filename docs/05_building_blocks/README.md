@@ -35,6 +35,7 @@ current) is in [`../README.md`](../README.md#living-docs).
 - [Prompt Design System v3](./prompt_design_system_v3/README.md) — how stored fragments become an agent's system prompt.
 - [Prompt Cache Strategy](./prompt_cache_strategy/README.md) — which requests ask the provider for prompt caching.
 - [Security Validation](./security_validation/README.md) — keeping written text from being read as a system instruction.
+- [Untrusted-Content Taint](./untrusted_content_taint/README.md) — why a hand-off after outside content waits for the owner's code.
 - [Localization System](./localization_system/README.md) — response language versus UI language.
 - [Companion Agents and Bound Channels](./companion_agents/README.md) — a channel bound straight to one agent, and the companions' session-scoped memory.
 - [Long-running Turns](./long_running_turns/README.md) — a turn that outlives the 90 s mark: the clock, the registry record, the late answer.

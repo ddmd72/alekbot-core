@@ -143,6 +143,7 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
 | Voice companion (Lelik): phone, web transport, providers | `docs/05_building_blocks/voice_companion/README.md`, `docs/05_building_blocks/voice_call_transport/README.md`, `docs/10_rfcs/VOICE_COMPANION_RFC.md`, `VOICE_WEB_TRANSPORT_RFC.md`, `VOICE_MULTI_PROVIDER_RFC.md`, `decisions/lelik_voice_modes.md` |
 | Remote MCP server | `docs/05_building_blocks/remote_mcp_server/README.md`; drive connector `docs/10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md` |
 | External task queue (outside workers, held tasks, worker keys) | `docs/05_building_blocks/external_task_queue/README.md`, `docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` |
+| Untrusted-content taint (execution taint, held hand-offs, `$task send`, what it does not gate) | `docs/05_building_blocks/untrusted_content_taint/README.md` |
 | Untrusted-content sandbox | `docs/05_building_blocks/untrusted_content_sandbox/README.md`, `decisions/sandbox_render_service.md`, `docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md` |
 | Secrets at rest, credential store, reconnect notices | `docs/05_building_blocks/secrets_at_rest/README.md`, `decisions/secrets_at_rest_cipher_and_digest.md`, `decisions/credential_store_cutover.md`, `decisions/reconnect_notice_r1.md` |
 | Access control (one whitelist, chat + Cabinet gates) | `decisions/cabinet_oauth_whitelist_gate.md` |

@@ -104,6 +104,9 @@ held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_R
 
 ## Security rules enforced in code
 
+The idea behind the taint rule, every taint source, how taint persists and what it does not cover, without reading
+code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
+
 - **Taint.** An execution is tainted when outside content entered it. `domain/execution_taint.py` is the pure rule and
   `TaintTracker` (`src/infrastructure/taint_tracker.py:25`) applies it per execution attempt, fed by the delegation
   engine after every tool batch. Sources: a wrapped result or attached-file reminder, any file part, any tool result
