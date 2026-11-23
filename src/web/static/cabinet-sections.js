@@ -160,7 +160,7 @@
 
       // A passkey change without a passkey proof (the step-up failed, was cancelled, or this browser holds no passkey
       // of the user): the page offers a fresh Google sign-in instead, which the server accepts as proof too (RFC §7.3).
-      // It returns here, on the Devices tab, and the user taps the button again.
+      // It returns here, to Settings (the `devices` alias), and the user taps the button again.
       function googleProofUrl() {
         return "/auth/login/google?next=" + encodeURIComponent("/cabinet?tab=devices");
       }
@@ -223,7 +223,7 @@
         try {
           if ((await fetchPasskeys()).offer === true) document.getElementById("passkey-offer").classList.remove("hidden");
         } catch {
-          // the offer is a convenience; the Devices tab keeps the button
+          // the offer is a convenience; Settings keeps the button
         }
       }
 
