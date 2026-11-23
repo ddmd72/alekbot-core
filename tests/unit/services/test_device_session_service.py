@@ -15,8 +15,6 @@ from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.domain.billing import AccountTier, BillingAccount
 from src.domain.device_session import DeviceSession, SessionAuthKind, SessionRevokeReason
 from src.domain.device_session_policy import DeviceSessionPolicy as P, RefreshOutcome, refresh_secret_hash
-from src.domain.language import LanguageCode
-from src.domain.ui_messages import UIMessage
 from src.domain.user import UserProfile
 from src.services.device_session_service import DeviceSessionService
 from src.services.localization_service import LocalizationService
@@ -174,16 +172,14 @@ class TestStart:
 # ---------------------------------------------------------------------------------------------- refresh
 
 class TestPasskeyStart:
-    """A passkey sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5): the notice says so, and the session starts proved by
-    a passkey for a call start; a Google one does not."""
+    """A passkey sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5): it sends no new-sign-in notice, and the session
+    starts proved by a passkey for a call start; a Google one is announced and does not."""
 
-    async def test_a_passkey_session_is_announced_as_a_passkey_sign_in_with_the_hint_literally(self, world):
+    async def test_a_passkey_session_sends_no_notice_and_starts_proved_by_the_passkey(self, world):
         hostile = "iPhone — Home Screen {time} <!channel>"
         session, _, _ = await world.service.start(ALEX, ALEX_ACCOUNT, label=hostile, platform_hint=hostile,
                                                   auth_kind=SessionAuthKind.PASSKEY)
-        [(_, _, text)] = world.channels.sent_literal
-        assert hostile in text and "09:00 UTC" in text and "passkey" in text and "Google" not in text
-        assert "$devices off" in text
+        assert world.channels.sent == [] and world.channels.sent_literal == []
         assert (session.auth_kind, session.passkey_at) == (SessionAuthKind.PASSKEY, T0)
 
     async def test_a_google_session_is_announced_as_google_and_starts_unproved(self, world):
@@ -191,15 +187,6 @@ class TestPasskeyStart:
         [(_, _, text)] = world.channels.sent_literal
         assert "Google" in text and "passkey" not in text
         assert session.passkey_at is None
-
-    @pytest.mark.parametrize("lang", ["uk", "fr", "es"])
-    async def test_the_passkey_notice_is_in_the_users_language(self, world, lang):
-        texts = LocalizationService(FileLocalizationAdapter())
-        google = texts.get_ui_string(LanguageCode(lang), UIMessage.DEVICE_SIGN_IN_NOTICE)
-        passkey = texts.get_ui_string(LanguageCode(lang), UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE)
-        english = texts.get_ui_string(LanguageCode.EN, UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE)
-        assert passkey != english and passkey != google
-        assert "{platform_hint}" in passkey and "{time}" in passkey and "$devices off" in passkey
 
 
 class TestCurrent:
