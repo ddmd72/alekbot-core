@@ -224,364 +224,350 @@
           <div id="drive-container"></div>
         </section>
 
-        <!-- Settings Section -->
+        <!-- Settings (CABINET_REDESIGN_RFC §5.1): groups of rows, each collapsed to its title and current value; a row
+             opens its body on click, one at a time (cabinet-settings.js). Classes only, no inline style. -->
         <section id="section-settings" class="section">
-          <div class="hero-header reveal">
-            <h1 id="settings-title">Settings</h1>
-            <p id="settings-subtitle">Preferences that personalise how Alek works for you.</p>
-          </div>
+          <div class="c-col">
+            <h1 class="c-title" id="settings-title">Settings</h1>
 
-          <!-- Account: the email and Log out, moved out of the header -->
-          <h2 class="c-glabel" id="settings-account-label">Account</h2>
-          <div class="c-group c-narrow">
-            <div class="c-row">
-              <span class="c-row-title" id="user-email"></span>
-              <button type="button" class="c-btn c-sec" id="settings-logout" onclick="logout()">Log out</button>
-            </div>
-          </div>
-
-          <div class="card reveal" style="max-width: 520px">
-            <div class="card-body">
-              <h3 id="settings-tz-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Timezone</h3>
-              <p id="settings-tz-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
-                Used for scheduling reminders and interpreting time expressions.
-              </p>
-              <div style="display: flex; gap: 12px; align-items: center">
-                <select
-                  id="timezone-input"
-                  style="
-                    flex: 1;
-                    padding: 10px 14px;
-                    border-radius: var(--radius-sm);
-                    border: 1px solid var(--border-light);
-                    background: var(--bg-hover);
-                    color: var(--text-main);
-                    font-family: inherit;
-                    font-size: 15px;
-                    outline: none;
-                    cursor: pointer;
-                    transition: border-color var(--transition-fast);
-                  "
-                  onfocus="this.style.borderColor='var(--border-focus)'"
-                  onblur="this.style.borderColor='var(--border-light)'"
-                >
-                  <optgroup label="Europe">
-                    <option value="Europe/Kyiv">Kyiv (UTC+2/+3)</option>
-                    <option value="Europe/London">London (UTC+0/+1)</option>
-                    <option value="Europe/Paris">Paris / Berlin (UTC+1/+2)</option>
-                    <option value="Europe/Warsaw">Warsaw (UTC+1/+2)</option>
-                    <option value="Europe/Istanbul">Istanbul (UTC+3)</option>
-                  </optgroup>
-                  <optgroup label="Americas">
-                    <option value="America/New_York">New York (UTC-5/-4)</option>
-                    <option value="America/Chicago">Chicago (UTC-6/-5)</option>
-                    <option value="America/Denver">Denver (UTC-7/-6)</option>
-                    <option value="America/Los_Angeles">Los Angeles (UTC-8/-7)</option>
-                    <option value="America/Toronto">Toronto (UTC-5/-4)</option>
-                    <option value="America/Sao_Paulo">São Paulo (UTC-3)</option>
-                  </optgroup>
-                  <optgroup label="Asia & Pacific">
-                    <option value="Asia/Dubai">Dubai (UTC+4)</option>
-                    <option value="Asia/Kolkata">India (UTC+5:30)</option>
-                    <option value="Asia/Singapore">Singapore (UTC+8)</option>
-                    <option value="Asia/Tokyo">Tokyo (UTC+9)</option>
-                    <option value="Asia/Seoul">Seoul (UTC+9)</option>
-                    <option value="Australia/Sydney">Sydney (UTC+10/+11)</option>
-                  </optgroup>
-                  <optgroup label="Other">
-                    <option value="UTC">UTC</option>
-                  </optgroup>
-                </select>
-                <button id="settings-tz-save" onclick="saveTimezone()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">
-                  Save
+            <h2 class="c-glabel" id="settings-account-label">Account</h2>
+            <div class="c-group">
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-account" aria-expanded="false" aria-controls="srow-account-body" onclick="toggleSettingsRow('account')">
+                  <span class="c-row-title" id="user-email"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
                 </button>
+                <div class="c-row-body hidden" id="srow-account-body">
+                  <p class="c-hint" id="settings-account-hint">Log out closes the Cabinet on this device only.</p>
+                  <div class="c-btns"><button type="button" class="c-btn c-sec" id="settings-logout" onclick="logout()">Log out</button></div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
-            <div class="card-body">
-              <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Location</h3>
-              <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
-                Your current location — used for contextual awareness (maps, weather, local info).
-              </p>
-              <div style="display: flex; gap: 12px; align-items: center">
-                <input
-                  id="location-input"
-                  type="text"
-                  placeholder="e.g. Springfield"
-                  style="
-                    flex: 1;
-                    padding: 10px 14px;
-                    border-radius: var(--radius-sm);
-                    border: 1px solid var(--border-light);
-                    background: var(--bg-hover);
-                    color: var(--text-main);
-                    font-family: inherit;
-                    font-size: 15px;
-                    outline: none;
-                    transition: border-color var(--transition-fast);
-                  "
-                  onfocus="this.style.borderColor='var(--border-focus)'"
-                  onblur="this.style.borderColor='var(--border-light)'"
-                />
-                <button onclick="saveLocation()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">
-                  Save
+            <h2 class="c-glabel" id="settings-profile-label">Profile</h2>
+            <div class="c-group">
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-tz" aria-expanded="false" aria-controls="srow-tz-body" onclick="toggleSettingsRow('tz')">
+                  <span class="c-row-title" id="settings-tz-title">Timezone</span><span class="c-row-value" id="settings-tz-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
                 </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
-            <div class="card-body">
-              <h3 id="settings-lang-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Language</h3>
-              <p id="settings-lang-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
-                UI language and the language Alek responds in.
-              </p>
-
-              <div style="margin-bottom: 18px">
-                <div id="settings-lang-ui-label" style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">UI Language</div>
-                <select id="lang-ui-select" onchange="setLangUI(this.value)"
-                  style="width: 100%; padding: 10px 14px; border-radius: var(--radius-sm);
-                         border: 1px solid var(--border-light); background: var(--bg-hover);
-                         color: var(--text-main); font-family: inherit; font-size: 15px;
-                         outline: none; cursor: pointer; transition: border-color var(--transition-fast)"
-                  onfocus="this.style.borderColor='var(--border-focus)'"
-                  onblur="this.style.borderColor='var(--border-light)'">
-                  <option value="">🌐 System default</option>
-                  <option value="uk">🇺🇦 Ukrainian</option>
-                  <option value="en">🇬🇧 English</option>
-                  <option value="fr">🇫🇷 French</option>
-                  <option value="es">🇪🇸 Spanish</option>
-                </select>
-              </div>
-
-              <div style="margin-bottom: 24px">
-                <div id="settings-lang-bot-label" style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">Bot responds in</div>
-                <div class="lang-segment-control">
-                  <button id="lang-mirror-btn" class="lang-seg-btn active" onclick="setLangMirror(true)">Mirror input</button>
-                  <button id="lang-fixed-btn" class="lang-seg-btn" onclick="setLangMirror(false)">Fixed language</button>
+                <div class="c-row-body hidden" id="srow-tz-body">
+                  <p class="c-hint" id="settings-tz-desc">Used for reminders and to read times such as "tomorrow at nine". Saved as soon as you pick.</p>
+                  <div class="c-field">
+                    <label for="timezone-input" id="settings-tz-label">Timezone</label>
+                    <select id="timezone-input" class="c-input" onchange="saveTimezone()">
+                      <optgroup label="Europe">
+                        <option value="Europe/Kyiv">Kyiv (UTC+2/+3)</option>
+                        <option value="Europe/London">London (UTC+0/+1)</option>
+                        <option value="Europe/Paris">Paris / Berlin (UTC+1/+2)</option>
+                        <option value="Europe/Warsaw">Warsaw (UTC+1/+2)</option>
+                        <option value="Europe/Istanbul">Istanbul (UTC+3)</option>
+                      </optgroup>
+                      <optgroup label="Americas">
+                        <option value="America/New_York">New York (UTC-5/-4)</option>
+                        <option value="America/Chicago">Chicago (UTC-6/-5)</option>
+                        <option value="America/Denver">Denver (UTC-7/-6)</option>
+                        <option value="America/Los_Angeles">Los Angeles (UTC-8/-7)</option>
+                        <option value="America/Toronto">Toronto (UTC-5/-4)</option>
+                        <option value="America/Sao_Paulo">São Paulo (UTC-3)</option>
+                      </optgroup>
+                      <optgroup label="Asia & Pacific">
+                        <option value="Asia/Dubai">Dubai (UTC+4)</option>
+                        <option value="Asia/Kolkata">India (UTC+5:30)</option>
+                        <option value="Asia/Singapore">Singapore (UTC+8)</option>
+                        <option value="Asia/Tokyo">Tokyo (UTC+9)</option>
+                        <option value="Asia/Seoul">Seoul (UTC+9)</option>
+                        <option value="Australia/Sydney">Sydney (UTC+10/+11)</option>
+                      </optgroup>
+                      <optgroup label="Other">
+                        <option value="UTC">UTC</option>
+                      </optgroup>
+                    </select>
+                  </div>
                 </div>
               </div>
-
-              <button id="settings-lang-save" onclick="saveLanguage()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
-            </div>
-          </div>
-
-          <!-- Voice messages -->
-          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
-            <div class="card-body">
-              <h3 id="settings-voice-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Voice messages</h3>
-              <p id="settings-voice-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
-                Languages you speak in voice messages. Pick as many as you like — switching mid-sentence is fine. Pick none to let Alek detect the language.
-              </p>
-
-              <div id="voice-lang-options" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px">
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
-                  <input type="checkbox" class="voice-lang" value="ru" style="width: 18px; height: 18px; cursor: pointer">
-                  <span style="font-size: 15px">🇷🇺 Russian</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
-                  <input type="checkbox" class="voice-lang" value="uk" style="width: 18px; height: 18px; cursor: pointer">
-                  <span style="font-size: 15px">🇺🇦 Ukrainian</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
-                  <input type="checkbox" class="voice-lang" value="en" style="width: 18px; height: 18px; cursor: pointer">
-                  <span style="font-size: 15px">🇬🇧 English</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
-                  <input type="checkbox" class="voice-lang" value="fr" style="width: 18px; height: 18px; cursor: pointer">
-                  <span style="font-size: 15px">🇫🇷 French</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
-                  <input type="checkbox" class="voice-lang" value="es" style="width: 18px; height: 18px; cursor: pointer">
-                  <span style="font-size: 15px">🇪🇸 Spanish</span>
-                </label>
-              </div>
-
-              <button id="settings-voice-save" onclick="saveVoiceLanguages()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
-            </div>
-          </div>
-
-          <!-- Deep Research -->
-          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
-            <div class="card-body">
-              <h3 id="settings-dr-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Deep Research</h3>
-              <p id="settings-dr-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
-                Second pass sends the result to a critic for verification and improvement.
-              </p>
-              <div style="display: flex; align-items: center; gap: 12px">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer">
-                  <input type="checkbox" id="dr-second-pass" onchange="saveDeepResearch()" style="width: 18px; height: 18px; cursor: pointer">
-                  <span id="settings-dr-label" style="font-size: 15px">Two-pass mode</span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <!-- Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7) -->
-          <div class="card reveal" id="pin-card" style="max-width: 640px; margin-top: 20px">
-            <div class="card-body">
-              <h3 id="pin-title" style="font-size:18px;font-weight:600;margin-bottom:6px">Facts PIN</h3>
-              <p id="pin-desc" style="font-size:14px;color:var(--text-muted);margin-bottom:12px"></p>
-              <p id="pin-state" style="font-size:14px;font-weight:600;margin-bottom:12px"></p>
-              <div id="pin-set-form">
-                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-                  <div style="flex:1;min-width:130px"><label id="pin-label-new" for="pin-new" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2" for="pin-new2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <div style="flex:1;min-width:130px"><label id="pin-label-duress" for="pin-duress" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2" for="pin-duress2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                </div>
-                <button id="pin-set-btn" class="btn btn-primary" onclick="submitPinSet()"></button>
-              </div>
-              <div id="pin-manage" class="hidden">
-                <h4 id="pin-change-title" style="font-size:15px;font-weight:600;margin-bottom:8px"></h4>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-                  <div style="flex:1;min-width:130px"><label id="pin-label-current-change" for="pin-current-change" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-change" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <div style="flex:1;min-width:130px"><label id="pin-label-new-c" for="pin-new-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2-c" for="pin-new2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <div style="flex:1;min-width:130px"><label id="pin-label-duress-c" for="pin-duress-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2-c" for="pin-duress2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                </div>
-                <button id="pin-change-btn" class="btn btn-primary" onclick="submitPinChange()"></button>
-                <h4 id="pin-remove-title" style="font-size:15px;font-weight:600;margin:20px 0 8px"></h4>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
-                  <div style="flex:1;min-width:130px"><label id="pin-label-current-remove" for="pin-current-remove" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-remove" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
-                  <button id="pin-remove-btn" class="btn btn-danger" onclick="submitPinRemove()"></button>
-                </div>
-                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-                  <button id="pin-forgot" class="btn btn-secondary" onclick="forgotPin()"></button>
-                  <button id="pin-reset-cancel" class="btn btn-secondary hidden" onclick="cancelPinReset()"></button>
-                </div>
-                <p id="pin-reset-note" class="hidden" style="font-size:14px;color:var(--text-muted);margin-top:12px"></p>
-              </div>
-              <p id="pin-message" role="alert" style="font-size:14px;margin-top:12px"></p>
-              <div id="pin-logout-offer" class="hidden" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-                <span id="pin-logout-text" style="font-size:14px"></span>
-                <button id="pin-logout-btn" class="btn btn-secondary" onclick="logoutOtherDevices()"></button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Integrations (Telegram, Slack, phone, Gmail, Microsoft To Do), moved from the old Integrations section -->
-          <h2 class="c-glabel" id="integrations-title">Integrations</h2>
-          <p class="c-hint c-glabel-hint" id="integrations-subtitle">Connect your favorite platforms and let Alek work seamlessly across them.</p>
-          <div class="integration-bento">
-            <div id="platforms-container" class="integration-contents">
-              <!-- Rendered via JS -->
-            </div>
-
-            <!-- Specific containers for Data Services to fix race condition -->
-            <div id="gmail-container">
-              <!-- Gmail Skeleton -->
-              <div class="card integration-card gmail-card">
-                <div
-                  class="skeleton"
-                  style="
-                    width: 48px;
-                    height: 48px;
-                    border-radius: 14px;
-                    margin-bottom: 14px;
-                  "
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 24px; width: 120px; margin-bottom: 12px"
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 36px; width: 160px; border-radius: 100px"
-                ></div>
-              </div>
-            </div>
-
-            <div id="tasks-container">
-              <!-- Tasks Skeleton -->
-              <div class="card integration-card tasks-card">
-                <div
-                  class="skeleton"
-                  style="
-                    width: 48px;
-                    height: 48px;
-                    border-radius: 14px;
-                    margin-bottom: 14px;
-                  "
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 24px; width: 140px; margin-bottom: 12px"
-                ></div>
-                <div
-                  class="skeleton"
-                  style="height: 36px; width: 160px; border-radius: 100px"
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Devices, passkeys, a lost phone (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6), moved from the old Devices section -->
-          <h2 class="c-glabel" id="devices-title">Devices</h2>
-          <p class="c-hint c-glabel-hint" id="devices-subtitle">Where you are signed in to the Cabinet.</p>
-          <div class="card reveal" style="max-width: 720px">
-            <div class="card-body">
-              <div id="devices-list"></div>
-              <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px">
-                <button id="devices-logout-others" class="btn btn-secondary" onclick="logoutOtherDevices()">Log out all other devices</button>
-                <button id="devices-logout-all" class="btn btn-danger" onclick="logoutAllDevices()">Log out all devices</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
-            <div class="card-body">
-              <h3 id="passkeys-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Face ID and passkeys</h3>
-              <p id="passkeys-subtitle" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px">They sign you in without Google, and confirm a call to Lelik.</p>
-              <div id="passkeys-list"></div>
-              <div style="margin-top: 12px">
-                <button id="passkeys-add" class="btn btn-secondary" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button>
-                <div id="passkeys-google-proof" class="hidden" style="margin-top: 12px">
-                  <p id="passkeys-google-proof-text" style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px">Your passkey is not on this device. Confirm with Google, then tap again.</p>
-                  <a id="passkeys-google-proof-link" class="btn btn-black" href="/auth/login/google">Confirm with Google</a>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
-            <div class="card-body">
-              <h3 id="devices-lost-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">If a phone is lost</h3>
-              <p id="devices-lost-intro" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px"></p>
-              <ol style="font-size: 14px; color: var(--text-muted); padding-left: 20px; line-height: 1.6">
-                <li id="devices-lost-1"></li>
-                <li id="devices-lost-2"></li>
-                <li id="devices-lost-3"></li>
-              </ol>
-            </div>
-          </div>
-
-          <!-- Team: owners only (init shows it), moved from the old Team section -->
-          <div id="settings-team" class="hidden">
-            <h2 class="c-glabel" id="team-title">Your Team</h2>
-            <p class="c-hint c-glabel-hint" id="team-subtitle">Invite colleagues to collaborate and share knowledge.</p>
-            <div class="invite-container reveal">
-              <button
-                id="team-generate-btn"
-                onclick="generateTeamInvite()"
-                class="btn btn-black"
-                style="padding: 16px 32px; font-size: 18px"
-              >
-                Generate New Invite Link
-              </button>
-
-              <div id="generated-code-container" class="hidden"></div>
-            </div>
-
-            <div class="card table-card reveal" style="margin-top: 64px">
-              <div class="card-body" style="padding: 0">
-                <div class="table-container">
-                  <div id="codes-list-container">
-                    <div style="padding: 40px">
-                      <div
-                        class="skeleton"
-                        style="height: 60px; width: 100%"
-                      ></div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-city" aria-expanded="false" aria-controls="srow-city-body" onclick="toggleSettingsRow('city')">
+                  <span class="c-row-title" id="settings-city-title">City</span><span class="c-row-value" id="settings-city-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-city-body">
+                  <p class="c-hint" id="settings-city-desc">For weather, maps and local tips.</p>
+                  <div class="c-field">
+                    <label for="location-input" id="settings-city-label">City</label>
+                    <div class="c-inline">
+                      <input id="location-input" type="text" class="c-input" placeholder="e.g. Springfield" onkeydown="if (event.key === 'Enter') saveLocation();" />
+                      <button type="button" class="c-btn c-pri" id="settings-city-save" onclick="saveLocation()">Save</button>
                     </div>
+                  </div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-uilang" aria-expanded="false" aria-controls="srow-uilang-body" onclick="toggleSettingsRow('uilang')">
+                  <span class="c-row-title" id="settings-lang-title">Interface language</span><span class="c-row-value" id="settings-uilang-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-uilang-body">
+                  <p class="c-hint" id="settings-uilang-desc">The Cabinet's language, and the one Alek answers in when the reply language is fixed.</p>
+                  <div class="c-field">
+                    <label for="lang-ui-select" id="settings-uilang-label">Interface language</label>
+                    <select id="lang-ui-select" class="c-input" onchange="setLangUI(this.value); saveLanguage()">
+                      <option value="" id="lang-ui-default">System default</option>
+                      <option value="uk">Українська</option>
+                      <option value="en">English</option>
+                      <option value="fr">Français</option>
+                      <option value="es">Español</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-reply" aria-expanded="false" aria-controls="srow-reply-body" onclick="toggleSettingsRow('reply')">
+                  <span class="c-row-title" id="settings-reply-title">Reply language</span><span class="c-row-value" id="settings-reply-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-reply-body">
+                  <p class="c-hint" id="settings-reply-desc">Alek answers in the language you write in, or always in the interface language.</p>
+                  <div class="c-seg" role="group" aria-labelledby="settings-reply-title">
+                    <button type="button" id="lang-mirror-btn" class="on" aria-pressed="true" onclick="setLangMirror(true); saveLanguage()">As I write</button>
+                    <button type="button" id="lang-fixed-btn" aria-pressed="false" onclick="setLangMirror(false); saveLanguage()">Always in one language</button>
+                  </div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-voice" aria-expanded="false" aria-controls="srow-voice-body" onclick="toggleSettingsRow('voice')">
+                  <span class="c-row-title" id="settings-voice-title">Voice message languages</span><span class="c-row-value" id="settings-voice-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-voice-body">
+                  <p class="c-hint" id="settings-voice-desc">Languages you speak in voice messages. Pick as many as you like; pick none to let Alek detect the language.</p>
+                  <div class="c-btns" id="voice-lang-options" role="group" aria-labelledby="settings-voice-title">
+                    <button type="button" class="c-pill voice-lang" data-lang="uk" aria-pressed="false" onclick="toggleVoiceLang(this); saveVoiceLanguages()">Українська</button>
+                    <button type="button" class="c-pill voice-lang" data-lang="en" aria-pressed="false" onclick="toggleVoiceLang(this); saveVoiceLanguages()">English</button>
+                    <button type="button" class="c-pill voice-lang" data-lang="ru" aria-pressed="false" onclick="toggleVoiceLang(this); saveVoiceLanguages()">Русский</button>
+                    <button type="button" class="c-pill voice-lang" data-lang="fr" aria-pressed="false" onclick="toggleVoiceLang(this); saveVoiceLanguages()">Français</button>
+                    <button type="button" class="c-pill voice-lang" data-lang="es" aria-pressed="false" onclick="toggleVoiceLang(this); saveVoiceLanguages()">Español</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2 class="c-glabel" id="settings-connections-label">Connections</h2>
+            <div class="c-group">
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-platforms" aria-expanded="false" aria-controls="srow-platforms-body" onclick="toggleSettingsRow('platforms')">
+                  <span class="c-row-title" id="settings-platforms-title">Telegram, Slack, phone</span>
+                  <span class="c-chip c-chip-off hidden" id="settings-platforms-chip"><span class="c-dot"></span><span id="settings-platforms-chip-text"></span></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-platforms-body">
+                  <div class="c-stack" id="platforms-container"></div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-mail" aria-expanded="false" aria-controls="srow-mail-body" onclick="toggleSettingsRow('mail')">
+                  <span class="c-row-title">Gmail</span>
+                  <span class="c-chip c-chip-off hidden" id="settings-gmail-chip"><span class="c-dot"></span><span id="settings-gmail-chip-text"></span></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-mail-body">
+                  <div class="c-stack" id="gmail-container"></div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-todo" aria-expanded="false" aria-controls="srow-todo-body" onclick="toggleSettingsRow('todo')">
+                  <span class="c-row-title" id="settings-todo-title">Microsoft To Do</span>
+                  <span class="c-chip c-chip-off hidden" id="settings-todo-chip"><span class="c-dot"></span><span id="settings-todo-chip-text"></span></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-todo-body">
+                  <div class="c-stack" id="tasks-container"></div>
+                </div>
+              </div>
+              <button type="button" class="c-row" id="srow-drives" onclick="navigate('drives')">
+                <span class="c-row-title" id="settings-drives-title">Drives</span>
+                <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+              </button>
+            </div>
+
+            <h2 class="c-glabel" id="settings-security-label">Security</h2>
+            <div class="c-group">
+              <!-- Memory PIN (CABINET_REDESIGN_RFC §5.3): one state at a time, a flow in steps, one request at its end -->
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-pin" aria-expanded="false" aria-controls="srow-pin-body" onclick="toggleSettingsRow('pin')">
+                  <span class="c-row-title" id="pin-title">Memory PIN</span>
+                  <span class="c-chip c-chip-off hidden" id="pin-chip"><span class="c-dot"></span><span id="pin-chip-text"></span></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-pin-body">
+                  <p class="c-msg hidden" id="pin-message" role="alert"></p>
+                  <div class="c-mini hidden" id="pin-logout-offer">
+                    <span class="c-mini-s" id="pin-logout-text"></span>
+                    <button type="button" class="c-btn c-sec" id="pin-logout-btn" onclick="logoutOtherDevices()"></button>
+                  </div>
+
+                  <div class="c-flow" id="pin-step-off">
+                    <p class="c-hint" id="pin-desc"></p>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-start-set" onclick="pinShow('set1')"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-set1">
+                    <div class="c-stepper"><span class="c-stepper-dots"><span class="c-stepper-dot on"></span><span class="c-stepper-dot"></span></span><span id="pin-set1-count"></span></div>
+                    <p class="c-step" id="pin-set1-title"></p>
+                    <div class="c-fields">
+                      <div class="c-field"><label id="pin-label-new" for="pin-new"></label><input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" /></div>
+                      <div class="c-field"><label id="pin-label-new2" for="pin-new2"></label><input id="pin-new2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" onkeydown="if (event.key === 'Enter') pinNext();" /></div>
+                    </div>
+                    <p class="c-hint" id="pin-set1-hint"></p>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-set1-next" onclick="pinNext()"></button><button type="button" class="c-lnk" id="pin-set1-cancel" onclick="pinCancel()"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-set2">
+                    <div class="c-stepper"><span class="c-stepper-dots"><span class="c-stepper-dot on"></span><span class="c-stepper-dot on"></span></span><span id="pin-set2-count"></span></div>
+                    <p class="c-step" id="pin-set2-title"></p>
+                    <div class="c-box"><b class="c-box-title" id="pin-duress-why-title"></b><span id="pin-duress-why"></span></div>
+                    <div class="c-fields">
+                      <div class="c-field"><label id="pin-label-duress" for="pin-duress"></label><input id="pin-duress" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" /></div>
+                      <div class="c-field"><label id="pin-label-duress2" for="pin-duress2"></label><input id="pin-duress2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" onkeydown="if (event.key === 'Enter') submitPinSet();" /></div>
+                    </div>
+                    <p class="c-hint" id="pin-set2-hint"></p>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-set-btn" onclick="submitPinSet()"></button><button type="button" class="c-btn c-sec" id="pin-set2-back" onclick="pinShow('set1')"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-on">
+                    <p class="c-hint" id="pin-on-desc"></p>
+                    <div class="c-btns">
+                      <button type="button" class="c-btn c-sec" id="pin-start-change" onclick="pinShow('ch1')"></button>
+                      <button type="button" class="c-btn c-dng" id="pin-start-remove" onclick="pinShow('remove')"></button>
+                      <button type="button" class="c-lnk" id="pin-forgot" onclick="pinShow('forgot')"></button>
+                    </div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-ch1">
+                    <div class="c-stepper"><span class="c-stepper-dots"><span class="c-stepper-dot on"></span><span class="c-stepper-dot"></span><span class="c-stepper-dot"></span></span><span id="pin-ch1-count"></span></div>
+                    <p class="c-step" id="pin-change-title"></p>
+                    <div class="c-fields">
+                      <div class="c-field"><label id="pin-label-current-change" for="pin-current-change"></label><input id="pin-current-change" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" onkeydown="if (event.key === 'Enter') pinNext();" /></div>
+                    </div>
+                    <p class="c-hint" id="pin-ch1-hint"></p>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-ch1-next" onclick="pinNext()"></button><button type="button" class="c-lnk" id="pin-ch1-cancel" onclick="pinCancel()"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-ch2">
+                    <div class="c-stepper"><span class="c-stepper-dots"><span class="c-stepper-dot on"></span><span class="c-stepper-dot on"></span><span class="c-stepper-dot"></span></span><span id="pin-ch2-count"></span></div>
+                    <p class="c-step" id="pin-ch2-title"></p>
+                    <div class="c-fields">
+                      <div class="c-field"><label id="pin-label-new-c" for="pin-new-c"></label><input id="pin-new-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" /></div>
+                      <div class="c-field"><label id="pin-label-new2-c" for="pin-new2-c"></label><input id="pin-new2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" onkeydown="if (event.key === 'Enter') pinNext();" /></div>
+                    </div>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-ch2-next" onclick="pinNext()"></button><button type="button" class="c-btn c-sec" id="pin-ch2-back" onclick="pinShow('ch1')"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-ch3">
+                    <div class="c-stepper"><span class="c-stepper-dots"><span class="c-stepper-dot on"></span><span class="c-stepper-dot on"></span><span class="c-stepper-dot on"></span></span><span id="pin-ch3-count"></span></div>
+                    <p class="c-step" id="pin-ch3-title"></p>
+                    <p class="c-hint" id="pin-ch3-hint"></p>
+                    <div class="c-fields">
+                      <div class="c-field"><label id="pin-label-duress-c" for="pin-duress-c"></label><input id="pin-duress-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" /></div>
+                      <div class="c-field"><label id="pin-label-duress2-c" for="pin-duress2-c"></label><input id="pin-duress2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" onkeydown="if (event.key === 'Enter') submitPinChange();" /></div>
+                    </div>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-change-btn" onclick="submitPinChange()"></button><button type="button" class="c-btn c-sec" id="pin-ch3-back" onclick="pinShow('ch2')"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-remove">
+                    <p class="c-step" id="pin-remove-title"></p>
+                    <p class="c-hint" id="pin-remove-hint"></p>
+                    <div class="c-fields">
+                      <div class="c-field"><label id="pin-label-current-remove" for="pin-current-remove"></label><input id="pin-current-remove" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-pin" onkeydown="if (event.key === 'Enter') submitPinRemove();" /></div>
+                    </div>
+                    <div class="c-btns"><button type="button" class="c-btn c-dng" id="pin-remove-btn" onclick="submitPinRemove()"></button><button type="button" class="c-lnk" id="pin-remove-cancel" onclick="pinCancel()"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-forgot">
+                    <p class="c-step" id="pin-forgot-title"></p>
+                    <p class="c-hint" id="pin-forgot-desc"></p>
+                    <div class="c-btns"><button type="button" class="c-btn c-pri" id="pin-reset-request" onclick="requestPinReset()"></button><button type="button" class="c-lnk" id="pin-forgot-cancel" onclick="pinCancel()"></button></div>
+                  </div>
+
+                  <div class="c-flow hidden" id="pin-step-pending">
+                    <p class="c-box" id="pin-reset-note"></p>
+                    <div class="c-btns"><button type="button" class="c-btn c-sec" id="pin-reset-cancel" onclick="cancelPinReset()"></button></div>
+                  </div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-devices" aria-expanded="false" aria-controls="srow-devices-body" onclick="toggleSettingsRow('devices')">
+                  <span class="c-row-title" id="devices-title">Devices</span><span class="c-row-value" id="settings-devices-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-devices-body">
+                  <p class="c-hint" id="devices-subtitle">Where you are signed in to the Cabinet.</p>
+                  <div class="c-stack" id="devices-list"></div>
+                  <div class="c-btns">
+                    <button type="button" class="c-btn c-sec" id="devices-logout-others" onclick="logoutOtherDevices()">Log out all other devices</button>
+                    <button type="button" class="c-btn c-dng" id="devices-logout-all" onclick="logoutAllDevices()">Log out all devices</button>
+                  </div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-passkeys" aria-expanded="false" aria-controls="srow-passkeys-body" onclick="toggleSettingsRow('passkeys')">
+                  <span class="c-row-title" id="passkeys-title">Face ID and passkeys</span><span class="c-row-value" id="settings-passkeys-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-passkeys-body">
+                  <p class="c-hint" id="passkeys-subtitle">They sign you in without Google, and confirm a call to Lelik.</p>
+                  <div class="c-stack" id="passkeys-list"></div>
+                  <div class="c-btns"><button type="button" class="c-btn c-sec" id="passkeys-add" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button></div>
+                  <div id="passkeys-google-proof" class="hidden">
+                    <div class="c-box">
+                      <p class="c-hint" id="passkeys-google-proof-text">Your passkey is not on this device. Confirm with Google, then tap again.</p>
+                      <div class="c-btns"><a id="passkeys-google-proof-link" class="c-btn c-blk" href="/auth/login/google">Confirm with Google</a></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-lost" aria-expanded="false" aria-controls="srow-lost-body" onclick="toggleSettingsRow('lost')">
+                  <span class="c-row-title" id="devices-lost-title">If a phone is lost</span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-lost-body">
+                  <p class="c-hint" id="devices-lost-intro"></p>
+                  <ol class="c-ol">
+                    <li id="devices-lost-1"></li>
+                    <li id="devices-lost-2"></li>
+                    <li id="devices-lost-3"></li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+
+            <h2 class="c-glabel" id="settings-voice-label">Voice</h2>
+            <div class="c-group">
+              <a class="c-row" id="settings-modes" href="/cabinet/call/modes">
+                <span class="c-row-title" id="settings-modes-title">Call modes</span><span class="c-row-value" id="settings-modes-value">Separate screen</span>
+                <svg class="c-ext" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg>
+              </a>
+            </div>
+
+            <h2 class="c-glabel" id="settings-more-label">More</h2>
+            <div class="c-group">
+              <div class="c-row">
+                <label class="c-row-title" for="dr-second-pass"><span id="settings-dr-title">Deep research in two passes</span><span class="c-row-sub" id="settings-dr-desc">A critic checks the result and improves it.</span></label>
+                <input type="checkbox" class="c-switch" id="dr-second-pass" onchange="saveDeepResearch()" />
+              </div>
+              <!-- Team: owners only (init shows it) -->
+              <div id="settings-team" class="hidden">
+                <div class="c-item">
+                  <button type="button" class="c-row" id="srow-team" aria-expanded="false" aria-controls="srow-team-body" onclick="toggleSettingsRow('team')">
+                    <span class="c-row-title" id="team-title">Team</span>
+                    <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                  </button>
+                  <div class="c-row-body hidden" id="srow-team-body">
+                    <p class="c-hint" id="team-subtitle">Only the account owner sees this. An invite link works once.</p>
+                    <div class="c-btns"><button type="button" class="c-btn c-sec" id="team-generate-btn" onclick="generateTeamInvite()">Create invite</button></div>
+                    <div id="generated-code-container" class="c-invite hidden"></div>
+                    <div class="c-stack" id="codes-list-container"></div>
                   </div>
                 </div>
               </div>
@@ -660,6 +646,7 @@
     <script src="/cabinet/assets/cabinet-strings.js"></script>
     <script src="/cabinet/assets/cabinet-shell.js"></script>
     <script src="/cabinet/assets/cabinet-sections.js"></script>
+    <script src="/cabinet/assets/cabinet-settings.js"></script>
     <div id="drive-picker-root"></div>
   </body>
 </html>
