@@ -104,7 +104,7 @@ class World:
         app.register_blueprint(create_oauth_blueprint(
             auth_service=self.auth, cabinet_sessions=self.kit.verifier, device_sessions=self.kit.device_sessions,
             auth_registry=registry, auth_config=SimpleNamespace(oauth_redirect_uri=f"{ORIGIN}/auth/callback"),
-            connectors=ConnectorRegistry(), passkey_sign_in=passkeys_wired))
+            connectors=ConnectorRegistry()))
         app.register_blueprint(create_device_auth_blueprint(
             self.kit.verifier, self.kit.device_sessions, passkeys=self.passkeys if passkeys_wired else None,
             auth_service=self.auth if passkeys_wired else None))

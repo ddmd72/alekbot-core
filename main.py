@@ -106,7 +106,6 @@ async def main():
             invite_service=app.invite_service,
             connect_service=app.connect_service,
             connectors=app.container.connectors,
-            passkey_sign_in=True,
         )
 
         cabinet_bp = create_user_cabinet_blueprint(

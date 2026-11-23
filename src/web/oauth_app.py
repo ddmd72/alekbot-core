@@ -7,8 +7,8 @@ Provides web UI authentication via Google OAuth / Firebase.
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 
 Endpoints:
-- GET  /auth/login - The sign-in page: passkey first, Google second (CABINET_DEVICE_SESSIONS_RFC §7.3); without passkey
-  sign-in configured, or with `?provider=`, the Google redirect itself
+- GET  /auth/login - The sign-in page: passkey first, Google second (CABINET_DEVICE_SESSIONS_RFC §7.3); with `?provider=`,
+  the Google redirect itself
 - GET  /auth/login/google - Redirect to the OAuth provider (the page's "Sign in with Google" and its fallback)
 - GET  /auth/callback - OAuth callback handler
 - POST /auth/refresh - Refresh the device session (CABINET_DEVICE_SESSIONS_RFC §7.1)
@@ -71,7 +71,6 @@ def create_oauth_blueprint(
     invite_service: Optional['InviteCodeService'] = None,
     connect_service: Optional['OAuthConnectService'] = None,
     connectors: Optional['ConnectorRegistry'] = None,
-    passkey_sign_in: bool = False,
 ) -> Blueprint:
     """
     Create Quart Blueprint with OAuth endpoints.
@@ -86,8 +85,6 @@ def create_oauth_blueprint(
         connect_service: the integration connect flow (`/auth/connect/<kind>`, `/auth/connect/callback`); without it
             both answer 501 (the start also without `connectors`)
         connectors: the connector registry: which kinds exist and which realms have an edge
-        passkey_sign_in: whether the passkey sign-in routes are served (`device_auth_app.py`); then `/auth/login` is
-            the sign-in page with the passkey path first, otherwise it is the Google redirect, as before passkeys
 
     Returns:
         Configured Blueprint
@@ -116,10 +113,9 @@ def create_oauth_blueprint(
         The sign-in page: "Sign in with Face ID / passkey" first, "Sign in with Google" second. The page is static; it
         reads `next` (and an invite `code`) from its own URL and hands them to `/auth/passkey/verify` or
         `/auth/login/google`, which check them. A browser without WebAuthn, a cancelled sheet, no passkey or a refused
-        one fall through to Google. Without passkey sign-in configured, or with `?provider=` (a provider chosen
-        explicitly), this is the Google redirect itself.
+        one fall through to Google. With `?provider=` (a provider chosen explicitly) this is the Google redirect itself.
         """
-        if not passkey_sign_in or request.args.get("provider"):
+        if request.args.get("provider"):
             return await _google_login()
         response = await send_file(os.path.join(static_dir, "sign_in.html"), mimetype="text/html")
         response.headers["Cache-Control"] = "no-cache"
