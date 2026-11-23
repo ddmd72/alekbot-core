@@ -18,6 +18,7 @@ from src.domain.revocation_scope import RevocationScope
 from src.ports.oauth_provider_port import OAuthProviderPort
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import creds
@@ -62,11 +63,11 @@ class World:
         self.revocation = CredentialRevocationService(self.store, {"google": self.google})
 
     def app(self) -> Quart:
-        sessions = MagicMock()
-        sessions.verify_access_token = MagicMock(return_value={"sub": ALEX, "account_id": "acct-1", "role": "owner"})
+        cabinet_sessions, _bearer = cabinet_session_for(ALEX, "acct-1")
+        AUTH.update(_bearer)
         app = Quart("test_cabinet_google_disconnect_by_credential")
         app.register_blueprint(create_user_cabinet_blueprint(
-            invite_service=MagicMock(), session_service=sessions, user_repo=Users(), fact_repo=MagicMock(),
+            invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.store, credential_revocation=self.revocation,
             connectors=ConnectorRegistry()))
         return app
@@ -124,11 +125,11 @@ async def test_a_disconnect_of_a_kind_not_connected_is_404_and_deletes_nothing(w
 
 async def test_without_the_registry_the_cards_read_not_connected(world):
     await world.seed()
-    sessions = MagicMock()
-    sessions.verify_access_token = MagicMock(return_value={"sub": ALEX, "account_id": "acct-1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(ALEX, "acct-1")
+    AUTH.update(_bearer)
     app = Quart("test_cabinet_no_registry")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=sessions, user_repo=Users(), fact_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=Users(), fact_repo=MagicMock(),
         embedding_service=MagicMock(), oauth_credentials_port=world.store, credential_revocation=world.revocation))
     async with app.test_client() as client:
         assert await (await client.get("/api/gmail/status", headers=AUTH)).get_json() == {"connected": False}

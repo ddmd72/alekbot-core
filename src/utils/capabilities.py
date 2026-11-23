@@ -220,6 +220,7 @@ Commands (type these to me directly):
 - `$skill save <code>` — confirm a skill I just drafted (the code comes with the draft)
 - `$skill delete <name>` — remove one of your skills
 - `$drive-notes erase-all` — erase all your drive notes and their history for good (I send a code to confirm)
+- `$devices` — list the devices signed in to your Cabinet; `$devices off` signs all of them out (the lost-phone switch)
 
 Built-in skills everyone has: one that walks you through creating your own skill, and one that
 maps the competencies of a profession into a Domain Manifest (e.g. to design an agent or a

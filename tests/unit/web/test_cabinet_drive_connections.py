@@ -25,6 +25,7 @@ from src.services.credential_revocation_service import CredentialRevocationServi
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.oauth_credentials_store import CredentialsStore, creds
 from tests.support.recording_task_queue import make_task_queue
@@ -95,10 +96,9 @@ class World:
         return await self.connections.activate(saved, identity)
 
     def app(self, **over) -> Quart:
-        session_service = MagicMock()
-        session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": "acc-1",
-                                                                      "role": "owner"})
-        kwargs = dict(invite_service=MagicMock(), session_service=session_service, user_repo=self.users,
+        cabinet_sessions, _bearer = cabinet_session_for(USER, "acc-1")
+        AUTH.update(_bearer)
+        kwargs = dict(invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=self.users,
                       fact_repo=MagicMock(), embedding_service=MagicMock(), oauth_credentials_port=self.store.repo,
                       credential_revocation=self.revocation, user_drive_service=self.router, drive_search_service=Search(),
                       drive_task_queue=self.queue, drive_transcribe_switch_on=self.switch_on, reconnect=self.reconnect,

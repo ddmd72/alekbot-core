@@ -18,6 +18,7 @@ from src.domain.voice_ticket_keys import button_end_key
 from src.services.voice_call_setup_service import VoiceCallSetupService
 from src.services.voice_resume_service import VoiceResumeService
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from tests.unit.web.test_voice_web_call_app import signed_in_verifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.voice_tickets import DIGEST_KEY, open_ticket, ticket_key
@@ -78,13 +79,12 @@ class FakeMediaRoom:
 
 
 def _app(store, room, *, user="usr-1", replace_wait_s=5.0):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": user, "account_id": "acc-1"})
+    cabinet_sessions = signed_in_verifier(user, "acc-1")
     agent = MagicMock()
     agent.session_config = AsyncMock(return_value=dict(SESSION))
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=session_service,
+        cabinet_sessions=cabinet_sessions,
         call_setup=VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=DIGEST_KEY),
         media_room=room, ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=CIPHER,
         digest_key=DIGEST_KEY, replace_wait_s=replace_wait_s, replace_poll_s=0.01))

@@ -10,6 +10,7 @@ from quart import Quart
 from src.composition.connector_registry import ConnectorRegistry
 from src.domain.integration import Integration
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
 
 _HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html").read_text(encoding="utf-8")
 
@@ -17,7 +18,7 @@ _HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabin
 def _routes() -> list:
     app = Quart("static_2b")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=MagicMock(), user_repo=MagicMock(), fact_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=CabinetSessionKit().verifier, user_repo=MagicMock(), fact_repo=MagicMock(),
         embedding_service=MagicMock(), connectors=ConnectorRegistry()))
     return [(rule.rule, rule.methods) for rule in app.url_map.iter_rules()]
 

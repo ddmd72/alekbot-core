@@ -281,4 +281,12 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_PAGE_RETRY.value: "Try again",
     UIMessage.GEO_PAGE_GONE.value: "This link is no longer valid. Send $geo again.",
     UIMessage.GEO_PAGE_NOT_SAVED.value: "The position was not saved. Send $geo again.",
+    UIMessage.DEVICE_SIGN_IN_NOTICE.value: "New sign-in: {platform_hint}, {time}, via Google. Not you? Send `$devices off`.",
+    UIMessage.DEVICES_UNAVAILABLE.value: "The device list is not available right now.",
+    UIMessage.DEVICES_USAGE.value: "`$devices` lists the devices signed in to your Cabinet; `$devices off` signs all of them out.",
+    UIMessage.DEVICES_LIST_HEADER.value: "Devices signed in to your Cabinet ({count}):",
+    UIMessage.DEVICES_LIST_EMPTY.value: "No device is signed in to your Cabinet.",
+    UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — signed in {created}, last used {last_used}",
+    UIMessage.DEVICES_OFF_DONE.value: "Signed out of {count} device(s). The next Cabinet access needs a new Google sign-in.",
+    UIMessage.DEVICES_CHECKLIST.value: "If a phone is lost:\n1. Send `$devices off` (done).\n2. Remove the phone from your Apple or Google account.\n3. End the phone's Telegram and Slack sessions in those apps.",
 }

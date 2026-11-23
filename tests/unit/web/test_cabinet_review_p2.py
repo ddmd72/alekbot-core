@@ -17,6 +17,7 @@ from src.domain.fact_review_options import OPTIONS
 from src.domain.fact_review_overview import QueueEntry
 from src.domain.fact_review_question import TEXT_KEYS, FactReviewQuestion
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 
 TOKEN = {"Authorization": "Bearer t"}
@@ -63,11 +64,11 @@ class StubStore:
 
 
 def _app(service: StubService, store: StubStore) -> Quart:
-    sessions = MagicMock()
-    sessions.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(USER, ACC)
+    TOKEN.update(_bearer)
     app = Quart("test_cabinet_review_p2")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=sessions, user_repo=MagicMock(), fact_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(), fact_repo=MagicMock(),
         embedding_service=MagicMock(), fact_review_store=store, fact_answer_service=service, connectors=ConnectorRegistry(),
     ))
     return app

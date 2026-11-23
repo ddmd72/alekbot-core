@@ -17,6 +17,7 @@ from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.firestore_eval import EvalDb, eval_transactions
 from tests.support.voice_callback import ticket_of
 
@@ -38,8 +39,8 @@ class World:
         provider = AsyncMock(return_value=agent)
         users = AsyncMock()
         users.get_user_by_platform_id.return_value = MagicMock(user_id="u1", account_id="a1")
-        sessions = MagicMock()
-        sessions.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1"})
+        cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+        AUTH.update(_bearer)
         self.media = AsyncMock()
         self.media.open_caller.return_value = MagicMock(session_id="S1", answer_sdp="ANSWER")
         self.media.attach_agent.return_value = MagicMock(adapter_ids=["A"], offer_sdp="OFFER2")
@@ -58,7 +59,7 @@ class World:
             summary_consumer=AsyncMock(), oidc_verifier=oidc, alert_sink=self.alerts, digest_key=DIGEST_KEY))
         setup = VoiceCallSetupService(self.store, self.alerts, provider, digest_key=DIGEST_KEY)
         app.register_blueprint(create_voice_web_call_blueprint(
-            session_service=sessions, call_setup=setup, media_room=self.media, ephemeral_store=self.store,
+            cabinet_sessions=cabinet_sessions, call_setup=setup, media_room=self.media, ephemeral_store=self.store,
             relay_base_url="wss://relay.example.test", cipher=self.cipher, digest_key=DIGEST_KEY))
         self.client = app.test_client()
 

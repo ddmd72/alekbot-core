@@ -7,8 +7,8 @@ reach a private storage object:
 
     GET /f/<token>
       1. Verify the capability token (signature + expiry + type).
-      2. If the token is `gated` (daily email review — PII): require a valid
-         Cabinet JWT cookie whose user matches the token's user_id; otherwise
+      2. If the token is `gated` (daily email review — PII): require a live
+         Cabinet session whose user matches the token's user_id; otherwise
          redirect to /auth/login. Non-gated tokens are openable from any client.
       3. video_generation/ keys: render a landing page (Download + Share
          buttons) instead of redirecting — see _VIDEO_KEY_PREFIX below.
@@ -40,8 +40,8 @@ from ..services.file_access_token_service import (
     FileAccessTokenExpired,
     FileAccessTokenInvalid,
 )
-from ..services.session_service import SessionService
 from ..utils.logger import logger
+from .cabinet_auth import CabinetSessionVerifier
 
 # Lifetime of the minted GCS signed URL (one click). Short — only needs to
 # survive the redirect + the browser/provider fetch.
@@ -55,7 +55,7 @@ _VIDEO_KEY_PREFIX = "video_generation/"
 def create_file_access_blueprint(
     token_service: FileAccessTokenService,
     media_storage: MediaStoragePort,
-    session_service: SessionService,
+    cabinet_sessions: CabinetSessionVerifier,
 ) -> Blueprint:
     bp = Blueprint("file_access", __name__)
 
@@ -76,17 +76,12 @@ def create_file_access_blueprint(
             return None, Response("Invalid or malformed link.", status=401)
 
         if access.gated:
-            cabinet_token = request.cookies.get("access_token")
-            if not cabinet_token:
+            identity = await cabinet_sessions.identify()
+            if identity is None:
+                # No live Cabinet session (none, expired, forged, revoked: the verifier logs why).
                 next_url = quote(request.full_path.rstrip("?"), safe="")
                 return None, redirect(f"/auth/login?next={next_url}")
-            try:
-                payload = session_service.verify_access_token(cabinet_token)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[FileAccess] gated: invalid Cabinet token — %s", e)
-                next_url = quote(request.full_path.rstrip("?"), safe="")
-                return None, redirect(f"/auth/login?next={next_url}")
-            if payload.get("sub") != access.user_id:
+            if identity.user_id != access.user_id:
                 # Logged in, but as a different user than the file's owner.
                 logger.warning("[FileAccess] gated: user mismatch")
                 return None, Response("You do not have access to this file.", status=403)

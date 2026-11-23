@@ -6,6 +6,14 @@ from quart import Quart
 
 from src.services.mcp_authorization_service import ConsentRequest
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
+_KIT = CabinetSessionKit()
+
+
+def _sign_in(client) -> None:
+    """The consenting user's Cabinet session: a live device session's access cookie."""
+    _KIT.set_cookies(client, _KIT.sign_in_now("user-1", "acc-1"), refresh=False)
+
 
 _MARKUP = '<script>alert(1)</script>'
 DRIVE = "https://mcp.example.test/drive-mcp"
@@ -17,12 +25,10 @@ async def _page(scopes, client_name="Example Client", resource="https://mcp.exam
         client_id="mcp-x", redirect_uri="https://claude.ai/api/mcp/auth_callback", code_challenge="c" * 43,
         code_challenge_method="S256", resource=resource, scopes=scopes, state="s"))
     svc.get_client = AsyncMock(return_value=Mock(client_name=client_name))
-    sessions = Mock()
-    sessions.verify_access_token = Mock(return_value={"sub": "user-1", "account_id": "acc-1"})
     app = Quart("test_consent_drive_text")
-    app.register_blueprint(build_mcp_consent_blueprint(svc, sessions))
+    app.register_blueprint(build_mcp_consent_blueprint(svc, _KIT.verifier))
     async with app.test_client() as client:
-        client.set_cookie("localhost", "access_token", "valid")
+        _sign_in(client)
         resp = await client.get("/mcp/consent", query_string={"req": "JWT"})
         assert resp.status_code == 200
         return (await resp.get_data()).decode()

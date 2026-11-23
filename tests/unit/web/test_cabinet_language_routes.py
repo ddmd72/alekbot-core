@@ -15,6 +15,7 @@ from src.domain.user import UserProfile
 from src.services.language_preference_service import LanguagePreferenceService
 from src.services.language_resolver import LanguageResolver
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.firestore_eval import EvalDb
 
 TOKEN = {"Authorization": "Bearer t"}
@@ -53,11 +54,11 @@ class World:
         return self.db.collection("users").docs["user-1"]["config"]
 
     def app(self, *, reader: Optional[LanguageResolver], writer: Optional[LanguagePreferenceService]) -> Quart:
-        sessions = MagicMock()
-        sessions.verify_access_token = MagicMock(return_value={"sub": "user-1", "account_id": "acct-1", "role": "owner"})
+        cabinet_sessions, _bearer = cabinet_session_for("user-1", "acct-1")
+        TOKEN.update(_bearer)
         app = Quart("test_cabinet_language_routes")
         app.register_blueprint(create_user_cabinet_blueprint(
-            invite_service=MagicMock(), session_service=sessions, user_repo=self.users, fact_repo=MagicMock(),
+            invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=self.users, fact_repo=MagicMock(),
             embedding_service=MagicMock(), language_service=reader, language_preferences=writer,
         ))
         return app

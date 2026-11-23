@@ -66,7 +66,8 @@ from src.services.credential_revocation_service import CredentialRevocationServi
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.integration_reconnect_service import IntegrationReconnectService
-from src.services.session_service import SessionService
+from src.web.cabinet_auth import ACCESS_COOKIE
+from tests.support.cabinet_session_kit import CabinetSessionKit
 from src.services.task_setup_service import TaskSetupService
 from src.web.oauth_app import create_oauth_blueprint
 from tests.support import http_boundary_fake
@@ -155,7 +156,7 @@ class World:
             lifecycle=self.graph, task_config=self.task_config, tasks_provider=None, oauth_credentials=self.store,
             task_search_index=self.search_index, task_queue=self.queue,
             notification_url_base="https://svc.example.test", connector=ConnectorRegistry().get("microsoft_todo"))
-        self.sessions = SessionService(secret_key=SECRET, access_token_ttl=3600, refresh_token_ttl=3600)
+        self.kit = CabinetSessionKit()
         registry = ConnectorRegistry(edges={"google": GoogleOAuthProvider("cid", "csecret"),
                                             "microsoft": MicrosoftOAuthProvider("ms-cid", "ms-csecret")})
         self.reconnect = create_autospec(IntegrationReconnectService, instance=True)
@@ -177,7 +178,8 @@ class World:
             redirect_uri=REDIRECT)
         self.app = Quart("test_reconnect_does_not_reindex")
         self.app.register_blueprint(create_oauth_blueprint(
-            auth_service=Mock(), session_service=self.sessions, auth_registry=Mock(),
+            auth_service=Mock(), cabinet_sessions=self.kit.verifier, device_sessions=self.kit.device_sessions,
+            auth_registry=Mock(),
             auth_config=SimpleNamespace(oauth_redirect_uri="https://service.example/auth/callback"),
             connect_service=connect_service, connectors=registry))
         self._kind = "gmail"
@@ -203,10 +205,9 @@ class World:
     async def consent(self, kind: str):
         """The user's connect of `kind` through the generic routes: the start, then the provider's callback."""
         self._kind = kind
-        session = self.sessions.create_access_token(UserProfile(user_id=USER, account_id="acct-1"),
-                                                    BillingAccount(account_id="acct-1"))
+        session = self.kit.sign_in_now(USER, "acct-1").access_token
         async with self.app.test_client() as client:
-            client.set_cookie("localhost", "access_token", session)
+            client.set_cookie("localhost", ACCESS_COOKIE, session)
             start = await client.get(f"/auth/connect/{kind}")
             state = parse_qs(urlparse(start.headers["Location"]).query)["state"][0]
             return await client.get(f"/auth/connect/callback?state={state}&code=c-1")

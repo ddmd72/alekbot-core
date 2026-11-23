@@ -15,8 +15,11 @@ from quart import Quart
 
 from src.domain.email import IndexingJob
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -37,13 +40,11 @@ def _job(job_id="job-1"):
 
 
 def _app(*, email_indexing_service, email_job_repo, task_queue, oauth_credentials_port):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(
-        return_value={"sub": _USER_ID, "account_id": _ACCOUNT_ID, "role": "owner"}
-    )
+    cabinet_sessions, _bearer = cabinet_session_for(_USER_ID, _ACCOUNT_ID)
+    _AUTH.update(_bearer)
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(),
-        session_service=session_service,
+        cabinet_sessions=cabinet_sessions,
         user_repo=MagicMock(),
         fact_repo=MagicMock(),
         embedding_service=MagicMock(),
@@ -88,7 +89,7 @@ class TestGmailIndexAsyncPath:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/gmail/index",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"mode": "incremental"},
             )
 

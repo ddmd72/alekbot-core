@@ -8,17 +8,18 @@ from quart import Quart
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_overview import SET_ASIDE_WINDOW, QueueEntry
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 
 TOKEN = {"Authorization": "Bearer t"}
 ASKED = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
 
 
 def _app(**kwargs) -> Quart:
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "acc", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "acc")
+    TOKEN.update(_bearer)
     app = Quart("test_cabinet_review_window_and_queue_service")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(),
         embedding_service=MagicMock(), **{"fact_repo": MagicMock(), **kwargs},
     ))
     return app

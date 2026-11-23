@@ -12,7 +12,7 @@ async def _sign_in(w: World, next_value: str | None = None, *, planted_cookie: s
     if planted_cookie is not None:  # a cookie set by a pre-fix login, replayed by the browser
         w.client.set_cookie("localhost", "auth_next", planted_cookie)
     resp = await w.client.get(f"/auth/callback?code=c&state={stored['oauth_state']}")
-    assert resp.status_code == 302 and "access_token=" in _set_cookies(resp)  # the sign-in itself succeeded
+    assert resp.status_code == 302 and "__Host-access=" in _set_cookies(resp)  # the sign-in itself succeeded
     return resp.headers["Location"]
 
 

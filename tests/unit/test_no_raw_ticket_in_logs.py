@@ -12,7 +12,7 @@ from tests.support.firestore_eval import eval_transactions
 from tests.support.voice_callback import ticket_of
 from tests.unit.handlers.test_relay_refuses_unredeemable_ticket import World as RelayWorld
 from tests.unit.handlers.test_sfu_stream_handler import FakeSessionService, FakeSfuWs
-from tests.unit.web.test_voice_ticket_digest import World as MainWorld
+from tests.unit.web.test_voice_ticket_digest import AUTH as MAIN_AUTH, World as MainWorld
 
 ROOT = Path(__file__).resolve().parents[2]
 FILES = (
@@ -106,7 +106,7 @@ async def test_web_call_setup_failure_logs_no_ticket(caplog):
         w = MainWorld()
         w.media.open_caller.side_effect = RuntimeError("sfu down")
         resp = await w.client.post("/api/voice/web-call", json={"sdp": "OFFER", "mid": "0"},
-                                   headers={"Authorization": "Bearer tok"})
+                                   headers=MAIN_AUTH)
     assert resp.status_code == 502
     _no_ticket_in(caplog)
     text = "\n".join(r.getMessage() for r in caplog.records)

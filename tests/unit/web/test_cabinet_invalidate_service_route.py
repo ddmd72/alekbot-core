@@ -9,17 +9,20 @@ from quart import Quart
 from src.domain.entities import FactState
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from src.composition.connector_registry import ConnectorRegistry
 
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
+
 
 def _app(store, cabinet_facts):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(USER, ACC)
+    _AUTH.update(_bearer)
     app = Quart("test_cabinet_invalidate_service_route")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(),
         fact_repo=store.repo, embedding_service=MagicMock(), cabinet_facts=cabinet_facts, connectors=ConnectorRegistry(),
     ))
     return app
@@ -27,7 +30,7 @@ def _app(store, cabinet_facts):
 
 async def _post(store, fact_id, cabinet_facts):
     async with _app(store, cabinet_facts).test_client() as client:
-        resp = await client.post(f"/api/user/facts/{fact_id}/invalidate", headers={"Authorization": "Bearer t"})
+        resp = await client.post(f"/api/user/facts/{fact_id}/invalidate", headers=_AUTH)
         return resp.status_code, await resp.get_json()
 
 

@@ -6,6 +6,7 @@ the stored documents unchanged, and a positive control keeps a route that refuse
 """
 import pytest
 
+from src.web.cabinet_auth import ACCESS_COOKIE
 from tests.support.firestore_eval import eval_transactions
 from tests.support.redelivery_world import Rendezvous, require
 from tests.unit.web.cabinet_routes_world import ALEX, CLARA, CabinetWorld, race
@@ -258,7 +259,7 @@ class TestJoinLink:
     async def test_a_signed_in_whitelisted_user_joins_and_lands_in_the_cabinet(self, world):
         await world.allow("clara@example.com")
         code = await _invite(world)
-        world.client.set_cookie("localhost", "access_token", world.token(CLARA)["Authorization"][7:])
+        world.client.set_cookie("localhost", ACCESS_COOKIE, world.token(CLARA)["Authorization"][7:])
         resp = await world.client.get(f"/join?code={code}")
         assert (resp.status_code, resp.headers["Location"]) == (302, "/cabinet?joined=true")
         assert world.user_doc("usr-2")["account_id"] == "acc-1"
@@ -273,7 +274,7 @@ class TestJoinLink:
     async def test_a_signed_in_user_outside_the_whitelist_is_sent_to_the_sign_in_and_stays_put(self, world):
         await world.allow("alex@example.com")
         code = await _invite(world)
-        world.client.set_cookie("localhost", "access_token", world.token(CLARA)["Authorization"][7:])
+        world.client.set_cookie("localhost", ACCESS_COOKIE, world.token(CLARA)["Authorization"][7:])
         resp = await world.client.get(f"/join?code={code}")
         assert resp.headers["Location"].startswith("/auth/login")
         assert world.user_doc("usr-2")["account_id"] == "acc-2"

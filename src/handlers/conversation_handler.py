@@ -41,6 +41,7 @@ from ..domain.drive_note import (
 from ..domain.chat_text import unwrapped
 from ..domain.geo_mark import LINK_TTL_S, GeoFix, GeoLinkBinding
 from ..domain.history_context_block import history_context_block
+from ..domain.device_session import SessionRevokeReason
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
@@ -84,6 +85,19 @@ from ..services.document_delivery_service import DocumentDeliveryService
 from ..services.channel_binding_service import ChannelBindingService
 from ..domain.channel_binding import ChannelBinding
 from ..domain.session_mode import SessionMode
+
+_LABEL_MAX = 80
+
+
+def _plain_label(label: str) -> str:
+    """A session label (the browser's User-Agent text, untrusted) for a chat line: one line, no markup characters, capped."""
+    cleaned = re.sub(r"[\x00-\x1f\x7f`<>]+", " ", label).strip()
+    return cleaned[:_LABEL_MAX]
+
+
+def _utc_minute(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
 
 _MEMORY_CODE = re.compile(r"[0-9a-f]{4}")   # secrets.token_hex(2): the only shape a memory draft code has
 
@@ -187,6 +201,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._drive_notes = commands.drive_notes
         # geo marks (GEO_MARKS_RFC §4.5, §4.6): `$geo` and the platform-native share; None answers "unavailable"
         self._geo_marks = commands.geo_marks
+        self._device_sessions = commands.device_sessions   # `$devices` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
         # turn_ids whose long-turn flow runs in this process (final review C1). With one
         # instance, a RUNNING record not in here belongs to an attempt that died. Plain
         # set ops with no await between test and change, so no lock is needed.
@@ -1616,6 +1631,9 @@ class ConversationHandler(ConversationHandlerPort):
             elif command.split()[:1] == ["geo"]:
                 await self._handle_geo_command(context, response_channel)
 
+            elif command.split()[:1] == ["devices"]:
+                await self._handle_devices_command(command, context, response_channel)
+
             elif command in ("new", "reset"):
                 # Topic marker — acknowledged by bot. SlackChannelHistorySource
                 # uses these as history boundaries (fetch stops at marker).
@@ -1706,6 +1724,47 @@ class ConversationHandler(ConversationHandlerPort):
             self._ui_string(context, UIMessage.GEO_LINK_LINE, minutes=LINK_TTL_S // 60), thread_id=context.thread_id)
         await response_channel.send_document_link(
             url, self._ui_string(context, UIMessage.GEO_LINK_LABEL), thread_id=context.thread_id)
+
+    # ------------------------------------------------------------------
+    # Device sessions (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
+    # ------------------------------------------------------------------
+
+    async def _handle_devices_command(
+        self, command: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """`$devices` lists the Cabinet sessions of the owner; `$devices off` is the kill switch (`revoke_all`) and its
+        reply carries the count and the lost-phone checklist. Handled before any LLM call. The label is the browser's
+        User-Agent text: untrusted, shown literally after `_plain_label`."""
+        send = response_channel.send_message
+        if self._device_sessions is None:
+            await send(self._ui_string(context, UIMessage.DEVICES_UNAVAILABLE), thread_id=context.thread_id)
+            return
+        sub = command.split()[1:]
+        try:
+            if sub == []:
+                sessions = await self._device_sessions.list_for_user(context.user_id)
+                if not sessions:
+                    text = self._ui_string(context, UIMessage.DEVICES_LIST_EMPTY)
+                else:
+                    lines = [self._ui_string(
+                        context, UIMessage.DEVICES_LIST_LINE, label=_plain_label(s.label),
+                        auth_kind=s.auth_kind.value, created=_utc_minute(s.created_at),
+                        last_used=_utc_minute(s.last_seen_at)) for s in sessions]
+                    header = self._ui_string(context, UIMessage.DEVICES_LIST_HEADER, count=len(sessions))
+                    text = "\n".join([header, *lines])
+            elif sub == ["off"]:
+                count = await self._device_sessions.revoke_all(context.user_id, SessionRevokeReason.KILL_SWITCH)
+                logger.warning("⛔ [ConversationHandler] $devices off for user %s: %d session(s) revoked",
+                               context.user_id[:8], count)
+                text = "\n\n".join([self._ui_string(context, UIMessage.DEVICES_OFF_DONE, count=count),
+                                     self._ui_string(context, UIMessage.DEVICES_CHECKLIST)])
+            else:
+                text = self._ui_string(context, UIMessage.DEVICES_USAGE)
+        except Exception as e:
+            logger.error("❌ [ConversationHandler] devices command %r failed for user %s: %s",
+                         command, context.user_id[:8], e, exc_info=True)
+            text = self._ui_string(context, UIMessage.DEVICES_UNAVAILABLE)
+        await send(text, thread_id=context.thread_id)
 
     # ------------------------------------------------------------------
     # Channel Binding commands

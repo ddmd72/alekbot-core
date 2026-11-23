@@ -12,6 +12,7 @@ from src.domain.drive_indexing_status import DriveIndexingStatus
 from src.ports.task_queue import TaskQueue
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import cabinet_drive
 
@@ -22,11 +23,11 @@ async def _app(status, queue):
     drive = await cabinet_drive()      # one connected drive: the card reads connections (MULTI_DRIVE_RFC §4.4)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = status
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     app = Quart("test_drive_index_card")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(),
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials,

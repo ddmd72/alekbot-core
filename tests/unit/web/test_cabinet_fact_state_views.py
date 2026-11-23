@@ -12,6 +12,7 @@ from quart import Quart
 
 from src.domain.entities import FactState
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
 from tests.support.fact_lifecycle_world import make_fact_world
 from src.composition.connector_registry import ConnectorRegistry
@@ -20,11 +21,11 @@ TOKEN = {"Authorization": "Bearer t"}
 
 
 def _app(repo: Any, account: str = ACC) -> Quart:
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": account, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(USER, account)
+    TOKEN.update(_bearer)
     app = Quart("test_cabinet_fact_state_views")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(), fact_repo=repo,
         embedding_service=MagicMock(), connectors=ConnectorRegistry(),
     ))
     return app

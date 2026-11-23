@@ -76,6 +76,7 @@ and most adapters state the document layout in their module docstring.
 | `{p}invite_codes_v2` | keyed digest of the normalised code | `InviteCode`, `src/domain/invite_code.py`; `src/adapters/firestore_invite_code_repo.py` |
 | `{p}credentials` | `{user_id}:{credential_id}` | `OAuthCredential`, `src/domain/oauth_credential.py`; `FirestoreCredentialStore` |
 | `{p}oauth_flows` | `oauth_flow:<keyed digest of the state>`; single use | `src/services/oauth_connect_service.py` |
+| `{p}auth_device_sessions_v1` (a Cabinet device session; expires on `purge_after`; stores the SHA-256 of the refresh secret, never the secret) | the random `sid` | `DeviceSession`, `src/domain/device_session.py`; `src/adapters/firestore_device_session_repo.py` |
 | `{p}channel_bindings` | `channel_id` | `ChannelBinding`, `src/domain/channel_binding.py` |
 
 Old account usage counters are unreliable; for historical cost use BigQuery `prompt_content`, not `usage.*` (`../04_solution_strategy/decisions/billing_execution_scoped_ledger.md`).

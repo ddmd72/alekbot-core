@@ -1,7 +1,8 @@
 # Cabinet session: 24h tokens, a refresh slides the session
 
 **Date:** 2026-09-28, amended 2026-11-18 (sliding session, owner decision)
-**Status:** Live on `feat/mobile-web-call`; the amendment on `qp/d26-cabinet-tokens`
+**Status:** Superseded by `cabinet_device_session_lifetimes.md` (device sessions, CABINET_DEVICE_SESSIONS_RFC).
+Was live on `feat/mobile-web-call`; the amendment on `qp/d26-cabinet-tokens`
 
 ## Decision
 

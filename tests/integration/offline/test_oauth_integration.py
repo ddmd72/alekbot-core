@@ -9,6 +9,7 @@ Tests complete flows with multiple services working together:
 
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 """
+import jwt
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +18,8 @@ from uuid import uuid4
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.session_service import SessionService
+from src.domain.device_session import SessionAuthKind
+from tests.support.cabinet_session_kit import CabinetSessionKit
 from src.services.configuration_service import ConfigurationService
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
@@ -83,11 +86,7 @@ def auth_service(mock_user_repo, mock_account_repo, mock_auth_provider):
 @pytest.fixture
 def session_service():
     """Create SessionService."""
-    return SessionService(
-        secret_key="test-secret-key-must-be-32-characters-minimum",
-        access_token_ttl=3600,
-        refresh_token_ttl=86400,
-    )
+    return SessionService(secret_key="test-secret-key-must-be-32-characters-minimum")
 
 
 @pytest.fixture
@@ -247,13 +246,12 @@ async def test_jwt_session_flow(session_service):
         iam_policy={"user-123": "owner"},
     )
 
-    # Create tokens
-    access_token = session_service.create_access_token(user, account)
-    refresh_token = session_service.create_refresh_token(user, account)
-
-    # Verify tokens
-    access_payload = session_service.verify_access_token(access_token)
-    refresh_payload = session_service.verify_refresh_token(refresh_token)
+    # Sign in: a device session starts, its access JWT carries the session id, its refresh credential is an
+    # opaque secret kept by the record (CABINET_DEVICE_SESSIONS_RFC §7.1)
+    kit = CabinetSessionKit()
+    session, access_token, refresh_secret = await kit.device_sessions.start(
+        user, account, label="Mac", platform_hint="Mac", auth_kind=SessionAuthKind.GOOGLE)
+    access_payload = kit.tokens.verify_device_access_token(access_token)
 
     # Verify access token payload
     assert access_payload["sub"] == "user-123"
@@ -263,11 +261,13 @@ async def test_jwt_session_flow(session_service):
     assert access_payload["role"] == "owner"
     assert access_payload["tier"] == "free"
     assert access_payload["type"] == "access"
+    assert access_payload["sid"] == session.sid
 
-    # Verify refresh token payload
-    assert refresh_payload["sub"] == "user-123"
-    assert refresh_payload["account_id"] == "account-456"
-    assert refresh_payload["type"] == "refresh"
+    # The refresh credential: the session record names the same user and account, and the secret is not a JWT
+    assert session.user_id == "user-123"
+    assert session.account_id == "account-456"
+    with pytest.raises(jwt.InvalidTokenError):
+        kit.tokens.verify_device_access_token(refresh_secret)
 
 
 # ============================================================================

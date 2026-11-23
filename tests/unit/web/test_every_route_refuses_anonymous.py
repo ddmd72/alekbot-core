@@ -1,7 +1,7 @@
 """Every route of every deployed web app refuses an anonymous request (P7, B1: the runtime probe).
 
 Each blueprint factory main.py, indexer_main.py and sandbox_main.py register is built on a fresh Quart app with its
-real gate (the session service, the OIDC gate over a non-empty identity set, the Twilio verifier, the Slack and
+real gate (the device-session verifier, the OIDC gate over a non-empty identity set, the Twilio verifier, the Slack and
 Telegram secrets, the sandbox caller gate), and everything behind the gate is a `Tripwire` or a real repository on
 the evaluating Firestore fake. The probe walks `url_map.iter_rules()` and sends every (rule, method) outside `PUBLIC`
 with no credentials, then asserts the app's refusal AND that nothing behind the gate was touched or written. A new
@@ -38,6 +38,7 @@ from src.services.file_access_token_service import FileAccessTokenService
 from src.services.geo_mark_service import GeoMarkService
 from src.services.short_link_service import ShortLinkService
 from src.web import user_cabinet_app
+from src.web.device_auth_app import create_device_auth_blueprint
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
 from src.web.geo_mark_app import create_geo_mark_blueprint
@@ -59,7 +60,7 @@ from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.worker_oidc_verifier import build_oidc_gate
 from tests.support.firestore_eval import EvalDb
 from tests.support.mcp_gate_fakes import allowing_repos
-from tests.unit.web.gate_fakes import SESSION_SECRET, Tripwire, session_service
+from tests.unit.web.gate_fakes import SESSION_SECRET, Tripwire, cabinet_sessions
 from src.composition.connector_registry import ConnectorRegistry
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -91,7 +92,7 @@ class Probe:
 def _cabinet(p: Probe):
     w = p.wire
     return create_user_cabinet_blueprint(
-        invite_service=w("invite_service"), session_service=session_service(), user_repo=w("user_repo"),
+        invite_service=w("invite_service"), cabinet_sessions=cabinet_sessions(), user_repo=w("user_repo"),
         fact_repo=w("fact_repo"), embedding_service=w("embedding_service"),
         oauth_credentials_port=w("oauth_credentials_port"), credential_revocation=w("credential_revocation"),
         indexed_email_repo=w("indexed_email_repo"),
@@ -108,12 +109,16 @@ def _cabinet(p: Probe):
     ), {}
 
 
+def _device_auth(p: Probe):
+    return create_device_auth_blueprint(cabinet_sessions(), p.wire("device_sessions")), {}
+
+
 def _oauth(p: Probe):
     w = p.wire
     return create_oauth_blueprint(
-        auth_service=w("auth_service"), session_service=session_service(), auth_registry=w("auth_registry"),
-        auth_config=SimpleNamespace(oauth_redirect_uri="https://app.example/auth/callback",
-                                    access_token_ttl=86400, refresh_token_ttl=86400),
+        auth_service=w("auth_service"), cabinet_sessions=cabinet_sessions(), device_sessions=w("device_sessions"),
+        auth_registry=w("auth_registry"),
+        auth_config=SimpleNamespace(oauth_redirect_uri="https://app.example/auth/callback"),
         invite_service=w("invite_service"), connect_service=w("connect_service"), connectors=ConnectorRegistry(),
     ), {}
 
@@ -125,7 +130,7 @@ def _ms_tasks(p: Probe):
 
 def _file_access(p: Probe):
     return create_file_access_blueprint(token_service=FileAccessTokenService(SESSION_SECRET),
-                                        media_storage=p.wire("media_storage"), session_service=session_service()), {}
+                                        media_storage=p.wire("media_storage"), cabinet_sessions=cabinet_sessions()), {}
 
 
 def _short_link(p: Probe):
@@ -168,17 +173,17 @@ def _voice_webhook(p: Probe):
 
 def _voice_web_call(p: Probe):
     w = p.wire
-    return create_voice_web_call_blueprint(session_service=session_service(), call_setup=w("call_setup"),
+    return create_voice_web_call_blueprint(cabinet_sessions=cabinet_sessions(), call_setup=w("call_setup"),
                                            media_room=w("media_room"), ephemeral_store=w("ephemeral_store"),
                                            relay_base_url="wss://relay.example", cipher=AesGcmTestCipher(), digest_key=b"k" * 32), {}
 
 
 def _landing(p: Probe):
-    return create_landing_blueprint(session_service()), {}
+    return create_landing_blueprint(cabinet_sessions()), {}
 
 
 def _mcp_consent(p: Probe):
-    return build_mcp_consent_blueprint(mcp_service=p.wire("mcp_service"), session_service=session_service()), {}
+    return build_mcp_consent_blueprint(mcp_service=p.wire("mcp_service"), cabinet_sessions=cabinet_sessions()), {}
 
 
 def _slack(p: Probe):
@@ -241,6 +246,7 @@ def _geo_mark(p: Probe):
 FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_user_cabinet_blueprint": _cabinet,
     "create_oauth_blueprint": _oauth,
+    "create_device_auth_blueprint": _device_auth,
     "create_microsoft_tasks_webhook_blueprint": _ms_tasks,
     "create_file_access_blueprint": _file_access,
     "create_short_link_blueprint": _short_link,
@@ -290,6 +296,8 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
         "Home Screen icon (tutor mode), fetched without the cookie; sizes are an allowlist (test_voice_web_call_mode_icons)",
     ("create_oauth_blueprint", "GET", "/auth/login"): "starts sign-in: only redirects to the provider",
     ("create_oauth_blueprint", "POST", "/auth/logout"): "only clears the caller's own cookies",
+    ("create_oauth_blueprint", "GET", "/auth/session.js"):
+        "the shared silent-refresh script: static, no secret, and a page loads it before it has a session",
     # reviewer edit, tidy main.py: the two public routes that moved out of main() with /worker
     ("create_main_service_blueprint", "GET", "/health"): "health check, no data",
     ("create_main_service_blueprint", "GET", "/favicon.ico"): "the static logo browsers and link-preview bots request",

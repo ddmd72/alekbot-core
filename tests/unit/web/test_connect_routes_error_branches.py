@@ -7,7 +7,8 @@ import jwt
 import pytest
 
 from tests.support.firestore_eval import eval_transactions
-from tests.unit.web.connect_world import SECRET, ConnectWorld
+from tests.support.cabinet_session_kit import KIT_SECRET
+from tests.unit.web.connect_world import ConnectWorld
 
 
 @pytest.fixture
@@ -16,16 +17,18 @@ def world(monkeypatch):
         yield ConnectWorld(monkeypatch)
 
 
-def _token(**claims) -> str:
-    payload = {"type": "access", "account_id": "acct-1", "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+def _token(world, **claims) -> str:
+    """A correctly signed access token of a live device session whose claims are overridden."""
+    payload = {"type": "access", "account_id": "acct-1", "sid": world.kit.sign_in_now().sid,
+               "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
     payload.update(claims)
-    return jwt.encode({k: v for k, v in payload.items() if v is not None}, SECRET, algorithm="HS256")
+    return jwt.encode({k: v for k, v in payload.items() if v is not None}, KIT_SECRET, algorithm="HS256")
 
 
 @pytest.mark.parametrize("claims", [{}, {"sub": 42}, {"sub": ""}])
 async def test_a_session_token_without_a_string_subject_is_no_session(world, claims):
     _, state = await world.start("gmail")
-    resp = await world.callback(state, token=_token(**claims))
+    resp = await world.callback(state, token=_token(world, **claims))
     assert resp.status_code == 302 and resp.headers["Location"] == "/auth/login?next=/cabinet"
     assert await world.held("gmail") == [] and len(world.flows) == 1       # the flow was never consumed
 

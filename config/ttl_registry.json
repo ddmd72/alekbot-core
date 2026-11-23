@@ -223,6 +223,29 @@
    ]
   },
   {
+   "id": "device_sessions",
+   "collection": "auth_device_sessions_v1",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "ended or expired Cabinet device sessions (the record is kept for a grace period after its absolute end or its revocation)",
+   "writers": [
+    "src/adapters/firestore_device_session_repo.py",
+    "src/domain/device_session.py",
+    "src/services/device_session_service.py"
+   ]
+  },
+  {
+   "id": "device_sessions_expires_at",
+   "collection": "auth_device_sessions_v1",
+   "field": "expires_at",
+   "deleted_by": "never",
+   "note": "the session's absolute end, checked on read (`is_live`, refresh); the record is deleted by the `purge_after` policy",
+   "writers": [
+    "src/domain/device_session.py",
+    "src/services/device_session_service.py"
+   ]
+  },
+  {
    "id": "provider_files",
    "collection": null,
    "field": "expires_at",
@@ -239,12 +262,14 @@
    "collection": null,
    "field": "expires_at",
    "deleted_by": "not-stored",
-   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim",
+   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim; the Cabinet access token's `exp` claim",
    "writers": [
     "src/adapters/google/google_drive_adapter.py",
     "src/domain/drive_media_source.py",
     "src/domain/llm.py",
-    "src/services/voice_mcp_token_service.py"
+    "src/services/voice_mcp_token_service.py",
+    "src/web/cabinet_auth.py",
+    "src/web/oauth_app.py"
    ]
   },
   {

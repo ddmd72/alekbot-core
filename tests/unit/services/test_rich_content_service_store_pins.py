@@ -120,7 +120,7 @@ async def test_html_file_for_a_user_is_a_capability_link_the_file_route_serves(m
     monkeypatch.setattr(google.auth, "default", no_ambient_credentials)
     app = Quart("files")
     app.register_blueprint(create_file_access_blueprint(token_service=tokens, media_storage=GcsMediaAdapter(BUCKET),
-                                                        session_service=None))  # type: ignore[arg-type]
+                                                        cabinet_sessions=None))  # type: ignore[arg-type]
     async with app.test_client() as client:
         resp = await client.get(urlparse(out).path)
     assert resp.status_code == 302 and "X-Goog-Signature=" in resp.headers["Location"]

@@ -1,7 +1,7 @@
 """The Cabinet blueprint over real services on one evaluating Firestore fake (P19), for the route-level tests of the
 account, settings and integration write routes.
 
-Real: the session service (signed JWTs), the user, account, whitelist, invite-code, indexed-email and agent-note
+Real: the device-session kit (signed JWTs over a live session record), the user, account, whitelist, invite-code, indexed-email and agent-note
 repositories, `InviteCodeService`. Only the collaborators the tests script are stand-ins: a Twilio-free build, so the
 phone routes answer 501 here (`test_user_cabinet_app_phone_binding.py` owns them), and `task_setup` where a test needs one.
 Examples come from the invented cast (usr-1/acc-1 `alex@example.com`, usr-2/acc-2 `clara@example.com`).
@@ -21,8 +21,8 @@ from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
 from src.domain.billing import BillingAccount
 from src.domain.user import UserProfile
 from src.services.invite_code_service import InviteCodeService
-from src.services.session_service import SessionService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
 from tests.support.fact_store import FactStore
 from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import Rendezvous
@@ -36,7 +36,7 @@ USERS, ACCOUNTS, WHITELIST, INVITES, NOTES, MAILS, MAIL_STATE = (
 
 
 class CabinetWorld:
-    def __init__(self, *, task_setup: Any = None, tasks_provider: Any = None, clock_ttl: int = 86400) -> None:
+    def __init__(self, *, task_setup: Any = None, tasks_provider: Any = None) -> None:
         self.db = EvalDb()
         env = SimpleNamespace(
             domain_users_collection=USERS, domain_whitelist_collection=WHITELIST, domain_invite_codes_collection=INVITES,
@@ -50,10 +50,10 @@ class CabinetWorld:
         self.notes = FirestoreAgentNoteAdapter(self.db, env)
         self.mails = FirestoreIndexedEmailRepository(self.db, env)
         self.facts = FactStore()
-        self.sessions = SessionService(secret_key=SECRET, access_token_ttl=clock_ttl, refresh_token_ttl=clock_ttl)
+        self.kit = CabinetSessionKit()
         self.app = Quart("cabinet_routes")
         self.app.register_blueprint(create_user_cabinet_blueprint(
-            invite_service=self.invite_service, session_service=self.sessions, user_repo=self.users,
+            invite_service=self.invite_service, cabinet_sessions=self.kit.verifier, user_repo=self.users,
             fact_repo=self.facts.repo, embedding_service=self.facts.embedder, indexed_email_repo=self.mails,
             agent_note_port=self.notes, task_setup=task_setup, tasks_provider=tasks_provider,
             connectors=ConnectorRegistry()))
@@ -70,9 +70,7 @@ class CabinetWorld:
 
     def token(self, who=ALEX, *, role: str = "owner") -> dict:
         user_id, account_id, email = who
-        account = BillingAccount(account_id=account_id, iam_policy={user_id: role})
-        jwt_ = self.sessions.create_access_token(UserProfile(user_id=user_id, account_id=account_id, email=email), account)
-        return {"Authorization": f"Bearer {jwt_}"}
+        return self.kit.sign_in_now(user_id, account_id, role=role, email=email).bearer
 
     def user_doc(self, user_id: str) -> dict:
         return self.db.collection(USERS).docs[user_id]

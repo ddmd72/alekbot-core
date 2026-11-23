@@ -1,11 +1,12 @@
 """Who a user is and how they get in: the account, user and whitelist repositories, IAM, invite codes, the Cabinet's
-sign-in (RFC docs/10_rfcs/USER_INVITE_DEEP_LINK_RFC.md) and the phone-binding OTP client (VOICE_COMPANION_RFC §4.6)."""
+sign-in (RFC docs/10_rfcs/USER_INVITE_DEEP_LINK_RFC.md), its device sessions (CABINET_DEVICE_SESSIONS_RFC) and the phone-binding OTP client (VOICE_COMPANION_RFC §4.6)."""
 from dataclasses import dataclass
 from typing import Any
 
 from twilio.rest import Client as TwilioClient
 
 from ..adapters.firebase_auth_adapter import FirebaseAuthAdapter
+from ..adapters.firestore_device_session_repo import FirestoreDeviceSessionRepository
 from ..adapters.firestore_account_repo import FirestoreAccountRepository
 from ..adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from ..adapters.firestore_user_repo import FirestoreUserRepository
@@ -14,9 +15,11 @@ from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..services.auth_provider_registry import AuthProviderRegistry
 from ..services.authentication_service import AuthenticationService
+from ..services.device_session_service import DeviceSessionService
 from ..services.iam_service import IAMService
 from ..services.invite_code_service import InviteCodeService
 from ..services.session_service import SessionService
+from ..services.user_notification_service import UserNotificationService
 from ..utils.logger import logger
 
 
@@ -58,13 +61,19 @@ def build_identity(config: dict, db_client: Any, env_config: EnvironmentConfig, 
     auth_registry = AuthProviderRegistry(providers={"firebase": firebase_adapter})
     auth_service = AuthenticationService(auth_registry=auth_registry, user_repo=user_repo, account_repo=account_repo,
                                          whitelist_repo=whitelist_repo)
-    session_service = SessionService(secret_key=auth_config.oauth_session_secret,
-                                     access_token_ttl=auth_config.access_token_ttl,
-                                     refresh_token_ttl=auth_config.refresh_token_ttl)
+    session_service = SessionService(secret_key=auth_config.oauth_session_secret)
     return Identity(account_repo=account_repo, user_repo=user_repo, whitelist_repo=whitelist_repo,
                     iam_service=iam_service, invite_service=invite_service, auth_registry=auth_registry,
                     auth_service=auth_service, session_service=session_service,
                     twilio_verify_client=_twilio_verify_client(config))
+
+
+def build_device_sessions(db_client: Any, env_config: EnvironmentConfig, *, session_service: SessionService,
+                          notification_service: UserNotificationService) -> DeviceSessionService:
+    """The Cabinet's revocable device sessions (CABINET_DEVICE_SESSIONS_RFC §7.1): the store over `db_client` and the
+    service that signs with `session_service` and announces new sign-ins through `notification_service`."""
+    repo = FirestoreDeviceSessionRepository(db_client, env_config.device_sessions_collection)
+    return DeviceSessionService(repo, session_service, notification_service)
 
 
 def _twilio_verify_client(config: dict) -> Any:

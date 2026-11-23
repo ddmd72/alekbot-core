@@ -100,7 +100,7 @@ def test_draft_files_is_an_unprefixed_subcollection_group():
 
 def test_the_runbook_keeps_its_original_words():
     block = gen.render_block(ENTRIES)
-    assert "Four collections expire on a different field, **`purge_after`**, which exists only in storage:" in block
+    assert "Five collections expire on a different field, **`purge_after`**, which exists only in storage:" in block
     assert "unsaved skill drafts (30 days) and their staged file contents |" in block
 
 

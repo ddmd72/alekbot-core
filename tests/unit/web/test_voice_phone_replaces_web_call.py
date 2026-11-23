@@ -22,6 +22,7 @@ from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.voice_tickets import DIGEST_KEY, open_ticket, ticket_key
 
 AUTH = {"Authorization": "Bearer tok"}
@@ -93,8 +94,8 @@ class World:
         provider = AsyncMock(return_value=self.agent)
         users = AsyncMock()
         users.get_user_by_platform_id.return_value = MagicMock(user_id="usr-1", account_id="acc-1")
-        sessions = MagicMock()
-        sessions.verify_access_token = MagicMock(return_value={"sub": "usr-1", "account_id": "acc-1"})
+        cabinet_sessions, _bearer = cabinet_session_for("usr-1", "acc-1")
+        AUTH.update(_bearer)
         app = Quart(__name__)
         app.register_blueprint(create_voice_webhook_blueprint(
             user_repository=users, ephemeral_store=self.store, alert_sink=AsyncMock(),
@@ -103,7 +104,7 @@ class World:
             relay_stream_url="wss://relay.example.com/", cipher=CIPHER, digest_key=DIGEST_KEY,
             media_room=self.room if phone_sees_room else None, replace_wait_s=replace_wait_s, replace_poll_s=0.01))
         app.register_blueprint(create_voice_web_call_blueprint(
-            session_service=sessions,
+            cabinet_sessions=cabinet_sessions,
             call_setup=VoiceCallSetupService(self.store, AsyncMock(), provider, digest_key=DIGEST_KEY),
             media_room=self.room, ephemeral_store=self.store, relay_base_url="wss://relay.example.com",
             cipher=CIPHER, digest_key=DIGEST_KEY, replace_poll_s=0.01))

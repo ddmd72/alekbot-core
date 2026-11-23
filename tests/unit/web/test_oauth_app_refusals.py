@@ -1,6 +1,6 @@
 """Refusals of the OAuth blueprint, route by route (P7, inventory §4; `src/web/oauth_app.py`).
 
-Every gate is real: the session service verifies real JWTs, AuthenticationService runs over the real user, account and
+Every gate is real: the device-session verifier checks real JWTs of live sessions, AuthenticationService runs over the real user, account and
 whitelist repositories on the evaluating Firestore fake. Only Google (the `AuthPort` boundary) is scripted. A refused
 request must leave no session cookie, no state cookie, no stored credential and no changed user document behind.
 """
@@ -22,9 +22,8 @@ from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.authentication_service import AuthenticationService
 from src.web.oauth_app import create_oauth_blueprint
 from tests.support.firestore_eval import EvalDb
-from tests.unit.web.gate_fakes import (
-    Tripwire, access_token, expired_token, forged_token, refresh_token, session_service,
-)
+from src.web.cabinet_auth import ACCESS_COOKIE, REFRESH_COOKIE
+from tests.unit.web.gate_fakes import KIT, Tripwire, access_token, cabinet_sessions, expired_token, forged_token
 from src.composition.connector_registry import ConnectorRegistry
 
 ALLOWED = "owner@example.com"
@@ -80,13 +79,12 @@ class World:
         self.app = Quart("oauth_refusals")
         self.app.register_blueprint(create_oauth_blueprint(
             auth_service=self.auth,
-            session_service=session_service(),
+            cabinet_sessions=cabinet_sessions(), device_sessions=KIT.device_sessions,
             auth_registry=registry,
             auth_config=SimpleNamespace(
                 oauth_redirect_uri="https://app.example/auth/callback",
                 gmail_oauth_redirect_uri="https://app.example/auth/connect-gmail/callback",
                 google_tasks_oauth_redirect_uri="https://app.example/auth/connect-google-tasks/callback",
-                access_token_ttl=86400, refresh_token_ttl=86400,
             ),
             connect_service=Tripwire("connect_service", self.touched), connectors=ConnectorRegistry(),
         ))
@@ -108,7 +106,7 @@ def _set_cookies(resp) -> str:
 
 def _no_session_cookies(resp) -> bool:
     cookies = _set_cookies(resp)
-    return "access_token=" not in cookies and "refresh_token=" not in cookies
+    return f"{ACCESS_COOKIE}=" not in cookies and f"{REFRESH_COOKIE}=" not in cookies
 
 
 # --------------------------------------------------------------------------- /auth/callback
@@ -144,62 +142,9 @@ class TestCallback:
         stored = {c.name: c.value for c in w.client.cookie_jar}  # what login set; the browser replays it
         resp = await w.client.get(f"/auth/callback?code=c&state={stored['oauth_state']}")
 
-        assert resp.status_code == 302 and "access_token=" in _set_cookies(resp)  # the sign-in itself succeeded
+        assert resp.status_code == 302 and f"{ACCESS_COOKIE}=" in _set_cookies(resp)  # the sign-in itself succeeded
         target = resp.headers["Location"]
         assert target.startswith("/") and not target.startswith("//"), target
-
-
-# --------------------------------------------------------------------------- /auth/refresh
-
-class TestRefresh:
-    async def test_no_token_is_401(self):
-        resp = await World().client.post("/auth/refresh")
-        assert resp.status_code == 401
-        assert "access_token=" not in _set_cookies(resp)
-
-    async def test_expired_refresh_token_is_401(self):
-        w = World()
-        w.client.set_cookie("localhost", "refresh_token", expired_token("refresh"))
-        resp = await w.client.post("/auth/refresh")
-        assert resp.status_code == 401
-        assert (await resp.get_json())["error"] == "Refresh token expired"
-        assert "access_token=" not in _set_cookies(resp)
-
-    async def test_forged_refresh_token_is_401(self):
-        w = World()
-        resp = await w.client.post("/auth/refresh", headers={"Authorization": f"Bearer {forged_token('refresh')}"})
-        assert resp.status_code == 401
-        assert (await resp.get_json())["error"] == "Invalid refresh token"
-        assert "access_token=" not in _set_cookies(resp)
-
-    async def test_access_token_presented_as_refresh_issues_nothing(self):
-        # Refused with 401: verify_refresh_token raises ValueError for the wrong type, which the route catches with
-        # the jwt errors (src/web/oauth_app.py, /auth/refresh; session_service.py verify_refresh_token). P7-R.
-        w = World()
-        w.client.set_cookie("localhost", "refresh_token", access_token())
-        resp = await w.client.post("/auth/refresh")
-        assert resp.status_code >= 400
-        body = await resp.get_json()
-        assert "access_token" not in body
-        assert "access_token=" not in _set_cookies(resp)
-
-    async def test_access_token_presented_as_refresh_is_401(self):
-        w = World()
-        w.client.set_cookie("localhost", "refresh_token", access_token())
-        resp = await w.client.post("/auth/refresh")
-        assert resp.status_code == 401
-
-    async def test_valid_refresh_token_is_accepted(self):
-        # The positive control: the refusals above are not a route that refuses everything. The refresh token's user
-        # must be stored: /auth/refresh mints from the stored user and account and refuses an absent user (P19-D1b),
-        # and its stored email must be on the whitelist, which a renewal re-checks (owner decision 2026-11-18).
-        w = World()
-        await w.seed()
-        await w.users.update_user(UserProfile(user_id="user-a", account_id="account-a", email=ALLOWED))
-        w.client.set_cookie("localhost", "refresh_token", refresh_token())
-        resp = await w.client.post("/auth/refresh")
-        assert resp.status_code == 200
-        assert session_service().verify_access_token((await resp.get_json())["access_token"])["sub"] == "user-a"
 
 
 # --------------------------------------------------------------------------- /auth/me
@@ -211,7 +156,7 @@ class TestMe:
 
     async def test_expired_token_is_401(self):
         w = World()
-        w.client.set_cookie("localhost", "access_token", expired_token())
+        w.client.set_cookie("localhost", ACCESS_COOKIE, expired_token())
         resp = await w.client.get("/auth/me")
         assert resp.status_code == 401
         assert (await resp.get_json())["error"] == "Token expired"
@@ -237,7 +182,7 @@ class TestLinkOauth:
         if state_cookie is not None:
             w.client.set_cookie("localhost", "oauth_state", state_cookie)
         if token is not None:
-            w.client.set_cookie("localhost", "access_token", token)
+            w.client.set_cookie("localhost", ACCESS_COOKIE, token)
         return await w.client.post("/auth/link-oauth", json=body if body is not None else {"code": "c", "state": "s1"})
 
     async def test_not_signed_in_is_401_and_links_nothing(self):
@@ -328,9 +273,9 @@ _KINDS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive")
 
 def _session_cookie(w: World, cookie: Optional[str]) -> None:
     if cookie == "forged":
-        w.client.set_cookie("localhost", "access_token", forged_token())
+        w.client.set_cookie("localhost", ACCESS_COOKIE, forged_token())
     elif cookie == "expired":
-        w.client.set_cookie("localhost", "access_token", expired_token())
+        w.client.set_cookie("localhost", ACCESS_COOKIE, expired_token())
 
 
 class TestConnect:
@@ -354,7 +299,7 @@ class TestConnectCallback:
     ])
     async def test_a_missing_state_or_code_or_a_refusal_saves_nothing(self, query, error):
         w = World()
-        w.client.set_cookie("localhost", "access_token", access_token())
+        w.client.set_cookie("localhost", ACCESS_COOKIE, access_token())
         resp = await w.client.get(f"/auth/connect/callback{query}")
         assert resp.status_code == 302
         assert resp.headers["Location"] == error
@@ -364,7 +309,7 @@ class TestConnectCallback:
     async def test_without_a_valid_session_the_callback_goes_to_login_and_saves_nothing(self, cookie):
         w = World()
         if cookie == "no-account":
-            w.client.set_cookie("localhost", "access_token", access_token(account_id=""))
+            w.client.set_cookie("localhost", ACCESS_COOKIE, access_token(account_id=""))
         else:
             _session_cookie(w, cookie)
         resp = await w.client.get("/auth/connect/callback?code=c&state=s1")

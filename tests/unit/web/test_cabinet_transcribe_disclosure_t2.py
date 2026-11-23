@@ -11,10 +11,13 @@ from quart import Quart
 from src.domain.drive_indexing_status import DriveIndexingStatus
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import cabinet_drive
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 _HTML = Path("src/web/static/cabinet.html").read_text(encoding="utf-8")
 
@@ -69,11 +72,11 @@ async def _app(has_root):
     search.indexing_status.return_value = DriveIndexingStatus(enabled=False, counters={})
     search.has_mirror_root.return_value = has_root
     user_repo = MagicMock()
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     app = Quart("test_mirror_flag")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials))
@@ -82,6 +85,6 @@ async def _app(has_root):
 
 async def _status(app):
     async with app.test_client() as client:
-        return await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
+        return await (await client.get("/api/drive/status", headers=_AUTH)).get_json()
 
 

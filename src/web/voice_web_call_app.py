@@ -72,13 +72,13 @@ def _control_channel_on() -> bool:
     return os.getenv("VOICE_CONTROL_CHANNEL", "off").strip().lower() == "on"
 
 
-def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
+def create_voice_web_call_blueprint(cabinet_sessions, call_setup, media_room, ephemeral_store,
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
                                     digest_key: bytes, replace_wait_s: float = _REPLACE_WAIT_S,
                                     replace_poll_s: float = _REPLACE_POLL_S, call_text_files=None,
                                     language_service=None) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
-    auth_required = make_auth_required(session_service)
+    auth_required = make_auth_required(cabinet_sessions)
     web_calls = WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
 
     async def _owned(call_id: str):

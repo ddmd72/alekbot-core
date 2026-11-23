@@ -2,7 +2,7 @@
 connect-flow tests (`test_connect_routes*.py`): sign-in start, a successful callback (new user, cookies, the invite code),
 logout, refresh and `/auth/me` for the right tenant.
 
-Real session service, `AuthenticationService`, user/account/whitelist/invite repositories on the evaluating fake; only
+Real device-session kit, `AuthenticationService`, user/account/whitelist/invite repositories on the evaluating fake; only
 Google (the `AuthPort` boundary) is scripted.
 """
 from datetime import datetime, timedelta, timezone
@@ -23,11 +23,13 @@ from src.domain.user import UserProfile
 from src.ports.auth_port import AuthPort
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.authentication_service import AuthenticationService
+from src.domain.device_session_policy import refresh_secret_hash
 from src.services.invite_code_service import InviteCodeService
+from src.web.cabinet_auth import ACCESS_COOKIE, REFRESH_COOKIE
 from src.web.oauth_app import create_oauth_blueprint
 from tests.support.firestore_eval import EvalDb, eval_transactions
 from tests.support.redelivery_world import require
-from tests.unit.web.gate_fakes import Tripwire, session_service
+from tests.unit.web.gate_fakes import KIT, Tripwire
 
 USERS, ACCOUNTS, WHITELIST, INVITES = "users", "accounts", "whitelist", "invites"
 ALEX = "alex@example.com"
@@ -72,12 +74,12 @@ class World:
         self.auth = AuthenticationService(registry, self.users, self.accounts, whitelist_repo=whitelist)
         self.invites = FirestoreInviteCodeRepository(self.db, env, digest_key=b"k" * 32)
         self.invite_service = InviteCodeService(self.invites, self.users, self.accounts, whitelist)
-        self.sessions = session_service()
+        self.kit = KIT
         app = Quart("oauth_routes")
         app.register_blueprint(create_oauth_blueprint(
-            auth_service=self.auth, session_service=self.sessions, auth_registry=registry,
-            auth_config=SimpleNamespace(oauth_redirect_uri="https://app.example/auth/callback",
-                                        access_token_ttl=86400, refresh_token_ttl=86400),
+            auth_service=self.auth, cabinet_sessions=self.kit.verifier, device_sessions=self.kit.device_sessions,
+            auth_registry=registry,
+            auth_config=SimpleNamespace(oauth_redirect_uri="https://app.example/auth/callback"),
             invite_service=self.invite_service, connect_service=Tripwire("connect_service", []),
             connectors=ConnectorRegistry()))
         self.client = app.test_client()
@@ -140,9 +142,10 @@ class TestCallbackSuccess:
         (user,) = world.db.collection(USERS).docs.values()
         assert user["email"] == ALEX and user["external_user_id"] == "google|sub-alex"
         cookies = _cookies(resp)
-        access = world.sessions.verify_access_token(cookies["access_token"])
+        access = world.kit.tokens.verify_device_access_token(cookies[ACCESS_COOKIE])
         assert (access["sub"], access["account_id"]) == (user["user_id"], user["account_id"])
-        assert world.sessions.verify_refresh_token(cookies["refresh_token"])["sub"] == user["user_id"]
+        stored = world.kit.repo.sessions[access["sid"]]       # the refresh cookie is the secret of the user's session
+        assert stored.user_id == user["user_id"] and stored.refresh_hash == refresh_secret_hash(cookies[REFRESH_COOKIE])
         assert user["account_id"] in world.db.collection(ACCOUNTS).docs
         assert cookies["oauth_state"] == ""                                    # the CSRF cookie is cleared
 
@@ -157,7 +160,7 @@ class TestCallbackSuccess:
         first = await world.sign_in()
         world.provider.sub, world.provider.email = "sub-clara", CLARA
         second = await world.sign_in()
-        ids = {world.sessions.verify_access_token(_cookies(r)["access_token"])["sub"] for r in (first, second)}
+        ids = {world.kit.tokens.verify_device_access_token(_cookies(r)[ACCESS_COOKIE])["sub"] for r in (first, second)}
         assert len(ids) == 2 and len(world.db.collection(USERS).docs) == 2
 
     async def test_a_pending_invite_code_is_consumed_for_the_signing_in_user(self, world):
@@ -174,57 +177,6 @@ class TestCallbackSuccess:
     async def test_a_bad_invite_code_does_not_block_the_sign_in(self, world):
         await world.allow(ALEX)
         resp = await world.sign_in(invite_code="NOT-A-CODE")
-        assert resp.status_code == 302 and "access_token" in _cookies(resp)
+        assert resp.status_code == 302 and ACCESS_COOKIE in _cookies(resp)
 
 
-class TestLogout:
-    async def test_it_clears_both_session_cookies_and_changes_no_stored_document(self, world):
-        await world.allow(ALEX)
-        await world.sign_in()
-        before = {c: dict(world.db.collection(c).docs) for c in (USERS, ACCOUNTS)}
-        resp = await world.client.post("/auth/logout")
-        assert resp.status_code == 200
-        cookies = _cookies(resp)
-        assert cookies["access_token"] == "" and cookies["refresh_token"] == ""
-        assert {c: world.db.collection(c).docs for c in (USERS, ACCOUNTS)} == before
-
-
-class TestRefreshAndMe:
-    async def _signed_in(self, world):
-        await world.allow(ALEX)
-        resp = await world.sign_in()
-        return _cookies(resp)
-
-    async def test_refresh_names_the_same_user_and_account_as_the_login(self, world):
-        cookies = await self._signed_in(world)
-        world.client.set_cookie("localhost", "refresh_token", cookies["refresh_token"])
-        resp = await world.client.post("/auth/refresh")
-        assert resp.status_code == 200
-        new = world.sessions.verify_access_token((await resp.get_json())["access_token"])
-        old = world.sessions.verify_access_token(cookies["access_token"])
-        assert (new["sub"], new["account_id"]) == (old["sub"], old["account_id"])
-
-    async def test_me_answers_for_the_token_identity(self, world):
-        cookies = await self._signed_in(world)
-        resp = await world.client.get("/auth/me", headers={"Authorization": f"Bearer {cookies['access_token']}"})
-        body = await resp.get_json()
-        (user,) = world.db.collection(USERS).docs.values()
-        assert body["user"]["user_id"] == user["user_id"] and body["account"]["account_id"] == user["account_id"]
-        assert body["user"]["email"] == ALEX
-
-    async def test_a_refreshed_token_keeps_the_owners_role(self, world):
-        cookies = await self._signed_in(world)
-        require(world.sessions.verify_access_token(cookies["access_token"])["role"] == "owner", "the login token carries the owner role")
-        world.client.set_cookie("localhost", "refresh_token", cookies["refresh_token"])
-        resp = await world.client.post("/auth/refresh")
-        assert world.sessions.verify_access_token((await resp.get_json())["access_token"])["role"] == "owner"
-
-    async def test_a_deleted_user_gets_no_new_access_token(self, world):
-        cookies = await self._signed_in(world)
-        (user_id,) = list(world.db.collection(USERS).docs)
-        await world.users.delete_user(user_id)
-        require(user_id not in world.db.collection(USERS).docs, "the user is gone")
-        world.client.set_cookie("localhost", "refresh_token", cookies["refresh_token"])
-        resp = await world.client.post("/auth/refresh")
-        assert resp.status_code in (401, 403, 404)
-        assert "access_token" not in _cookies(resp)

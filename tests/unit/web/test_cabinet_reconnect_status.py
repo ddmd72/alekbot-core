@@ -35,10 +35,12 @@ from src.domain.user import UserProfile
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.integration_reconnect_service import IntegrationReconnectService
-from src.services.session_service import SessionService
+from src.web.cabinet_auth import ACCESS_COOKIE
+from tests.support.cabinet_session_kit import CabinetSessionKit
 from src.services.task_setup_service import TaskSetupService
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
@@ -85,11 +87,10 @@ class World:
                                            notification_url_base="", connector=ConnectorRegistry().get("microsoft_todo"))
 
     def cabinet(self) -> Quart:
-        session_service = MagicMock()
-        session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": "acc-a",
-                                                                       "role": "owner"})
+        cabinet_sessions, _bearer = cabinet_session_for(USER, "acc-a")
+        AUTH.update(_bearer)
         bp = create_user_cabinet_blueprint(
-            invite_service=MagicMock(), session_service=session_service, user_repo=Users(), fact_repo=MagicMock(),
+            invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.creds, indexed_email_repo=self.email,
             task_setup=self.task_setup, user_drive_service=None, reconnect=self.reconnect, connectors=ConnectorRegistry(),
             credential_revocation=CredentialRevocationService(self.creds, {}),
@@ -122,16 +123,16 @@ class World:
                                                   todo_connector=registry.get("microsoft_todo"), task_queue=None,
                                                   drive_activation=None),
             redirect_uri="https://service.example/auth/connect/callback")
-        sessions = SessionService(secret_key=SECRET, access_token_ttl=3600, refresh_token_ttl=3600)
+        kit = CabinetSessionKit()
         app = Quart("test_oauth_reconnect")
         app.register_blueprint(create_oauth_blueprint(
-            auth_service=Mock(), session_service=sessions, auth_registry=Mock(),
+            auth_service=Mock(), cabinet_sessions=kit.verifier, device_sessions=kit.device_sessions,
+            auth_registry=Mock(),
             auth_config=SimpleNamespace(oauth_redirect_uri="https://service.example/auth/callback"),
             connect_service=connect_service, connectors=registry))
-        token = sessions.create_access_token(UserProfile(user_id=USER, account_id="acct-1"),
-                                             BillingAccount(account_id="acct-1"))
+        token = kit.sign_in_now(USER, "acct-1").access_token
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", token)
+            client.set_cookie("localhost", ACCESS_COOKIE, token)
             start = await client.get(f"/auth/connect/{kind}")
             state = parse_qs(urlparse(start.headers["Location"]).query)["state"][0]
             return await client.get(f"/auth/connect/callback?state={state}&code=c")

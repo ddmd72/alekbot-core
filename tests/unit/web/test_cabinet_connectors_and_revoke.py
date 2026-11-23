@@ -24,6 +24,7 @@ from src.services.credential_revocation_service import CredentialRevocationServi
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
@@ -69,11 +70,11 @@ class World:
         self.drive_connections = DriveConnectionService(FakeDriveConnectionRepository(), self.store)
 
     def app(self, *, registry=True) -> Quart:
-        sessions = MagicMock()
-        sessions.verify_access_token = MagicMock(return_value={"sub": ALEX, "account_id": "acct-1", "role": "owner"})
+        cabinet_sessions, _bearer = cabinet_session_for(ALEX, "acct-1")
+        AUTH.update(_bearer)
         app = Quart("test_cabinet_connectors_and_revoke")
         app.register_blueprint(create_user_cabinet_blueprint(
-            invite_service=MagicMock(), session_service=sessions, user_repo=Users(), fact_repo=MagicMock(),
+            invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.store, user_drive_service=self.drive,
             credential_revocation=self.revocation, reconnect=self.reconnect,
             connectors=self.registry if registry else None, drive_connections=self.drive_connections))

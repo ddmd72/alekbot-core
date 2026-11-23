@@ -39,7 +39,7 @@ def fake(monkeypatch):
 def _client(tokens):
     app = Quart("file_access_expired")
     app.register_blueprint(create_file_access_blueprint(
-        token_service=tokens, media_storage=GcsMediaAdapter(BUCKET), session_service=None))
+        token_service=tokens, media_storage=GcsMediaAdapter(BUCKET), cabinet_sessions=None))
     return app.test_client()
 
 

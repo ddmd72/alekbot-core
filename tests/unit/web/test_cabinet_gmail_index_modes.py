@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.services.email_indexing_service import REINDEX_DISABLED
 from tests.support.oauth_credentials_store import mirror_get
-from tests.unit.web.test_user_cabinet_app import _app, _job
+from tests.unit.web.test_user_cabinet_app import _AUTH, _app, _job
 
 
 class _Rig:
@@ -33,7 +33,7 @@ class _Rig:
 
     async def post(self, body):
         async with self.app.test_client() as client:
-            resp = await client.post("/api/gmail/index", headers={"Authorization": "Bearer token"}, json=body)
+            resp = await client.post("/api/gmail/index", headers=_AUTH, json=body)
             return resp.status_code, await resp.get_json()
 
 

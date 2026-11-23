@@ -7,29 +7,23 @@ reads user data, so every route is public on purpose.
 """
 import os
 
-from quart import Blueprint, redirect, request, send_file
+from quart import Blueprint, redirect, send_file
 
-from src.utils.logger import logger
+from src.web.cabinet_auth import CabinetSessionVerifier
 
 _ROBOTS = "User-agent: *\nAllow: /$\nDisallow: /\n"
 
 
-def create_landing_blueprint(session_service) -> Blueprint:
+def create_landing_blueprint(cabinet_sessions: CabinetSessionVerifier) -> Blueprint:
     bp = Blueprint("landing", __name__)
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
     @bp.route("/", methods=["GET"])
     async def root():
-        # Login sets the `access_token` JWT *cookie* (oauth_app), not a Quart session entry —
-        # checking `session` here sent a signed-in owner to the landing page every time.
-        token = request.cookies.get("access_token")
-        if token:
-            try:
-                session_service.verify_access_token(token)
-                return redirect("/cabinet")
-            except Exception as e:
-                # Expired or forged: show the public page, Sign in starts a fresh login.
-                logger.info(f"Landing: login cookie not accepted ({e})")
+        # A live device session goes to the Cabinet. Without one (none, expired, forged, revoked: the verifier logs
+        # why) the public page shows, and Sign in starts a fresh login.
+        if await cabinet_sessions.identify() is not None:
+            return redirect("/cabinet")
         response = await send_file(os.path.join(static_dir, "landing.html"), mimetype="text/html")
         # Revalidate on every load: send_file's 12 h max-age would serve a stale page after deploys.
         response.headers["Cache-Control"] = "no-cache"

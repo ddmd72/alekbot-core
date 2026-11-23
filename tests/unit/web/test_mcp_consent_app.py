@@ -22,6 +22,14 @@ from src.services.mcp_authorization_service import (
     MCPAuthError,
 )
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
+
+_KIT = CabinetSessionKit()
+
+
+def _sign_in(client) -> None:
+    """The consenting user's Cabinet session: a live device session's access cookie."""
+    _KIT.set_cookies(client, _KIT.sign_in_now("user-1", "acc-1"), refresh=False)
 
 
 # ---------------------------------------------------------------------------
@@ -64,19 +72,10 @@ def mock_mcp_service():
 
 
 @pytest.fixture
-def mock_session_service():
-    svc = Mock()
-    svc.verify_access_token = Mock(
-        return_value={"sub": "user-1", "account_id": "acc-1"}
-    )
-    return svc
-
-
-@pytest.fixture
-def app(mock_mcp_service, mock_session_service):
+def app(mock_mcp_service):
     app = Quart("test_app")
     app.register_blueprint(
-        build_mcp_consent_blueprint(mock_mcp_service, mock_session_service)
+        build_mcp_consent_blueprint(mock_mcp_service, _KIT.verifier)
     )
     return app
 
@@ -99,10 +98,10 @@ class TestGetConsent:
             assert "/auth/login" in resp.headers["Location"]
 
     async def test_valid_cookie_renders_consent_page(
-        self, app, mock_mcp_service, mock_session_service
+        self, app, mock_mcp_service
     ):
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", "valid")
+            _sign_in(client)
             resp = await client.get("/mcp/consent?req=JWT")
             assert resp.status_code == 200
             body = (await resp.get_data()).decode()
@@ -112,13 +111,13 @@ class TestGetConsent:
             assert "Deny" in body
 
     async def test_bad_jwt_returns_400(
-        self, app, mock_mcp_service, mock_session_service
+        self, app, mock_mcp_service
     ):
         mock_mcp_service.verify_consent_request = Mock(
             side_effect=MCPAuthError("bad jwt")
         )
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", "valid")
+            _sign_in(client)
             resp = await client.get("/mcp/consent?req=bad")
             assert resp.status_code == 400
 
@@ -133,7 +132,7 @@ class TestPostConsent:
         self, app, mock_mcp_service
     ):
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", "valid")
+            _sign_in(client)
             resp = await client.post(
                 "/mcp/consent",
                 form={"req": "JWT", "action": "approve"},
@@ -148,7 +147,7 @@ class TestPostConsent:
 
     async def test_deny_redirects_with_access_denied(self, app):
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", "valid")
+            _sign_in(client)
             resp = await client.post(
                 "/mcp/consent",
                 form={"req": "JWT", "action": "deny"},
@@ -169,7 +168,7 @@ class TestPostConsent:
 
     async def test_unknown_action_returns_400(self, app):
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", "valid")
+            _sign_in(client)
             resp = await client.post(
                 "/mcp/consent",
                 form={"req": "JWT", "action": "whatever"},
@@ -178,6 +177,6 @@ class TestPostConsent:
 
     async def test_missing_form_fields_returns_400(self, app):
         async with app.test_client() as client:
-            client.set_cookie("localhost", "access_token", "valid")
+            _sign_in(client)
             resp = await client.post("/mcp/consent", form={})
             assert resp.status_code == 400

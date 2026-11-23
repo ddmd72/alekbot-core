@@ -100,6 +100,10 @@ THRESHOLDS: Dict[str, float] = {
     "src/domain/voice_mcp_token.py":                100.0,
     "src/services/voice_mcp_token_service.py":      100.0,
     "src/composition/voice_mcp_setup.py":           100.0,
+    # Cabinet device sessions (P7): the session record's lifetimes and refresh decision, its store and the gate's service.
+    "src/domain/device_session_policy.py":          100.0,
+    "src/adapters/firestore_device_session_repo.py": 100.0,
+    "src/services/device_session_service.py":       100.0,
 }
 
 

@@ -9,6 +9,7 @@ from src.domain.media_room_agent_leg import AgentLeg
 from src.domain.media_room_caller_leg import CallerLeg
 from src.ports.media_room_port import MediaRoomError
 from src.services.voice_call_setup_service import VoiceCallSetupError
+from src.web.cabinet_auth import CabinetIdentity, CabinetSessionVerifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from tests.support.voice_tickets import open_ticket, ticket_key
 
@@ -41,6 +42,29 @@ class MemoryStore:
         return self.data.pop(key, None)
 
 
+class _FixedVerifier(CabinetSessionVerifier):
+    """The Cabinet gate's verifier with the live-session lookup fixed: the real `presents_token()` (a Bearer header
+    or the access cookie) and the real gate, but `identify()` answers with one given identity, or None (no live
+    session). The session path itself is covered by tests/unit/web/test_cabinet_auth.py and the session kit."""
+
+    def __init__(self, identity):
+        self._identity = identity
+
+    async def identify(self):
+        return self._identity
+
+
+def signed_in_verifier(user, account="a1"):
+    """A verifier whose every presented token belongs to a live session of `user`."""
+    return _FixedVerifier(CabinetIdentity(user_id=user, account_id=account, role="owner", sid="sid-1",
+                                          expires_at=4102444800, email=None, external_user_id=None, tier=None))
+
+
+def refusing_verifier():
+    """A verifier for which no token names a live session."""
+    return _FixedVerifier(None)
+
+
 def _setup(store, prepare_error=None):
     from src.services.voice_call_setup_service import VoiceCallSetupService
     agent = MagicMock()
@@ -50,11 +74,10 @@ def _setup(store, prepare_error=None):
 
 
 def _app(store, media_room, user="u1", setup=None):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": user, "account_id": "a1"})
+    cabinet_sessions = signed_in_verifier(user, "a1")
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=session_service, call_setup=setup or _setup(store), media_room=media_room,
+        cabinet_sessions=cabinet_sessions, call_setup=setup or _setup(store), media_room=media_room,
         ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=CIPHER, digest_key=b"k" * 32))
     return app
 
@@ -171,10 +194,9 @@ async def test_another_user_cannot_touch_the_call():
 async def test_unauthenticated_is_401():
     store, room = MemoryStore(), _room()
     session_less = Quart(__name__)
-    ss = MagicMock()
-    ss.verify_access_token = MagicMock(side_effect=ValueError("bad"))
+    ss = refusing_verifier()
     session_less.register_blueprint(create_voice_web_call_blueprint(
-        session_service=ss, call_setup=_setup(store), media_room=room, ephemeral_store=store,
+        cabinet_sessions=ss, call_setup=_setup(store), media_room=room, ephemeral_store=store,
         relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     resp = await session_less.test_client().post("/api/voice/web-call", json={"sdp": "o", "mid": "0"})
     assert resp.status_code == 401

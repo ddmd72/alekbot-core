@@ -19,6 +19,7 @@ from quart import Quart
 
 from src.domain.media_room_agent_leg import AgentLeg
 from src.domain.media_room_caller_leg import CallerLeg
+from tests.unit.web.test_voice_web_call_app import signed_in_verifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 
 AUTH = {"Authorization": "Bearer tok"}
@@ -62,11 +63,10 @@ def _setup(store, prepare_error=None):
 
 
 def _app(store, media_room, user="u1", setup=None):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": user, "account_id": "a1"})
+    cabinet_sessions = signed_in_verifier(user, "a1")
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=session_service, call_setup=setup or _setup(store), media_room=media_room,
+        cabinet_sessions=cabinet_sessions, call_setup=setup or _setup(store), media_room=media_room,
         ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 

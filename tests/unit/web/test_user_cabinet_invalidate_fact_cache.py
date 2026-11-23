@@ -11,9 +11,12 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.fact_kit import make_fact
 from tests.support.fact_store import FACTS, FactStore, make_env_config
 from src.composition.connector_registry import ConnectorRegistry
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -26,12 +29,11 @@ def _repo(store):
 
 
 def _app(fact_repo, bio):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(
-        return_value={"sub": _USER_ID, "account_id": _ACCOUNT_ID, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(_USER_ID, _ACCOUNT_ID)
+    _AUTH.update(_bearer)
     # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     bp = create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(),
         fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo, bio), connectors=ConnectorRegistry(),
     )
     app = Quart("test_app")
@@ -52,7 +54,7 @@ async def _seed(store, bio):
 
 async def _invalidate(app, fact_id):
     async with app.test_client() as client:
-        return await client.post(f"/api/user/facts/{fact_id}/invalidate", headers={"Authorization": "Bearer t"})
+        return await client.post(f"/api/user/facts/{fact_id}/invalidate", headers=_AUTH)
 
 
 async def test_invalidated_fact_leaves_the_cached_baseline_immediately():

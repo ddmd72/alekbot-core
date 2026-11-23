@@ -64,7 +64,7 @@ class TestDeleteGmailData:
         w = CabinetWorld()
         app = Quart("no_mail_repo")
         app.register_blueprint(create_user_cabinet_blueprint(
-            invite_service=w.invite_service, session_service=w.sessions, user_repo=w.users,
+            invite_service=w.invite_service, cabinet_sessions=w.kit.verifier, user_repo=w.users,
             fact_repo=w.facts.repo, embedding_service=w.facts.embedder))
         resp = await app.test_client().delete("/api/gmail/data", headers=w.token(ALEX))
         assert resp.status_code == 501

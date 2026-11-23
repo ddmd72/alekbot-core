@@ -13,6 +13,14 @@ from quart import Quart
 
 from src.services.mcp_authorization_service import ConsentRequest
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
+_KIT = CabinetSessionKit()
+
+
+def _sign_in(client) -> None:
+    """The consenting user's Cabinet session: a live device session's access cookie."""
+    _KIT.set_cookies(client, _KIT.sign_in_now("user-1", "acc-1"), refresh=False)
+
 
 _MARKUP = '<script>alert(1)</script><img src=x onerror="alert(2)">'
 
@@ -33,16 +41,14 @@ def _app(client_name="Claude", scopes=("user_context",)):
     svc = Mock()
     svc.verify_consent_request = Mock(return_value=_consent(list(scopes)))
     svc.get_client = AsyncMock(return_value=Mock(client_name=client_name))
-    sessions = Mock()
-    sessions.verify_access_token = Mock(return_value={"sub": "user-1", "account_id": "acc-1"})
     app = Quart("test_consent_rendering")
-    app.register_blueprint(build_mcp_consent_blueprint(svc, sessions))
+    app.register_blueprint(build_mcp_consent_blueprint(svc, _KIT.verifier))
     return app
 
 
 async def _page(app, req="JWT"):
     async with app.test_client() as client:
-        client.set_cookie("localhost", "access_token", "valid")
+        _sign_in(client)
         resp = await client.get("/mcp/consent", query_string={"req": req})
         return resp, (await resp.get_data()).decode()
 

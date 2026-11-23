@@ -13,10 +13,13 @@ from src.domain.call_text_file import (
 from src.domain.media_room_caller_leg import CallerLeg
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
-from tests.unit.web.test_voice_web_call_app import AUTH, MemoryStore, _setup
+from tests.support.cabinet_session_kit import cabinet_session_for
+from tests.unit.web.test_voice_web_call_app import MemoryStore, _setup
 
 PAIR = {"source": "We have a booking under RM-55120.", "translation": "Abbiamo una prenotazione con il codice RM-55120."}
 BODY = {"target": "drive", "mode": "interpreter", "duration_s": 30, "entries": [PAIR]}
+
+AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 
 def _service(outcome=None, available=True):
@@ -27,14 +30,14 @@ def _service(outcome=None, available=True):
 
 
 def _app(service, user="u1"):
-    sessions = MagicMock()
-    sessions.verify_access_token = MagicMock(return_value={"sub": user, "account_id": "a1"})
+    cabinet_sessions, _bearer = cabinet_session_for(user, "a1")
+    AUTH.update(_bearer)
     room = AsyncMock()
     room.open_caller.return_value = CallerLeg("S1", "ANSWER")
     store = MemoryStore()
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=sessions, call_setup=_setup(store), media_room=room, ephemeral_store=store,
+        cabinet_sessions=cabinet_sessions, call_setup=_setup(store), media_room=room, ephemeral_store=store,
         relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32,
         call_text_files=service))
     return app
