@@ -60,7 +60,11 @@ def test_no_card_names_a_connect_path_of_its_own():
     # the connection list (MULTI_DRIVE_RFC §11.7) reconnects to its own kind with its own credential
     assert "renderAddDrive(data)" in _body(r"function renderDriveStatus\(.*?\n      }\n")
     loader = _body(r"async function loadDriveStatus\(\) \{.*?\n      }\n")
-    assert '(await loadConnectors()).filter((c) => c.integration === "drive")' in loader
+    # The three reads run side by side (the Drives loading fix); add_kinds is the loadConnectors() result, filtered.
+    reads = re.search(r"const \[\s*\w+,\s*\w+,\s*(\w+)\s*\] = await Promise\.all\(\[\s*authFetch\(`\$\{API\}/api/drive/"
+                      r"connections`.*?\),\s*loadDeepResearchCopy\(\),\s*loadConnectors\(\),\s*\]\);", loader, re.S)
+    assert reads, "loadDriveStatus reads connections, the copy setting and the connectors together"
+    assert f'data.add_kinds = {reads.group(1)}.filter((c) => c.integration === "drive");' in loader
     assert ("`/auth/connect/${encodeURIComponent(row.kind)}"
             "?credential=${encodeURIComponent(row.reconnect.credential_id)}`") in loader
     assert "addDrive('${escapeHtml(c.kind)}')" in _body(r"function renderAddDrive\(.*?\n      }\n")
