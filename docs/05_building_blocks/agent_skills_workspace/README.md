@@ -1,4 +1,5 @@
 <!-- living-doc
+audited: 2026-11-23
 covers:
   src/skills/
   src/domain/skill.py
@@ -107,8 +108,7 @@ voice call is used for that run only.
    file), stores a draft under a random short code and returns a `skill_preview` delivery item carrying the rendered
    `SKILL.md` and the command `$skill save <code>`.
 3. **Only the owner's pasted command saves it** (`ConversationHandler._handle_skill_save` → `SkillService.save_draft`
-   → `SkillRepository.save_version`, one transaction). Only the pasted command saves: `draft_skill` stores a draft and
-   delivers a code, never a skill (`tests/unit/infrastructure/test_skill_tools_draft.py`,
+   → `SkillRepository.save_version`, one transaction). `draft_skill` stores a draft and delivers a code, never a skill (`tests/unit/infrastructure/test_skill_tools_draft.py`,
    `tests/unit/handlers/test_conversation_handler_skill_command.py`). Afterwards a note and a model reply are
    appended to history so the next turn knows it happened.
 4. `$skill list` and `$skill delete <name>` are the other sub-commands of `_handle_skill_command`.
@@ -189,8 +189,8 @@ does nothing.
 - **The stub is neutral on purpose.** The voice companion reads model summaries and has no `use_skill`; the marker
   regex is whole-line and strict so the stub never matches it.
 - **Trap: the skill-save note is written in the system's voice as a user-role message.** `skill_saved_note`
-  (`src/domain/skill.py:320`) builds a `[System: ...]` line that `ConversationHandler._handle_skill_save`
-  (`src/handlers/conversation_handler.py:2066-2073`) appends as `role="user"`. The repo rules forbid both: the
+  (`src/domain/skill.py::skill_saved_note`) builds a `[System: ...]` line that `ConversationHandler._handle_skill_save`
+  appends as `role="user"` in its history-append block. The repo rules forbid both: the
   consolidator reads user-role text as the owner's words, and code text must not claim the system's voice. The owner
   knows and accepted it (2026-11-20): no fix planned; do not re-raise it as a finding.
 - **Code-written text in a tool result is a `Tool note:`** (`src/infrastructure/skill_tools.py`,

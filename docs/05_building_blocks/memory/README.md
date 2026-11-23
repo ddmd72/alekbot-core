@@ -1,4 +1,5 @@
 <!-- living-doc
+audited: 2026-11-23
 covers:
   src/domain/fact_*.py
   src/domain/consolidation*.py

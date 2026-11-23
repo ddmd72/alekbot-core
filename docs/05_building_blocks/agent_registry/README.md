@@ -1,4 +1,5 @@
 <!-- living-doc
+audited: 2026-11-23
 covers:
   src/infrastructure/agent_registry.py
   src/infrastructure/agent_manifest.py
@@ -30,8 +31,7 @@ It also owns what every agent shares: the message and response contract (`AgentM
 `DeliveryItem`), the execution wrapper (circuit breaker, typed retry, timeout), the worker that runs ASYNC intents, and
 the fallback chain that guarantees a displayable answer.
 
-Not here: the multi-turn tool loop itself (`DelegationEngine`, see [hybrid_router](../hybrid_router/README.md) and
-[hybrid_router](../hybrid_router/README.md)), per-agent behaviour (each specialist's own block or
+Not here: the multi-turn tool loop itself (`DelegationEngine`, see [hybrid_router](../hybrid_router/README.md)), per-agent behaviour (each specialist's own block or
 `src/agents/CLAUDE.md`), provider failover (see [provider_resolution](../provider_resolution/README.md)), and the
 step list for adding an agent ([`NEW_AGENT_PLAYBOOK.md`](../../how_to/NEW_AGENT_PLAYBOOK.md)).
 
@@ -107,8 +107,8 @@ The execution mode is the manifest's. The caller cannot choose it (`decisions/de
 3. Eviction (`$admin_cache_reset`, the TTL sweep) takes no lock, so it bumps the user's generation. The eager build
    (`_build_unless_overtaken`) is redone when an eviction overtook it, at most `_MAX_BUILD_ATTEMPTS` times, keeping the last.
    The lazy build re-reads the cache entry under the lock instead and returns `False` after `_MAX_BUILD_ATTEMPTS` evictions.
-   An eager build that is cancelled (or fails) after registering its agents and before writing the cache entry unregisters
-   exactly the agents it registered and re-raises, so no orphan registration blocks the next build.
+   An eager build that is cancelled (or interrupted by an error the preload does not swallow) after registering its agents and before writing the cache entry unregisters
+   exactly the agents it registered and re-raises (`UserAgentFactory._register_and_preload`), so no orphan registration blocks the next build.
 4. A turn that was delegating during an eviction finds its eager agents unregistered. `_try_lazy_load` sees an eager
    descriptor and calls `restore_agents_for_user`, which rebuilds the set, instead of answering "Unknown recipient".
 
