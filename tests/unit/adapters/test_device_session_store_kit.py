@@ -251,7 +251,7 @@ class TestFirestoreDocuments:
         await repo.revoke("sid-1", LIST, T0 + timedelta(days=2))
         doc = db.collection(SESSIONS).docs["sid-1"]
         assert set(doc) == {"sid", "user_id", "account_id", "label", "platform_hint", "auth_kind", "auth_at",
-                            "created_at", "last_seen_at", "expires_at", "refresh_hash", "prev_refresh_hash",
+                            "passkey_at", "created_at", "last_seen_at", "expires_at", "refresh_hash", "prev_refresh_hash",
                             "rotated_at", "revoked_at", "revoke_reason", "purge_after"}
         assert (doc["auth_kind"], doc["revoke_reason"]) == ("google", "device_list")
         assert (doc["refresh_hash"], doc["prev_refresh_hash"]) == (SECOND, FIRST)
