@@ -579,7 +579,8 @@ class SmartResponseAgent(BaseAgent):
                     and not self._reached_by_delegation(message)
                     and self.user_config.external_tasks_enabled):
                 local_tools = dict(local_tools or {})
-                await self._add_external_task_tools(tools, local_tools, prompt_user_id, message, session_id, taint)
+                await self._add_external_task_tools(
+                    self.external_tasks, tools, local_tools, prompt_user_id, message, session_id, taint)
 
             # Every path, interactive or not (D2, D5): background writes are labelled with their origin, not
             # forbidden. Outside `if skills:` — a skills-store failure must not take the workspace away (§7.1).
@@ -755,14 +756,13 @@ class SmartResponseAgent(BaseAgent):
         return bool(message.context.get(AgentCoordinator.CALL_CHAIN_KEY))
 
     async def _add_external_task_tools(
-        self, tools: List[Dict[str, Any]], local_tools: Dict[str, Any], user_id: str, message: AgentMessage,
+        self, service: "ExternalTaskService", tools: List[Dict[str, Any]], local_tools: Dict[str, Any], user_id: str,
+        message: AgentMessage,
         session_id: Optional[str], taint: TaintTracker,
     ) -> None:
-        """Declare and serve the four external task tools. The `worker` enum is this execution's registered workers; with
+        """Declare and serve the five external task tools. The `worker` enum is this execution's registered workers; with
         none, `create_external_task` is left out (an empty enum is not a valid schema). When the service refuses the
         list (the flag or the account lock changed under the cached profile), or fails, no tool is offered."""
-        service = self.external_tasks
-        assert service is not None
         try:
             workers = await service.list_workers(user_id)
         except ExternalTaskRefused as e:
