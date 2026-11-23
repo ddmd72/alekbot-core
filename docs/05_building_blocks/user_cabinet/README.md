@@ -11,6 +11,7 @@ covers:
   src/web/static/cabinet-settings.js
   src/web/static/cabinet-home.js
   src/web/static/cabinet-memory.js
+  src/web/static/cabinet-reminders.js
 -->
 # User Cabinet
 
@@ -20,12 +21,16 @@ The Cabinet is the owner's web page for what chat is a poor place for: seeing an
 connecting and disconnecting integrations (Gmail, drives, Microsoft To Do), and setting personal preferences (language,
 timezone, schedules, reminders, team invites). It is one page served at `/cabinet`: a shell
 (`src/web/static/cabinet.html`: header, menu, section markup) and its assets (`cabinet.css`, `cabinet-strings.js`,
-`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-settings.js`, `cabinet-home.js`, `cabinet-memory.js`: one
+`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-settings.js`, `cabinet-home.js`, `cabinet-memory.js`,
+`cabinet-reminders.js`: one
 stylesheet and plain scripts sharing one global scope, loaded in that order, no build), with five sections: Home,
 Memory, Drives, Reminders, Settings
 ([CABINET_REDESIGN_RFC](../../10_rfcs/CABINET_REDESIGN_RFC.md)). Settings (`cabinet-settings.js`, RFC §5.1) is groups of
 collapsed rows (Account, Profile, Connections, Security, Voice, More), one row open at a time; a switch or a select
 saves at once, City alone has a Save button.
+Reminders is its own section of rows (label, next run in the user's timezone, repeat); a row opens to Edit and Delete, and
+"+ New" and Edit open the one form (`#reminder-form`), which `cabinet-reminders.js` moves into the row's body or above the
+list, so one form is open at a time. The preset rules are named in words, any other rule is shown raw.
 Behind it is one Quart blueprint of JSON routes behind the JWT session that the OAuth sign-in set.
 
 What it is not: it is not a second way to write memory (a correction is a message the user sends in chat, see Flows),

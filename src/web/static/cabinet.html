@@ -534,39 +534,35 @@
           </div>
         </section>
 
-        <!-- Reminders (CABINET_REDESIGN_RFC §5.5): the Bot Reminders card, moved out of Settings unchanged -->
+        <!-- Reminders (CABINET_REDESIGN_RFC §5.5): the list as rows; one form, placed in a row's body or above the list -->
         <section id="section-reminders" class="section">
-          <h1 class="c-title" id="reminders-title">Reminders</h1>
-          <!-- Bot Reminders -->
-          <div class="card reveal" style="max-width: 640px; margin-top: 20px">
-            <div class="card-body">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-                <div>
-                  <h3 id="settings-rem-title" style="font-size:18px;font-weight:600;margin-bottom:4px">Bot Reminders</h3>
-                  <p id="settings-rem-desc" style="font-size:14px;color:var(--text-muted);margin:0">Scheduled actions the bot executes automatically.</p>
-                </div>
-                <button class="btn btn-primary" style="padding:8px 16px;font-size:14px" onclick="showReminderForm()">+ New</button>
-              </div>
+          <div class="c-page">
+            <div class="c-rem-head">
+              <h1 class="c-title" id="reminders-title">Reminders</h1>
+              <button type="button" class="c-btn c-pri" id="reminders-new" onclick="showReminderForm()">+ New</button>
+            </div>
+            <p class="c-lead" id="settings-rem-desc">Scheduled actions the bot executes automatically.</p>
 
-              <!-- Create/Edit form (hidden by default) -->
-              <div id="reminder-form" style="display:none;background:var(--bg-hover);border-radius:var(--radius-sm);padding:16px;margin-bottom:16px">
+            <!-- Where the form sits for "+ New", and where it is parked while closed -->
+            <div class="c-group c-rem-new" id="reminders-new-slot" hidden>
+              <div class="c-row-body c-rem-form" id="reminder-form" hidden>
                 <input type="hidden" id="rem-edit-id" value="">
-                <div style="margin-bottom:12px">
-                  <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Label</label>
-                  <input id="rem-text" class="inp" placeholder="Short label (e.g. Check email)" style="width:100%;margin-top:4px">
+                <div class="c-field">
+                  <label for="rem-text" id="rem-label-text">Label</label>
+                  <input id="rem-text" class="c-input" placeholder="Short label (e.g. Check email)">
                 </div>
-                <div style="margin-bottom:12px">
-                  <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Instruction</label>
-                  <textarea id="rem-instruction" class="inp" rows="3" placeholder="What the bot should do when this fires..." style="width:100%;margin-top:4px;resize:vertical;font-family:inherit"></textarea>
+                <div class="c-field">
+                  <label for="rem-instruction" id="rem-label-instruction">Instruction</label>
+                  <textarea id="rem-instruction" class="c-input" rows="3" placeholder="What the bot should do when this fires..."></textarea>
                 </div>
-                <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
-                  <div style="flex:1;min-width:180px">
-                    <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Due (your time)</label>
-                    <input id="rem-due" type="datetime-local" class="inp" style="width:100%;margin-top:4px">
+                <div class="c-rem-pair">
+                  <div class="c-field">
+                    <label for="rem-due" id="rem-label-due">Due (your time)</label>
+                    <input id="rem-due" type="datetime-local" class="c-input">
                   </div>
-                  <div style="flex:1;min-width:140px">
-                    <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Repeat</label>
-                    <select id="rem-recurrence" class="inp" style="width:100%;margin-top:4px;padding:10px" onchange="onRecurrenceChange()">
+                  <div class="c-field">
+                    <label for="rem-recurrence" id="rem-label-repeat">Repeat</label>
+                    <select id="rem-recurrence" class="c-input" onchange="onRecurrenceChange()">
                       <option value="">Once</option>
                       <option value="FREQ=HOURLY">Hourly</option>
                       <option value="FREQ=DAILY">Daily</option>
@@ -576,22 +572,20 @@
                     </select>
                   </div>
                 </div>
-                <div id="rem-rrule-row" style="display:none;margin-bottom:12px">
-                  <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Recurrence rule (RRULE)</label>
-                  <input id="rem-rrule" class="inp" style="width:100%;margin-top:4px" placeholder="FREQ=WEEKLY;BYDAY=TU,FR">
-                  <div style="font-size:12px;color:var(--text-subtle);margin-top:4px">
-                    RFC 5545, no DTSTART. e.g. <code>FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0</code> · <code>FREQ=MONTHLY;BYDAY=-1SU</code>
-                  </div>
+                <div class="c-field" id="rem-rrule-row" hidden>
+                  <label for="rem-rrule" id="rem-label-rrule">Recurrence rule (RRULE)</label>
+                  <input id="rem-rrule" class="c-input" placeholder="FREQ=WEEKLY;BYDAY=TU,FR">
+                  <p class="c-hint" id="rem-rrule-help">RFC 5545, no DTSTART. e.g. <code>FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0</code> · <code>FREQ=MONTHLY;BYDAY=-1SU</code></p>
                 </div>
-                <div style="display:flex;gap:8px;justify-content:flex-end">
-                  <button class="btn btn-secondary" style="padding:8px 16px;font-size:14px" onclick="hideReminderForm()">Cancel</button>
-                  <button class="btn btn-primary" style="padding:8px 16px;font-size:14px" onclick="saveReminder()">Save</button>
+                <div class="c-btns">
+                  <button type="button" class="c-btn c-pri" id="rem-save" onclick="saveReminder()">Save</button>
+                  <button type="button" class="c-btn c-sec" id="rem-cancel" onclick="hideReminderForm()">Cancel</button>
                 </div>
               </div>
-
-              <!-- Reminders list -->
-              <div id="reminders-list" style="font-size:14px;color:var(--text-muted)">Loading...</div>
             </div>
+
+            <!-- The reminders: one group of rows -->
+            <div class="c-group" id="reminders-list"><div class="c-rem-note">Loading...</div></div>
           </div>
         </section>
       </main>
@@ -608,6 +602,7 @@
     <script src="/cabinet/assets/cabinet-settings.js"></script>
     <script src="/cabinet/assets/cabinet-home.js"></script>
     <script src="/cabinet/assets/cabinet-memory.js"></script>
+    <script src="/cabinet/assets/cabinet-reminders.js"></script>
     <div id="drive-picker-root"></div>
   </body>
 </html>
