@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.agents.tasks_agent import _resolve_zone
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from src.domain.task import (
     Task,
@@ -894,3 +895,19 @@ class TestPromptBuildFailure:
         assert response.error.startswith("Failed to build system prompt")
         mock_call.assert_not_called()
         provider.list_tasks.assert_not_awaited()
+
+
+# --- _resolve_zone: falls back to UTC for every name ZoneInfo refuses (mutation survivor 4a8f2b50) ---
+
+@pytest.mark.parametrize("name", ["Nowhere/Land", "not-a-zone", "/etc/passwd", "../etc", "a\x00b"])
+def test_refused_zone_name_resolves_to_the_utc_singleton(name):
+    assert _resolve_zone(name) is timezone.utc
+
+
+@pytest.mark.parametrize("name", ["", None])
+def test_empty_zone_name_resolves_to_utc(name):
+    assert str(_resolve_zone(name)) == "UTC"
+
+
+def test_known_zone_is_kept():
+    assert str(_resolve_zone("Europe/Paris")) == "Europe/Paris"
