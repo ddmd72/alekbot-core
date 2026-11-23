@@ -523,3 +523,11 @@ class TestChangingPasskeysNeedsAFreshAssertion:
         await world.enrol()
         await world.step_up()
         assert (await world.enrol()).status_code == 201
+
+
+async def test_removing_a_passkey_after_the_session_was_revoked_elsewhere_is_400_and_removes_nothing(world):
+    await world.google_sign_in()
+    row = (await (await world.enrol()).get_json())["passkey"]
+    await world.kit.repo.revoke(world.sid(), SessionRevokeReason.LOGOUT, world.kit.clock())          # another instance revoked it
+    resp = await world.post(f"/api/user/passkeys/{row['id']}/remove")
+    assert resp.status_code == 400 and await resp.get_json() == {"error": "Session ended"}
