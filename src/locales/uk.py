@@ -287,6 +287,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_PAGE_GONE.value: "Це посилання вже недійсне. Надішли $geo ще раз.",
     UIMessage.GEO_PAGE_NOT_SAVED.value: "Місцезнаходження не збережено. Надішли $geo ще раз.",
     UIMessage.DEVICE_SIGN_IN_NOTICE.value: "Новий вхід: {platform_hint}, {time}, через Google. Не ти? Надішли `$devices off`.",
+    UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE.value: "Новий вхід: {platform_hint}, {time}, ключем доступу (Face ID). Не ти? Надішли `$devices off`.",
     UIMessage.DEVICES_UNAVAILABLE.value: "Список пристроїв зараз недоступний.",
     UIMessage.DEVICES_USAGE.value: "`$devices` показує пристрої, з яких виконано вхід у Кабінет; `$devices off` виходить з усіх.",
     UIMessage.DEVICES_LIST_HEADER.value: "Пристрої, з яких виконано вхід у Кабінет ({count}):",
@@ -294,4 +295,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — вхід {created}, остання активність {last_used}",
     UIMessage.DEVICES_OFF_DONE.value: "Вихід виконано на пристроях: {count}. Наступний вхід у Кабінет потребує нового входу через Google.",
     UIMessage.DEVICES_CHECKLIST.value: "Якщо загублено телефон:\n1. Надішли `$devices off` (виконано).\n2. Видали телефон з облікового запису Apple або Google.\n3. Заверш сесії телефона в Telegram і Slack у цих застосунках.",
+    UIMessage.PASSKEY_ADDED_NOTICE.value: "Додано ключ доступу: {label}, {time}. Тепер ним можна увійти в Кабінет. Не ти? Надішли `$devices off`.",
+    UIMessage.PASSKEY_REMOVED_NOTICE.value: "Ключ доступу видалено: {label}, {time}. Ним більше не можна увійти в Кабінет.",
 }

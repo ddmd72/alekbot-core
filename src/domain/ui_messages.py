@@ -203,8 +203,10 @@ class UIMessage(Enum):
     GEO_PAGE_RETRY = "geo_page_retry"
     GEO_PAGE_GONE = "geo_page_gone"
     GEO_PAGE_NOT_SAVED = "geo_page_not_saved"
-    # A new Cabinet device session started (CABINET_DEVICE_SESSIONS_RFC §7.5); {platform_hint} is untrusted text.
+    # A new Cabinet device session started (CABINET_DEVICE_SESSIONS_RFC §7.5), signed in with Google or with a passkey;
+    # {platform_hint} is untrusted text.
     DEVICE_SIGN_IN_NOTICE = "device_sign_in_notice"
+    DEVICE_PASSKEY_SIGN_IN_NOTICE = "device_passkey_sign_in_notice"
     # `$devices` and `$devices off` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6). {label} is untrusted text.
     DEVICES_UNAVAILABLE = "devices_unavailable"
     DEVICES_USAGE = "devices_usage"
@@ -213,3 +215,7 @@ class UIMessage(Enum):
     DEVICES_LIST_LINE = "devices_list_line"
     DEVICES_OFF_DONE = "devices_off_done"
     DEVICES_CHECKLIST = "devices_checklist"
+    # A passkey added to or removed from the user's Cabinet sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5); {label} is
+    # untrusted text.
+    PASSKEY_ADDED_NOTICE = "passkey_added_notice"
+    PASSKEY_REMOVED_NOTICE = "passkey_removed_notice"

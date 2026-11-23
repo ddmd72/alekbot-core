@@ -42,7 +42,7 @@ Today the second is impossible. Tokens are stateless JWTs, and nothing can revok
 
 | Attacker has | Today | After this RFC |
 |---|---|---|
-| A phone, unlocked or with a known passcode, with live sessions | Up to 48h of Cabinet and calls; no revocation | The Cabinet and Lelik until `$devices off`, which takes effect in ≤30 s. With a facts PIN set, the facts tab needs the PIN, and five wrong guesses lock the account |
+| A phone, unlocked or with a known passcode, with live sessions | Up to 48h of Cabinet and calls; no revocation | The Cabinet until `$devices off`, which takes effect in ≤30 s; Lelik calls need a fresh passkey assertion when one is enrolled (§7.3). With a facts PIN set, the facts tab needs the PIN, and five wrong guesses lock the account |
 | The same phone, with the account holder's Google account signed in on it | A new Google login at will | Every new session is announced in chat. With a PIN set, the account holder answers with the duress code in chat: a full lock in seconds (§7.8) |
 | A stolen session cookie (copied, not the device) | Valid until its JWT expires | Rotation detects reuse and revokes that session (§7.1) |
 | An unlocked laptop left in a public place | 24h | The same as the first row, plus the 14-day idle end |
@@ -173,6 +173,7 @@ Two consequences:
 | `auth_kind`, `auth_at` | How and when the session was signed in (`google` or `passkey`) |
 | `created_at`, `last_seen_at`, `expires_at` | `expires_at` = `created_at` + 30 days |
 | `refresh_hash`, `prev_refresh_hash`, `rotated_at` | The rotating refresh secret |
+| `passkey_at` | When a passkey assertion last proved the session (its passkey sign-in, or the step-up before a call, §7.3) |
 | `facts_unlocked_until` | §7.7 |
 | `revoked_at`, `revoke_reason` | Set by logout, the devices list, the kill switch or the account lock |
 | `purge_after` | Firestore TTL field: `last_seen_at` + 30 days |
@@ -270,6 +271,7 @@ short-lived httponly cookie.
 - **Lelik call start.** Every call start requires a fresh passkey assertion (about 1 s; it guards an unlocked phone
   in another person's hands; the passcode is accepted as fallback, F1). A 5-minute grace after the last assertion
   means a redial after a dropped call does not ask again.
+- **Changing the passkeys.** Removing or adding a passkey, when the user already has one, needs a fresh passkey assertion on the session (otherwise the call-start check could be switched off). The routes answer 400 `passkey_required`; the page runs the step-up and retries once. A user with no passkey enrols freely.
 
 ### 7.4 Frontend: refresh before login
 
@@ -544,7 +546,7 @@ challenge bound to that `sid`. The session, the gate, the devices list and the l
 
 The questions this design left open are closed (2026-11-22):
 1. **A passkey check at every Lelik call start**, with a 5-minute grace, so a redial after a dropped call does not
-   ask again (§7.3). Built in step 2, after the per-entry-point check.
+   ask again (§7.3). Built in step 2, after the per-entry-point check; phone calls are outside it (the SIM is out of scope).
 2. **PIN unlock window:** 15 minutes, or until the tab closes (§7.7).
 3. **The real PIN sent in chat:** the counter resets and the reply warns that the PIN should be changed (§7.9).
 4. **`$devices off` revokes the MCP connector grants** as well as the sessions and passkeys (§7.6). A phone's MCP

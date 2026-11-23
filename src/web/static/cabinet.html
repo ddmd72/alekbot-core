@@ -1308,6 +1308,14 @@
 
       <!-- Main Content Area -->
       <main class="main-content">
+        <!-- Offered once after a Google sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3); a dismissal is remembered per browser -->
+        <div id="passkey-offer" class="card hidden" style="max-width: 720px; margin-bottom: 16px">
+          <div class="card-body" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap">
+            <span id="passkey-offer-text" style="flex: 1; min-width: 200px; font-size: 14px">Sign in faster next time: add Face ID (a passkey) on this device.</span>
+            <button id="passkey-offer-add" class="btn btn-black" onclick="acceptPasskeyOffer()">Add Face ID</button>
+            <button id="passkey-offer-dismiss" class="btn btn-secondary" onclick="dismissPasskeyOffer()">Not now</button>
+          </div>
+        </div>
         <!-- Memory Section -->
         <section id="section-memory" class="section">
           <div class="hero-header reveal">
@@ -1521,6 +1529,17 @@
               <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px">
                 <button id="devices-logout-others" class="btn btn-secondary" onclick="logoutOtherDevices()">Log out all other devices</button>
                 <button id="devices-logout-all" class="btn btn-danger" onclick="logoutAllDevices()">Log out all devices</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
+            <div class="card-body">
+              <h3 id="passkeys-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Face ID and passkeys</h3>
+              <p id="passkeys-subtitle" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px">They sign you in without Google, and confirm a call to Lelik.</p>
+              <div id="passkeys-list"></div>
+              <div style="margin-top: 12px">
+                <button id="passkeys-add" class="btn btn-secondary" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button>
               </div>
             </div>
           </div>
@@ -1790,7 +1809,7 @@
 
     <script src="/auth/session.js"></script>
     <script>
-      const { authFetch } = window.alekSession;
+      const { authFetch, addPasskey } = window.alekSession;
       /* ── App state ───────────────────────────────────── */
       const API = "";
       let currentUser = null;
@@ -1859,6 +1878,22 @@
           "devices.lost_1": "Send $devices off in Slack or Telegram, or press Log out all devices here.",
           "devices.lost_2": "Remove the phone from your Apple or Google account.",
           "devices.lost_3": "End the phone's Telegram and Slack sessions in those apps.",
+          "devices.kind_passkey": "Passkey",
+          "passkeys.title": "Face ID and passkeys",
+          "passkeys.subtitle": "They sign you in without Google, and confirm a call to Lelik.",
+          "passkeys.add": "Add Face ID for faster sign-in",
+          "passkeys.remove": "Remove",
+          "passkeys.empty": "No passkey yet.",
+          "passkeys.synced": "Synced",
+          "passkeys.last_used": "Last used",
+          "passkeys.never_used": "Not used yet",
+          "passkeys.added": "Face ID added",
+          "passkeys.exists": "This device already has a passkey for you",
+          "passkeys.failed": "Could not add or remove the passkey.",
+          "passkeys.confirm_remove": "Remove this passkey? It will no longer sign you in.",
+          "passkeys.offer_text": "Sign in faster next time: add Face ID (a passkey) on this device.",
+          "passkeys.offer_add": "Add Face ID",
+          "passkeys.offer_dismiss": "Not now",
           "settings.title": "Settings",
           "settings.subtitle": "Preferences that personalise how Alek works for you.",
           "settings.tz.title": "Timezone",
@@ -2198,6 +2233,22 @@
           "devices.lost_1": "Надішли $devices off у Slack або Telegram чи натисни тут «Вийти на всіх пристроях».",
           "devices.lost_2": "Видали телефон з облікового запису Apple або Google.",
           "devices.lost_3": "Заверш сесії телефона в Telegram і Slack у цих застосунках.",
+          "devices.kind_passkey": "Ключ доступу",
+          "passkeys.title": "Face ID і ключі доступу",
+          "passkeys.subtitle": "Вони дають увійти без Google і підтверджують дзвінок Лелику.",
+          "passkeys.add": "Додати Face ID для швидшого входу",
+          "passkeys.remove": "Видалити",
+          "passkeys.empty": "Ключів доступу ще немає.",
+          "passkeys.synced": "Синхронізований",
+          "passkeys.last_used": "Останнє використання",
+          "passkeys.never_used": "Ще не використовувався",
+          "passkeys.added": "Face ID додано",
+          "passkeys.exists": "На цьому пристрої вже є твій ключ доступу",
+          "passkeys.failed": "Не вдалося додати або видалити ключ доступу.",
+          "passkeys.confirm_remove": "Видалити цей ключ доступу? Ним більше не можна буде увійти.",
+          "passkeys.offer_text": "Наступного разу входь швидше: додай Face ID (ключ доступу) на цьому пристрої.",
+          "passkeys.offer_add": "Додати Face ID",
+          "passkeys.offer_dismiss": "Не зараз",
           "settings.title": "Налаштування",
           "settings.subtitle": "Персоналізуйте роботу Alek під себе.",
           "settings.tz.title": "Часовий пояс",
@@ -2537,6 +2588,22 @@
           "devices.lost_1": "Envoyez $devices off dans Slack ou Telegram, ou appuyez ici sur Déconnecter tous les appareils.",
           "devices.lost_2": "Retirez le téléphone de votre compte Apple ou Google.",
           "devices.lost_3": "Terminez les sessions Telegram et Slack du téléphone dans ces applications.",
+          "devices.kind_passkey": "Clé d'accès",
+          "passkeys.title": "Face ID et clés d'accès",
+          "passkeys.subtitle": "Elles vous connectent sans Google et confirment un appel à Lelik.",
+          "passkeys.add": "Ajouter Face ID pour se connecter plus vite",
+          "passkeys.remove": "Supprimer",
+          "passkeys.empty": "Aucune clé d'accès pour l'instant.",
+          "passkeys.synced": "Synchronisée",
+          "passkeys.last_used": "Dernière utilisation",
+          "passkeys.never_used": "Pas encore utilisée",
+          "passkeys.added": "Face ID ajouté",
+          "passkeys.exists": "Cet appareil a déjà une clé d'accès pour vous",
+          "passkeys.failed": "Impossible d'ajouter ou de supprimer la clé d'accès.",
+          "passkeys.confirm_remove": "Supprimer cette clé d'accès ? Elle ne vous connectera plus.",
+          "passkeys.offer_text": "Connectez-vous plus vite la prochaine fois : ajoutez Face ID (une clé d'accès) sur cet appareil.",
+          "passkeys.offer_add": "Ajouter Face ID",
+          "passkeys.offer_dismiss": "Plus tard",
           "settings.title": "Param\u00e8tres",
           "settings.subtitle": "Pr\u00e9f\u00e9rences pour personnaliser Alek.",
           "settings.tz.title": "Fuseau horaire",
@@ -2876,6 +2943,22 @@
           "devices.lost_1": "Envía $devices off en Slack o Telegram, o pulsa aquí Cerrar sesión en todos los dispositivos.",
           "devices.lost_2": "Quita el teléfono de tu cuenta de Apple o Google.",
           "devices.lost_3": "Cierra las sesiones de Telegram y Slack del teléfono en esas aplicaciones.",
+          "devices.kind_passkey": "Llave de acceso",
+          "passkeys.title": "Face ID y llaves de acceso",
+          "passkeys.subtitle": "Te permiten entrar sin Google y confirman una llamada a Lelik.",
+          "passkeys.add": "Añadir Face ID para entrar más rápido",
+          "passkeys.remove": "Eliminar",
+          "passkeys.empty": "Aún no hay llaves de acceso.",
+          "passkeys.synced": "Sincronizada",
+          "passkeys.last_used": "Último uso",
+          "passkeys.never_used": "Aún sin usar",
+          "passkeys.added": "Face ID añadido",
+          "passkeys.exists": "Este dispositivo ya tiene una llave de acceso tuya",
+          "passkeys.failed": "No se pudo añadir o eliminar la llave de acceso.",
+          "passkeys.confirm_remove": "¿Eliminar esta llave de acceso? Ya no te permitirá entrar.",
+          "passkeys.offer_text": "Entra más rápido la próxima vez: añade Face ID (una llave de acceso) en este dispositivo.",
+          "passkeys.offer_add": "Añadir Face ID",
+          "passkeys.offer_dismiss": "Ahora no",
           "settings.title": "Ajustes",
           "settings.subtitle": "Preferencias para personalizar Alek.",
           "settings.tz.title": "Zona horaria",
@@ -3177,6 +3260,12 @@
         "#devices-lost-1":            "devices.lost_1",
         "#devices-lost-2":            "devices.lost_2",
         "#devices-lost-3":            "devices.lost_3",
+        "#passkeys-title":            "passkeys.title",
+        "#passkeys-subtitle":         "passkeys.subtitle",
+        "#passkeys-add":              "passkeys.add",
+        "#passkey-offer-text":        "passkeys.offer_text",
+        "#passkey-offer-add":         "passkeys.offer_add",
+        "#passkey-offer-dismiss":     "passkeys.offer_dismiss",
         "#nav-call":                  "nav.call",
         "#nav-mobile-call .tab-label":           "nav.call",
         "#nav-modes":                 "nav.modes",
@@ -3362,6 +3451,7 @@
         if (name === "team") loadCodes();
         if (name === "settings") loadSettings();
         if (name === "devices") loadDevices();
+        if (name === "devices") loadPasskeys();
       }
 
       /* ── Devices (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6) ─── */
@@ -3377,7 +3467,8 @@
           const current = d.is_current
             ? ` <span class="fact-domain-badge">${escapeHtml(t("devices.current"))}</span>`
             : "";
-          const kind = d.auth_kind === "google" ? t("devices.kind_google") : d.auth_kind;
+          const kind = d.auth_kind === "google" ? t("devices.kind_google")
+            : d.auth_kind === "passkey" ? t("devices.kind_passkey") : d.auth_kind;
           return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
               <div style="flex:1">
@@ -3439,6 +3530,107 @@
           return;
         }
         window.location.href = "/";
+      }
+
+      /* ── Passkeys (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5) ─── */
+      // label and platform_hint are the User-Agent text of the session that added the passkey: untrusted, escaped.
+      const PASSKEY_OFFER_KEY = "alek.passkeyOffer";
+
+      function renderPasskeys(passkeys) {
+        const list = document.getElementById("passkeys-list");
+        if (!passkeys.length) {
+          list.innerHTML = `<p style="color:var(--text-subtle);font-style:italic">${escapeHtml(t("passkeys.empty"))}</p>`;
+          return;
+        }
+        const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+        list.innerHTML = passkeys.map((p) => {
+          const synced = p.synced ? ` · ${escapeHtml(t("passkeys.synced"))}` : "";
+          const used = p.last_used_at
+            ? `${escapeHtml(t("passkeys.last_used"))}: ${escapeHtml(when(p.last_used_at))}`
+            : escapeHtml(t("passkeys.never_used"));
+          return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <div style="flex:1">
+                <div style="font-weight:600;color:var(--text-main);font-size:15px">${escapeHtml(p.label)}</div>
+                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(p.platform_hint)}${synced}</div>
+                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(t("devices.created"))}: ${escapeHtml(when(p.created_at))} · ${used}</div>
+              </div>
+              <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" data-id="${escapeHtml(p.id)}" onclick="removePasskey(this.dataset.id)">${escapeHtml(t("passkeys.remove"))}</button>
+            </div>
+          </div>`;
+        }).join("");
+      }
+
+      async function fetchPasskeys() {
+        const res = await authFetch(`${API}/api/user/passkeys`, { credentials: "include" });
+        if (!res.ok) throw new Error();
+        return res.json();
+      }
+
+      async function loadPasskeys() {
+        try {
+          renderPasskeys((await fetchPasskeys()).passkeys || []);
+        } catch {
+          showToast(t("devices.failed"), "error");
+        }
+      }
+
+      async function addPasskeyHere() {
+        let outcome = await addPasskey();
+        // The user already has a passkey: adding another needs a fresh assertion on this session. Step up, retry once.
+        if (outcome === "passkey_required") outcome = (await window.alekSession.ensurePasskey()) ? await addPasskey() : "failed";
+        rememberPasskeyOffer();
+        if (outcome === "added") showToast(t("passkeys.added"));
+        else if (outcome === "exists") showToast(t("passkeys.exists"));
+        else if (outcome === "failed") showToast(t("passkeys.failed"), "error");
+        if (document.getElementById("section-devices").classList.contains("active")) loadPasskeys();
+        return outcome;
+      }
+
+      async function removePasskey(id) {
+        if (!confirm(t("passkeys.confirm_remove"))) return;
+        try {
+          const url = `${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`;
+          let res = await authFetch(url, { method: "POST", credentials: "include" });
+          // A fresh passkey assertion is needed while the user has a passkey: step up, retry once.
+          if (!res.ok && (await window.alekSession.needsPasskey(res.clone())) && (await window.alekSession.ensurePasskey())) {
+            res = await authFetch(url, { method: "POST", credentials: "include" });
+          }
+          if (!res.ok) throw new Error();
+        } catch {
+          showToast(t("passkeys.failed"), "error");
+          return;
+        }
+        showToast(t("devices.done"));
+        loadPasskeys();
+      }
+
+      // Storage can be absent or refuse (a private window): then the offer simply shows again next time.
+      function passkeyOfferDone() {
+        try { return localStorage.getItem(PASSKEY_OFFER_KEY) === "done"; } catch { return false; }
+      }
+
+      function rememberPasskeyOffer() {
+        try { localStorage.setItem(PASSKEY_OFFER_KEY, "done"); } catch { /* shown again next time */ }
+        document.getElementById("passkey-offer").classList.add("hidden");
+      }
+
+      // After a Google sign-in, once per browser: the banner offering "Add Face ID". Never in the way of the page.
+      async function offerPasskey() {
+        if (passkeyOfferDone() || typeof window.PublicKeyCredential === "undefined") return;
+        try {
+          if ((await fetchPasskeys()).offer === true) document.getElementById("passkey-offer").classList.remove("hidden");
+        } catch {
+          // the offer is a convenience; the Devices tab keeps the button
+        }
+      }
+
+      async function acceptPasskeyOffer() {
+        await addPasskeyHere();
+      }
+
+      function dismissPasskeyOffer() {
+        rememberPasskeyOffer();
       }
 
       /* ── Settings ────────────────────────────────────── */
@@ -3783,6 +3975,7 @@
 
           const tab = qs.get("tab");
           navigate(tab && document.getElementById(`section-${tab}`) ? tab : "integrations");
+          offerPasskey();
         } catch {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);

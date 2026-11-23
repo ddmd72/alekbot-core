@@ -15,7 +15,8 @@ covers:
 ## Purpose
 
 This block is how a person signs in to the web side of the system (the Cabinet, the voice call page, the MCP consent
-page) and how that sign-in is kept. It does four things: it runs the Google sign-in through the `/auth/*` routes, it
+page) and how that sign-in is kept. It does four things: it runs the sign-in through the `/auth/*` routes (a passkey
+first, Google as the fallback and the enrolment path), it
 turns a successful sign-in into a revocable device session and its two cookies, it renews and revokes that session, and it starts and
 finishes the connect of integrations (mail, tasks, drive) under the signed-in session.
 
@@ -40,7 +41,10 @@ The block owns no Firestore collection of its own. What it writes and holds:
   absolute end: the JWT inside the access cookie expires after 15 minutes, but the cookie must outlive it, because
   refresh and logout take the `sid` from that expired JWT. The lifetimes are `DeviceSessionPolicy`'s, not
   configuration (`decisions/cabinet_device_session_lifetimes.md`).
-- **Sign-in cookies**, set by `/auth/login`, short-lived: `oauth_state` (the CSRF value), `auth_next` (where to return)
+- **Passkey ceremony cookies** (`src/web/device_auth_app.py`): `__Host-passkey-sign-in`, `__Host-passkey-register` and
+  `__Host-passkey-step-up`, each holding the nonce of one ceremony's challenge (Secure, HttpOnly, SameSite=Strict,
+  Path=/, 300 s), deleted when the ceremony finishes. One per ceremony, so parallel tabs do not overwrite each other.
+- **Sign-in cookies**, set by `/auth/login/google` (and by `/auth/login` when it is the Google redirect), short-lived: `oauth_state` (the CSRF value), `auth_next` (where to return)
   and `invite_code` (a team invite to consume after sign-in). The callback deletes only `oauth_state`; the other two
   expire by themselves.
 - **Token claims** (`SessionService.create_device_access_token`): identity, `role` (from the account's `iam_policy`,
@@ -61,7 +65,26 @@ The block owns no Firestore collection of its own. What it writes and holds:
 
 ### Sign in
 
-1. `GET /auth/login` (`src/web/oauth_app.py::create_oauth_blueprint`, route `oauth_login`) takes `provider`, `next`
+`GET /auth/login?next=` serves the sign-in page (`src/web/static/sign_in.html`): "Sign in with Face ID / passkey"
+first, "Sign in with Google" second (`/auth/login/google`, with the page's own query). The page goes straight to
+Google for an invite `code` or a browser without WebAuthn, and falls through to Google on any failure of the passkey
+path (a cancelled sheet, no passkey on the device, a refusal, a network error). `/auth/login` is the Google redirect
+itself when passkey sign-in is not configured (`passkey_sign_in` of the factory, set by `main.py`) or with `?provider=`.
+
+**Passkey sign-in** (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3), anonymous by design:
+`POST /auth/passkey/options` makes a challenge for any passkey of this relying party (`PasskeyService.begin_sign_in`)
+and sets its nonce cookie; `POST /auth/passkey/verify` takes `{credential, next}`, verifies the assertion
+(`finish_sign_in`: single-use challenge, a live passkey, its key and counter, its user handle), then runs the same
+stored-identity checks as a refresh (`AuthenticationService.resume_session`: active user, whitelisted email, existing
+account), starts a `passkey` device session (label from the User-Agent and `next`), sets the two session cookies as the
+callback does and answers `{"next": safe_return_path(next)}` for the page to go to. A refused assertion is 401
+`passkey_refused`, a refused user 403 `access_denied`; neither starts a session. A passkey session counts as proved by
+a passkey for the next voice call start (`DeviceSession.passkey_at`). The relying party is the host of
+`OAUTH_REDIRECT_URI` (`identity_setup.passkey_relying_party`).
+
+**The Google path:**
+
+1. `GET /auth/login/google` (`src/web/oauth_app.py::create_oauth_blueprint`, `_google_login`) takes `provider`, `next`
    and `code`. `next` goes through `src/domain/safe_redirect.py::safe_return_path` (same-site relative path only, else
    `/cabinet`). It generates the state, builds Google's consent URL with
    `AuthPort.get_authorization_url` (`FirebaseAuthAdapter`), sets the three cookies and
@@ -153,7 +176,13 @@ is never in it.
   credential is never saved under a guessed tenant.
 - **This blueprint sets no CORS headers**; nothing in `src/` adds them for these routes.
 - **Every route is probed anonymously**: `tests/unit/web/test_every_route_refuses_anonymous.py` walks the URL map and
-  allows an anonymous answer only for the routes it lists with a reason (`/auth/login`, `/auth/logout`).
+  allows an anonymous answer only for the routes it lists with a reason (`/auth/login`, `/auth/login/google`,
+  `/auth/logout`, `/auth/session.js`, `/auth/passkey/options`, `/auth/passkey/verify`).
+- **Passkeys live and die with the RP ID.** The RP ID is the host of `OAUTH_REDIRECT_URI`; a passkey is bound to it, so
+  moving the sign-in to another domain makes every passkey useless (F7): users sign in with Google and enrol again.
+- **`session.js` ends a session only on a refusal.** A refresh that never reached the server (offline, a dropped
+  connection) leaves the page where it is and is tried again on the next request or the next return to the page; only
+  a non-2xx answer of `/auth/refresh` sends the page to `/auth/login`.
 
 ## Links
 
@@ -170,6 +199,9 @@ is never in it.
 - `src/web/cabinet_auth.py::CabinetSessionVerifier`: the one session check and the cookies.
 - `src/services/session_service.py::SessionService`: token claims and verification.
 - `src/services/device_session_service.py::DeviceSessionService`: start, refresh, revoke, `is_live`.
+- `src/web/device_auth_app.py::create_device_auth_blueprint`: the passkey routes (sign-in, enrolment, the call-start
+  step-up) and the devices list.
+- `src/services/passkey_service.py::PasskeyService`: the ceremonies and `call_start_allowed`.
 - `src/adapters/firebase_auth_adapter.py::FirebaseAuthAdapter`: Google code exchange and ID-token verification.
 - `src/services/oauth_connect_service.py::OAuthConnectService`: the connect flow.
 - `src/config/auth.py::AuthConfig`: the session secret, redirect URIs, MCP TTLs and the startup checks.

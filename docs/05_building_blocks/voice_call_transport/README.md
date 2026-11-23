@@ -133,6 +133,13 @@ Why: a phone call costs PSTN minutes and is narrowband mu-law; the same model ov
 negligible transport cost (decision `voice_web_transport_cloudflare_sfu.md`). The page must stay on screen (RFC §3: a
 browser cannot hold a screen-off call), so the phone path stays as the hands-free fallback.
 
+**The passkey before a start.** A user with a live passkey needs a passkey assertion on this session under five
+minutes old (`PasskeyService.call_start_allowed`, CABINET_DEVICE_SESSIONS_RFC §7.3 and §13 decision 1): otherwise the
+start is 403 `passkey_required` before anything is claimed, and a failed check is 503. The page runs the passkey sheet
+first (`session.js` `ensurePasskey`, the step-up routes of `src/web/device_auth_app.py`, which record `passkey_at` on
+the session; a passkey sign-in counts too), so a redial within five minutes does not ask again. A user without a
+passkey starts as before. Phone calls do not pass here.
+
 1. `POST /api/voice/web-call` validates, mints `call_id`, the ticket and the **control token**, claims or replaces the
    marker, `prepare`s, opens the caller leg on the SFU and writes the web call record. **The ticket never reaches the
    browser.** The token is minted here, not at connect: the SFU dials the relay during `attach_agent` and the relay

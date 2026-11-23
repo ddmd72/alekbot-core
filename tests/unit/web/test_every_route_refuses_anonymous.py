@@ -298,6 +298,13 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
     ("create_oauth_blueprint", "POST", "/auth/logout"): "only clears the caller's own cookies",
     ("create_oauth_blueprint", "GET", "/auth/session.js"):
         "the shared silent-refresh script: static, no secret, and a page loads it before it has a session",
+    ("create_oauth_blueprint", "GET", "/auth/login/google"):
+        "the sign-in page's Google path: only redirects to the provider, like /auth/login",
+    ("create_device_auth_blueprint", "POST", "/auth/passkey/options"):
+        "passkey sign-in starts before any session: a random challenge under a fresh nonce, nothing of a user read",
+    ("create_device_auth_blueprint", "POST", "/auth/passkey/verify"):
+        "passkey sign-in finishes before any session: a single-use challenge, a verified assertion and resume_session "
+        "decide (test_device_auth_passkey_routes)",
     # reviewer edit, tidy main.py: the two public routes that moved out of main() with /worker
     ("create_main_service_blueprint", "GET", "/health"): "health check, no data",
     ("create_main_service_blueprint", "GET", "/favicon.ico"): "the static logo browsers and link-preview bots request",

@@ -191,3 +191,207 @@ def test_becoming_visible_runs_the_check_and_hidden_does_not():
         setTimeout(() => console.log(JSON.stringify({ log })), 50);
     """)
     assert out["log"] == ["GET /auth/me"]
+
+
+# ---------------------------------------------------------------- an unreachable refresh, and the passkey helpers
+
+# The harness above, plus a refresh or request that never reaches the server ("error": fetch rejects, as offline),
+# request bodies kept per url, and a fake WebAuthn (`navigator.credentials`) that answers or refuses.
+_HARNESS_2 = r"""
+const log = [];
+let script = %(script)s;
+let now = 1000000;
+Date.now = () => now * 1000;
+const listeners = {};
+global.document = { visibilityState: "visible", addEventListener: (n, f) => { listeners[n] = f; } };
+global.location = { pathname: "/cabinet/call", search: "", replace: (u) => log.push("replace:" + u) };
+const webauthn = %(webauthn)s;   // null: no WebAuthn in this browser; else {get|create: "ok" | error name}
+global.window = webauthn ? { PublicKeyCredential: function () {} } : {};
+const bytes = (s) => new TextEncoder().encode(s).buffer;
+const sheets = [];
+const answer = (kind) => (arg) => {
+  sheets.push({ kind, challenge: new TextDecoder().decode(arg.publicKey.challenge),
+                user: arg.publicKey.user ? new TextDecoder().decode(arg.publicKey.user.id) : null,
+                excluded: (arg.publicKey.excludeCredentials || []).map((c) => new TextDecoder().decode(c.id)) });
+  const outcome = webauthn[kind];
+  if (outcome !== "ok") { const e = new Error(outcome); e.name = outcome; return Promise.reject(e); }
+  const response = kind === "create"
+    ? { clientDataJSON: bytes("cd"), attestationObject: bytes("att"), getTransports: () => ["internal"] }
+    : { clientDataJSON: bytes("cd"), authenticatorData: bytes("ad"), signature: bytes("sig"), userHandle: bytes("u1") };
+  return Promise.resolve({ id: "cred-1", rawId: bytes("cred-1"), type: "public-key", response,
+                           authenticatorAttachment: "platform" });
+};
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: webauthn
+  ? { credentials: { get: answer("get"), create: answer("create") } } : {} });
+const respond = (status, body) => ({ status, json: async () => body });
+const routes = %(routes)s;
+const calls = {}; const bodies = {};
+global.fetch = async (url, init) => {
+  calls[url] = (calls[url] || 0) + 1;
+  log.push((init && init.method || "GET") + " " + url);
+  if (init && init.body) bodies[url] = JSON.parse(init.body);
+  const seq = routes[url];
+  const item = seq[Math.min(calls[url], seq.length) - 1];
+  await new Promise((r) => setTimeout(r, 5));
+  if (item === "error") throw new TypeError("Failed to fetch");
+  return typeof item === "number" ? respond(item, {}) : respond(item.status, item.body);
+};
+eval(script);
+const { authFetch, ensureSession, ensurePasskey, addPasskey } = window.alekSession;
+"""
+
+# base64url of the texts the fake WebAuthn returns, as the server receives them.
+_B64 = {"cd": "Y2Q", "att": "YXR0", "ad": "YWQ", "sig": "c2ln", "u1": "dTE", "cred-1": "Y3JlZC0x"}
+# A challenge "chal" and a user id "u1", base64url, as the server's options carry them.
+_REQUEST = {"challenge": "Y2hhbA", "rpId": "cabinet.example.com", "allowCredentials": [], "userVerification": "required"}
+_CREATION = {"challenge": "Y2hhbA", "rp": {"id": "cabinet.example.com", "name": "Alek"},
+             "user": {"id": "dTE", "name": "alex@example.com", "displayName": "Alex"},
+             "excludeCredentials": [{"id": "b2xk", "type": "public-key"}]}
+STEP_UP, STEP_UP_VERIFY = "/api/user/passkeys/step-up/options", "/api/user/passkeys/step-up/verify"
+REGISTER, REGISTER_VERIFY = "/api/user/passkeys/register/options", "/api/user/passkeys/register/verify"
+
+
+def _run_2(routes: dict, body: str, webauthn=None):
+    script = _HARNESS_2 % {"script": json.dumps(SESSION_JS), "routes": json.dumps(routes),
+                           "webauthn": json.dumps(webauthn)} + body
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True).stdout
+    return json.loads(out)
+
+
+@needs_node
+def test_an_unreachable_refresh_keeps_the_page_and_the_next_request_refreshes_again():
+    out = _run_2({"/api/x": [401, 401, 200], "/auth/refresh": ["error", 200]}, """
+        authFetch("/api/x").then((first) => authFetch("/api/x").then((second) =>
+          console.log(JSON.stringify({ statuses: [first.status, second.status], log }))));
+    """)
+    assert out["statuses"] == [401, 200]                      # the first fails as offline, the next one recovers
+    assert out["log"] == ["GET /api/x", "POST /auth/refresh", "GET /api/x", "POST /auth/refresh", "GET /api/x"]
+    assert not any(line.startswith("replace:") for line in out["log"])
+
+
+@needs_node
+def test_an_unreachable_refresh_on_return_to_the_page_does_not_go_to_login():
+    out = _run_2({"/auth/me": [401], "/auth/refresh": ["error"]}, """
+        ensureSession().then(() => { listeners.visibilitychange(); setTimeout(() =>
+          console.log(JSON.stringify({ log })), 50); });
+    """)
+    assert out["log"] == ["GET /auth/me", "POST /auth/refresh", "GET /auth/me", "POST /auth/refresh"]
+
+
+@needs_node
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_any_refusal_of_the_refresh_ends_the_session(status):
+    out = _run_2({"/auth/me": [{"status": 200, "body": {"expires_at": 1000000 + 10}}], "/auth/refresh": [status]}, """
+        ensureSession().then(() => console.log(JSON.stringify({ log })));
+    """)
+    assert out["log"][-1] == "replace:/auth/login?next=%2Fcabinet%2Fcall"
+
+
+@needs_node
+def test_a_session_that_needs_no_passkey_runs_no_sheet():
+    out = _run_2({STEP_UP: [{"status": 200, "body": {"required": False}}]}, """
+        ensurePasskey().then((ok) => console.log(JSON.stringify({ ok, log, sheets })));
+    """, webauthn={"get": "ok"})
+    assert out == {"ok": True, "log": [f"POST {STEP_UP}"], "sheets": []}
+
+
+@needs_node
+def test_a_needed_passkey_runs_the_sheet_over_the_decoded_options_and_hands_back_the_assertion():
+    out = _run_2({STEP_UP: [{"status": 200, "body": {"required": True, "options": _REQUEST}}],
+                  STEP_UP_VERIFY: [200]}, """
+        ensurePasskey().then((ok) => console.log(JSON.stringify({ ok, log, sheets, sent: bodies })));
+    """, webauthn={"get": "ok"})
+    assert out["ok"] is True and out["log"] == [f"POST {STEP_UP}", f"POST {STEP_UP_VERIFY}"]
+    assert out["sheets"] == [{"kind": "get", "challenge": "chal", "user": None, "excluded": []}]
+    assert out["sent"][STEP_UP_VERIFY] == {"credential": {
+        "id": "cred-1", "rawId": _B64["cred-1"], "type": "public-key", "clientExtensionResults": {},
+        "authenticatorAttachment": "platform",
+        "response": {"clientDataJSON": _B64["cd"], "authenticatorData": _B64["ad"], "signature": _B64["sig"],
+                     "userHandle": _B64["u1"]}}}
+
+
+@needs_node
+@pytest.mark.parametrize("routes, webauthn", [
+    ({STEP_UP: [{"status": 200, "body": {"required": True, "options": _REQUEST}}]}, {"get": "NotAllowedError"}),
+    ({STEP_UP: [{"status": 200, "body": {"required": True, "options": _REQUEST}}], STEP_UP_VERIFY: [400]},
+     {"get": "ok"}),
+    ({STEP_UP: [{"status": 200, "body": {"required": True, "options": _REQUEST}}]}, None),
+    ({STEP_UP: [500]}, {"get": "ok"}),
+    ({STEP_UP: ["error"]}, {"get": "ok"}),
+], ids=["sheet-cancelled", "assertion-refused", "no-webauthn", "server-error", "offline"])
+def test_a_passkey_that_could_not_be_given_resolves_false(routes, webauthn):
+    out = _run_2(routes, """
+        ensurePasskey().then((ok) => console.log(JSON.stringify({ ok, log })));
+    """, webauthn=webauthn)
+    assert out["ok"] is False
+    assert not any(line.startswith("replace:") for line in out["log"])
+
+
+@needs_node
+def test_add_passkey_creates_over_the_decoded_options_and_sends_the_attestation():
+    out = _run_2({REGISTER: [{"status": 200, "body": {"options": _CREATION}}], REGISTER_VERIFY: [201]}, """
+        addPasskey().then((outcome) => console.log(JSON.stringify({ outcome, sheets, sent: bodies })));
+    """, webauthn={"create": "ok"})
+    assert out["outcome"] == "added"
+    assert out["sheets"] == [{"kind": "create", "challenge": "chal", "user": "u1", "excluded": ["old"]}]
+    assert out["sent"][REGISTER_VERIFY]["credential"]["response"] == {
+        "clientDataJSON": _B64["cd"], "attestationObject": _B64["att"], "transports": ["internal"]}
+
+
+@needs_node
+@pytest.mark.parametrize("routes, webauthn, outcome", [
+    ({REGISTER: [{"status": 200, "body": {"options": _CREATION}}]}, {"create": "InvalidStateError"}, "exists"),
+    ({REGISTER: [{"status": 200, "body": {"options": _CREATION}}]}, {"create": "NotAllowedError"}, "cancelled"),
+    ({REGISTER: [{"status": 200, "body": {"options": _CREATION}}], REGISTER_VERIFY: [400]}, {"create": "ok"},
+     "failed"),
+    ({REGISTER: [403]}, {"create": "ok"}, "failed"),
+    ({REGISTER: [200]}, None, "failed"),
+    ({REGISTER: ["error"]}, {"create": "ok"}, "failed"),
+], ids=["already-in-this-keychain", "cancelled", "refused", "not-allowed", "no-webauthn", "offline"])
+def test_add_passkey_names_what_happened(routes, webauthn, outcome):
+    out = _run_2(routes, """
+        addPasskey().then((outcome) => console.log(JSON.stringify({ outcome })));
+    """, webauthn=webauthn)
+    assert out["outcome"] == outcome
+
+
+def test_the_call_page_runs_the_passkey_helper_before_its_media_and_refuses_on_a_stale_start():
+    html = (STATIC / "call.html").read_text(encoding="utf-8")
+    start = re.search(r"      async function startCall\(\) \{.*?\n      }\n", html, re.S).group(0)
+    assert "const { authFetch, ensureSession, ensurePasskey } = window.alekSession;" in html
+    assert start.index("startRingback();") < start.index("await ensurePasskey()") < start.index("getUserMedia")
+    assert start.count("ensurePasskey(") == 1
+    assert 'if (startResp.status === 403) {' in start and 'setState(t("state.passkey_needed"));' in start
+
+
+@needs_node
+@pytest.mark.parametrize("routes", [
+    {REGISTER: [{"status": 400, "body": {"error": "passkey_required"}}]},
+    {REGISTER: [{"status": 200, "body": {"options": _CREATION}}],
+     REGISTER_VERIFY: [{"status": 400, "body": {"error": "passkey_required"}}]},
+], ids=["at-options", "at-verify"])
+def test_add_passkey_names_a_missing_fresh_assertion_so_the_page_can_step_up(routes):
+    out = _run_2(routes, """
+        addPasskey().then((outcome) => console.log(JSON.stringify({ outcome })));
+    """, webauthn={"create": "ok"})
+    assert out["outcome"] == "passkey_required"
+
+
+@needs_node
+@pytest.mark.parametrize("status, body, expected", [
+    (400, {"error": "passkey_required"}, True), (400, {"error": "passkey_refused"}, False),
+    (401, {"error": "passkey_required"}, False), (200, {}, False)])
+def test_needs_passkey_reads_only_a_400_passkey_required(status, body, expected):
+    out = _run_2({"/api/x": [{"status": status, "body": body}]}, """
+        authFetch("/api/x").then((resp) => window.alekSession.needsPasskey(resp))
+          .then((needed) => console.log(JSON.stringify({ needed })));
+    """)
+    assert out["needed"] is expected
+
+
+def test_the_cabinet_steps_up_and_retries_once_when_adding_or_removing_needs_a_passkey():
+    html = (STATIC / "cabinet.html").read_text(encoding="utf-8")
+    add = re.search(r"async function addPasskeyHere\(\) \{.*?\n      }\n", html, re.S).group(0)
+    remove = re.search(r"async function removePasskey\(id\) \{.*?\n      }\n", html, re.S).group(0)
+    assert 'outcome === "passkey_required"' in add and "ensurePasskey()" in add and add.count("addPasskey()") == 2
+    assert "needsPasskey(" in remove and "ensurePasskey()" in remove and remove.count("authFetch(") == 2

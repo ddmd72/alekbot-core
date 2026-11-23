@@ -114,8 +114,8 @@ def world():
 
 class TestLogin:
     async def test_it_redirects_to_the_provider_with_a_fresh_state_stored_in_a_cookie(self, world):
-        a = await world.client.get("/auth/login")
-        b = await world.client.get("/auth/login")
+        a = await world.client.get("/auth/login/google")
+        b = await world.client.get("/auth/login/google")
         state_a = parse_qs(urlparse(a.headers["Location"]).query)["state"][0]
         assert a.status_code == 302 and _cookies(a)["oauth_state"] == state_a
         assert _cookies(b)["oauth_state"] != state_a
@@ -123,10 +123,10 @@ class TestLogin:
         assert "Secure" in a.headers.get_all("Set-Cookie")[0] and "HttpOnly" in a.headers.get_all("Set-Cookie")[0]
 
     async def test_next_and_invite_code_are_carried_in_cookies_and_an_off_site_next_is_dropped_to_the_default(self, world):
-        ok = await world.client.get("/auth/login?next=/cabinet&code=INV-1")
+        ok = await world.client.get("/auth/login/google?next=/cabinet&code=INV-1")
         assert _cookies(ok)["auth_next"] in ("/cabinet", "%2Fcabinet")
         assert _cookies(ok)["invite_code"] == "INV-1"
-        evil = await world.client.get("/auth/login?next=https://evil.example/x")
+        evil = await world.client.get("/auth/login/google?next=https://evil.example/x")
         assert "evil.example" not in _cookies(evil).get("auth_next", "")
 
     async def test_an_unknown_provider_is_500_and_sets_no_state(self, world):

@@ -259,6 +259,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_PAGE_GONE.value: "Este enlace ya no es válido. Envía $geo de nuevo.",
     UIMessage.GEO_PAGE_NOT_SAVED.value: "La ubicación no se guardó. Envía $geo de nuevo.",
     UIMessage.DEVICE_SIGN_IN_NOTICE.value: "Nuevo inicio de sesión: {platform_hint}, {time}, con Google. ¿No fuiste tú? Envía `$devices off`.",
+    UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE.value: "Nuevo inicio de sesión: {platform_hint}, {time}, con una llave de acceso (Face ID). ¿No fuiste tú? Envía `$devices off`.",
     UIMessage.DEVICES_UNAVAILABLE.value: "La lista de dispositivos no está disponible ahora mismo.",
     UIMessage.DEVICES_USAGE.value: "`$devices` muestra los dispositivos con sesión iniciada en tu Cabinet; `$devices off` cierra todas.",
     UIMessage.DEVICES_LIST_HEADER.value: "Dispositivos con sesión iniciada en tu Cabinet ({count}):",
@@ -266,4 +267,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — inicio {created}, último uso {last_used}",
     UIMessage.DEVICES_OFF_DONE.value: "Sesión cerrada en {count} dispositivo(s). El próximo acceso al Cabinet requiere un nuevo inicio de sesión con Google.",
     UIMessage.DEVICES_CHECKLIST.value: "Si se pierde un teléfono:\n1. Envía `$devices off` (hecho).\n2. Quita el teléfono de tu cuenta de Apple o Google.\n3. Cierra las sesiones de Telegram y Slack del teléfono en esas aplicaciones.",
+    UIMessage.PASSKEY_ADDED_NOTICE.value: "Llave de acceso añadida: {label}, {time}. Ahora inicia sesión en tu Cabinet. ¿No fuiste tú? Envía `$devices off`.",
+    UIMessage.PASSKEY_REMOVED_NOTICE.value: "Llave de acceso eliminada: {label}, {time}. Ya no inicia sesión en tu Cabinet.",
 }

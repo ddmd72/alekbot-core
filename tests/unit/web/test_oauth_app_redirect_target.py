@@ -6,7 +6,7 @@ from tests.unit.web.test_oauth_app_refusals import World, _set_cookies
 async def _sign_in(w: World, next_value: str | None = None, *, planted_cookie: str | None = None):
     await w.seed()
     await w.users.update_user(UserProfile(user_id="user-a", account_id="account-a", external_user_id="google|sub-1"))
-    login = await w.client.get("/auth/login" if next_value is None else f"/auth/login?next={next_value}")
+    login = await w.client.get("/auth/login/google" if next_value is None else f"/auth/login/google?next={next_value}")
     assert login.status_code == 302
     stored = {c.name: c.value for c in w.client.cookie_jar}
     if planted_cookie is not None:  # a cookie set by a pre-fix login, replayed by the browser
@@ -39,6 +39,6 @@ async def test_an_old_cookie_with_an_external_target_is_not_followed():
 
 async def test_login_does_not_store_an_external_next():
     w = World()
-    await w.client.get("/auth/login?next=https://evil.example/phish")
+    await w.client.get("/auth/login/google?next=https://evil.example/phish")
     stored = {c.name: c.value for c in w.client.cookie_jar}
     assert stored.get("auth_next") == "/cabinet"

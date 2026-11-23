@@ -44,8 +44,8 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
    `g.user_id`, `g.account_id`, `g.role` and `g.session_id` come only from a verified token of a live session. A bad,
    missing or revoked one is `401`. The docs pages (`owner_only`) and `/join` ask the same verifier. Lifetimes and
    refresh: `decisions/cabinet_device_session_lifetimes.md`.
-3. Sign-in itself, including the email whitelist that refuses unlisted users, is the OAuth block
-   (`decisions/cabinet_oauth_whitelist_gate.md`); the Cabinet only consumes the session.
+3. Sign-in itself, including the email whitelist that refuses unlisted users and the passkey sign-in page, is the
+   OAuth block (`decisions/cabinet_oauth_whitelist_gate.md`); the Cabinet only consumes the session.
 
 ### Browse and search facts
 
@@ -115,6 +115,17 @@ per question; one failure shows as `"error"` for that question and does not stop
   (`src/domain/local_time.py::wall_time_instant`) and is stored as UTC; the list answers in the user's timezone. A
   recurrence rule is normalized and phrased by `RecurrencePort`, so the page never parses a rule. An explicit empty
   `recurrence` on update stops the repeat; an absent one leaves it unchanged.
+
+### Devices and passkeys
+
+The Devices tab (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5) lists the live sessions with
+"Log out", "Log out all other devices" and "Log out all devices", and under them the user's live passkeys
+(`GET /api/user/passkeys`), each with "Remove". "Add Face ID for faster sign-in" runs the enrolment
+(`/api/user/passkeys/register/options`, then `/register/verify`) from this session, through `session.js`
+`addPasskey`; the user is loaded with `resume_session`, so an inactive or de-listed user cannot add one. After a Google
+sign-in (`offer` in the list answer) the page shows a banner offering the same, once: a dismissal or an attempt is
+remembered in this browser's `localStorage` (`alek.passkeyOffer`), and blocked storage only means the banner comes back.
+Labels and platform hints are User-Agent words, escaped in the page.
 
 ### Platforms, invites, team
 

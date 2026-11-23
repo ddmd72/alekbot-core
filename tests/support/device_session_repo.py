@@ -1,10 +1,12 @@
-"""FakeDeviceSessionRepository — the in-memory twin of `DeviceSessionRepository` (CABINET_DEVICE_SESSIONS_RFC §7.1).
+"""FakeDeviceSessionRepository — the in-memory twin of `DeviceSessionRepository` (CABINET_DEVICE_SESSIONS_RFC §7.1,
+§7.3).
 
-A fake with semantics, not a mock: it applies the port's rules (create never overwrites, the refresh decision is
-`DeviceSessionPolicy.decide_refresh` on the stored record and its write lands atomically under a lock, the first
-revocation is kept, the order the port promises). The store kit (`tests/unit/adapters/test_device_session_store_kit.py`)
-runs the port's rules on both this and the Firestore adapter so the two cannot drift. `sessions` is the stored records
-by sid, for assertions.
+A fake with semantics, not a mock: it applies the port's rules (create and add never overwrite, the refresh decision is
+`DeviceSessionPolicy.decide_refresh` on the stored record and its write lands atomically under a lock, a passkey's
+counter must advance (`sign_count_advances`), the first revocation is kept, `revoke_all` covers sessions and passkeys,
+the order the port promises). The store kit (`tests/unit/adapters/test_device_session_store_kit.py`) runs the port's
+rules on both this and the Firestore adapter so the two cannot drift. `sessions` is the stored records by sid and
+`passkeys` by cred_hash, for assertions.
 """
 import asyncio
 from datetime import datetime
@@ -12,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.domain.device_session import DeviceSession, SessionRevokeReason
 from src.domain.device_session_policy import DeviceSessionPolicy, RefreshOutcome
+from src.domain.passkey import Passkey, sign_count_advances
 from src.ports.device_session_repository import DeviceSessionRepository
 
 
@@ -19,6 +22,7 @@ class FakeDeviceSessionRepository(DeviceSessionRepository):
 
     def __init__(self) -> None:
         self.sessions: Dict[str, DeviceSession] = {}
+        self.passkeys: Dict[str, Passkey] = {}
         self._lock = asyncio.Lock()
 
     async def create(self, session: DeviceSession) -> bool:
@@ -60,9 +64,49 @@ class FakeDeviceSessionRepository(DeviceSessionRepository):
             self.sessions[sid] = session.model_copy(update={"revoked_at": now, "revoke_reason": reason})
             return True
 
+    async def record_passkey_assertion(self, sid: str, user_id: str, at: datetime) -> bool:
+        async with self._lock:
+            session = self.sessions.get(sid)
+            if session is None or session.user_id != user_id or not DeviceSessionPolicy.is_live(session, at):
+                return False
+            self.sessions[sid] = session.model_copy(update={"passkey_at": at})
+            return True
+
     async def revoke_all(self, user_id: str, reason: SessionRevokeReason, now: datetime) -> int:
         async with self._lock:
             live = [s for s in self.sessions.values() if s.user_id == user_id and s.revoked_at is None]
             for session in live:
                 self.sessions[session.sid] = session.model_copy(update={"revoked_at": now, "revoke_reason": reason})
+            for key in [p for p in self.passkeys.values() if p.user_id == user_id and p.revoked_at is None]:
+                self.passkeys[key.cred_hash] = key.model_copy(update={"revoked_at": now})
             return len(live)
+
+    async def add_passkey(self, passkey: Passkey) -> bool:
+        async with self._lock:
+            if passkey.cred_hash in self.passkeys:
+                return False
+            self.passkeys[passkey.cred_hash] = passkey
+            return True
+
+    async def get_passkey(self, cred_hash: str) -> Optional[Passkey]:
+        return self.passkeys.get(cred_hash)
+
+    async def list_passkeys(self, user_id: str) -> List[Passkey]:
+        return sorted((p for p in self.passkeys.values() if p.user_id == user_id),
+                      key=lambda p: (p.created_at, p.cred_hash))
+
+    async def touch_passkey(self, cred_hash: str, sign_count: int, last_used_at: datetime) -> bool:
+        async with self._lock:
+            key = self.passkeys.get(cred_hash)
+            if key is None or key.revoked_at is not None or not sign_count_advances(key.sign_count, sign_count):
+                return False
+            self.passkeys[cred_hash] = key.model_copy(update={"sign_count": sign_count, "last_used_at": last_used_at})
+            return True
+
+    async def revoke_passkey(self, cred_hash: str, now: datetime) -> bool:
+        async with self._lock:
+            key = self.passkeys.get(cred_hash)
+            if key is None or key.revoked_at is not None:
+                return False
+            self.passkeys[cred_hash] = key.model_copy(update={"revoked_at": now})
+            return True

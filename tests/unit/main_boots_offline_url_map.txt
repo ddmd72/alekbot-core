@@ -29,6 +29,7 @@ GET /api/user/facts/review-queue
 GET /api/user/invite-codes
 GET /api/user/language
 GET /api/user/location
+GET /api/user/passkeys
 GET /api/user/platforms
 GET /api/user/reminders
 GET /api/user/timezone
@@ -39,6 +40,7 @@ GET /auth/callback
 GET /auth/connect/<kind>
 GET /auth/connect/callback
 GET /auth/login
+GET /auth/login/google
 GET /auth/me
 GET /auth/session.js
 GET /cabinet
@@ -84,6 +86,11 @@ POST /api/user/join-team
 POST /api/user/language
 POST /api/user/link-platform
 POST /api/user/link-telegram
+POST /api/user/passkeys/<cred_hash>/remove
+POST /api/user/passkeys/register/options
+POST /api/user/passkeys/register/verify
+POST /api/user/passkeys/step-up/options
+POST /api/user/passkeys/step-up/verify
 POST /api/user/reminders
 POST /api/user/request-phone-otp
 POST /api/user/verify-phone-otp
@@ -95,6 +102,8 @@ POST /api/voice/web-call/<call_id>/hangup
 POST /api/voice/web-call/<call_id>/renegotiate
 POST /auth/link-oauth
 POST /auth/logout
+POST /auth/passkey/options
+POST /auth/passkey/verify
 POST /auth/refresh
 POST /geo/<link_id>
 POST /mcp/consent

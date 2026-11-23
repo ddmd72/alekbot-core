@@ -137,7 +137,7 @@ refuses).
 
 | `.env` key | Substitution → variable | Notes |
 |---|---|---|
-| `SERVICE_URL_DEV` | `_SERVICE_URL`, `_OAUTH_REDIRECT_URI` | `make deploy` refuses when empty |
+| `SERVICE_URL_DEV` | `_SERVICE_URL`, `_OAUTH_REDIRECT_URI` | `make deploy` refuses when empty. Its host is also the passkey RP ID: a new domain makes every passkey useless, and users re-enrol after a Google sign-in (CABINET_DEVICE_SESSIONS_RFC §10) |
 | `VOICE_RELAY_URL_DEV` | `_VOICE_RELAY_URL` → `VOICE_RELAY_STREAM_URL` (main) | `https://` form; the Makefile turns it into `wss://`. Two-pass, below |
 | `GCS_MEDIA_BUCKET_DEV` | `_GCS_MEDIA_BUCKET` → `GCS_MEDIA_BUCKET` (main service and research job) | **required**; `make deploy` refuses when empty |
 | `INDEXER_URL_DEV` | `_INDEXER_URL` → `DRIVE_INDEXER_URL` (both services) | no trailing slash; `make deploy` refuses when empty unless `DRIVE_FIRST_PASS=1`. Two-pass, below |
@@ -360,6 +360,7 @@ are never deleted (nothing breaks).
 | `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
 | `<prefix>geo_mark_links` | one-time `$geo` location links (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps unused links |
 | `<prefix>event_dedup` | inbound event dedup claims (1 h); reads check expiry themselves |
+| `<prefix>auth_passkey_challenges` | pending passkey ceremonies (5 minutes, single use); the ephemeral store reads the expiry itself, the policy only sweeps abandoned ones |
 | `<prefix>drive_note_erase_requests` | pending drive-note erase requests |
 | `<prefix>short_links` | short links (`resolve` re-checks expiry itself, the sweep lags) |
 | `<prefix>mcp_auth_codes` | MCP authorization codes (about 10 minutes) |

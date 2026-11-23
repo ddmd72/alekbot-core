@@ -104,6 +104,12 @@ THRESHOLDS: Dict[str, float] = {
     "src/domain/device_session_policy.py":          100.0,
     "src/adapters/firestore_device_session_repo.py": 100.0,
     "src/services/device_session_service.py":       100.0,
+    # Passkeys (P7): the passkey record's rules, the WebAuthn verifier and the ceremony service.
+    "src/domain/passkey.py":                        100.0,
+    "src/adapters/webauthn_signer_verifier.py":     100.0,
+    "src/services/passkey_service.py":              100.0,
+    # Passkey routes (P7): the devices list, enrolment, the call-start step-up and the anonymous passkey sign-in.
+    "src/web/device_auth_app.py":                   100.0,
 }
 
 

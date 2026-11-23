@@ -137,7 +137,7 @@ class TestCallback:
         w = World()
         await w.seed()
         await w.users.update_user(UserProfile(user_id="user-a", account_id="account-a", external_user_id="google|sub-1"))
-        login = await w.client.get("/auth/login?next=https://evil.example/phish")
+        login = await w.client.get("/auth/login/google?next=https://evil.example/phish")
         assert login.status_code == 302
         stored = {c.name: c.value for c in w.client.cookie_jar}  # what login set; the browser replays it
         resp = await w.client.get(f"/auth/callback?code=c&state={stored['oauth_state']}")

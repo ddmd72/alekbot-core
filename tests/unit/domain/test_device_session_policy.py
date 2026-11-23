@@ -75,3 +75,15 @@ GRACE_END = ROTATED_AT + timedelta(seconds=60)
         "dead-absolute", "dead-old-secret"])
 def test_decide_refresh(record, presented, now, outcome):
     assert P.decide_refresh(record, presented, now) is outcome
+
+
+@pytest.mark.parametrize("passkey_at, now, fresh", [
+    (None, T0, False),                                              # no assertion ever
+    (T0, T0, True),
+    (T0, T0 + timedelta(minutes=5) - timedelta(microseconds=1), True),
+    (T0, T0 + timedelta(minutes=5), False),                         # the grace end is exclusive
+    (T0 + timedelta(seconds=2), T0, True),                          # an instance whose clock runs a little behind
+], ids=["never", "just-now", "last-instant", "grace-end", "clock-behind"])
+def test_passkey_fresh_is_an_assertion_under_five_minutes_old(passkey_at, now, fresh):
+    assert P.CALL_PASSKEY_GRACE == timedelta(minutes=5)
+    assert P.passkey_fresh(session(passkey_at=passkey_at), now) is fresh

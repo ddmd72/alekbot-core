@@ -124,6 +124,16 @@
    ]
   },
   {
+   "id": "auth_passkey_challenges",
+   "collection": "auth_passkey_challenges",
+   "field": "expires_at",
+   "deleted_by": "ttl-policy",
+   "what_expires": "pending passkey ceremonies (5 minutes, single use); the ephemeral store reads the expiry itself, the policy only sweeps abandoned ones",
+   "writers": [
+    "src/adapters/firestore_ephemeral_store.py"
+   ]
+  },
+  {
    "id": "drive_note_erase_requests",
    "collection": "drive_note_erase_requests",
    "field": "expires_at",

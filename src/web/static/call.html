@@ -838,7 +838,7 @@
 
     <script src="/auth/session.js"></script>
     <script>
-      const { authFetch, ensureSession } = window.alekSession;
+      const { authFetch, ensureSession, ensurePasskey } = window.alekSession;
       /* ── i18n ────────────────────────────────────────── */
       const LANG_DICT = {
         en: {
@@ -849,6 +849,7 @@
           "state.live": "Live",
           "state.ended": "Ended",
           "state.busy": "Busy — a call is already in progress",
+          "state.passkey_needed": "Face ID or a passkey is needed to call",
           "state.mic_blocked": "Microphone blocked",
           "state.could_not_connect": "Could not connect",
           "mode.interpreter": "Interpreter",
@@ -905,6 +906,7 @@
           "state.live": "У розмові",
           "state.ended": "Завершено",
           "state.busy": "Зайнято — дзвінок вже триває",
+          "state.passkey_needed": "Для дзвінка потрібен Face ID або ключ доступу",
           "state.mic_blocked": "Мікрофон заблоковано",
           "state.could_not_connect": "Не вдалося з'єднатися",
           "mode.interpreter": "Перекладач",
@@ -961,6 +963,7 @@
           "state.live": "En direct",
           "state.ended": "Terminé",
           "state.busy": "Occupé — un appel est déjà en cours",
+          "state.passkey_needed": "Face ID ou une clé d'accès est nécessaire pour appeler",
           "state.mic_blocked": "Microphone bloqué",
           "state.could_not_connect": "Connexion impossible",
           "mode.interpreter": "Interprète",
@@ -1017,6 +1020,7 @@
           "state.live": "En directo",
           "state.ended": "Finalizada",
           "state.busy": "Ocupado — ya hay una llamada en curso",
+          "state.passkey_needed": "Se necesita Face ID o una llave de acceso para llamar",
           "state.mic_blocked": "Micrófono bloqueado",
           "state.could_not_connect": "No se pudo conectar",
           "mode.interpreter": "Intérprete",
@@ -2932,6 +2936,19 @@
         setAudioSessionType("play-and-record");
         startRingback();
 
+        // A call start needs a fresh passkey assertion when the user has a passkey (CABINET_DEVICE_SESSIONS_RFC §7.3):
+        // the server refuses the start without one, so the passkey sheet runs first. After the audio setup above,
+        // which must stay in the tap's own call stack.
+        const passkeyOk = await ensurePasskey();
+        if (myToken !== callToken) return; // hung up while the sheet was open
+        if (!passkeyOk) {
+          inCall = false;
+          stopRingback();
+          setState(t("state.passkey_needed"));
+          renderButton("idle");
+          return;
+        }
+
         const AUDIO_PROCESSING = {
           echoCancellation: true,
           noiseSuppression: true,
@@ -3025,6 +3042,12 @@
             // authFetch already refreshed and is sending the user to login; release everything.
             handledState = true;
             throw new Error("unauthorized");
+          }
+          if (startResp.status === 403) {
+            // The passkey went stale between the check above and the start: the next tap asks again.
+            handledState = true;
+            setState(t("state.passkey_needed"));
+            throw new Error("passkey_required");
           }
           if (startResp.status === 409) {
             handledState = true;

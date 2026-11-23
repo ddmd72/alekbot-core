@@ -16,8 +16,9 @@ from pydantic import BaseModel, ConfigDict
 
 
 class SessionAuthKind(str, Enum):
-    """How the session was signed in."""
+    """How the session was signed in: a Google OAuth login, or a passkey assertion (§7.3)."""
     GOOGLE = "google"
+    PASSKEY = "passkey"
 
 
 class SessionRevokeReason(str, Enum):
@@ -34,7 +35,9 @@ class DeviceSession(BaseModel):
 
     `expires_at` is the absolute end (`created_at` + `DeviceSessionPolicy.ABSOLUTE_TTL`); `purge_after` is the
     Firestore TTL field (`last_seen_at` + `DeviceSessionPolicy.PURGE_AFTER`). `prev_refresh_hash` and `rotated_at` are
-    None until the first rotation; `revoked_at` and `revoke_reason` are None while the session is not revoked."""
+    None until the first rotation; `revoked_at` and `revoke_reason` are None while the session is not revoked.
+    `passkey_at` is when a passkey assertion last proved this session (its passkey sign-in, or the step-up a call start
+    asks for, §7.3); None until one did. A call start reads it (`DeviceSessionPolicy.passkey_fresh`)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -54,3 +57,4 @@ class DeviceSession(BaseModel):
     revoked_at: Optional[datetime] = None
     revoke_reason: Optional[SessionRevokeReason] = None
     purge_after: datetime
+    passkey_at: Optional[datetime] = None
