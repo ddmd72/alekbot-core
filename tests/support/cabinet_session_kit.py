@@ -27,8 +27,20 @@ ALEX_ID, ALEX_ACCOUNT = "user-alex", "acct-alex"
 
 
 class KitClock:
+    """Follows the wall clock until a test moves it, then holds the instant it was moved to. The gate verifies a
+    JWT's `exp` against the real time and a module-level kit outlives the test that made it, so a clock frozen at
+    import would mint tokens that expire while a long suite is still running."""
+
     def __init__(self) -> None:
-        self.now = datetime.now(timezone.utc)
+        self._held = None
+
+    @property
+    def now(self) -> datetime:
+        return self._held if self._held is not None else datetime.now(timezone.utc)
+
+    @now.setter
+    def now(self, value: datetime) -> None:
+        self._held = value
 
     def __call__(self) -> datetime:
         return self.now
@@ -37,7 +49,7 @@ class KitClock:
         self.now = now
 
     def advance(self, **delta: float) -> None:
-        self.now += timedelta(**delta)
+        self.now = self.now + timedelta(**delta)
 
 
 class RecordingNotices:
