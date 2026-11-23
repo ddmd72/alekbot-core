@@ -24,6 +24,7 @@ from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
 from src.services.localization_service import LocalizationService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
@@ -52,11 +53,11 @@ def _service(world: ReviewWorld) -> FactAnswerService:
 
 def _app(world: ReviewWorld, account: str = ACC, user: str = USER, service: Any = "real", with_store: bool = True,
          localized: bool = True) -> Quart:
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": user, "account_id": account, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(user, account)
+    TOKEN.update(_bearer)
     app = Quart("test_cabinet_review_answers")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=world.repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(), fact_repo=world.repo,
         embedding_service=MagicMock(),
         fact_review_store=world.review_store if with_store else None,
         fact_answer_service=_service(world) if service == "real" else service,

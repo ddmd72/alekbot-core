@@ -48,7 +48,7 @@ class _CallbackWorld(ConnectWorld):
     async def start(self, kind, *, query="", token="default"):
         if self.registry.get(kind).offered:
             return await super().start(kind, query=query, token=token)
-        user_id = ALEX if token == "default" else self.sessions.verify_access_token(token)["sub"]
+        user_id = ALEX if token == "default" else self.kit.tokens.verify_device_access_token(token)["sub"]
         return None, await self.in_flight(kind, user_id)
 
 

@@ -1,5 +1,5 @@
 """Cabinet settings write routes (P19): timezone, location, voice languages, the Gmail auto-index and daily-review
-schedules, the deep-research switch, reminders, and the session cap on the Cabinet API.
+schedules, the deep-research switch, reminders, and the access-token expiry on the Cabinet API.
 
 The user record, the notes and the whole Cabinet run on stores that evaluate; every write is read back from the stored
 document of the token's user, never of another, and a refused request leaves the stored document unchanged.
@@ -10,18 +10,19 @@ from types import SimpleNamespace
 import jwt.api_jwt
 import pytest
 
-import src.services.session_service as session_module
 from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
+from src.domain.device_session_policy import DeviceSessionPolicy
 from src.domain.language import LanguageCode
 from src.services.language_preference_service import LanguagePreferenceService
 from src.services.language_resolver import LanguageResolver
+from src.web.cabinet_auth import ACCESS_COOKIE
 from tests.support.clock_instants import pin_datetime
 from tests.support.redelivery_world import Rendezvous, require
 from tests.unit.web.cabinet_routes_world import ALEX, CLARA, CabinetWorld, race
 from tests.unit.web.gate_fakes import expired_token, forged_token
 
 T0 = datetime(2026, 10, 27, 9, 0, 0, tzinfo=timezone.utc)
-DAY = 86400
+ACCESS = int(DeviceSessionPolicy.ACCESS_TTL.total_seconds())
 
 
 @pytest.fixture
@@ -205,30 +206,31 @@ class TestReminderCreate:
         assert world.db.collection("notes").docs == {}
 
 
-# --------------------------------------------------------------------------- the 24 h cap on the Cabinet API
+# --------------------------------------------------------------------------- the access-token expiry on the Cabinet API
 
-def _pin(monkeypatch, instant: datetime) -> None:
-    pin_datetime(monkeypatch, session_module, instant)
+def _pin(monkeypatch, world: CabinetWorld, instant: datetime) -> None:
+    """The instant of the JWT expiry check and of the device sessions' own clock."""
     pin_datetime(monkeypatch, jwt.api_jwt, instant)
+    world.kit.clock.set(instant)
 
 
-class TestTheCabinetApiHonoursTheSessionCap:
-    async def test_a_session_token_writes_until_24_h_and_is_refused_after_with_nothing_written(self, monkeypatch, world):
-        _pin(monkeypatch, T0)
+class TestTheCabinetApiHonoursTheAccessTokenExpiry:
+    async def test_an_access_token_writes_until_its_expiry_and_is_refused_after_with_nothing_written(self, monkeypatch, world):
+        _pin(monkeypatch, world, T0)
         headers = world.token(ALEX)
-        _pin(monkeypatch, T0 + timedelta(seconds=DAY - 1))
+        _pin(monkeypatch, world, T0 + timedelta(seconds=ACCESS - 1))
         assert (await world.client.put("/api/user/location", headers=headers, json={"location": "Springfield"})).status_code == 200
-        _pin(monkeypatch, T0 + timedelta(seconds=DAY + 1))
+        _pin(monkeypatch, world, T0 + timedelta(seconds=ACCESS + 1))
         resp = await world.client.put("/api/user/location", headers=headers, json={"location": "Porto"})
         assert resp.status_code == 401
         assert _config(world)["location"] == "Springfield"
 
-    async def test_the_cookie_session_is_capped_the_same_way(self, monkeypatch, world):
-        _pin(monkeypatch, T0)
-        world.client.set_cookie("localhost", "access_token", world.token(ALEX)["Authorization"][7:])
-        _pin(monkeypatch, T0 + timedelta(seconds=DAY - 1))
+    async def test_the_access_cookie_expires_the_same_way(self, monkeypatch, world):
+        _pin(monkeypatch, world, T0)
+        world.client.set_cookie("localhost", ACCESS_COOKIE, world.token(ALEX)["Authorization"][7:])
+        _pin(monkeypatch, world, T0 + timedelta(seconds=ACCESS - 1))
         assert (await world.client.put("/api/user/location", json={"location": "Springfield"})).status_code == 200
-        _pin(monkeypatch, T0 + timedelta(seconds=DAY + 1))
+        _pin(monkeypatch, world, T0 + timedelta(seconds=ACCESS + 1))
         resp = await world.client.put("/api/user/location", json={"location": "Porto"})
         assert resp.status_code == 401
         assert _config(world)["location"] == "Springfield"

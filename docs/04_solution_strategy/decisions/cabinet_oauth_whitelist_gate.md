@@ -61,7 +61,7 @@ Since 2026-11-18 (owner decision) `/auth/refresh` re-checks the list: `Authentic
 email of the last sign-in (`auth_metadata["email"]`, rewritten by every Google sign-in and link after the gate passed;
 `user.email` only when there is none, as it is set once at registration and can be empty or stale) through the same
 `_whitelisted` check sign-in uses; no email, or one off the list, is the refresh's ordinary 401. A revoked email therefore keeps only the
-access token it holds, up to 24h (`cabinet_session_24h_cap.md`). A
+access token it holds, up to 24h (`cabinet_session_24h_cap.md`, superseded by `cabinet_device_session_lifetimes.md`: now up to 15 min). A
 per-request check in `auth_required` would add one Firestore read to every API call. For instant
 revocation, rotate the session signing secret, which logs everyone out.
 

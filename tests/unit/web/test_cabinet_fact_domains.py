@@ -16,6 +16,8 @@ from src.domain import fact_domains
 from src.domain.entities import FactState
 from src.domain.fact_domains import Domain
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
+from tests.unit.web.gate_fakes import expired_token
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
 from tests.support.fact_lifecycle_world import make_fact_world
 
@@ -23,22 +25,21 @@ TOKEN = {"Authorization": "Bearer t"}
 PAGE = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 
 
-def _app(repo: Any = None, verify=None) -> Quart:
-    session_service = MagicMock()
-    session_service.verify_access_token = verify or MagicMock(
-        return_value={"sub": USER, "account_id": ACC, "role": "owner"})
+def _app(repo: Any = None) -> Quart:
+    cabinet_sessions, _bearer = cabinet_session_for(USER, ACC)
+    TOKEN.update(_bearer)
     app = Quart("test_cabinet_fact_domains")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(),
         fact_repo=repo if repo is not None else MagicMock(), embedding_service=MagicMock(),
         connectors=ConnectorRegistry(),
     ))
     return app
 
 
-async def _get(path: str, repo: Any = None, headers=TOKEN, verify=None):
-    async with _app(repo, verify).test_client() as client:
-        resp = await client.get(path, headers=headers)
+async def _get(path: str, repo: Any = None, headers=None):
+    async with _app(repo).test_client() as client:
+        resp = await client.get(path, headers=TOKEN if headers is None else headers)
         return resp.status_code, await resp.get_json()
 
 
@@ -94,10 +95,10 @@ async def test_the_route_refuses_a_request_without_a_session():
 
 
 async def test_the_route_refuses_an_invalid_session_as_its_neighbours_do():
-    verify = MagicMock(side_effect=ValueError("expired"))
+    expired = {"Authorization": f"Bearer {expired_token(USER, ACC)}"}
 
-    assert (await _get("/api/user/fact-domains", verify=verify))[0] == 401
-    assert (await _get("/api/user/facts/browse", verify=verify))[0] == 401
+    assert (await _get("/api/user/fact-domains", headers=expired))[0] == 401
+    assert (await _get("/api/user/facts/browse", headers=expired))[0] == 401
 
 
 # ------------------------------------------------------------------------------------------- the domain filter
@@ -203,11 +204,11 @@ async def test_the_search_list_carries_the_profile_domain(world):
     store, repo = world
     await repo.add_fact(make_fact("morning yoga 30 min", **YOGA))
     await repo.add_fact(make_fact("plays tennis on Sundays"))
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(USER, ACC)
+    TOKEN.update(_bearer)
     app = Quart("test_cabinet_fact_domains_search")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(), fact_repo=repo,
         embedding_service=store.embedder, connectors=ConnectorRegistry(),
     ))
 

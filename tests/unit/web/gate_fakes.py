@@ -1,7 +1,7 @@
-"""Shared pieces of the inbound-gate tests (P7): a real session service, real tokens, and a tripwire for
+"""Shared pieces of the inbound-gate tests (P7): a real device-session kit, real tokens, and a tripwire for
 dependencies an unauthenticated request must never reach.
 
-The gates under test are always the real ones (SessionService, the OIDC gate, the Twilio verifier, ...); only a
+The gates under test are always the real ones (the device-session verifier, the OIDC gate, the Twilio verifier, ...); only a
 dependency that lies BEHIND a gate is replaced, and then by a `Tripwire` that records every touch, so a test can
 assert that a refused request had no side effect at all."""
 from datetime import datetime, timedelta, timezone
@@ -9,40 +9,42 @@ from typing import List
 
 import jwt
 
-from src.domain.billing import BillingAccount
-from src.domain.user import UserProfile
-from src.services.session_service import SessionService
+from src.web.cabinet_auth import CabinetSessionVerifier
+from tests.support.cabinet_session_kit import KIT_SECRET, CabinetSessionKit
 
 SESSION_SECRET = "p7-session-secret-0123456789abcdef-xyz"
 OTHER_SECRET = "p7-forger-secret-0123456789abcdef-xyzw"
 
-
-def session_service() -> SessionService:
-    return SessionService(secret_key=SESSION_SECRET)
-
-
-def access_token(user_id: str = "user-a", account_id: str = "account-a") -> str:
-    return session_service().create_access_token(
-        UserProfile(user_id=user_id, account_id=account_id), BillingAccount(account_id=account_id))
+# One device-session kit for the module's helpers: `cabinet_sessions()` verifies exactly the tokens they mint.
+KIT = CabinetSessionKit()
 
 
-def refresh_token(user_id: str = "user-a", account_id: str = "account-a") -> str:
-    return session_service().create_refresh_token(
-        UserProfile(user_id=user_id, account_id=account_id), BillingAccount(account_id=account_id))
+def cabinet_sessions() -> CabinetSessionVerifier:
+    return KIT.verifier
 
 
-def expired_token(kind: str = "access", user_id: str = "user-a", account_id: str = "account-a") -> str:
-    """A token signed with the right key whose `exp` has passed."""
+def access_token(user_id: str = "user-a", account_id: str = "account-a", role: str = "viewer") -> str:
+    """The access JWT of a new live device session (`role` in the account's policy)."""
+    return KIT.sign_in_now(user_id, account_id, role=role).access_token
+
+
+def _claims(sid: str, user_id: str, account_id: str, iat: datetime, exp: datetime) -> dict:
+    return {"sub": user_id, "account_id": account_id, "type": "access", "sid": sid, "iat": int(iat.timestamp()),
+            "exp": int(exp.timestamp())}
+
+
+def expired_token(user_id: str = "user-a", account_id: str = "account-a") -> str:
+    """A token of a live device session, signed with the right key, whose `exp` has passed."""
     iat = datetime.now(timezone.utc) - timedelta(days=2)
-    return jwt.encode({"sub": user_id, "account_id": account_id, "type": kind, "iat": int(iat.timestamp()),
-                       "exp": int((iat + timedelta(hours=1)).timestamp())}, SESSION_SECRET, algorithm="HS256")
+    sid = KIT.sign_in_now(user_id, account_id).sid
+    return jwt.encode(_claims(sid, user_id, account_id, iat, iat + timedelta(hours=1)), KIT_SECRET, algorithm="HS256")
 
 
-def forged_token(kind: str = "access", user_id: str = "user-a", account_id: str = "account-a") -> str:
-    """A well-formed, unexpired token signed with a key the service does not hold."""
+def forged_token(user_id: str = "user-a", account_id: str = "account-a") -> str:
+    """A well-formed, unexpired token of a live device session signed with a key the service does not hold."""
     now = datetime.now(timezone.utc)
-    return jwt.encode({"sub": user_id, "account_id": account_id, "type": kind, "iat": int(now.timestamp()),
-                       "exp": int((now + timedelta(hours=1)).timestamp())}, OTHER_SECRET, algorithm="HS256")
+    sid = KIT.sign_in_now(user_id, account_id).sid
+    return jwt.encode(_claims(sid, user_id, account_id, now, now + timedelta(hours=1)), OTHER_SECRET, algorithm="HS256")
 
 
 class TripwireTouched(Exception):

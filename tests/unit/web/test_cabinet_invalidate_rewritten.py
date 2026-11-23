@@ -10,22 +10,25 @@ from quart import Quart
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh, make_env_config
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from src.composition.connector_registry import ConnectorRegistry
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 _META = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
          "context_priority": "medium", "tags": ["tea"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE}
 
 
 def _app(fact_repo):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(USER, ACC)
+    _AUTH.update(_bearer)
     app = Quart("test_cabinet_invalidate_rewritten")
     # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(),
         fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo, bio_cache=NoCacheRefresh()), connectors=ConnectorRegistry(),
     ))
     return app
@@ -44,7 +47,7 @@ async def test_a_row_whose_text_was_rewritten_is_a_409_and_nothing_is_written(st
     before = copy.deepcopy(store.docs)
 
     async with _app(repo).test_client() as client:
-        resp = await client.post(f"/api/user/facts/{shown}/invalidate", headers={"Authorization": "Bearer t"})
+        resp = await client.post(f"/api/user/facts/{shown}/invalidate", headers=_AUTH)
         status, body = resp.status_code, await resp.get_json()
 
     assert status == 409

@@ -836,7 +836,9 @@
 
     <audio id="remote-audio" autoplay playsinline hidden></audio>
 
+    <script src="/auth/session.js"></script>
     <script>
+      const { authFetch, ensureSession } = window.alekSession;
       /* ── i18n ────────────────────────────────────────── */
       const LANG_DICT = {
         en: {
@@ -1107,7 +1109,7 @@
 
       async function syncServerLanguage() {
         try {
-          const resp = await fetch(UI_LANG_URL, { credentials: "same-origin" });
+          const resp = await authFetch(UI_LANG_URL, { credentials: "same-origin" });
           if (!resp.ok) return; // no answer: keep the fallback
           const body = await resp.json();
           const code = body && typeof body.language === "string" ? body.language.toLowerCase() : "";
@@ -1216,23 +1218,8 @@
       }
 
       /* ── Session ─────────────────────────────────────── */
-      // The Cabinet session is capped at 24h with no silent refresh (owner decision): an
-      // expired session goes to login and comes back here, instead of failing the call later
-      // with a bare "Could not connect".
-      function goToLogin() {
-        // A mode page returns to itself after login; the main call page keeps its own path.
-        const next = window.VOICE_MODE ? window.location.pathname : "/cabinet/call";
-        window.location.replace(`/auth/login?next=${next}`);
-      }
-
-      async function ensureSession() {
-        try {
-          const resp = await fetch("/auth/me", { credentials: "same-origin" });
-          if (resp.status === 401) goToLogin();
-        } catch (e) {
-          // Offline / transient — let the call attempt surface the error instead.
-        }
-      }
+      // authFetch refreshes the session silently on a 401 and goes to login only when the refresh fails;
+      // ensureSession (session.js) runs on load and whenever the page becomes visible again.
 
       /* ── Microphone choice ───────────────────────────── */
       // Persisted so the caller's pick survives a reload. Every localStorage access is
@@ -1445,7 +1432,7 @@
           } catch (e) {
             // no stats — the rx keys are omitted
           }
-          fetch(`/api/voice/web-call/${reportCallId}/client-report`, {
+          authFetch(`/api/voice/web-call/${reportCallId}/client-report`, {
             method: "POST",
             credentials: "same-origin",
             keepalive: true,
@@ -2721,7 +2708,7 @@
         let extra = "";
         let ok = false;
         try {
-          const resp = await fetch("/api/voice/call-text/file", {
+          const resp = await authFetch("/api/voice/call-text/file", {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
@@ -2861,7 +2848,7 @@
       async function pollStatus() {
         if (!callId) return;
         try {
-          const resp = await fetch(`/api/voice/web-call/${callId}/status`, {
+          const resp = await authFetch(`/api/voice/web-call/${callId}/status`, {
             credentials: "same-origin",
           });
           if (!resp.ok) return; // transient — keep polling
@@ -2906,7 +2893,7 @@
         callId = null;
         if (notifyServer && endingCallId) {
           try {
-            await fetch(`/api/voice/web-call/${endingCallId}/hangup`, {
+            await authFetch(`/api/voice/web-call/${endingCallId}/hangup`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
@@ -3024,7 +3011,7 @@
           const tx = pc.addTransceiver(localStream.getAudioTracks()[0], { direction: "sendonly" });
 
           await pc.setLocalDescription(await pc.createOffer());
-          const startResp = await fetch("/api/voice/web-call", {
+          const startResp = await authFetch("/api/voice/web-call", {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
@@ -3035,9 +3022,8 @@
             ),
           });
           if (startResp.status === 401) {
-            // Session expired while the page was open — release everything, then log in.
+            // authFetch already refreshed and is sending the user to login; release everything.
             handledState = true;
-            goToLogin();
             throw new Error("unauthorized");
           }
           if (startResp.status === 409) {
@@ -3059,7 +3045,7 @@
             // same pattern as pagehide) instead of leaving it to expire on its own TTL, and
             // don't touch `pc` (already closed) or write the global callId for an abandoned
             // call the rest of this function no longer owns.
-            fetch(`/api/voice/web-call/${startedCallId}/hangup`, {
+            authFetch(`/api/voice/web-call/${startedCallId}/hangup`, {
               method: "POST",
               keepalive: true,
               credentials: "same-origin",
@@ -3073,7 +3059,7 @@
           await pc.setRemoteDescription({ type: "answer", sdp: startBody.sdp });
           await waitForConnected(pc);
 
-          const connectResp = await fetch(`/api/voice/web-call/${callId}/connect`, {
+          const connectResp = await authFetch(`/api/voice/web-call/${callId}/connect`, {
             method: "POST",
             credentials: "same-origin",
           });
@@ -3091,7 +3077,7 @@
           if (connectBody.sdp) {
             await pc.setRemoteDescription({ type: "offer", sdp: connectBody.sdp });
             await pc.setLocalDescription(await pc.createAnswer());
-            await fetch(`/api/voice/web-call/${callId}/renegotiate`, {
+            await authFetch(`/api/voice/web-call/${callId}/renegotiate`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },

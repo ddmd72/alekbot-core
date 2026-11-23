@@ -9,6 +9,7 @@ from quart import Quart
 
 from src.domain.agent_note import AgentNote
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 
 _AUTH = {"Authorization": "Bearer token"}
@@ -17,15 +18,15 @@ DUE = datetime(2030, 1, 1, 6, tzinfo=timezone.utc)
 
 
 def _app(notes):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     users = MagicMock()
     users.get_user = AsyncMock(return_value=SimpleNamespace(config=SimpleNamespace(timezone="UTC")))
     notes_port = AsyncMock()
     notes_port.list_active_notes = AsyncMock(return_value=notes)
     app = Quart("test_reminder_workspace_file")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=users, fact_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=users, fact_repo=MagicMock(),
         embedding_service=MagicMock(), agent_note_port=notes_port, connectors=ConnectorRegistry(),
     ))
     return app

@@ -39,9 +39,11 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
 
 1. `src/web/user_cabinet_app.py::create_user_cabinet_blueprint` serves `/cabinet` with `Cache-Control: no-cache` (a
    cached page outlived deploys). The page itself needs no session; every `/api/...` call does.
-2. Every API route is wrapped by `src/web/cabinet_auth.py::make_auth_required`: a Bearer header or the `access_token`
-   cookie goes to `SessionService.verify_access_token`; `g.user_id`, `g.account_id` and `g.role` come only from the
-   verified token. A bad or missing token is `401`. Token lifetime and refresh: `decisions/cabinet_session_24h_cap.md`.
+2. Every API route is wrapped by `src/web/cabinet_auth.py::make_auth_required`: a Bearer header or the `__Host-access`
+   cookie goes to `CabinetSessionVerifier.identify` (the JWT with its `sid`, then `DeviceSessionService.is_live`);
+   `g.user_id`, `g.account_id`, `g.role` and `g.session_id` come only from a verified token of a live session. A bad,
+   missing or revoked one is `401`. The docs pages (`owner_only`) and `/join` ask the same verifier. Lifetimes and
+   refresh: `decisions/cabinet_device_session_lifetimes.md`.
 3. Sign-in itself, including the email whitelist that refuses unlisted users, is the OAuth block
    (`decisions/cabinet_oauth_whitelist_gate.md`); the Cabinet only consumes the session.
 
@@ -161,7 +163,7 @@ per question; one failure shows as `"error"` for that question and does not stop
 
 - [oauth_web_api](../oauth_web_api/README.md) (sign-in, JWT), [oauth_multi_tenant](../oauth_multi_tenant/README.md)
   (users, accounts, roles)
-- `decisions/cabinet_oauth_whitelist_gate.md`, `decisions/cabinet_session_24h_cap.md`,
+- `decisions/cabinet_oauth_whitelist_gate.md`, `decisions/cabinet_device_session_lifetimes.md`,
   `decisions/fact_review_and_owner_questions.md`, `decisions/reconnect_notice_r1.md`,
   `decisions/drive_unreadable_files_cabinet_only.md`, `decisions/deep_research_drive_copy.md`
 - `docs/10_rfcs/FACT_LIFECYCLE_RFC.md`, `FACT_PROFILE_RFC.md`, `MULTI_DRIVE_RFC.md`, `DRIVE_MCP_CONNECTOR_RFC.md`

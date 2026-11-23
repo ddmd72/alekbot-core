@@ -28,6 +28,7 @@ HELD_AS = {
     "geo_mark_service": "_geo_marks",
     "long_turn_service": "_long_turns",
     "doc_delivery_service": "_doc_delivery_service",
+    "device_sessions": "_device_sessions",
 }
 
 

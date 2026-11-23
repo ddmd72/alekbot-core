@@ -7,6 +7,7 @@ from quart import Quart
 
 from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
 from src.services.voice_call_setup_service import VoiceCallSetupService
+from tests.unit.web.test_voice_web_call_app import signed_in_verifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from tests.support.voice_tickets import call_kind_key, ticket_key
 from tests.unit.web.test_voice_web_call_app import AUTH, CIPHER, MemoryStore, _room
@@ -26,12 +27,11 @@ class RecordingAgent:
 def _app(agent=None):
     store, agent = MemoryStore(), agent or RecordingAgent()
     setup = VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=b"k" * 32)
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1"})
+    cabinet_sessions = signed_in_verifier("u1", "a1")
     app = Quart(__name__)
     room = _room()
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=session_service, call_setup=setup, media_room=room, ephemeral_store=store,
+        cabinet_sessions=cabinet_sessions, call_setup=setup, media_room=room, ephemeral_store=store,
         relay_base_url="wss://relay.example.com", cipher=CIPHER, digest_key=b"k" * 32))
     return app, store, agent, room
 

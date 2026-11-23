@@ -13,6 +13,7 @@ from quart import Quart
 
 from src.domain.user import UserBotConfig
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 
 _AUTH = {"Authorization": "Bearer token"}
@@ -33,11 +34,11 @@ def _users(enabled=False, missing=False):
 
 
 def _app(user_repo):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     app = Quart("test_drive_dr_copy")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), connectors=ConnectorRegistry(),
     ))
     return app

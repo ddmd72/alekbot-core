@@ -1,18 +1,18 @@
 """Public landing at `/`: static page without a session, Cabinet redirect with one."""
-from unittest.mock import MagicMock
-
 import pytest
 from quart import Quart
 
+from src.web.cabinet_auth import ACCESS_COOKIE
 from src.web.landing_app import create_landing_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
 
 
-def _app(token_valid: bool = False):
-    session_service = MagicMock()
-    if not token_valid:
-        session_service.verify_access_token = MagicMock(side_effect=ValueError("bad token"))
+_KIT = CabinetSessionKit()
+
+
+def _app():
     app = Quart(__name__)
-    app.register_blueprint(create_landing_blueprint(session_service))
+    app.register_blueprint(create_landing_blueprint(_KIT.verifier))
     return app
 
 
@@ -30,8 +30,8 @@ async def test_root_without_session_serves_the_landing_page_not_the_login():
 
 @pytest.mark.asyncio
 async def test_root_with_valid_login_cookie_redirects_to_cabinet():
-    client = _app(token_valid=True).test_client()
-    client.set_cookie("localhost", "access_token", "jwt")
+    client = _app().test_client()
+    _KIT.set_cookies(client, _KIT.sign_in_now("user-1", "acc-1"), refresh=False)
 
     resp = await client.get("/")
 
@@ -41,8 +41,8 @@ async def test_root_with_valid_login_cookie_redirects_to_cabinet():
 
 @pytest.mark.asyncio
 async def test_root_with_invalid_cookie_shows_the_landing_page():
-    client = _app(token_valid=False).test_client()
-    client.set_cookie("localhost", "access_token", "expired")
+    client = _app().test_client()
+    client.set_cookie("localhost", ACCESS_COOKIE, "expired")
 
     resp = await client.get("/")
 

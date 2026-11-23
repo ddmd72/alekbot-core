@@ -7,7 +7,6 @@ import os
 import re
 
 from ..services.invite_code_service import InviteCodeService
-from ..services.session_service import SessionService
 from ..services.credential_revocation_service import CredentialRevocationService
 from ..services.email_indexing_service import REINDEX_DISABLED, EmailIndexingService
 from ..services.drive_connection_service import DriveConnectionService
@@ -56,7 +55,7 @@ from ..ports.recurrence_port import RecurrencePort
 from ..ports.quota_service import QuotaService
 from ..utils.billed_scope import billed_scope
 from ..utils.logger import exc_brief, logger
-from .cabinet_auth import make_auth_required
+from .cabinet_auth import CabinetSessionVerifier, make_auth_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
 DOCS_OWNER_USER_ID = os.getenv('DOCS_OWNER_USER_ID')
@@ -95,7 +94,7 @@ def _domain_fields(fact: Any) -> Dict[str, Optional[str]]:
 
 def create_user_cabinet_blueprint(
     invite_service: InviteCodeService,
-    session_service: SessionService,
+    cabinet_sessions: CabinetSessionVerifier,
     user_repo: UserRepository,
     fact_repo: FactRepository,
     embedding_service: EmbeddingService,
@@ -172,7 +171,7 @@ def create_user_cabinet_blueprint(
     SITE_DIR = os.path.join(project_root, 'site')
 
     # Authentication Middleware
-    auth_required = make_auth_required(session_service)
+    auth_required = make_auth_required(cabinet_sessions)
 
     # Owner-only Middleware (for internal features like docs)
     def owner_only(func):
@@ -183,32 +182,13 @@ def create_user_cabinet_blueprint(
             if not DOCS_OWNER_USER_ID:
                 abort(404)  # Pretend page doesn't exist
             
-            # Check Authorization header or Cookie
-            auth_header = request.headers.get("Authorization")
-            token = None
-            
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.split(" ")[1]
-            else:
-                token = request.cookies.get("access_token")
-
-            if not token:
-                abort(404)  # Pretend page doesn't exist (don't reveal it requires auth)
-
-            try:
-                payload = session_service.verify_access_token(token)
-                user_id = payload["sub"]
-                
-                # Check if user_id matches owner
-                if str(user_id) != DOCS_OWNER_USER_ID:
-                    abort(404)  # Pretend page doesn't exist
-                
-                # Store in g for potential use in handler
-                g.user_id = user_id
-                return await func(*args, **kwargs)
-            except Exception as e:
-                logger.debug(f"Owner-only auth failed: {e}")
-                abort(404)  # Pretend page doesn't exist
+            # A live Cabinet session (Bearer header or cookie, the one verifier); anything else pretends the page
+            # does not exist (it does not reveal that it requires auth).
+            identity = await cabinet_sessions.identify()
+            if identity is None or identity.user_id != DOCS_OWNER_USER_ID:
+                abort(404)
+            g.user_id = identity.user_id
+            return await func(*args, **kwargs)
         return wrapper
 
     @bp.route("/health", methods=["GET"])
@@ -239,24 +219,15 @@ def create_user_cabinet_blueprint(
         if not code:
             return "Invalid link: missing code", 400
         
-        # Check authentication via cookie
-        token = request.cookies.get("access_token")
-        
-        if token:
+        identity = await cabinet_sessions.identify()
+        if identity is not None:
             try:
-                # Validate token
-                payload = session_service.verify_access_token(token)
-                user_id = payload["sub"]
-                
-                # Consume code immediately
-                await invite_service.consume_team_invite(code, user_id)
-                
-                # Redirect to cabinet with success message
+                await invite_service.consume_team_invite(code, identity.user_id)
                 return redirect("/cabinet?joined=true")
             except Exception as e:
-                logger.warning(f"Auto-join failed (token invalid or code error): {e}")
+                logger.warning(f"Auto-join failed (code error): {e}")
                 # Fallthrough to login flow
-        
+
         # If not authenticated or failed, redirect to login with code state
         # We use 'next' param which OAuth endpoint handles
         return redirect(f"/auth/login?next=/cabinet&code={code}")

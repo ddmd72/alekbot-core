@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.web.call_page_harness import FAKE_DOM, HTML, block, live_text_block, needs_node, run_node, show_view_block
+from tests.unit.web.call_page_harness import (FAKE_DOM, HTML, block, live_text_block, needs_node, run_node, session_prelude,
+                                              show_view_block)
 from tests.unit.web.test_call_page_save_as_file import save_block
 
 MODES_HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "call_modes.html").read_text(encoding="utf-8")
@@ -142,7 +143,7 @@ globalThis.fetch = async (url, init) => {{
 }};
 const tick = () => new Promise((r) => setTimeout(r, 0));
 """
-    script = "\n".join([prelude, FAKE_DOM, "const SCREEN = buildSkeleton(true);",
+    script = "\n".join([prelude, FAKE_DOM, session_prelude(HTML), "const SCREEN = buildSkeleton(true);",
                         _dictionary_only(), _STUBS, _blocks_without_dict(), body])
     return run_node(script)
 
@@ -320,7 +321,7 @@ def _modes_run(*, phone="en-US", stored=None, server=None, storage_throws=False)
     ids = ["title", "back-link", "interpreter-title", "interpreter-desc", "tutor-title", "tutor-desc"]
     prelude = f"""
 const els = {{}}; for (const id of {json.dumps(ids)}) els[id] = {{ textContent: "" }};
-const document = {{ title: "", getElementById: (id) => els[id] }};
+const document = {{ title: "", getElementById: (id) => els[id], addEventListener() {{}} }};
 const window = {{ location: {{ replace() {{}} }} }};
 const navigator = {{ language: {json.dumps(phone)} }};
 const data = {json.dumps({} if stored is None else {"voice_ui_language": stored})};
@@ -330,7 +331,7 @@ const localStorage = {{
 }};
 const server = {json.dumps(server)};
 globalThis.fetch = async (url) => {{
-  if (url === "/auth/me") return {{ ok: true, status: 200 }};
+  if (url === "/auth/me") return {{ ok: true, status: 200, json: async () => ({{}}) }};
   if (server === "reject") throw new Error("offline");
   return {{ ok: server.status === 200, status: server.status, json: async () => server.body }};
 }};
@@ -350,7 +351,7 @@ new Promise((r) => setTimeout(r, 5)).then(() => console.log(JSON.stringify({
   stored: data.voice_ui_language || null,
 })));
 """
-    return run_node(prelude + script_src + tail)
+    return run_node(prelude + session_prelude(MODES_HTML, binding=False) + script_src + tail)
 
 
 @needs_node

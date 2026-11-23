@@ -25,7 +25,7 @@ from src.domain.user import UserBotConfig, UserProfile
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.clock_instants import REPEATED_HOUR, SKIPPED_HOUR, ZONES
 from tests.support.firestore_eval import EvalDb
-from tests.unit.web.gate_fakes import Tripwire, access_token, session_service
+from tests.unit.web.gate_fakes import Tripwire, access_token, cabinet_sessions
 from src.composition.connector_registry import ConnectorRegistry
 
 UTC = timezone.utc
@@ -46,7 +46,7 @@ class World:
         app = Quart("cabinet_reminder_time_instants")
         app.register_blueprint(create_user_cabinet_blueprint(
             invite_service=Tripwire("invite_service", self.touched),
-            session_service=session_service(),
+            cabinet_sessions=cabinet_sessions(),
             user_repo=self.users,
             fact_repo=Tripwire("fact_repo", self.touched),
             embedding_service=Tripwire("embedding_service", self.touched),

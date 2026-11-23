@@ -24,7 +24,8 @@ from src.services.drive_connection_service import DriveConnectionService
 from src.domain.user import UserProfile
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.integration_reconnect_service import IntegrationReconnectService
-from src.services.session_service import SessionService
+from src.web.cabinet_auth import ACCESS_COOKIE
+from tests.support.cabinet_session_kit import CabinetSessionKit
 from src.web.oauth_app import create_oauth_blueprint
 from src.composition.drive_connection_setup import build_drive_activation
 from tests.support import http_boundary_fake
@@ -74,7 +75,7 @@ class ConnectWorld:
         self.db = EvalDb()
         self.store = FirestoreCredentialStore(self.db, SimpleNamespace(credentials_collection=CREDS),
                                               cipher=AesGcmTestCipher())
-        self.sessions = SessionService(secret_key=SECRET, access_token_ttl=3600, refresh_token_ttl=3600)
+        self.kit = CabinetSessionKit()
         edges: Dict[str, Any] = {"google": GoogleOAuthProvider("g-cid", "g-csecret")}
         if microsoft:
             edges["microsoft"] = MicrosoftOAuthProvider("ms-cid", "ms-csecret")
@@ -103,7 +104,7 @@ class ConnectWorld:
             redirect_uri=REDIRECT)
         self.app = Quart("connect_world")
         self.app.register_blueprint(create_oauth_blueprint(
-            auth_service=Mock(), session_service=self.sessions, auth_registry=Mock(),
+            auth_service=Mock(), cabinet_sessions=self.kit.verifier, device_sessions=self.kit.device_sessions, auth_registry=Mock(),
             auth_config=SimpleNamespace(oauth_redirect_uri="https://service.example/auth/callback"),
             connect_service=self.connect_service if wired else None, connectors=self.registry if wired else None))
         self.http.route("POST", GOOGLE_TOKEN, handler=lambda r: (200, self._token(r)))
@@ -129,14 +130,13 @@ class ConnectWorld:
     # ---------------------------------------------------------------- the browser side
 
     def session(self, user_id: str = ALEX, account_id: str = "acct-1") -> str:
-        return self.sessions.create_access_token(UserProfile(user_id=user_id, account_id=account_id),
-                                                 BillingAccount(account_id=account_id))
+        return self.kit.sign_in_now(user_id, account_id).access_token
 
     async def get(self, path: str, *, token: Optional[str] = "default") -> Any:
         async with self.app.test_client() as client:
             token = self.session() if token == "default" else token
             if token is not None:
-                client.set_cookie("localhost", "access_token", token)
+                client.set_cookie("localhost", ACCESS_COOKIE, token)
             resp = await client.get(path)
         self.responses.append(resp)
         return resp

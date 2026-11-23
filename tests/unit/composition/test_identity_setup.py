@@ -14,7 +14,7 @@ TWILIO = {"TWILIO_ACCOUNT_SID": "AC-test-1", "TWILIO_AUTH_TOKEN": "token-1", "TW
 SECRET = "session-secret-1-" + "x" * 32
 AUTH = SimpleNamespace(firebase_project_id="project-1", firebase_web_api_key="web-key-1", firebase_service_account=None,
                        google_oauth_client_id="client-1", google_oauth_client_secret="client-secret-1",
-                       oauth_session_secret=SECRET, access_token_ttl=60, refresh_token_ttl=120)
+                       oauth_session_secret=SECRET)
 
 
 class _Firebase:
@@ -55,7 +55,12 @@ def test_the_repositories_are_shared_and_the_sign_in_runs_over_the_auth_config(e
     assert firebase.kwargs == {"project_id": "project-1", "web_api_key": "web-key-1", "service_account_path": None,
                                "oauth_client_id": "client-1", "oauth_client_secret": "client-secret-1"}
     session = identity.session_service
-    assert (session.secret_key, session.access_token_ttl, session.refresh_token_ttl) == (SECRET, 60, 120)
+    # The token lifetimes are the device-session policy's now: the session service takes only the secret, and the
+    # device sessions are signed by this very service.
+    assert session.secret_key == SECRET
+    notices = object()
+    device_sessions = identity_setup.build_device_sessions(db, env, session_service=session, notification_service=notices)  # type: ignore[arg-type]
+    assert device_sessions._sessions is session and device_sessions._notifications is notices
 
 
 def test_with_all_three_twilio_settings_the_verify_service_is_built(env):

@@ -9,25 +9,31 @@ RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 Endpoints:
 - GET  /auth/login - Redirect to OAuth provider
 - GET  /auth/callback - OAuth callback handler
-- POST /auth/refresh - Refresh access token
-- POST /auth/logout - Logout (clear cookies)
+- POST /auth/refresh - Refresh the device session (CABINET_DEVICE_SESSIONS_RFC §7.1)
+- POST /auth/logout - Logout (revoke the device session, clear cookies)
 - GET  /auth/me - Get current user info
 - GET  /auth/connect/<kind> - Start an integration connect (or, with ?credential=<id>, a reconnect)
 - GET  /auth/connect/callback - The one integration connect callback (MULTI_DRIVE_RFC §5.2)
 """
+import os
 import secrets
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlencode
-from quart import Blueprint, request, jsonify, redirect, make_response
-import jwt
+from quart import Blueprint, request, jsonify, redirect, make_response, send_file
 
 from ..services.authentication_service import AuthenticationService
-from ..services.session_service import SessionService
+from ..services.device_session_service import DeviceSessionService
 from ..services.auth_provider_registry import AuthProviderRegistry
 from ..config.auth import AuthConfig
+from ..domain.device_label import describe_device
+from ..domain.device_session import SessionAuthKind, SessionRevokeReason
+from ..domain.device_session_policy import RefreshOutcome
 from ..domain.exceptions import AccessDeniedError
 from ..domain.safe_redirect import safe_return_path
 from ..utils.logger import logger
+from .cabinet_auth import (
+    REFRESH_COOKIE, CabinetSessionVerifier, Refusal, clear_session_cookies, set_session_cookies,
+)
 
 if TYPE_CHECKING:
     from ..services.invite_code_service import InviteCodeService
@@ -56,7 +62,8 @@ def _with_query(path: str, params: Dict[str, str]) -> str:
 
 def create_oauth_blueprint(
     auth_service: AuthenticationService,
-    session_service: SessionService,
+    cabinet_sessions: CabinetSessionVerifier,
+    device_sessions: DeviceSessionService,
     auth_registry: AuthProviderRegistry,
     auth_config: AuthConfig,
     invite_service: Optional['InviteCodeService'] = None,
@@ -68,7 +75,8 @@ def create_oauth_blueprint(
 
     Args:
         auth_service: Authentication service for OAuth flows
-        session_service: Session service for JWT management
+        cabinet_sessions: the one verifier of the access token (`cabinet_auth.py`)
+        device_sessions: the revocable device sessions a sign-in starts, a refresh rotates and a logout revokes
         auth_registry: OAuth provider registry
         auth_config: OAuth configuration
         invite_service: Optional service to consume invite codes on callback
@@ -81,21 +89,16 @@ def create_oauth_blueprint(
     """
     bp = Blueprint("oauth", __name__)
 
-    def _session() -> Optional[Tuple[str, str]]:
-        """(user_id, account_id) of the signed-in Cabinet session (the `access_token` cookie's verified payload), or
-        None without one. account_id is "" when the payload carries none: a connect then stores nothing (a credential
-        is never saved under a guessed tenant)."""
-        token = request.cookies.get("access_token")
-        if not token:
-            return None
-        try:
-            payload = session_service.verify_access_token(token)
-        except (jwt.InvalidTokenError, ValueError):
-            return None
-        user_id, account_id = payload.get("sub"), payload.get("account_id")
-        if not isinstance(user_id, str) or not user_id:
-            return None
-        return user_id, account_id if isinstance(account_id, str) else ""
+    async def _session() -> Optional[Tuple[str, str]]:
+        """(user_id, account_id) of the signed-in Cabinet session, or None without a live one."""
+        identity = await cabinet_sessions.identify()
+        return None if identity is None else (identity.user_id, identity.account_id)
+
+    async def _signed_out(body: Dict[str, str], status: int):
+        """A refusal that also deletes both session cookies: the session behind them can no longer refresh."""
+        response = await make_response(jsonify(body), status)
+        clear_session_cookies(response)
+        return response
 
     # ========================================================================
     # GET /auth/login - Redirect to OAuth provider
@@ -179,8 +182,8 @@ def create_oauth_blueprint(
         1. Verify CSRF state token
         2. Exchange code for tokens
         3. Register or authenticate user
-        4. Create JWT session tokens
-        5. Set session cookies
+        4. Start a device session (label and platform hint from the User-Agent, untrusted)
+        5. Set the session cookies
         6. Check for pending invite code -> consume
         7. Redirect to web UI (or next_url)
         """
@@ -215,40 +218,18 @@ def create_oauth_blueprint(
                 except Exception as e:
                     logger.error(f"❌ Failed to auto-consume invite code: {e}")
 
-            # Create JWT session tokens
-            access_token = session_service.create_access_token(user, account)
-            refresh_token = session_service.create_refresh_token(user, account)
+            next_url = safe_return_path(request.cookies.get("auth_next"))  # a pre-fix cookie may hold anything
+            label, platform_hint = describe_device(request.headers.get("User-Agent", ""), next_url)
+            session, access_token, refresh_secret = await device_sessions.start(
+                user, account, label=label, platform_hint=platform_hint, auth_kind=SessionAuthKind.GOOGLE)
 
             logger.info(
                 f"✅ OAuth callback success - user: {user.user_id}, "
-                f"account: {account.account_id}"
+                f"account: {account.account_id}, sid: {session.sid[:8]}"
             )
 
-            # Determine redirect target
-            next_url = safe_return_path(request.cookies.get("auth_next"))  # a pre-fix cookie may hold anything
-            
-            # Create redirect response
             response = await make_response(redirect(next_url))
-
-            # Set access token cookie (short-lived)
-            response.set_cookie(
-                "access_token",
-                access_token,
-                max_age=auth_config.access_token_ttl,
-                httponly=True,
-                secure=True,
-                samesite="lax",
-            )
-
-            # Set refresh token cookie (long-lived)
-            response.set_cookie(
-                "refresh_token",
-                refresh_token,
-                max_age=auth_config.refresh_token_ttl,
-                httponly=True,
-                secure=True,
-                samesite="lax",
-            )
+            set_session_cookies(response, session, access_token, refresh_secret)
 
             # Clear CSRF state cookie
             response.delete_cookie("oauth_state")
@@ -267,100 +248,70 @@ def create_oauth_blueprint(
             return jsonify({"error": "OAuth callback failed"}), 500
 
     # ========================================================================
-    # POST /auth/refresh - Refresh access token
+    # POST /auth/refresh - Refresh the device session (CABINET_DEVICE_SESSIONS_RFC §7.1 "Refresh")
     # ========================================================================
     @bp.route("/auth/refresh", methods=["POST"])
     async def refresh_token_endpoint():
         """
-        Refresh expired access token using refresh token.
+        Renew the device session of this browser.
 
-        Headers or cookies:
-        - refresh_token: JWT refresh token
+        Cookies: the access cookie (its JWT may be expired: only its `sid` and user are taken) and the refresh cookie
+        (the session's current secret).
 
         Flow:
-        1. Verify refresh token (expired, invalid or wrong type: 401)
-        2. Load the stored user and their account, and re-check the user's sign-in email against the access
-           whitelist as sign-in does (absent or inactive user, email missing or off the whitelist, absent account:
-           401; `AuthenticationService.resume_session`)
-        3. Generate a new access token from them (a full access TTL: the session slides,
-           decisions/cabinet_session_24h_cap.md)
-        4. Return new token
+        1. No verifiable access cookie or no refresh cookie: 401, cookies cleared
+        2. `AuthenticationService.resume_session` (active user, whitelisted sign-in email, existing account; refused:
+           401, cookies cleared). Role and tier of the new token come from the stored user and account
+        3. `DeviceSessionService.refresh`: ROTATE sets both cookies, GRACE (a second tab within the rotation grace)
+           only the access cookie, REPLAY (the session is now revoked) and DEAD answer 401 and clear the cookies
+        4. The body carries `expires_at`, the new access token's expiry (Unix seconds); never the token itself
         """
-        # Get refresh token from cookie or header
-        refresh_token = request.cookies.get("refresh_token")
-        if not refresh_token:
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer "):
-                refresh_token = auth_header[7:]
-
-        if not refresh_token:
-            return jsonify({"error": "Missing refresh token"}), 401
-
+        presented = cabinet_sessions.presented_session()
+        secret = request.cookies.get(REFRESH_COOKIE)
+        if presented is None or not secret:
+            return await _signed_out({"error": "No session to refresh"}, 401)
+        user_id, sid = presented
         try:
-            payload = session_service.verify_refresh_token(refresh_token)
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Refresh token expired")
-            return jsonify({"error": "Refresh token expired"}), 401
-        except (jwt.InvalidTokenError, ValueError) as e:
-            # ValueError: a valid token of the wrong type (an access token sent as refresh) is a client error too.
-            logger.warning(f"❌ Invalid refresh token: {e}")
-            return jsonify({"error": "Invalid refresh token"}), 401
-
-        user_id = payload["sub"]
-        try:
-            # Role and tier come from the stored user and account, as at sign-in; the payload only names the user.
             user, account = await auth_service.resume_session(user_id)
-            new_access_token = session_service.create_access_token(user, account)
-
-            logger.info(f"🔄 Access token refreshed - user: {user_id}")
-
-            response = await make_response(
-                jsonify({
-                    "success": True,
-                    "access_token": new_access_token,
-                })
-            )
-
-            # Update access token cookie
-            response.set_cookie(
-                "access_token",
-                new_access_token,
-                max_age=auth_config.access_token_ttl,
-                httponly=True,
-                secure=True,
-                samesite="lax",
-            )
-
-            return response
-
+            result = await device_sessions.refresh(sid, secret, user, account)
         except AccessDeniedError:
-            return jsonify({"error": "Session no longer valid"}), 401
+            return await _signed_out({"error": "Session no longer valid"}, 401)
         except Exception as e:
             # Log detail server-side; never leak exception internals to the client.
-            logger.error(f"❌ Token refresh failed: {e}")
+            logger.error(f"❌ Session refresh failed: sid={sid[:8]}: {e}", exc_info=True)
             return jsonify({"error": "Token refresh failed"}), 500
+        if (result.outcome not in (RefreshOutcome.ROTATE, RefreshOutcome.GRACE) or result.session is None
+                or result.access_token is None):
+            return await _signed_out({"error": "Session no longer valid"}, 401)
+        logger.info(f"🔄 Device session refreshed - user: {user_id}, sid: {sid[:8]}, outcome: {result.outcome.value}")
+        response = await make_response(jsonify({
+            "success": True, "expires_at": cabinet_sessions.access_expiry(result.access_token)}))
+        set_session_cookies(response, result.session, result.access_token, result.refresh_secret)
+        return response
 
     # ========================================================================
-    # POST /auth/logout - Logout (clear cookies)
+    # POST /auth/logout - Logout (revoke the device session, clear cookies)
     # ========================================================================
     @bp.route("/auth/logout", methods=["POST"])
     async def logout():
         """
-        Logout user by clearing session cookies.
-
-        Note: JWT tokens remain valid until expiration.
-        For immediate revocation, implement token blacklist (future).
+        Revoke this browser's device session (named by the access cookie, expired or not), then clear both cookies.
+        A failed revocation still clears the cookies and answers 500: this browser is signed out, the record stays
+        live until its idle end, and the failure is logged.
         """
-        response = await make_response(
-            jsonify({"success": True, "message": "Logged out"})
-        )
-
-        # Clear session cookies
-        response.delete_cookie("access_token")
-        response.delete_cookie("refresh_token")
-
+        presented = cabinet_sessions.presented_session()
+        revoke_failed = False
+        if presented is not None:
+            user_id, sid = presented
+            try:
+                await device_sessions.revoke(user_id, sid, SessionRevokeReason.LOGOUT)
+            except Exception as e:
+                logger.error(f"💥 Logout could not revoke the device session sid={sid[:8]}: {e}", exc_info=True)
+                revoke_failed = True
+        if revoke_failed:
+            return await _signed_out({"error": "Logout failed"}, 500)
         logger.info("👋 User logged out")
-        return response
+        return await _signed_out({"success": True, "message": "Logged out"}, 200)
 
     # ========================================================================
     # GET /auth/me - Get current user info
@@ -370,49 +321,32 @@ def create_oauth_blueprint(
         """
         Get current authenticated user information.
 
-        Headers or cookies:
-        - access_token: JWT access token
+        A Bearer header or the access cookie, through the one verifier (a live device session).
 
         Returns:
-        - User profile (user_id, email, display_name)
+        - User profile (user_id, email, external_user_id)
         - Account info (account_id, tier, role)
+        - expires_at: the access token's expiry (Unix seconds), so a page can refresh before it
         """
-        # Get access token from cookie or Authorization header
-        access_token = request.cookies.get("access_token")
-        if not access_token:
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer "):
-                access_token = auth_header[7:]
-
-        if not access_token:
-            return jsonify({"error": "Not authenticated"}), 401
-
-        try:
-            # Verify access token
-            payload = session_service.verify_access_token(access_token)
-
-            return jsonify({
-                "user": {
-                    "user_id": payload["sub"],
-                    "email": payload.get("email"),
-                    "external_user_id": payload.get("external_user_id"),
-                },
-                "account": {
-                    "account_id": payload["account_id"],
-                    "tier": payload.get("tier"),
-                    "role": payload.get("role"),
-                },
-            })
-
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Access token expired")
-            return jsonify({"error": "Token expired"}), 401
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"❌ Invalid access token: {e}")
-            return jsonify({"error": "Invalid token"}), 401
-        except Exception as e:
-            logger.error(f"❌ Get current user failed: {e}")
-            return jsonify({"error": "Failed to get user info"}), 500
+        check = await cabinet_sessions.verify()
+        identity = check.identity
+        if identity is None:
+            error = {Refusal.EXPIRED: "Token expired", Refusal.INVALID: "Invalid token",
+                     Refusal.ENDED: "Invalid token"}.get(check.refusal, "Not authenticated")
+            return jsonify({"error": error}), 401
+        return jsonify({
+            "user": {
+                "user_id": identity.user_id,
+                "email": identity.email,
+                "external_user_id": identity.external_user_id,
+            },
+            "account": {
+                "account_id": identity.account_id,
+                "tier": identity.tier,
+                "role": identity.role,
+            },
+            "expires_at": identity.expires_at,
+        })
 
     # ========================================================================
     # POST /auth/link-oauth - Link OAuth to existing user
@@ -425,7 +359,7 @@ def create_oauth_blueprint(
         Use case: User already logged in via Slack/Telegram, wants to add Google OAuth.
 
         Request:
-        - access_token: JWT access token (cookie or Authorization header)
+        - the access token (cookie or Authorization header) of a live device session
         - code: OAuth authorization code (body)
         - state: CSRF token (body)
 
@@ -444,14 +378,7 @@ def create_oauth_blueprint(
         - 409: OAuth identity already linked to another user
         - 500: Server error
         """
-        # Get access token from cookie or Authorization header
-        access_token = request.cookies.get("access_token")
-        if not access_token:
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer "):
-                access_token = auth_header[7:]
-
-        if not access_token:
+        if not cabinet_sessions.presents_token():
             return jsonify({"error": "Not authenticated. Please login first."}), 401
 
         # Get OAuth code and state from request body
@@ -468,11 +395,15 @@ def create_oauth_blueprint(
             logger.warning("⚠️ OAuth link CSRF validation failed")
             return jsonify({"error": "Invalid state parameter"}), 400
 
-        try:
-            # 1. Verify access token → get current user
-            payload = session_service.verify_access_token(access_token)
-            user_id = payload["sub"]
+        check = await cabinet_sessions.verify()
+        identity = check.identity
+        if identity is None:
+            error = ("Access token expired. Please login again." if check.refusal is Refusal.EXPIRED
+                     else "Invalid access token")
+            return jsonify({"error": error}), 401
+        user_id = identity.user_id
 
+        try:
             logger.info(f"🔗 Linking OAuth to existing user: {user_id}")
 
             # 2. Link OAuth identity to user (handles all logic internally)
@@ -501,12 +432,6 @@ def create_oauth_blueprint(
 
             return response
 
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Access token expired")
-            return jsonify({"error": "Access token expired. Please login again."}), 401
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"❌ Invalid access token: {e}")
-            return jsonify({"error": "Invalid access token"}), 401
         except AccessDeniedError:
             return jsonify({"error": "Access not authorized"}), 403
         except ValueError as e:
@@ -530,7 +455,7 @@ def create_oauth_blueprint(
         """
         if connect_service is None or connectors is None:
             return jsonify({"error": "Integrations not configured"}), 501
-        session = _session()
+        session = await _session()
         if session is None:
             return redirect(_LOGIN)
         user_id = session[0]
@@ -572,7 +497,7 @@ def create_oauth_blueprint(
             return redirect(_with_query(_CABINET, {"connect_error": "state"}))
         if not code:
             return redirect(_with_query(_CABINET, {"connect_error": "no_code"}))
-        session = _session()
+        session = await _session()
         if session is None or not session[1]:
             return redirect(_LOGIN)
         user_id, account_id = session
@@ -589,5 +514,18 @@ def create_oauth_blueprint(
         if outcome.kind:
             params["kind"] = outcome.kind
         return redirect(_with_query(target, params))
+
+    # ========================================================================
+    # GET /auth/session.js - the shared silent-refresh script of the Cabinet and the call pages
+    # ========================================================================
+    @bp.route("/auth/session.js", methods=["GET"])
+    async def session_script():
+        """Anonymous by design: the script holds no secret, and a page must load it before it has a session.
+        The main app has no static folder, so this is an explicit route (CABINET_DEVICE_SESSIONS_RFC §7.4)."""
+        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+        response = await send_file(os.path.join(static_dir, "session.js"), mimetype="application/javascript")
+        # Revalidate on every load: a deploy must not leave a page running an old refresh protocol.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     return bp

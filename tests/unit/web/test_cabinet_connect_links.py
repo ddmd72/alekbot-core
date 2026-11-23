@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.web.call_page_harness import session_prelude
+
 _HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html").read_text(encoding="utf-8")
 CONNECTORS = [
     {"kind": "gmail", "integration": "mail", "label": "Gmail"},
@@ -35,7 +37,8 @@ def _run(body: str, connectors=CONNECTORS):
         f'const CONNECTORS = {json.dumps(connectors)};\n'
         'globalThis.fetch = async (url) => { fetches += 1; if (url !== "/api/connectors") throw new Error(url);\n'
         '  return { ok: true, json: async () => ({ connectors: CONNECTORS }) }; };\n'
-        + _helpers() + "\n(async () => {\n" + body + "\n})().catch((e) => { console.error(e); process.exit(1); });\n")
+        'const window = {}; const document = { addEventListener() {} };\n'
+        + session_prelude(_HTML) + _helpers() + "\n(async () => {\n" + body + "\n})().catch((e) => { console.error(e); process.exit(1); });\n")
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True).stdout
     return json.loads(out)
 

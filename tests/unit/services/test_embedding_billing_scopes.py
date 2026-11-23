@@ -19,6 +19,7 @@ from src.ports.quota_service import QuotaService
 from src.services.companion_extraction_service import CompanionExtractionService
 from src.services.drive_note_service import DriveNoteService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 
 from .test_fact_profile_service import World as FactProfileWorld, CAR, ok, answer
 from ..composition.test_drive_mcp_tools import (
@@ -111,19 +112,16 @@ async def test_a_drive_note_embedding_bills_the_writing_account(monkeypatch):
 # --- Cabinet fact search ---------------------------------------------------------------------------------------------
 
 async def test_the_cabinet_fact_search_bills_the_query_embedding_to_the_session_account():
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "user-1", "account_id": "account-a",
-                                                                  "role": "owner"})
+    cabinet_sessions, bearer = cabinet_session_for("user-1", "account-a")
     fact_repo = MagicMock()
     fact_repo.search_facts = AsyncMock(return_value=[])
     quota = RecordingQuota()
     app = Quart("test_embedding_billing")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=fact_repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(), fact_repo=fact_repo,
         embedding_service=MeteredEmbeddings(), quota_service=quota))
     async with app.test_client() as client:
-        resp = await client.post("/api/user/facts/search", headers={"Authorization": "Bearer token"},
-                                 json={"query": "text one"})
+        resp = await client.post("/api/user/facts/search", headers=bearer, json={"query": "text one"})
         assert resp.status_code == 200
     assert quota.calls == quota.expect("account-a", PER_CALL)
 

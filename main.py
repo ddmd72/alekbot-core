@@ -15,7 +15,9 @@ from src.composition.application_graph import build_application_graph
 from src.utils.logger import logger, quiet_third_party_loggers
 from src.utils.telemetry import init_telemetry
 from src.composition.memory_telemetry_setup import build_memory_telemetry
+from src.web.cabinet_auth import CabinetSessionVerifier
 from src.web.oauth_app import create_oauth_blueprint
+from src.web.device_auth_app import create_device_auth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
@@ -90,10 +92,15 @@ async def main():
         app = build_application_graph(config, db_client)
         await app.start()
 
+        # The one verifier of the Cabinet's access token (CABINET_DEVICE_SESSIONS_RFC §7.1): every blueprint that asks
+        # who is signed in asks it.
+        cabinet_sessions = CabinetSessionVerifier(app.session_service, app.device_sessions)
+
         # Create blueprints (will be registered on slack_adapter.quart_app)
         oauth_bp = create_oauth_blueprint(
             auth_service=app.auth_service,
-            session_service=app.session_service,
+            cabinet_sessions=cabinet_sessions,
+            device_sessions=app.device_sessions,
             auth_registry=app.auth_registry,
             auth_config=app.auth_config,
             invite_service=app.invite_service,
@@ -103,7 +110,7 @@ async def main():
 
         cabinet_bp = create_user_cabinet_blueprint(
             invite_service=app.invite_service,
-            session_service=app.session_service,
+            cabinet_sessions=cabinet_sessions,
             user_repo=app.user_repo,
             fact_repo=app.container.repository,
             embedding_service=app.container.embedding_service,
@@ -174,6 +181,7 @@ async def main():
                 # Register OAuth + Cabinet blueprints
                 main_app.register_blueprint(oauth_bp)
                 main_app.register_blueprint(cabinet_bp)
+                main_app.register_blueprint(create_device_auth_blueprint(cabinet_sessions, app.device_sessions))
                 main_app.register_blueprint(ms_tasks_webhook_bp)
 
                 # /f/<token> capability route for private file access
@@ -183,7 +191,7 @@ async def main():
                         create_file_access_blueprint(
                             token_service=app.file_token_service,
                             media_storage=app.media_storage,
-                            session_service=app.session_service,
+                            cabinet_sessions=cabinet_sessions,
                         )
                     )
                     logger.info("✅ File access blueprint registered at /f/<token>")
@@ -403,7 +411,7 @@ async def main():
 
                     relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
                     main_app.register_blueprint(create_voice_web_call_blueprint(
-                        session_service=app.session_service,
+                        cabinet_sessions=cabinet_sessions,
                         call_setup=VoiceCallSetupService(
                             voice_ephemeral_store, app.alert_sink, app.agent_factory.get_lelik,
                             digest_key=app.digest_key,
@@ -456,7 +464,7 @@ async def main():
                 
                 # Public landing at `/` (signed-in owner → /cabinet), /og.png, /robots.txt
                 from src.web.landing_app import create_landing_blueprint
-                main_app.register_blueprint(create_landing_blueprint(app.session_service))
+                main_app.register_blueprint(create_landing_blueprint(cabinet_sessions))
 
                 # Accepted /worker identities, computed once: SERVICE_ACCOUNT_EMAIL plus the optional
                 # transition list. Empty set: every call refused on Cloud Run (ERROR logged once, here),
@@ -497,7 +505,7 @@ async def main():
                     # built by build_mcp_components into the factory.
                     mcp_consent_bp = build_mcp_consent_blueprint(
                         mcp_service=mcp_components.authorization_service,
-                        session_service=app.session_service,
+                        cabinet_sessions=cabinet_sessions,
                     )
                     main_app.register_blueprint(mcp_consent_bp)
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")

@@ -11,9 +11,12 @@ from quart import Quart
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.composition.connector_registry import ConnectorRegistry
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import creds
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 USER = "user-1"
@@ -42,16 +45,16 @@ async def _status(job_status: str) -> dict:
     store = FirestoreCredentialStore(db, SimpleNamespace(credentials_collection="eval_credentials"),
                                      cipher=AesGcmTestCipher())
     await store.save(creds(USER, "gmail"))
-    sessions = MagicMock()
-    sessions.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": "acct-1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for(USER, "acct-1")
+    _AUTH.update(_bearer)
     bp = create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=sessions, user_repo=MagicMock(), fact_repo=MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=MagicMock(), fact_repo=MagicMock(),
         embedding_service=MagicMock(), oauth_credentials_port=store, connectors=ConnectorRegistry(),
         indexed_email_repo=IndexedEmails(), email_job_repo=Jobs(job_status))
     app = Quart("test_gmail_status_indexing")
     app.register_blueprint(bp)
     async with app.test_client() as client:
-        resp = await client.get("/api/gmail/status", headers={"Authorization": "Bearer t"})
+        resp = await client.get("/api/gmail/status", headers=_AUTH)
     assert resp.status_code == 200
     return await resp.get_json()
 

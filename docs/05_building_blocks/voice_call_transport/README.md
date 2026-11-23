@@ -263,7 +263,7 @@ buttons, live call text and `listening`. Frames, versions, features and limits: 
 - `docs/10_rfcs/VOICE_COMPANION_RFC.md` (callback identity, relay as its own service);
   `docs/10_rfcs/SECRETS_AT_REST_RFC.md` §2.5 (tickets as digests and ciphertext).
 - Decisions `voice_spike_02_mulaw_e2e.md`, `voice_spike_03_latency.md` (phone audio and latency evidence),
-  `runtime_service_accounts.md` (relay identity, verifier set), `cabinet_session_24h_cap.md`.
+  `runtime_service_accounts.md` (relay identity, verifier set), `cabinet_device_session_lifetimes.md`.
 - Deployment: `docs/07_deployment/SCHEDULERS.md` (keep-alive), `docs/07_deployment/README.md` (relay knobs, TTL policy).
 
 ## Where to start reading

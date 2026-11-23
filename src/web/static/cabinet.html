@@ -1242,6 +1242,9 @@
           <button class="nav-item" onclick="navigate('settings')" id="nav-settings">
             Settings
           </button>
+          <button class="nav-item" onclick="navigate('devices')" id="nav-devices">
+            Devices
+          </button>
           <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-call">
             Call
           </button>
@@ -1288,6 +1291,10 @@
         <button class="nav-item" onclick="navigate('settings')" id="nav-mobile-settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span class="tab-label">Settings</span>
+        </button>
+        <button class="nav-item" onclick="navigate('devices')" id="nav-mobile-devices">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+          <span class="tab-label">Devices</span>
         </button>
         <button class="nav-item call-tab" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
@@ -1497,6 +1504,36 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Devices Section (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6) -->
+        <section id="section-devices" class="section">
+          <div class="hero-header reveal">
+            <h1 id="devices-title">Devices</h1>
+            <p id="devices-subtitle">Where you are signed in to the Cabinet.</p>
+          </div>
+
+          <div class="card reveal" style="max-width: 720px">
+            <div class="card-body">
+              <div id="devices-list"></div>
+              <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px">
+                <button id="devices-logout-others" class="btn btn-secondary" onclick="logoutOtherDevices()">Log out all other devices</button>
+                <button id="devices-logout-all" class="btn btn-danger" onclick="logoutAllDevices()">Log out all devices</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card reveal" style="max-width: 720px; margin-top: 24px">
+            <div class="card-body">
+              <h3 id="devices-lost-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">If a phone is lost</h3>
+              <p id="devices-lost-intro" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px"></p>
+              <ol style="font-size: 14px; color: var(--text-muted); padding-left: 20px; line-height: 1.6">
+                <li id="devices-lost-1"></li>
+                <li id="devices-lost-2"></li>
+                <li id="devices-lost-3"></li>
+              </ol>
             </div>
           </div>
         </section>
@@ -1751,7 +1788,9 @@
     <div id="modal-container"></div>
     <div id="toast-container" class="toast-container"></div>
 
+    <script src="/auth/session.js"></script>
     <script>
+      const { authFetch } = window.alekSession;
       /* ── App state ───────────────────────────────────── */
       const API = "";
       let currentUser = null;
@@ -1800,6 +1839,26 @@
           "team.title": "Your Team",
           "team.subtitle": "Invite colleagues to collaborate and share knowledge.",
           "team.generate_invite": "Generate New Invite Link",
+          "nav.devices": "Devices",
+          "devices.title": "Devices",
+          "devices.subtitle": "Where you are signed in to the Cabinet.",
+          "devices.current": "This device",
+          "devices.created": "Signed in",
+          "devices.last_used": "Last used",
+          "devices.kind_google": "Google",
+          "devices.logout": "Log out",
+          "devices.logout_others": "Log out all other devices",
+          "devices.logout_all": "Log out all devices",
+          "devices.confirm_all": "Log out every device, this one included?",
+          "devices.confirm_others": "Log out every other device?",
+          "devices.empty": "No device is signed in.",
+          "devices.failed": "Could not load or change the devices.",
+          "devices.done": "Done",
+          "devices.lost_title": "If a phone is lost",
+          "devices.lost_intro": "Do these in order:",
+          "devices.lost_1": "Send $devices off in Slack or Telegram, or press Log out all devices here.",
+          "devices.lost_2": "Remove the phone from your Apple or Google account.",
+          "devices.lost_3": "End the phone's Telegram and Slack sessions in those apps.",
           "settings.title": "Settings",
           "settings.subtitle": "Preferences that personalise how Alek works for you.",
           "settings.tz.title": "Timezone",
@@ -2119,6 +2178,26 @@
           "team.title": "Ваша команда",
           "team.subtitle": "Запрошуйте колег для спільної роботи та обміну знаннями.",
           "team.generate_invite": "Створити запрошення",
+          "nav.devices": "Пристрої",
+          "devices.title": "Пристрої",
+          "devices.subtitle": "Де виконано вхід у Кабінет.",
+          "devices.current": "Цей пристрій",
+          "devices.created": "Вхід",
+          "devices.last_used": "Остання активність",
+          "devices.kind_google": "Google",
+          "devices.logout": "Вийти",
+          "devices.logout_others": "Вийти на всіх інших пристроях",
+          "devices.logout_all": "Вийти на всіх пристроях",
+          "devices.confirm_all": "Вийти на кожному пристрої, зокрема на цьому?",
+          "devices.confirm_others": "Вийти на кожному іншому пристрої?",
+          "devices.empty": "Жоден пристрій не ввійшов.",
+          "devices.failed": "Не вдалося завантажити або змінити пристрої.",
+          "devices.done": "Готово",
+          "devices.lost_title": "Якщо загублено телефон",
+          "devices.lost_intro": "Зроби по порядку:",
+          "devices.lost_1": "Надішли $devices off у Slack або Telegram чи натисни тут «Вийти на всіх пристроях».",
+          "devices.lost_2": "Видали телефон з облікового запису Apple або Google.",
+          "devices.lost_3": "Заверш сесії телефона в Telegram і Slack у цих застосунках.",
           "settings.title": "Налаштування",
           "settings.subtitle": "Персоналізуйте роботу Alek під себе.",
           "settings.tz.title": "Часовий пояс",
@@ -2438,6 +2517,26 @@
           "team.title": "Votre \u00e9quipe",
           "team.subtitle": "Invitez des coll\u00e8gues \u00e0 collaborer et partager des connaissances.",
           "team.generate_invite": "Cr\u00e9er un lien d'invitation",
+          "nav.devices": "Appareils",
+          "devices.title": "Appareils",
+          "devices.subtitle": "Où vous êtes connecté au Cabinet.",
+          "devices.current": "Cet appareil",
+          "devices.created": "Connexion",
+          "devices.last_used": "Dernière utilisation",
+          "devices.kind_google": "Google",
+          "devices.logout": "Se déconnecter",
+          "devices.logout_others": "Déconnecter tous les autres appareils",
+          "devices.logout_all": "Déconnecter tous les appareils",
+          "devices.confirm_all": "Déconnecter tous les appareils, celui-ci compris ?",
+          "devices.confirm_others": "Déconnecter tous les autres appareils ?",
+          "devices.empty": "Aucun appareil connecté.",
+          "devices.failed": "Impossible de charger ou de modifier les appareils.",
+          "devices.done": "Fait",
+          "devices.lost_title": "Si un téléphone est perdu",
+          "devices.lost_intro": "Faites ceci dans l'ordre :",
+          "devices.lost_1": "Envoyez $devices off dans Slack ou Telegram, ou appuyez ici sur Déconnecter tous les appareils.",
+          "devices.lost_2": "Retirez le téléphone de votre compte Apple ou Google.",
+          "devices.lost_3": "Terminez les sessions Telegram et Slack du téléphone dans ces applications.",
           "settings.title": "Param\u00e8tres",
           "settings.subtitle": "Pr\u00e9f\u00e9rences pour personnaliser Alek.",
           "settings.tz.title": "Fuseau horaire",
@@ -2757,6 +2856,26 @@
           "team.title": "Tu equipo",
           "team.subtitle": "Invita a colegas a colaborar y compartir conocimiento.",
           "team.generate_invite": "Crear enlace de invitaci\u00f3n",
+          "nav.devices": "Dispositivos",
+          "devices.title": "Dispositivos",
+          "devices.subtitle": "Dónde tienes la sesión iniciada en el Cabinet.",
+          "devices.current": "Este dispositivo",
+          "devices.created": "Inicio",
+          "devices.last_used": "Último uso",
+          "devices.kind_google": "Google",
+          "devices.logout": "Cerrar sesión",
+          "devices.logout_others": "Cerrar sesión en los demás dispositivos",
+          "devices.logout_all": "Cerrar sesión en todos los dispositivos",
+          "devices.confirm_all": "¿Cerrar sesión en todos los dispositivos, incluido este?",
+          "devices.confirm_others": "¿Cerrar sesión en todos los demás dispositivos?",
+          "devices.empty": "Ningún dispositivo con sesión iniciada.",
+          "devices.failed": "No se pudo cargar o cambiar los dispositivos.",
+          "devices.done": "Hecho",
+          "devices.lost_title": "Si se pierde un teléfono",
+          "devices.lost_intro": "Hazlo en este orden:",
+          "devices.lost_1": "Envía $devices off en Slack o Telegram, o pulsa aquí Cerrar sesión en todos los dispositivos.",
+          "devices.lost_2": "Quita el teléfono de tu cuenta de Apple o Google.",
+          "devices.lost_3": "Cierra las sesiones de Telegram y Slack del teléfono en esas aplicaciones.",
           "settings.title": "Ajustes",
           "settings.subtitle": "Preferencias para personalizar Alek.",
           "settings.tz.title": "Zona horaria",
@@ -3047,6 +3166,17 @@
         "#nav-mobile-team .tab-label":           "nav.team",
         "#nav-settings":              "nav.settings",
         "#nav-mobile-settings .tab-label":       "nav.settings",
+        "#nav-devices":               "nav.devices",
+        "#nav-mobile-devices .tab-label":        "nav.devices",
+        "#devices-title":             "devices.title",
+        "#devices-subtitle":          "devices.subtitle",
+        "#devices-logout-others":     "devices.logout_others",
+        "#devices-logout-all":        "devices.logout_all",
+        "#devices-lost-title":        "devices.lost_title",
+        "#devices-lost-intro":        "devices.lost_intro",
+        "#devices-lost-1":            "devices.lost_1",
+        "#devices-lost-2":            "devices.lost_2",
+        "#devices-lost-3":            "devices.lost_3",
         "#nav-call":                  "nav.call",
         "#nav-mobile-call .tab-label":           "nav.call",
         "#nav-modes":                 "nav.modes",
@@ -3134,7 +3264,7 @@
         const lang = _currentLang;
         if (factDomainsLang === lang) return;
         try {
-          const res = await fetch(
+          const res = await authFetch(
             `${API}/api/user/fact-domains?lang=${encodeURIComponent(lang)}`,
             { credentials: "include" },
           );
@@ -3231,12 +3361,90 @@
         }
         if (name === "team") loadCodes();
         if (name === "settings") loadSettings();
+        if (name === "devices") loadDevices();
+      }
+
+      /* ── Devices (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6) ─── */
+      // label and platform_hint are the browser's User-Agent text: untrusted, always escaped.
+      function renderDevices(devices) {
+        const list = document.getElementById("devices-list");
+        if (!devices.length) {
+          list.innerHTML = `<p style="color:var(--text-subtle);font-style:italic">${escapeHtml(t("devices.empty"))}</p>`;
+          return;
+        }
+        const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+        list.innerHTML = devices.map((d) => {
+          const current = d.is_current
+            ? ` <span class="fact-domain-badge">${escapeHtml(t("devices.current"))}</span>`
+            : "";
+          const kind = d.auth_kind === "google" ? t("devices.kind_google") : d.auth_kind;
+          return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <div style="flex:1">
+                <div style="font-weight:600;color:var(--text-main);font-size:15px">${escapeHtml(d.label)}${current}</div>
+                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(d.platform_hint)} · ${escapeHtml(kind)}</div>
+                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(t("devices.created"))}: ${escapeHtml(when(d.created_at))} · ${escapeHtml(t("devices.last_used"))}: ${escapeHtml(when(d.last_seen_at))}</div>
+              </div>
+              <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" data-sid="${escapeHtml(d.sid)}" data-current="${d.is_current ? "1" : ""}" onclick="logoutDevice(this.dataset.sid, !!this.dataset.current)">${escapeHtml(t("devices.logout"))}</button>
+            </div>
+          </div>`;
+        }).join("");
+      }
+
+      async function loadDevices() {
+        try {
+          const res = await authFetch(`${API}/api/user/devices`, { credentials: "include" });
+          if (!res.ok) throw new Error();
+          renderDevices((await res.json()).devices || []);
+        } catch {
+          showToast(t("devices.failed"), "error");
+        }
+      }
+
+      async function postDevices(path) {
+        const res = await authFetch(`${API}/api/user/devices/${path}`, { method: "POST", credentials: "include" });
+        if (!res.ok) throw new Error();
+      }
+
+      async function logoutDevice(sid, isCurrent) {
+        try {
+          await postDevices(`${encodeURIComponent(sid)}/logout`);
+        } catch {
+          showToast(t("devices.failed"), "error");
+          return;
+        }
+        if (isCurrent) { window.location.href = "/"; return; }
+        showToast(t("devices.done"));
+        loadDevices();
+      }
+
+      async function logoutOtherDevices() {
+        if (!confirm(t("devices.confirm_others"))) return;
+        try {
+          await postDevices("logout-others");
+        } catch {
+          showToast(t("devices.failed"), "error");
+          return;
+        }
+        showToast(t("devices.done"));
+        loadDevices();
+      }
+
+      async function logoutAllDevices() {
+        if (!confirm(t("devices.confirm_all"))) return;
+        try {
+          await postDevices("logout-all");
+        } catch {
+          showToast(t("devices.failed"), "error");
+          return;
+        }
+        window.location.href = "/";
       }
 
       /* ── Settings ────────────────────────────────────── */
       async function loadSettings() {
         try {
-          const res = await fetch(`${API}/api/user/timezone`, { credentials: "include" });
+          const res = await authFetch(`${API}/api/user/timezone`, { credentials: "include" });
           if (!res.ok) throw new Error();
           const data = await res.json();
           const sel = document.getElementById("timezone-input");
@@ -3246,7 +3454,7 @@
           showToast("Failed to load settings", "error");
         }
         try {
-          const locRes = await fetch(`${API}/api/user/location`, { credentials: "include" });
+          const locRes = await authFetch(`${API}/api/user/location`, { credentials: "include" });
           if (locRes.ok) {
             const locData = await locRes.json();
             document.getElementById("location-input").value = locData.location || "";
@@ -3260,7 +3468,7 @@
 
       async function loadDeepResearch() {
         try {
-          const res = await fetch(`${API}/api/user/deep-research`, { credentials: "include" });
+          const res = await authFetch(`${API}/api/user/deep-research`, { credentials: "include" });
           if (!res.ok) return;
           const data = await res.json();
           document.getElementById("dr-second-pass").checked = data.second_pass || false;
@@ -3270,7 +3478,7 @@
       async function saveDeepResearch() {
         const secondPass = document.getElementById("dr-second-pass").checked;
         try {
-          const res = await fetch(`${API}/api/user/deep-research`, {
+          const res = await authFetch(`${API}/api/user/deep-research`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -3287,7 +3495,7 @@
         const tz = document.getElementById("timezone-input").value.trim();
         if (!tz) { showToast("Enter a timezone", "error"); return; }
         try {
-          const res = await fetch(`${API}/api/user/timezone`, {
+          const res = await authFetch(`${API}/api/user/timezone`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -3307,7 +3515,7 @@
       async function saveLocation() {
         const loc = document.getElementById("location-input").value.trim();
         try {
-          const res = await fetch(`${API}/api/user/location`, {
+          const res = await authFetch(`${API}/api/user/location`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -3350,7 +3558,7 @@
 
       async function loadVoiceLanguages() {
         try {
-          const res = await fetch(`${API}/api/user/voice-languages`, { credentials: "include" });
+          const res = await authFetch(`${API}/api/user/voice-languages`, { credentials: "include" });
           if (!res.ok) return;
           const data = await res.json();
           const selected = new Set(data.voice_languages || []);
@@ -3363,7 +3571,7 @@
       async function saveVoiceLanguages() {
         const codes = Array.from(document.querySelectorAll(".voice-lang:checked")).map((cb) => cb.value);
         try {
-          const res = await fetch(`${API}/api/user/voice-languages`, {
+          const res = await authFetch(`${API}/api/user/voice-languages`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -3382,7 +3590,7 @@
 
       async function loadLanguage() {
         try {
-          const res = await fetch(`${API}/api/user/language`, { credentials: "include" });
+          const res = await authFetch(`${API}/api/user/language`, { credentials: "include" });
           if (!res.ok) return;
           const data = await res.json();
           setLangUI(data.preferred_language || "");
@@ -3396,7 +3604,7 @@
             preferred_language: _langUiSelected || null,
             agent_mirror: _langMirrorSelected,
           };
-          const res = await fetch(`${API}/api/user/language`, {
+          const res = await authFetch(`${API}/api/user/language`, {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -3419,7 +3627,7 @@
       async function loadReminders() {
         const list = document.getElementById("reminders-list");
         try {
-          const res = await fetch(`${API}/api/user/reminders`, { credentials: "include" });
+          const res = await authFetch(`${API}/api/user/reminders`, { credentials: "include" });
           if (res.status === 501) { list.textContent = "Reminders not available."; return; }
           if (!res.ok) throw new Error();
           const data = await res.json();
@@ -3513,7 +3721,7 @@
         try {
           const url = editId ? `${API}/api/user/reminders/${editId}` : `${API}/api/user/reminders`;
           const method = editId ? "PUT" : "POST";
-          const res = await fetch(url, { method, credentials: "include", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
+          const res = await authFetch(url, { method, credentials: "include", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
           if (!res.ok) { const e = await res.json().catch(()=>({})); showToast(e.error || "Failed", "error"); return; }
           hideReminderForm();
           showToast(editId ? "Reminder updated" : "Reminder created", "success");
@@ -3524,7 +3732,7 @@
       async function deleteReminder(noteId) {
         if (!confirm("Delete this reminder?")) return;
         try {
-          const res = await fetch(`${API}/api/user/reminders/${noteId}`, { method: "DELETE", credentials: "include" });
+          const res = await authFetch(`${API}/api/user/reminders/${noteId}`, { method: "DELETE", credentials: "include" });
           if (!res.ok) { showToast("Failed to delete", "error"); return; }
           showToast("Reminder deleted", "success");
           await loadReminders();
@@ -3547,7 +3755,7 @@
       async function init() {
         if (redirectPhoneToCall()) return;
         try {
-          const res = await fetch(`${API}/auth/me`, { credentials: "include" });
+          const res = await authFetch(`${API}/auth/me`, { credentials: "include" });
           if (!res.ok) throw new Error("Not authenticated");
           currentUser = await res.json();
 
@@ -3654,7 +3862,7 @@
         const countEl = document.getElementById("facts-count");
         document.getElementById("facts-pagination").innerHTML = "";
         try {
-          const res = await fetch(`${API}/api/user/facts/recently-closed`, {
+          const res = await authFetch(`${API}/api/user/facts/recently-closed`, {
             credentials: "include",
           });
           if (!res.ok) throw new Error("Failed to load facts");
@@ -3700,7 +3908,7 @@
       async function loadReviewQuestions() {
         const box = document.getElementById("review-questions");
         try {
-          const res = await fetch(`${API}/api/user/facts/review-queue`, {
+          const res = await authFetch(`${API}/api/user/facts/review-queue`, {
             credentials: "include",
           });
           if (!res.ok) {
@@ -3957,7 +4165,7 @@
           .querySelectorAll("button")
           .forEach((b) => (b.disabled = true));
         try {
-          const res = await fetch(`${API}/api/user/facts/review-answers`, {
+          const res = await authFetch(`${API}/api/user/facts/review-answers`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -4007,7 +4215,7 @@
             ? `&cursor=${encodeURIComponent(browseCursor)}`
             : "";
           const sp = factsState === "stale" ? "&state=stale" : "";
-          const res = await fetch(
+          const res = await authFetch(
             `${API}/api/user/facts/browse?limit=50${sp}${dp}${cp}`,
             { credentials: "include" },
           );
@@ -4075,7 +4283,7 @@
         factsMode = "search";
 
         try {
-          const res = await fetch(`${API}/api/user/facts/search`, {
+          const res = await authFetch(`${API}/api/user/facts/search`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -4169,7 +4377,7 @@
       /* ── Integrations ────────────────────────────────── */
       async function loadPlatforms() {
         try {
-          const res = await fetch(`${API}/api/user/platforms`, {
+          const res = await authFetch(`${API}/api/user/platforms`, {
             credentials: "include",
           });
           const data = res.ok ? await res.json() : { platforms: {} };
@@ -4223,7 +4431,7 @@
         }
         try {
           const isTg = id === "telegram";
-          const res = await fetch(
+          const res = await authFetch(
             `${API}${isTg ? "/api/user/link-telegram" : "/api/user/link-platform"}`,
             {
               method: "POST",
@@ -4250,7 +4458,7 @@
       async function unlinkPlatform(platform) {
         if (!confirm(`Disconnect ${platform}?`)) return;
         try {
-          const res = await fetch(
+          const res = await authFetch(
             `${API}/api/user/link-platform?platform=${platform}`,
             { method: "DELETE", credentials: "include" },
           );
@@ -4277,7 +4485,7 @@
 
       function loadConnectors() {
         if (!_connectorsPromise) {
-          _connectorsPromise = fetch(`${API}/api/connectors`, { credentials: "include" })
+          _connectorsPromise = authFetch(`${API}/api/connectors`, { credentials: "include" })
             .then((res) => (res.ok ? res.json() : { connectors: [] }))
             .then((body) => body.connectors || [])
             .catch(() => {
@@ -4326,9 +4534,9 @@
       async function loadGmailStatus() {
         try {
           const [statusRes, autoIndexRes, dailyReviewRes] = await Promise.all([
-            fetch(`${API}/api/gmail/status`, { credentials: "include" }),
-            fetch(`${API}/api/gmail/auto-index`, { credentials: "include" }),
-            fetch(`${API}/api/gmail/daily-review`, { credentials: "include" }),
+            authFetch(`${API}/api/gmail/status`, { credentials: "include" }),
+            authFetch(`${API}/api/gmail/auto-index`, { credentials: "include" }),
+            authFetch(`${API}/api/gmail/daily-review`, { credentials: "include" }),
           ]);
           if (!statusRes.ok) throw new Error();
           const data = await statusRes.json();
@@ -4352,7 +4560,7 @@
 
       async function saveDailyReview(enabled, hour) {
         try {
-          const res = await fetch(`${API}/api/gmail/daily-review`, {
+          const res = await authFetch(`${API}/api/gmail/daily-review`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -4367,7 +4575,7 @@
 
       async function saveGmailAutoIndex(enabled, hour) {
         try {
-          const res = await fetch(`${API}/api/gmail/auto-index`, {
+          const res = await authFetch(`${API}/api/gmail/auto-index`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -4575,7 +4783,7 @@
           body.backfill_until = backfillUntil;
 
         try {
-          const res = await fetch(`${API}/api/gmail/index`, {
+          const res = await authFetch(`${API}/api/gmail/index`, {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -4605,7 +4813,7 @@
         btn.textContent = "Canceling...";
         btn.disabled = true;
         try {
-          const res = await fetch(`${API}/api/gmail/jobs/${jobId}/cancel`, {
+          const res = await authFetch(`${API}/api/gmail/jobs/${jobId}/cancel`, {
             method: "POST",
             credentials: "include",
           });
@@ -4622,7 +4830,7 @@
       async function deleteGmailData() {
         if (!confirm("Delete all indexed emails? Cannot be undone.")) return;
         try {
-          const res = await fetch(`${API}/api/gmail/data`, {
+          const res = await authFetch(`${API}/api/gmail/data`, {
             method: "DELETE",
             credentials: "include",
           });
@@ -4637,7 +4845,7 @@
       async function disconnectGmail() {
         if (!confirm("Disconnect Gmail? Indexed data remains.")) return;
         try {
-          const res = await fetch(`${API}/api/gmail/disconnect`, {
+          const res = await authFetch(`${API}/api/gmail/disconnect`, {
             method: "DELETE",
             credentials: "include",
           });
@@ -4651,7 +4859,7 @@
 
       async function loadTasksStatus() {
         try {
-          const res = await fetch(`${API}/api/tasks/microsoft/status`, {
+          const res = await authFetch(`${API}/api/tasks/microsoft/status`, {
             credentials: "include",
           });
           if (!res.ok) throw new Error();
@@ -4668,7 +4876,7 @@
 
       async function loadDriveStatus() {
         try {
-          const res = await fetch(`${API}/api/drive/connections`, {
+          const res = await authFetch(`${API}/api/drive/connections`, {
             credentials: "include",
           });
           if (!res.ok) throw new Error();
@@ -4725,7 +4933,7 @@
       // null when the setting could not be read (the switch is then not shown).
       async function loadDeepResearchCopy() {
         try {
-          const res = await fetch(`${API}/api/drive/deep-research-copy`, {
+          const res = await authFetch(`${API}/api/drive/deep-research-copy`, {
             credentials: "include",
           });
           if (!res.ok) return null;
@@ -5166,7 +5374,7 @@
       }
 
       async function driveCall(method, path, body) {
-        const res = await fetch(`${API}${path}`, {
+        const res = await authFetch(`${API}${path}`, {
           method,
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -5197,7 +5405,7 @@
         try { sessionStorage.removeItem(DRIVE_ADD_KEY); } catch {}
         if (qs.get("connected") !== pending.kind || Date.now() - pending.at > 30 * 60 * 1000) return;
         try {
-          const res = await fetch(`${API}/api/drive/connections`, { credentials: "include" });
+          const res = await authFetch(`${API}/api/drive/connections`, { credentials: "include" });
           if (!res.ok) return;
           const fresh = (await res.json()).connections.find((c) => !pending.ids.includes(c.connection_id));
           if (!fresh || !pending.name || pending.name === fresh.mount_name) return;
@@ -5914,7 +6122,7 @@
       async function saveDeepResearchCopy(input) {
         const enabled = input.checked;
         try {
-          const res = await fetch(`${API}/api/drive/deep-research-copy`, {
+          const res = await authFetch(`${API}/api/drive/deep-research-copy`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -5937,7 +6145,7 @@
           return;
         }
         try {
-          const res = await fetch(`${API}/api/drive/connections/${encodeURIComponent(id)}/indexing`, {
+          const res = await authFetch(`${API}/api/drive/connections/${encodeURIComponent(id)}/indexing`, {
             method: "PUT",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -6014,7 +6222,7 @@
         const name = "MS ToDo";
         if (!confirm(`Disconnect ${name}?`)) return;
         try {
-          const res = await fetch(`${API}/api/tasks/microsoft/disconnect`, {
+          const res = await authFetch(`${API}/api/tasks/microsoft/disconnect`, {
             method: "DELETE",
             credentials: "include",
           });
@@ -6031,7 +6239,7 @@
         const email = prompt("Enter email to invite:");
         if (!email || !email.trim()) return;
         try {
-          const res = await fetch(`${API}/api/user/invite-codes`, {
+          const res = await authFetch(`${API}/api/user/invite-codes`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -6071,7 +6279,7 @@
 
       async function loadCodes() {
         try {
-          const res = await fetch(`${API}/api/user/invite-codes`, {
+          const res = await authFetch(`${API}/api/user/invite-codes`, {
             credentials: "include",
           });
           if (!res.ok) throw new Error();
@@ -6162,7 +6370,7 @@
         btn.textContent = "Deleting...";
         btn.disabled = true;
         try {
-          const res = await fetch(
+          const res = await authFetch(
             `${API}/api/user/facts/${fact.id}/invalidate`,
             { method: "POST", credentials: "include" },
           );

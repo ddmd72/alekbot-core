@@ -8,7 +8,10 @@ from quart import Quart
 from src.domain.drive_indexing_status import DriveIndexingStatus
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.cabinet_drive import cabinet_drive
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 
 async def _app(flag, switch):
@@ -16,12 +19,12 @@ async def _app(flag, switch):
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = DriveIndexingStatus(enabled=True, counters={})
     user_repo = MagicMock()
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     app = Quart("test_switch_gate")
     kwargs = {} if switch is None else {"drive_transcribe_switch_on": switch}
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=AsyncMock(), drive_connections=drive.connections,
         oauth_credentials_port=drive.credentials, **kwargs))
@@ -30,7 +33,7 @@ async def _app(flag, switch):
 
 async def _shown(flag, switch):
     async with (await _app(flag, switch)).test_client() as client:
-        body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
+        body = await (await client.get("/api/drive/status", headers=_AUTH)).get_json()
     return body["indexing"]["transcribe_enabled"]
 
 

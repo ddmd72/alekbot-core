@@ -11,23 +11,24 @@ from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 _USER_ID = "user-1"
 
 
 def _app(creds):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(
-        return_value={"sub": _USER_ID, "account_id": "account-1", "role": "owner"}
-    )
+    cabinet_sessions, _bearer = cabinet_session_for(_USER_ID, "account-1")
+    _AUTH.update(_bearer)
     oauth = MagicMock()
     oauth.get = AsyncMock(return_value=creds)
     mirror_get(oauth)
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(),
-        session_service=session_service,
+        cabinet_sessions=cabinet_sessions,
         user_repo=MagicMock(),
         fact_repo=MagicMock(),
         embedding_service=MagicMock(),
@@ -55,7 +56,7 @@ def _creds(flag: bool) -> OAuthCredential:
 
 async def _status(creds):
     async with _app(creds).test_client() as client:
-        resp = await client.get("/api/gmail/status", headers={"Authorization": "Bearer t"})
+        resp = await client.get("/api/gmail/status", headers=_AUTH)
     assert resp.status_code == 200
     return await resp.get_json()
 

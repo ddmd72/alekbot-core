@@ -23,15 +23,16 @@ gate was touched; a route that is anonymous by design is listed in its `PUBLIC` 
 
 | Kind | What it is | Refusal |
 |---|---|---|
-| JWT | Cabinet session: `access_token` HttpOnly cookie (web UI) or `Authorization: Bearer` (`src/web/cabinet_auth.py::make_auth_required`, shared by every Cabinet blueprint) | 401 |
+| JWT | Cabinet device session: `__Host-access` HttpOnly cookie (web UI) or `Authorization: Bearer`, checked by the one verifier (`src/web/cabinet_auth.py::CabinetSessionVerifier`: the JWT with its `sid`, then the session record) through `make_auth_required`, shared by every Cabinet blueprint | 401 |
 | account owner | JWT whose `role` claim is `owner` (invite codes) | 403 |
 | docs owner | The one user id configured as `DOCS_OWNER_USER_ID` (`src/web/user_cabinet_app.py`, `owner_only`) | 404 on every failure, so the page looks absent |
 | OIDC | Google-signed ID token of an allowed service account (`src/web/worker_oidc_verifier.py::build_oidc_gate`; `decisions/worker_oidc_and_docx_sandbox.md`) | 401 |
 | signature | Slack (`src/adapters/slack/signature.py`), Telegram secret-token header, Twilio (`src/web/twilio_signature_verifier.py`) | 401 / 403 |
 | capability | The id or token in the URL is the credential | a refusal that reveals nothing more where the module says so (`/d`, `GET /geo`); `/f` and `/s` answer with different bodies, and `/f` also 403 for a gated link opened by another user |
 
-A login gives short-lived tokens (the TTL defaults of `src/services/session_service.py`) and `/auth/refresh` mints a full-TTL access token, so a session slides; an expired or
-over-age refresh token is refused (`decisions/cabinet_session_24h_cap.md`).
+A login starts a device session: a 15-minute access JWT and a rotating refresh secret; `/auth/refresh` renews it until
+14 days without use or 30 days after sign-in, and a revoked session is refused within 30 s
+(`decisions/cabinet_device_session_lifetimes.md`).
 
 ## Main service (`main.py`)
 
@@ -55,8 +56,10 @@ over-age refresh token is refused (`decisions/cabinet_session_24h_cap.md`).
 | `/mcp`, `/drive-mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-*` | `src/web/mcp_dispatcher.py` to the `mcp` SDK apps | `/mcp` and `/drive-mcp` take a bearer token; `/authorize`, `/token`, `/register`, `/revoke` are the OAuth protocol endpoints; `/.well-known/oauth-*` is public by design (`MCP_PUBLIC` in the probe); see `docs/05_building_blocks/remote_mcp_server/README.md` |
 
 Sign-in (`src/web/oauth_app.py`): `/auth/login` and `/auth/callback` are public (the callback is protected by its OAuth
-state cookie and applies the whitelist gate, `decisions/cabinet_oauth_whitelist_gate.md`); `/auth/refresh` reads the
-`refresh_token` cookie and re-checks the user and the whitelist; `/auth/me` and `/auth/link-oauth` need the JWT;
+state cookie and applies the whitelist gate, `decisions/cabinet_oauth_whitelist_gate.md`); `/auth/refresh` takes the
+sid from the access cookie (expired accepted), re-checks the user and the whitelist and presents the `__Host-refresh`
+secret (rotate / grace / replay → revoked); `/auth/logout` revokes the session; `/auth/me` (with `expires_at`) and
+`/auth/link-oauth` need a live session;
 `/auth/connect/<kind>` starts an integration connect (the kinds are the offered entries of `src/composition/connector_registry.py`; an unknown or not offered kind 404, a kind with no
 OAuth client on this deployment 501) and `/auth/connect/callback` is the one callback of every integration, its flow
 stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).

@@ -25,6 +25,7 @@ from src.services.drive_disconnect_service import DriveDisconnectService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.user_drive_service import UserDriveService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.fake_drive_adapter import FakeDriveAdapter
 from tests.support.oauth_credentials_store import CredentialsStore, creds
@@ -119,10 +120,9 @@ class World:
         return self.adapter.plant(connection.handle, parent or root, name, folder=True)
 
     def app(self, **over) -> Quart:
-        session_service = MagicMock()
-        session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": "acc-1",
-                                                                      "role": "owner"})
-        kwargs = dict(invite_service=MagicMock(), session_service=session_service, user_repo=self.users,
+        cabinet_sessions, _bearer = cabinet_session_for(USER, "acc-1")
+        AUTH.update(_bearer)
+        kwargs = dict(invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=self.users,
                       fact_repo=MagicMock(), embedding_service=MagicMock(), oauth_credentials_port=self.store.repo,
                       credential_revocation=self.revocation, user_drive_service=self.drive,
                       drive_search_service=self.search, drive_task_queue=self.queue, drive_transcribe_switch_on=True,

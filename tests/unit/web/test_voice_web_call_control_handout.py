@@ -10,6 +10,7 @@ from quart import Quart
 from src.domain.media_room_agent_leg import AgentLeg
 from src.domain.media_room_caller_leg import CallerLeg
 from src.services.voice_call_setup_service import VoiceCallSetupService
+from tests.unit.web.test_voice_web_call_app import signed_in_verifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.voice_tickets import DIGEST_KEY, open_ticket, ticket_key
@@ -27,11 +28,10 @@ class World:
         self.room.attach_agent.return_value = AgentLeg(["A-in", "A-eg"], "OFFER2")
         agent = MagicMock()
         agent.session_config = AsyncMock(return_value={"instructions": "you are Lelik", "tools": []})
-        session_service = MagicMock()
-        session_service.verify_access_token = MagicMock(return_value={"sub": "usr-1", "account_id": "acc-1"})
+        cabinet_sessions = signed_in_verifier("usr-1", "acc-1")
         app = Quart(__name__)
         app.register_blueprint(create_voice_web_call_blueprint(
-            session_service=session_service,
+            cabinet_sessions=cabinet_sessions,
             call_setup=VoiceCallSetupService(self.store, AsyncMock(), AsyncMock(return_value=agent),
                                              digest_key=DIGEST_KEY),
             media_room=self.room, ephemeral_store=self.store, relay_base_url=RELAY, cipher=self.cipher,

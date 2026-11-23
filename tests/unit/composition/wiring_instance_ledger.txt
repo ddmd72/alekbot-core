@@ -23,6 +23,7 @@ src.adapters.firestore_confirmed_people_repo.FirestoreConfirmedPeopleRepository 
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
 src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
 src.adapters.firestore_dedup_store.FirestoreDedupStore 2  # by-design two stores on two TTLs: worker daily-review marks (application_graph.py build_worker_tasks, held by StartDailyEmailReviewTask), Telegram update dedup
+src.adapters.firestore_device_session_repo.FirestoreDeviceSessionRepository 1  # by-design the one device session store, held by DeviceSessionService (CABINET_DEVICE_SESSIONS_RFC 7.1)
 src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 1  # by-design one connection store, held by the ServiceContainer and its DriveConnectionService (MULTI_DRIVE_RFC 4.4)
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
@@ -141,6 +142,7 @@ src.services.daily_email_review_task.DailyEmailReviewTask 1  # by-design the one
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.deep_research_failed_task.DeepResearchFailedTask 1  # by-design the one deep_research_failed runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender of the deep_research_failed runner, built by build_worker_tasks (worker_setup.py)
+src.services.device_session_service.DeviceSessionService 1  # by-design one per instance, its gate cache is per instance (CABINET_DEVICE_SESSIONS_RFC 7.1)
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.document_service.DocumentService 1  # by-design one document service, built by the ServiceContainer and held by the file conversion service (service_container.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)

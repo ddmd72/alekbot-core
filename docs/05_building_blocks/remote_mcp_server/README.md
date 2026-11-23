@@ -124,8 +124,8 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
 3. **Authorize** (`/authorize`). `build_consent_redirect` requires a registered `redirect_uri`, PKCE with `S256`, binds
    resource and scope (`src/domain/mcp_resource.py::bind_resource`, below), requires the scope to be registered for the
    client, and returns `<host>/mcp/consent?req=<consent JWT>`.
-4. **Consent** (`src/web/mcp_consent_app.py::build_mcp_consent_blueprint`). No Cabinet `access_token` cookie, or an
-   invalid one, redirects to `/auth/login?next=<self>`. Otherwise the page names the client and the scopes; a drive grant
+4. **Consent** (`src/web/mcp_consent_app.py::build_mcp_consent_blueprint`). No live Cabinet session (the one verifier,
+   `src/web/cabinet_auth.py`: a revoked device grants nothing) redirects to `/auth/login?next=<self>`. Otherwise the page names the client and the scopes; a drive grant
    gets the drive wording (`is_drive_grant`). On approve, `issue_auth_code_for_consent` stamps the Cabinet user and
    account onto a new code and redirects to the client with `code` and `state`; deny redirects with
    `error=access_denied`. The user who is logged into the Cabinet at the moment of Approve is the identity the token

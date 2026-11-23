@@ -31,7 +31,8 @@ from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from tests.support.firestore_eval import EvalDb
 from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
-from tests.unit.web.gate_fakes import access_token, forged_token, session_service
+from src.web.cabinet_auth import ACCESS_COOKIE
+from tests.unit.web.gate_fakes import access_token, cabinet_sessions, forged_token
 
 RESOURCE = "https://mcp.example.test/mcp"
 BASE = "https://mcp.example.test"
@@ -106,7 +107,7 @@ class _CodeIssueFails(MCPAuthorizationService):
 
 def _consent_app(service: MCPAuthorizationService):
     app = Quart("mcp_consent_refusals")
-    app.register_blueprint(build_mcp_consent_blueprint(service, session_service()))
+    app.register_blueprint(build_mcp_consent_blueprint(service, cabinet_sessions()))
     return app.test_client()
 
 
@@ -114,7 +115,7 @@ class TestConsentPost:
     async def test_invalid_cabinet_cookie_redirects_to_login_and_issues_no_code(self):
         w = World()
         client = _consent_app(w.service)
-        client.set_cookie("localhost", "access_token", forged_token())
+        client.set_cookie("localhost", ACCESS_COOKIE, forged_token())
         resp = await client.post("/mcp/consent", form={"req": await _consent_req(w.service), "action": "approve"})
         assert resp.status_code == 302
         assert resp.headers["Location"].startswith("/auth/login?next=")
@@ -123,7 +124,7 @@ class TestConsentPost:
     async def test_bad_consent_jwt_is_400_and_issues_no_code(self):
         w = World()
         client = _consent_app(w.service)
-        client.set_cookie("localhost", "access_token", access_token())
+        client.set_cookie("localhost", ACCESS_COOKIE, access_token())
         forged_req = jwt.encode({"client_id": "c1", "redirect_uri": "https://evil.example/cb", "code_challenge": "c",
                                  "aud": "mcp-consent", "exp": 4102444800}, "another-secret-0123456789abcdef-xyz",
                                 algorithm="HS256")
@@ -140,7 +141,7 @@ class TestConsentPost:
                                   scope_of=SCOPE_OF,
                                   user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         client = _consent_app(service)
-        client.set_cookie("localhost", "access_token", access_token())
+        client.set_cookie("localhost", ACCESS_COOKIE, access_token())
         resp = await client.post("/mcp/consent", form={"req": await _consent_req(service), "action": "approve"})
         assert resp.status_code == 400
         assert "Location" not in resp.headers
@@ -150,7 +151,7 @@ class TestConsentPost:
         # Positive control.
         w = World()
         client = _consent_app(w.service)
-        client.set_cookie("localhost", "access_token", access_token("u1", "acc1"))
+        client.set_cookie("localhost", ACCESS_COOKIE, access_token("u1", "acc1"))
         resp = await client.post("/mcp/consent", form={"req": await _consent_req(w.service), "action": "approve"})
         assert resp.status_code == 302 and resp.headers["Location"].startswith(REDIRECT + "?code=")
         assert [d["user_id"] for d in w.docs(CODES).values()] == ["u1"]

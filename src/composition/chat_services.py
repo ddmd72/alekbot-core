@@ -10,6 +10,7 @@ from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..services.channel_binding_service import ChannelBindingService
 from ..services.consolidation_service import ConsolidationService
+from ..services.device_session_service import DeviceSessionService
 from ..services.document_delivery_service import DocumentDeliveryService
 from ..services.geo_mark_service import GeoMarkService
 from ..services.localization_service import LocalizationService
@@ -39,6 +40,7 @@ class ChatServices:
     long_turn_service: Optional[Any] = None
     doc_delivery_service: Optional[DocumentDeliveryService] = None
     geo_mark_service: Optional[GeoMarkService] = None   # `$geo` and the Telegram pin (GEO_MARKS_RFC §4.5, §4.6)
+    device_sessions: Optional[DeviceSessionService] = None   # `$devices` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
 
 
 def build_conversation_handler(chat: ChatServices, rich_content: RichContentService, *,
@@ -65,5 +67,6 @@ def build_conversation_handler(chat: ChatServices, rich_content: RichContentServ
         long_turn_service=chat.long_turn_service,
         doc_delivery_service=chat.doc_delivery_service,
         commands=CommandServices(skills=chat.skill_service, memory_facts=chat.memory_fact_service,
-                                 drive_notes=chat.drive_note_service, geo_marks=chat.geo_mark_service),
+                                 drive_notes=chat.drive_note_service, geo_marks=chat.geo_mark_service,
+                                 device_sessions=chat.device_sessions),
     )

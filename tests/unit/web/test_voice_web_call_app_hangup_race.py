@@ -10,6 +10,7 @@ from quart import Quart
 from src.domain.media_room_agent_leg import AgentLeg
 from src.domain.media_room_caller_leg import CallerLeg
 from src.services.voice_call_setup_service import VoiceCallSetupService
+from tests.unit.web.test_voice_web_call_app import signed_in_verifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 
 AUTH = {"Authorization": "Bearer tok"}
@@ -39,14 +40,13 @@ class MemoryStore:
 
 
 def _app(store, media_room):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1"})
+    cabinet_sessions = signed_in_verifier("u1", "a1")
     agent = MagicMock()
     agent.session_config = AsyncMock(return_value={"instructions": "you are Lelik", "tools": []})
     setup = VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=b"k" * 32)
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=session_service, call_setup=setup, media_room=media_room,
+        cabinet_sessions=cabinet_sessions, call_setup=setup, media_room=media_room,
         ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 

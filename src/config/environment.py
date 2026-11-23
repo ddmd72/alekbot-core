@@ -511,6 +511,15 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}oauth_flows"
 
     @property
+    def device_sessions_collection(self) -> str:
+        """
+        Cabinet device sessions, doc id = the random `sid` (CABINET_DEVICE_SESSIONS_RFC §7.1): the rotating refresh
+        secret's SHA-256, never the secret; queried by `user_id` equality only. A TTL policy on `purge_after` sweeps the
+        unused ones. Dev: development_auth_device_sessions_v1
+        """
+        return f"{self.firestore_collection_prefix}auth_device_sessions_v1"
+
+    @property
     def geo_mark_links_collection(self) -> str:
         """
         Pending `$geo` links under `geo_link:<keyed digest of the link id>`, single use, ten minutes (GEO_MARKS_RFC

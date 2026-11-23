@@ -141,7 +141,9 @@
       </a>
     </main>
 
+    <script src="/auth/session.js"></script>
     <script>
+      const { authFetch, ensureSession } = window.alekSession;
       const LANG_DICT = {
         en: {
           "app.title": "Lelik modes",
@@ -227,7 +229,7 @@
 
       async function syncServerLanguage() {
         try {
-          const resp = await fetch(UI_LANG_URL, { credentials: "same-origin" });
+          const resp = await authFetch(UI_LANG_URL, { credentials: "same-origin" });
           if (!resp.ok) return; // no answer: keep the fallback
           const body = await resp.json();
           const code = body && typeof body.language === "string" ? body.language.toLowerCase() : "";
@@ -244,17 +246,8 @@
       render();
       syncServerLanguage();
 
-      // Same session rule as the call page: an expired Cabinet session goes to login and comes back here.
-      (async () => {
-        try {
-          const resp = await fetch("/auth/me", { credentials: "same-origin" });
-          if (resp.status === 401) {
-            window.location.replace("/auth/login?next=/cabinet/call/modes");
-          }
-        } catch (e) {
-          /* offline: the links still work, the call page checks again */
-        }
-      })();
+      // Same session rule as the call page: refresh silently, go to login only when that fails.
+      ensureSession();
     </script>
   </body>
 </html>

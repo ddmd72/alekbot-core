@@ -20,6 +20,7 @@ GET /api/tasks/microsoft/lists
 GET /api/tasks/microsoft/status
 GET /api/tasks/status
 GET /api/user/deep-research
+GET /api/user/devices
 GET /api/user/fact-domains
 GET /api/user/facts
 GET /api/user/facts/browse
@@ -39,6 +40,7 @@ GET /auth/connect/<kind>
 GET /auth/connect/callback
 GET /auth/login
 GET /auth/me
+GET /auth/session.js
 GET /cabinet
 GET /cabinet/call
 GET /cabinet/call/icon-<int:size>.png
@@ -71,6 +73,9 @@ POST /api/drive/connections/<connection_id>/scope/preview
 POST /api/gmail/index
 POST /api/gmail/jobs/<job_id>/cancel
 POST /api/tasks/microsoft/reindex
+POST /api/user/devices/<sid>/logout
+POST /api/user/devices/logout-all
+POST /api/user/devices/logout-others
 POST /api/user/facts/<fact_id>/invalidate
 POST /api/user/facts/review-answers
 POST /api/user/facts/search

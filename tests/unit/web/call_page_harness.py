@@ -9,9 +9,24 @@ from pathlib import Path
 
 import pytest
 
-HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "call.html").read_text(encoding="utf-8")
+STATIC = Path(__file__).resolve().parents[3] / "src" / "web" / "static"
+HTML = (STATIC / "call.html").read_text(encoding="utf-8")
+SESSION_JS = (STATIC / "session.js").read_text(encoding="utf-8")
 
 needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+
+
+def session_prelude(html: str, *, binding: bool = True) -> str:
+    """What a page has before its own blocks run: the real `session.js` (loaded by `<script src>` ahead of the inline
+    script) evaluated over the harness's `window`, `document` and `fetch`, then the page's own `window.alekSession`
+    binding line, so the blocks' `authFetch` is the real wrapper over the faked `fetch`. `binding=False` when the
+    page's whole inline script runs (it carries that line itself). Needs `window` and `document.addEventListener`."""
+    parts = [f"eval({json.dumps(SESSION_JS)});"]
+    if binding:
+        line = re.search(r"^\s*const \{[^}]*\} = window\.alekSession;$", html, re.M)
+        assert line, "the page binds no window.alekSession"
+        parts.append(line.group(0))
+    return "\n".join(parts) + "\n"
 
 
 def block(start: str, end: str) -> str:
@@ -122,6 +137,7 @@ def page_script(mode: str | None, body: str, *, skeleton: bool = True) -> str:
         f"const window = {{ VOICE_MODE: {json.dumps(mode) if mode else 'undefined'} }};",
         "const t = (key) => key;",
         FAKE_DOM,
+        session_prelude(HTML),
         f"const SCREEN = {'buildSkeleton(' + json.dumps(mode == 'interpreter') + ')' if skeleton else 'null'};",
         live_text_block(),
     ]

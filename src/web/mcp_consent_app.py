@@ -11,7 +11,7 @@ Flow:
     1. Claude.ai → GET /mcp/authorize?...  (SDK handles)
     2. SDK → provider.authorize() → returns `{consent_base}?req=<jwt>`
     3. Browser → GET /mcp/consent?req=<jwt>
-       - If no alekbot Cabinet JWT cookie → redirect to /auth/login?next=...
+       - Without a live Cabinet session → redirect to /auth/login?next=...
        - Otherwise render the consent page with Approve / Deny buttons
     4. Browser → POST /mcp/consent  (form: req, action)
        - On approve: service mints a one-shot auth code, we 302 to
@@ -29,8 +29,8 @@ from ..services.mcp_authorization_service import (
     MCPAuthError,
     MCPAuthorizationService,
 )
-from ..services.session_service import SessionService
 from ..utils.logger import logger
+from .cabinet_auth import CabinetSessionVerifier
 
 # The page has no script and no external resource: only its own inline <style>. It must never be framed (the
 # Approve button), and its URL carries the consent request token, so it sends no referrer.
@@ -46,24 +46,20 @@ _CONSENT_PAGE_HEADERS = {
 
 def build_mcp_consent_blueprint(
     mcp_service: MCPAuthorizationService,
-    session_service: SessionService,
+    cabinet_sessions: CabinetSessionVerifier,
 ) -> Blueprint:
     bp = Blueprint("mcp_consent", __name__)
 
-    def _require_user() -> tuple[str, str] | Response:
+    async def _require_user() -> tuple[str, str] | Response:
         """
-        Return (user_id, account_id) from the Cabinet JWT cookie, or a
-        redirect Response if the user is not logged in.
+        Return (user_id, account_id) of the live Cabinet session, or a
+        redirect Response to the sign-in without one (a revoked device
+        grants nothing: the one verifier asks the session record).
         """
-        token = request.cookies.get("access_token")
-        if not token:
+        identity = await cabinet_sessions.identify()
+        if identity is None:
             return redirect(f"/auth/login?next={quote(request.full_path.rstrip('?'), safe='')}")
-        try:
-            payload = session_service.verify_access_token(token)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"MCP consent: invalid Cabinet token — {e}")
-            return redirect(f"/auth/login?next={quote(request.full_path.rstrip('?'), safe='')}")
-        return payload["sub"], payload["account_id"]
+        return identity.user_id, identity.account_id
 
     def _render_consent_html(
         *,
@@ -148,7 +144,7 @@ def build_mcp_consent_blueprint(
         if not req_jwt:
             abort(400, description="missing req parameter")
 
-        auth_result = _require_user()
+        auth_result = await _require_user()
         if isinstance(auth_result, Response):
             return auth_result
 
@@ -181,7 +177,7 @@ def build_mcp_consent_blueprint(
         if not req_jwt or not action:
             abort(400, description="missing form fields")
 
-        auth_result = _require_user()
+        auth_result = await _require_user()
         if isinstance(auth_result, Response):
             return auth_result
         user_id, account_id = auth_result

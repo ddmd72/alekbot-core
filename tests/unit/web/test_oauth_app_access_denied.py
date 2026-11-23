@@ -12,7 +12,9 @@ import pytest
 from quart import Quart
 
 from src.domain.exceptions import AccessDeniedError
+from src.web.cabinet_auth import ACCESS_COOKIE, REFRESH_COOKIE
 from src.web.oauth_app import create_oauth_blueprint
+from tests.support.cabinet_session_kit import CabinetSessionKit
 from src.composition.connector_registry import ConnectorRegistry
 
 
@@ -25,21 +27,20 @@ def auth_service():
 
 
 @pytest.fixture
-def session_service():
-    svc = Mock()
-    svc.verify_access_token = Mock(return_value={"sub": "u1"})
-    return svc
+def kit():
+    return CabinetSessionKit()
 
 
 @pytest.fixture
-def app(auth_service, session_service):
+def app(auth_service, kit):
     auth_config = Mock()
     auth_config.oauth_redirect_uri = "https://example.test/auth/callback"
     app = Quart("test_app")
     app.register_blueprint(
         create_oauth_blueprint(
             auth_service=auth_service,
-            session_service=session_service,
+            cabinet_sessions=kit.verifier,
+            device_sessions=kit.device_sessions,
             auth_registry=Mock(),
             auth_config=auth_config, connectors=ConnectorRegistry(),
         )
@@ -47,7 +48,7 @@ def app(auth_service, session_service):
     return app
 
 
-async def test_callback_denied_returns_403_without_session_cookies(app, session_service):
+async def test_callback_denied_returns_403_without_session_cookies(app, kit):
     async with app.test_client() as client:
         client.set_cookie("localhost", "oauth_state", "s1")
         resp = await client.get("/auth/callback?code=c&state=s1")
@@ -55,10 +56,9 @@ async def test_callback_denied_returns_403_without_session_cookies(app, session_
     assert resp.status_code == 403
     assert "text/html" in resp.headers["Content-Type"]
     set_cookies = " ".join(resp.headers.get_all("Set-Cookie"))
-    assert "access_token=" not in set_cookies
-    assert "refresh_token=" not in set_cookies
-    session_service.create_access_token.assert_not_called()
-    session_service.create_refresh_token.assert_not_called()
+    assert f"{ACCESS_COOKIE}=" not in set_cookies
+    assert f"{REFRESH_COOKIE}=" not in set_cookies
+    assert kit.repo.sessions == {}          # no device session was started, so no token of either kind exists
 
 
 async def test_callback_denied_does_not_leak_reason(app):
@@ -70,10 +70,10 @@ async def test_callback_denied_does_not_leak_reason(app):
     assert "whitelist" not in body.lower()
 
 
-async def test_link_oauth_denied_returns_403(app):
+async def test_link_oauth_denied_returns_403(app, kit):
     async with app.test_client() as client:
         client.set_cookie("localhost", "oauth_state", "s1")
-        client.set_cookie("localhost", "access_token", "valid")
+        kit.set_cookies(client, kit.sign_in_now("u1", "a1"), refresh=False)
         resp = await client.post("/auth/link-oauth", json={"code": "c", "state": "s1"})
 
     assert resp.status_code == 403

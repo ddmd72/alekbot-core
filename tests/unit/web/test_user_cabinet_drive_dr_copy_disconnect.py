@@ -10,6 +10,7 @@ from quart import Quart
 
 from src.domain.drive_connection_state import ConnectionState
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import CabinetDrive, cabinet_drive
 
@@ -18,11 +19,11 @@ _HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabine
 
 
 def _app(user_repo, drive: CabinetDrive):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     app = Quart("test_drive_dr_copy_disconnect")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials,
         credential_revocation=drive.revocation,

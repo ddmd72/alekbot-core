@@ -15,7 +15,10 @@ from unittest.mock import AsyncMock, MagicMock
 from quart import Quart
 
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
+
+_AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -23,13 +26,11 @@ _PHONE = "+15550112"
 
 
 def _app(*, twilio_verify_client, user_repo=None):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(
-        return_value={"sub": _USER_ID, "account_id": _ACCOUNT_ID, "role": "owner"}
-    )
+    cabinet_sessions, _bearer = cabinet_session_for(_USER_ID, _ACCOUNT_ID)
+    _AUTH.update(_bearer)
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(),
-        session_service=session_service,
+        cabinet_sessions=cabinet_sessions,
         user_repo=user_repo or MagicMock(),
         fact_repo=MagicMock(),
         embedding_service=MagicMock(),
@@ -50,7 +51,7 @@ class TestRequestPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/request-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE},
             )
 
@@ -66,7 +67,7 @@ class TestRequestPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/request-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": "3460012"},
             )
 
@@ -80,7 +81,7 @@ class TestRequestPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/request-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": "+"},
             )
 
@@ -94,7 +95,7 @@ class TestRequestPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/request-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": "+abc"},
             )
 
@@ -108,7 +109,7 @@ class TestRequestPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/request-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 # 6 digits after '+' — below the E.164 regex's 7-digit minimum.
                 json={"phone_number": "+155501"},
             )
@@ -122,7 +123,7 @@ class TestRequestPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/request-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE},
             )
 
@@ -141,7 +142,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE, "code": "123456"},
             )
 
@@ -161,7 +162,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE, "code": "000000"},
             )
 
@@ -176,7 +177,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": "+abc", "code": "123456"},
             )
 
@@ -190,7 +191,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": "+155501", "code": "123456"},
             )
 
@@ -204,7 +205,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE, "code": ""},
             )
 
@@ -223,7 +224,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE, "code": "123456"},
             )
 
@@ -235,7 +236,7 @@ class TestVerifyPhoneOtp:
         async with app.test_client() as client:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
-                headers={"Authorization": "Bearer token"},
+                headers=_AUTH,
                 json={"phone_number": _PHONE, "code": "123456"},
             )
 

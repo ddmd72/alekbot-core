@@ -258,4 +258,12 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_PAGE_RETRY.value: "Réessayer",
     UIMessage.GEO_PAGE_GONE.value: "Ce lien n'est plus valide. Envoyez $geo à nouveau.",
     UIMessage.GEO_PAGE_NOT_SAVED.value: "La position n'a pas été enregistrée. Envoyez $geo à nouveau.",
+    UIMessage.DEVICE_SIGN_IN_NOTICE.value: "Nouvelle connexion : {platform_hint}, {time}, via Google. Ce n'est pas vous ? Envoyez `$devices off`.",
+    UIMessage.DEVICES_UNAVAILABLE.value: "La liste des appareils n'est pas disponible pour le moment.",
+    UIMessage.DEVICES_USAGE.value: "`$devices` liste les appareils connectés à votre Cabinet ; `$devices off` les déconnecte tous.",
+    UIMessage.DEVICES_LIST_HEADER.value: "Appareils connectés à votre Cabinet ({count}) :",
+    UIMessage.DEVICES_LIST_EMPTY.value: "Aucun appareil n'est connecté à votre Cabinet.",
+    UIMessage.DEVICES_LIST_LINE.value: "• {label} ({auth_kind}) — connecté {created}, dernière utilisation {last_used}",
+    UIMessage.DEVICES_OFF_DONE.value: "Déconnexion de {count} appareil(s). Le prochain accès au Cabinet demandera une nouvelle connexion Google.",
+    UIMessage.DEVICES_CHECKLIST.value: "Si un téléphone est perdu :\n1. Envoyez `$devices off` (fait).\n2. Retirez le téléphone de votre compte Apple ou Google.\n3. Terminez les sessions Telegram et Slack du téléphone dans ces applications.",
 }

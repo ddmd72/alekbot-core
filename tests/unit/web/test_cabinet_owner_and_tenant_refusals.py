@@ -1,7 +1,7 @@
 """Cabinet refusals the shared `@auth_required` test cannot show (P7, inventory §4): the owner-only docs routes, and
 another tenant's records reached by id.
 
-Real session service, real repositories (email jobs, reminders, facts) on the evaluating Firestore fake; each refusal
+Real device-session verifier, real repositories (email jobs, reminders, facts) on the evaluating Firestore fake; each refusal
 is checked on the stored document, and each has a positive control so a route that refuses everyone cannot pass.
 """
 from datetime import datetime, timedelta, timezone
@@ -22,7 +22,7 @@ from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_store import FactStore, NoCacheRefresh
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import EvalDb
-from tests.unit.web.gate_fakes import Tripwire, access_token, forged_token, session_service
+from tests.unit.web.gate_fakes import Tripwire, access_token, cabinet_sessions, forged_token
 from src.composition.connector_registry import ConnectorRegistry
 
 OWNER, STRANGER = ("user-a", "account-a"), ("user-b", "account-b")
@@ -45,7 +45,7 @@ class World:
         app = Quart("cabinet_refusals")
         app.register_blueprint(create_user_cabinet_blueprint(
             invite_service=Tripwire("invite_service", self.touched),
-            session_service=session_service(),
+            cabinet_sessions=cabinet_sessions(),
             user_repo=users,
             fact_repo=self.facts.repo,
             embedding_service=self.facts.embedder,

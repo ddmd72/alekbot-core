@@ -14,6 +14,7 @@ from src.domain.drive_task_keys import DRIVE_SYNC_TASK
 from src.ports.task_queue import TaskQueue
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import CabinetDrive, cabinet_drive
 
@@ -29,11 +30,11 @@ async def _drive(connected=True, needs_reconnect=False, indexing=False) -> Cabin
 
 
 def _app(drive=None, search=None, queue=None, user_repo=None):
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
+    cabinet_sessions, _bearer = cabinet_session_for("u1", "a1")
+    _AUTH.update(_bearer)
     app = Quart("test_drive_indexing")
     app.register_blueprint(create_user_cabinet_blueprint(
-        invite_service=MagicMock(), session_service=session_service, user_repo=user_repo or MagicMock(),
+        invite_service=MagicMock(), cabinet_sessions=cabinet_sessions, user_repo=user_repo or MagicMock(),
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
         drive_connections=drive.connections if drive else None,

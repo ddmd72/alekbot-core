@@ -10,15 +10,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from quart import Quart
 
+from tests.unit.web.test_voice_web_call_app import refusing_verifier
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
 
 
 def _app():
-    session_service = MagicMock()
-    session_service.verify_access_token = MagicMock(side_effect=ValueError("no session"))
+    cabinet_sessions = refusing_verifier()
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
-        session_service=session_service, call_setup=MagicMock(), media_room=AsyncMock(),
+        cabinet_sessions=cabinet_sessions, call_setup=MagicMock(), media_room=AsyncMock(),
         ephemeral_store=AsyncMock(), relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 
