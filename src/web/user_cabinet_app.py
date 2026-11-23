@@ -965,6 +965,24 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error browsing facts: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    @bp.route("/api/user/facts/domain-counts", methods=["GET"])
+    @auth_required
+    @facts_unlock_required
+    async def fact_domain_counts():
+        """The numbers behind the Cabinet's life-area select (CABINET_REDESIGN_RFC §5.2): how many `state` facts
+        (current | stale, read as browse reads it) the account has, `total`, and per registry key, `counts`, areas
+        with none left out. Each number is what browse lists for that filter: a fact in two areas counts in both, an
+        unprofiled one in the total only. Behind the unlock guard: counts are facts metadata."""
+        state = listable_state(request.args.get("state"))
+        if state is None:
+            return jsonify({"error": "state must be current or stale"}), 400
+        try:
+            total, counts = await fact_repo.count_facts_by_domain(g.account_id, state, fact_domains.cabinet_keys())
+            return jsonify({"total": total, "counts": {key: n for key, n in counts.items() if n > 0}}), 200
+        except Exception as e:
+            logger.error(f"Error counting facts by domain: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
     @bp.route("/api/user/facts/recently-closed", methods=["GET"])
     @auth_required
     @facts_unlock_required

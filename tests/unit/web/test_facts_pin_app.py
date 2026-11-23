@@ -373,6 +373,38 @@ async def test_a_facts_route_answers_when_the_user_has_no_pin(site, alex, method
     assert response.status_code not in (401, 403)
 
 
+async def _counted(site):
+    from src.domain.fact_domains import Domain
+    from tests.support.fact_kit import make_fact
+    await site.facts.repo.add_fact(make_fact("morning yoga 30 min", account=ALEX.account_id,
+                                             primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT]))
+
+
+async def test_the_domain_counts_are_locked_like_the_facts_and_nothing_is_counted(site, alex):
+    # CABINET_REDESIGN_RFC §5.2: counts are facts metadata, so a locked memory does not show them either.
+    from tests.support.fact_store import FACTS
+    await _counted(site)
+    await site.world.set_pin()
+
+    response = await site.call(alex, "GET", "/api/user/facts/domain-counts?state=current")
+
+    assert response.status_code == 403 and (await response.get_json()) == {"error": "facts_locked"}
+    assert site.facts.db.collection(FACTS).executed == []
+
+
+async def test_the_domain_counts_answer_once_unlocked_or_without_a_pin(site, alex):
+    from src.domain.fact_domains import Domain
+    await _counted(site)
+    open_body = await (await site.call(alex, "GET", "/api/user/facts/domain-counts")).get_json()
+    await site.world.set_pin()
+    await site.call(alex, "POST", "/api/user/facts-pin/unlock", {"pin": PIN})
+
+    unlocked = await site.call(alex, "GET", "/api/user/facts/domain-counts")
+
+    assert unlocked.status_code == 200
+    assert open_body == await unlocked.get_json() == {"total": 1, "counts": {Domain.SPORT: 1}}
+
+
 async def test_the_guard_fails_closed_when_the_pin_read_fails(site, alex, monkeypatch):
     async def broken(*args):
         raise RuntimeError("store down")

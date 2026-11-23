@@ -25,6 +25,7 @@ GET /api/user/fact-domains
 GET /api/user/facts
 GET /api/user/facts-pin
 GET /api/user/facts/browse
+GET /api/user/facts/domain-counts
 GET /api/user/facts/recently-closed
 GET /api/user/facts/review-queue
 GET /api/user/invite-codes
