@@ -147,6 +147,7 @@ Drives section, which the Drives row opens.
    caller's own user id first, so another user's id answers `404`. Scope and indexing changes enqueue a `drive_sync` task
    so the indexer acts at once; with no drive queue the change is saved, a warning is logged and `queued` is false.
    A disconnect that leaves no primary drive turns the deep-research drive copy off.
+   `GET /api/drive/connections` reads its rows and each row's parts concurrently (`asyncio.gather`), in stored order.
 
 ### Settings
 

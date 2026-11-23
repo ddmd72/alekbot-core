@@ -1634,6 +1634,9 @@ def create_user_cabinet_blueprint(
         # DRIVE_TRANSCRIBE_ENABLED) and the connection's own switch is on (MULTI_DRIVE_RFC §4.4).
         return bool(drive_transcribe_switch_on and connection is not None and connection.transcribe_enabled)
 
+    async def _false() -> bool:
+        return False
+
     async def _mirror_root(user_id: str) -> bool:
         try:
             return (await drive_search_service.has_mirror_root(user_id)) is True
@@ -1787,8 +1790,9 @@ def create_user_cabinet_blueprint(
             return {"mode": "nothing", "folders": []}
         if access.whole:
             return {"mode": "whole", "folders": []}
-        return {"mode": "folders", "folders": [{"id": folder, "path": await _item_path(connection, folder)}
-                                               for folder in access.folder_ids]}
+        paths = await asyncio.gather(*(_item_path(connection, folder) for folder in access.folder_ids))
+        return {"mode": "folders", "folders": [{"id": folder, "path": path}
+                                               for folder, path in zip(access.folder_ids, paths)]}
 
     async def _account_label(connection: DriveConnection) -> str:
         """The grant's account label (one decrypt per row), best effort."""
@@ -1813,39 +1817,62 @@ def create_user_cabinet_blueprint(
             return None
         return "area" if capabilities.feed_scope is FeedScope.AREA else "nothing"
 
+    async def _indexing_block(connection: DriveConnection) -> Optional[dict]:
+        """The row's indexing block; None when there is no search service or the read fails (the list must not depend
+        on the index read)."""
+        if drive_search_service is None:
+            return None
+        try:
+            status = await drive_search_service.indexing_status(connection.user_id,
+                                                                connection_id=connection.connection_id)
+            return _indexing_json(status)
+        except Exception as exc:
+            logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
+            return None
+
     async def _connection_row(connection: DriveConnection, primary_id: Optional[str], note: str) -> dict:
-        grant_present = await _has_credential(connection)
+        # the row's parts are independent reads (Firestore, the drive, KMS): run them together; a part that used to
+        # raise still raises (plain gather re-raises the first error), a best-effort part still catches its own
+        (grant_present, account_label, write_folder, empty_means, scope_folders, connector_access,
+         indexing) = await asyncio.gather(
+            _has_credential(connection),
+            _account_label(connection),
+            _write_folder_json(connection),
+            _empty_scope_meaning(connection),
+            asyncio.gather(*(_scope_folder_json(connection, folder) for folder in connection.scope_folder_ids)),
+            _connector_access_json(connection),
+            _indexing_block(connection),
+        )
         needs_reconnect = connection.state is ConnectionState.NEEDS_RECONNECT or not grant_present
-        row: dict = {
+        return {
             "connection_id": connection.connection_id,
             "mount_name": connection.mount_name,
             "kind": connection.kind,
             "provider_label": connectors.get(connection.kind).label if connectors is not None else "",
-            "account_label": await _account_label(connection),
+            "account_label": account_label,
             "state": connection.state.value,
             "primary": connection.connection_id == primary_id,
-            "write_folder": await _write_folder_json(connection),
+            "write_folder": write_folder,
             "scope": {"whole_drive": connection.scope_whole_drive,
-                      "empty_means": await _empty_scope_meaning(connection),
-                      "folders": [await _scope_folder_json(connection, folder)
-                                  for folder in connection.scope_folder_ids]},
-            "connector_access": await _connector_access_json(connection),
+                      "empty_means": empty_means,
+                      "folders": list(scope_folders)},
+            "connector_access": connector_access,
             "searched_by_default": connection.searched_by_default,
             "indexing_enabled": connection.indexing_enabled,
             "transcribe_enabled": _transcribe_enabled(connection),
             "note": note,
-            "indexing": None,
+            "indexing": indexing,
             "reconnect": {"credential_id": connection.credential_id} if needs_reconnect else None,
         }
-        if drive_search_service is not None:
-            try:
-                status = await drive_search_service.indexing_status(connection.user_id,
-                                                                    connection_id=connection.connection_id)
-                row["indexing"] = _indexing_json(status)
-            except Exception as exc:
-                # the list (rename, reconnect, disconnect) must not depend on the index read
-                logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
-        return row
+
+    async def _drive_notes_for(user_id: str) -> dict:
+        if drive_notes is None:
+            return {}
+        try:
+            return await drive_notes.drive_note_texts(user_id)
+        except Exception as exc:
+            logger.warning(f"Drive card: reading the drive notes failed: {exc_brief(exc)}")
+            return {}
 
     @bp.route("/api/drive/connections", methods=["GET"])
     @auth_required
@@ -1854,20 +1881,21 @@ def create_user_cabinet_blueprint(
         """The drive card: one row per live connection, the default name "Add a drive" prefills, the primary's id.
         A row whose grant is rejected or gone carries its own `reconnect`; there is no drive-level reconnect flag."""
         user_id = g.user_id
-        live = await drive_connections.list_for_user(user_id)
-        primary = await drive_connections.primary(user_id)
+        # the independent reads run together; the rows follow once the list, the primary and the notes are known
+        live, primary, notes, default_name, mirror_root = await asyncio.gather(
+            drive_connections.list_for_user(user_id),
+            drive_connections.primary(user_id),
+            _drive_notes_for(user_id),
+            drive_connections.default_name(user_id),
+            _mirror_root(user_id) if drive_search_service is not None else _false(),
+        )
         primary_id = primary.connection_id if primary is not None else None
-        notes: dict = {}
-        if drive_notes is not None:
-            try:
-                notes = await drive_notes.drive_note_texts(user_id)
-            except Exception as exc:
-                logger.warning(f"Drive card: reading the drive notes failed: {exc_brief(exc)}")
+        rows = await asyncio.gather(*(_connection_row(c, primary_id, notes.get(c.connection_id, "")) for c in live))
         body: dict = {
-            "connections": [await _connection_row(c, primary_id, notes.get(c.connection_id, "")) for c in live],
-            "default_name": await drive_connections.default_name(user_id),
+            "connections": list(rows),
+            "default_name": default_name,
             "primary_connection_id": primary_id,
-            "mirror_root": await _mirror_root(user_id) if drive_search_service is not None else False,
+            "mirror_root": mirror_root,
         }
         return jsonify(body), 200
 
