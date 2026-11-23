@@ -13,8 +13,8 @@ import pytest
 _STATIC = Path(__file__).resolve().parents[3] / "src/web/static"
 _HTML = (_STATIC / "cabinet.html").read_text(encoding="utf-8")
 _SESSION = (_STATIC / "session.js").read_text(encoding="utf-8")
-_NO_NODE = shutil.which("node") is None
-pytestmark = pytest.mark.skipif(_NO_NODE, reason="node not installed")
+_NODE = shutil.which("node") is None
+pytestmark = pytest.mark.skipif(_NODE, reason="node not installed")
 
 
 def _function(name: str) -> str:
