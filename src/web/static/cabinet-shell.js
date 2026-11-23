@@ -46,6 +46,8 @@
         "#passkey-offer-text":        "passkeys.offer_text",
         "#passkey-offer-add":         "passkeys.offer_add",
         "#passkey-offer-dismiss":     "passkeys.offer_dismiss",
+        "#passkeys-google-proof-text": "passkeys.google_proof_text",
+        "#passkeys-google-proof-link": "passkeys.google_proof",
         "#pin-title": "pin.title",
         "#pin-desc": "pin.desc",
         "#pin-label-new": "pin.new",

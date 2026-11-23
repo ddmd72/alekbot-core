@@ -515,10 +515,16 @@ class TestChangingPasskeysNeedsAFreshAssertion:
         start = await world.service.begin_step_up("user-alex", sid)
         await world.service.finish_step_up(start.nonce, world.authenticator.sign_in(start.options), "user-alex", sid)
 
+    @staticmethod
+    def unproved(session):
+        """The same session, whose Google sign-in is older than the 5-minute window: it carries no proof (§7.3)."""
+        return session.model_copy(update={"auth_at": T0 - timedelta(hours=1)})
+
     async def with_passkey(self, world):
-        """A passkey enrolled while the user had none (free), both sessions stored and never proved."""
-        await world.repo.create(PHONE_SESSION)
-        await world.repo.create(MAC_SESSION)
+        """A passkey enrolled while the user had none (free), both sessions stored and never proved: their Google
+        sign-in is an hour old, so neither carries a fresh proof."""
+        await world.repo.create(self.unproved(PHONE_SESSION))
+        await world.repo.create(self.unproved(MAC_SESSION))
         return await world.enrol()
 
     async def test_the_first_enrolment_needs_no_assertion(self, world):
@@ -584,8 +590,8 @@ class TestChangingPasskeysNeedsAFreshAssertion:
         assert len(await world.service.live_passkeys("user-alex")) == 1
 
     async def test_a_registration_begun_before_the_first_passkey_cannot_finish_without_proof(self, world):
-        await world.repo.create(PHONE_SESSION)
-        await world.repo.create(MAC_SESSION)
+        await world.repo.create(self.unproved(PHONE_SESSION))
+        await world.repo.create(self.unproved(MAC_SESSION))
         late = await world.service.begin_registration(ALEX, MAC_SESSION)         # the user had none then
         await world.enrol(PHONE_SESSION)                                          # the owner's first, free
         with pytest.raises(PasskeyFreshRequired):

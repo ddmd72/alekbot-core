@@ -135,6 +135,9 @@ The Devices tab (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3
 `addPasskey`; the user is loaded with `resume_session`, so an inactive or de-listed user cannot add one. After a Google
 sign-in (`offer` in the list answer) the page shows a banner offering the same, once: a dismissal or an attempt is
 remembered in this browser's `localStorage` (`alek.passkeyOffer`), and blocked storage only means the banner comes back.
+When the user already has a passkey, adding or removing one needs a fresh proof on this session: a passkey assertion or
+a Google sign-in under 5 minutes old. If the passkey step-up cannot run (a device whose store lacks the user's passkey),
+the page shows "Confirm with Google" (`/auth/login/google?next=/cabinet?tab=devices`) and the user taps Add again.
 Labels and platform hints are User-Agent words, escaped in the page.
 
 ### The facts PIN

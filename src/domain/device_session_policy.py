@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import ClassVar, Optional
 
-from .device_session import DeviceSession
+from .device_session import DeviceSession, SessionAuthKind
 
 
 class RefreshOutcome(str, Enum):
@@ -79,6 +79,16 @@ class DeviceSessionPolicy:
     def passkey_fresh(cls, session: DeviceSession, now: datetime) -> bool:
         """Whether a passkey assertion proved `session` less than `CALL_PASSKEY_GRACE` before `now`."""
         return session.passkey_at is not None and now < session.passkey_at + cls.CALL_PASSKEY_GRACE
+
+    @classmethod
+    def change_proof_fresh(cls, session: DeviceSession, now: datetime) -> bool:
+        """Whether `session` may change the user's passkeys at `now` (RFC §7.3): a passkey assertion less than
+        `CALL_PASSKEY_GRACE` old (`passkey_fresh`) OR a Google sign-in (`auth_kind` GOOGLE) whose `auth_at` is less
+        than `CALL_PASSKEY_GRACE` old. Google is the root of trust (§7.6), so a device whose passkey store does not sync
+        with the user's existing passkey can still enrol its own."""
+        if cls.passkey_fresh(session, now):
+            return True
+        return session.auth_kind == SessionAuthKind.GOOGLE and now < session.auth_at + cls.CALL_PASSKEY_GRACE
 
     @classmethod
     def decide_refresh(cls, session: DeviceSession, presented_hash: str, now: datetime) -> RefreshOutcome:

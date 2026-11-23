@@ -535,6 +535,10 @@
               <div id="passkeys-list"></div>
               <div style="margin-top: 12px">
                 <button id="passkeys-add" class="btn btn-secondary" onclick="addPasskeyHere()">Add Face ID for faster sign-in</button>
+                <div id="passkeys-google-proof" class="hidden" style="margin-top: 12px">
+                  <p id="passkeys-google-proof-text" style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px">Your passkey is not on this device. Confirm with Google, then tap again.</p>
+                  <a id="passkeys-google-proof-link" class="btn btn-black" href="/auth/login/google">Confirm with Google</a>
+                </div>
               </div>
             </div>
           </div>

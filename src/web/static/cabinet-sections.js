@@ -158,10 +158,28 @@
         }
       }
 
+      // A passkey change without a passkey proof (the step-up failed, was cancelled, or this browser holds no passkey
+      // of the user): the page offers a fresh Google sign-in instead, which the server accepts as proof too (RFC §7.3).
+      // It returns here, on the Devices tab, and the user taps the button again.
+      function googleProofUrl() {
+        return "/auth/login/google?next=" + encodeURIComponent("/cabinet?tab=devices");
+      }
+
+      function showGoogleProof() {
+        const box = document.getElementById("passkeys-google-proof");
+        if (!box) return;
+        document.getElementById("passkeys-google-proof-link").href = googleProofUrl();
+        box.classList.remove("hidden");
+      }
+
       async function addPasskeyHere() {
         let outcome = await addPasskey();
-        // The user already has a passkey: adding another needs a fresh assertion on this session. Step up, retry once.
-        if (outcome === "passkey_required") outcome = (await window.alekSession.ensurePasskey()) ? await addPasskey() : "failed";
+        // The user already has a passkey: adding another needs a fresh proof on this session. Step up, retry once;
+        // when the step-up cannot run, offer the Google sign-in.
+        if (outcome === "passkey_required") {
+          if (await window.alekSession.ensurePasskey()) outcome = await addPasskey();
+          else { outcome = "failed"; showGoogleProof(); }
+        }
         rememberPasskeyOffer();
         if (outcome === "added") showToast(t("passkeys.added"));
         else if (outcome === "exists") showToast(t("passkeys.exists"));
@@ -175,9 +193,10 @@
         try {
           const url = `${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`;
           let res = await authFetch(url, { method: "POST", credentials: "include" });
-          // A fresh passkey assertion is needed while the user has a passkey: step up, retry once.
-          if (!res.ok && (await window.alekSession.needsPasskey(res.clone())) && (await window.alekSession.ensurePasskey())) {
-            res = await authFetch(url, { method: "POST", credentials: "include" });
+          // A fresh proof is needed while the user has a passkey: step up and retry once, else offer Google.
+          if (!res.ok && (await window.alekSession.needsPasskey(res.clone()))) {
+            if (await window.alekSession.ensurePasskey()) res = await authFetch(url, { method: "POST", credentials: "include" });
+            else showGoogleProof();
           }
           if (!res.ok) throw new Error();
         } catch {
