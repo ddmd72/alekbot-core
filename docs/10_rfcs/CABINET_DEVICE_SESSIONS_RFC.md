@@ -26,7 +26,8 @@ Today the second is impossible. Tokens are stateless JWTs, and nothing can revok
   instead of Google. Google stays as the fallback and the enrolment path.
 - **A devices list** in the Cabinet, for every user: log out one device or all of them. `$devices off` does the same
   from chat.
-- **A chat notice on every new sign-in**, for every user.
+- **A chat notice on every new Google sign-in**, for every user. A passkey sign-in sends none: the passkey's
+  enrolment was already announced, and signing in with it needs the enrolled device's biometrics.
 - **An opt-in 4-digit PIN guards the facts tab only.** A user who sets no PIN sees the facts tab as today, and
   nothing can lock that user through the PIN. The device lock protects the rest of the Cabinet and Lelik.
 - **A duress code, set together with the PIN, and five wrong PIN entries in a row, lock the whole account.** Every
@@ -129,7 +130,7 @@ literally. Every proactive delivery resolves its target through `resolve_channel
 1. A revocable server-side session per browser, with silent refresh and lifetimes documented as ASVS V7.1.1 requires.
 2. Passkey sign-in as the fast path.
 3. A devices list and a kill switch, for every user.
-4. A new-sign-in notice, for every user.
+4. A new-sign-in notice on a Google sign-in, for every user.
 5. An opt-in facts PIN.
 6. A full account lock that every entry point honours, triggered by the duress code or by five wrong PIN entries, so
    only for a user who set a PIN.
@@ -271,7 +272,7 @@ short-lived httponly cookie.
 - **Lelik call start.** Every call start requires a fresh passkey assertion (about 1 s; it guards an unlocked phone
   in another person's hands; the passcode is accepted as fallback, F1). A 5-minute grace after the last assertion
   means a redial after a dropped call does not ask again.
-- **Changing the passkeys.** Removing or adding a passkey, when the user already has one, needs a fresh proof on the caller's own session, either a passkey assertion (as for a call start) or a Google sign-in (`auth_kind` google, `auth_at` under 5 minutes; `DeviceSessionPolicy.change_proof_fresh`). Without one the call-start check could be switched off by a bare live session. Google is accepted because it is the root of trust (§7.6) and because a device whose passkey store does not sync with the existing passkey (Chrome on a Mac against Safari on an iPhone, Android against iPhone) could otherwise never enrol its own. The routes answer 400 `passkey_required`; the page runs the passkey step-up and retries once, and when the step-up cannot run (cancelled, no usable credential) it shows "Confirm with Google" (`/auth/login/google?next=/cabinet?tab=devices`); after that sign-in the user taps Add again. A user with no passkey enrols freely.
+- **Changing the passkeys.** Removing or adding a passkey, when the user already has one, needs a fresh proof on the caller's own session, either a passkey assertion (as for a call start) or a Google sign-in (`auth_kind` google, `auth_at` under 5 minutes; `DeviceSessionPolicy.change_proof_fresh`). Without one the call-start check could be switched off by a bare live session. Google is accepted because it is the root of trust (§7.6) and because a device whose passkey store does not sync with the existing passkey (Chrome on a Mac against Safari on an iPhone, Android against iPhone) could otherwise never enrol its own. The routes answer 400 `passkey_required`; a browser that holds a local passkey marker (set when it registered, signed in with or stepped up with a passkey) runs the passkey step-up and retries once, and any other browser, or a failed step-up, goes straight to `/auth/login/google?next=/cabinet?tab=devices&resume=add_passkey` (`remove_passkey&id=<id>` for a removal) without ever opening a passkey sheet (iOS shows an empty one, with a QR code, on a device that holds no passkey); on return the Cabinet consumes the flag and starts the change by itself, falling back to the Add button with a hint if Safari refuses WebAuthn without a tap. A user with no passkey enrols freely.
 
 ### 7.4 Frontend: refresh before login
 
@@ -297,9 +298,12 @@ For `alex@example.com`, signed in on a phone and a laptop, the list shows two ro
 `$devices` in chat lists the same sessions, and `$devices off` is the kill switch (§7.6). This meets ASVS 5.0 V7.5.2
 (4.0.3 V3.3.4) apart from the re-authentication deviation in §7.2.
 
-**Notice on every new session.** It goes through `notify_ui_notice`: "New sign-in: {platform_hint}, {time}, by
-{Google|passkey}. Not you? `$devices off`." It is sent literally, because the hint is untrusted text. It is
-code-written UI text and never claims the system's voice. Adding or removing a passkey sends a notice of its own.
+**Notice on every new Google sign-in.** It goes through `notify_ui_notice`: "New sign-in: {platform_hint}, {time}.
+Not you? `$devices off`." It is sent literally, because the hint is untrusted text. It is code-written UI text and
+never claims the system's voice. A passkey sign-in sends no notice: a passkey lives only on a device the owner
+enrolled, whose enrolment was already announced, and signing in with it needs that device's biometrics. The
+threat the notice catches is someone signing in with the Google account. Adding or removing a passkey sends a
+notice of its own.
 
 ### 7.6 Kill switch: `$devices off` and recovery
 

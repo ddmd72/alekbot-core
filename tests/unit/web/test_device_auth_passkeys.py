@@ -251,9 +251,7 @@ class TestPasskeySignIn:
                 assert flag in headers[name]
         assert _deleted(resp, SIGN_IN_COOKIE)
         assert (await world.client.get("/auth/me")).status_code == 200
-        [(notified, message, params)] = world.kit.notices.sent
-        assert (notified, message, params["platform_hint"]) == (
-            user_id, UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE, "iPhone — Home Screen")
+        assert world.kit.notices.sent == []
 
     async def test_the_options_cookie_is_short_lived_strict_and_the_options_ask_for_verification(self, world):
         resp = await world.post("/auth/passkey/options")

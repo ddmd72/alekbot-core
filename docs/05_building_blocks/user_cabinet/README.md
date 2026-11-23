@@ -143,8 +143,11 @@ The Devices tab (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3
 sign-in (`offer` in the list answer) the page shows a banner offering the same, once: a dismissal or an attempt is
 remembered in this browser's `localStorage` (`alek.passkeyOffer`), and blocked storage only means the banner comes back.
 When the user already has a passkey, adding or removing one needs a fresh proof on this session: a passkey assertion or
-a Google sign-in under 5 minutes old. If the passkey step-up cannot run (a device whose store lacks the user's passkey),
-the page shows "Confirm with Google" (`/auth/login/google?next=/cabinet?tab=devices`) and the user taps Add again.
+a Google sign-in under 5 minutes old. A browser that holds a local passkey marker (`alek.hasPasskey`, set on a passkey registration, sign-in or step-up)
+runs the step-up and retries once; any other browser, or a failed step-up, goes straight to
+`/auth/login/google?next=/cabinet?tab=devices&resume=add_passkey` (`remove_passkey&id=` for a removal), so the empty
+iOS passkey sheet never opens. On return the Cabinet consumes the flag and starts the change itself, showing the Add
+button with a hint if the browser refuses WebAuthn without a tap.
 Labels and platform hints are User-Agent words, escaped in the page.
 
 ### The facts PIN

@@ -249,7 +249,7 @@ _SECTIONS_JS = (STATIC / "cabinet-sections.js").read_text(encoding="utf-8")
 @_node
 @pytest.mark.parametrize(("active", "reloaded"), [("settings", True), ("home", False), ("memory", False)])
 def test_adding_a_passkey_refreshes_the_list_while_settings_is_open(active, reloaded):
-    add = re.search(r"\n(      async function addPasskeyHere\(\) \{.*?\n      \})\n", _SECTIONS_JS, re.S).group(1)
+    add = re.search(r"\n(      async function addPasskeyHere\(resumed\) \{.*?\n      \})\n", _SECTIONS_JS, re.S).group(1)
     script = f"""
       const calls = [];
       let _activeSection = {json.dumps(active)};

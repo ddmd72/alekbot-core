@@ -46,8 +46,7 @@
         "#passkey-offer-text":        "passkeys.offer_text",
         "#passkey-offer-add":         "passkeys.offer_add",
         "#passkey-offer-dismiss":     "passkeys.offer_dismiss",
-        "#passkeys-google-proof-text": "passkeys.google_proof_text",
-        "#passkeys-google-proof-link": "passkeys.google_proof",
+        "#passkeys-resume-hint": "passkeys.resume_hint",
         "#pin-title": "pin.title",
         "#pin-desc": "pin.desc",
         "#pin-label-new": "pin.new",
@@ -300,6 +299,7 @@
           const connectReturn = qs.get("connected") || qs.get("connect_error");
           navigate(sectionFor(qs, connectReturn ? await loadConnectors() : []));
           offerPasskey();
+          await resumePasskeyFlow(qs).catch(() => {});
         } catch {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);
