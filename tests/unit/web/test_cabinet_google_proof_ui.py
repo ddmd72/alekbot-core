@@ -1,6 +1,8 @@
-"""Cabinet -> Devices: "Confirm with Google" after a failed passkey step-up (CABINET_DEVICE_SESSIONS_RFC §7.3). The page
-shows the fallback only when a passkey change needed proof the step-up could not give, and its link goes to
-`/auth/login/google` with `next` back to the Devices tab. Run under node when installed."""
+"""Cabinet -> Settings, the passkeys card: "Confirm with Google" after a failed passkey step-up
+(CABINET_DEVICE_SESSIONS_RFC §7.3). The page shows the fallback only when a passkey change needed proof the step-up
+could not give, and its link goes to `/auth/login/google` with `next` back to `?tab=devices`, the alias that opens
+Settings (CABINET_REDESIGN_RFC §4). The harness runs with Settings open, where the card sits. Run under node when
+installed."""
 import json
 import re
 import shutil
@@ -36,8 +38,8 @@ def test_the_fallback_starts_hidden_and_is_translated():
 _SCRIPT = """
   const els = {{ "passkeys-google-proof": {{ hidden: true, classList: {{ remove: () => {{ els["passkeys-google-proof"].hidden = false; }} }} }},
                  "passkeys-google-proof-link": {{ href: "" }},
-                 "passkey-offer": {{ classList: {{ add: () => {{}} }} }},
-                 "section-devices": {{ classList: {{ contains: () => false }} }} }};
+                 "passkey-offer": {{ classList: {{ add: () => {{}} }} }} }};
+  const _activeSection = "settings";
   const document = {{ getElementById: (id) => els[id] }};
   const t = (k) => k;
   const showToast = () => {{}};
@@ -63,7 +65,7 @@ def _run(step_up: str, first: str, call: str = "addPasskeyHere()") -> dict:
 
 
 @pytest.mark.skipif(_NODE, reason="node not installed")
-def test_a_failed_step_up_shows_confirm_with_google_linking_back_to_the_devices_tab():
+def test_a_failed_step_up_shows_confirm_with_google_linking_back_to_the_passkeys_card():
     out = _run(step_up="false", first='"passkey_required"')
     assert out["shown"] is True and out["outcome"] == "failed"
     url = urlparse(out["href"])
