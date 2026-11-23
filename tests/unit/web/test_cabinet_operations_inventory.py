@@ -112,7 +112,7 @@ SERVER_CALLS = [
     ("PUT", "/api/drive/deep-research-copy"),
 ]
 
-PAGE_TARGETS = ["/cabinet/call", "/cabinet/call/modes", "/auth/connect/{}", "/auth/login"]
+PAGE_TARGETS = ["/cabinet/call", "/cabinet/call/modes", "/auth/connect/{}", "/auth/login", "/auth/login/google"]
 
 _VERBS = ("GET", "POST", "PUT", "DELETE", "PATCH")
 _TEMPLATE_PART = r"\$\{(?:[^{}]|\{[^{}]*\})*\}"     # a `${…}` part, one level of braces inside allowed
