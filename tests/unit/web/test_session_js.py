@@ -362,3 +362,36 @@ def test_the_call_page_runs_the_passkey_helper_before_its_media_and_refuses_on_a
     assert start.index("startRingback();") < start.index("await ensurePasskey()") < start.index("getUserMedia")
     assert start.count("ensurePasskey(") == 1
     assert 'if (startResp.status === 403) {' in start and 'setState(t("state.passkey_needed"));' in start
+
+
+@needs_node
+@pytest.mark.parametrize("routes", [
+    {REGISTER: [{"status": 400, "body": {"error": "passkey_required"}}]},
+    {REGISTER: [{"status": 200, "body": {"options": _CREATION}}],
+     REGISTER_VERIFY: [{"status": 400, "body": {"error": "passkey_required"}}]},
+], ids=["at-options", "at-verify"])
+def test_add_passkey_names_a_missing_fresh_assertion_so_the_page_can_step_up(routes):
+    out = _run_2(routes, """
+        addPasskey().then((outcome) => console.log(JSON.stringify({ outcome })));
+    """, webauthn={"create": "ok"})
+    assert out["outcome"] == "passkey_required"
+
+
+@needs_node
+@pytest.mark.parametrize("status, body, expected", [
+    (400, {"error": "passkey_required"}, True), (400, {"error": "passkey_refused"}, False),
+    (401, {"error": "passkey_required"}, False), (200, {}, False)])
+def test_needs_passkey_reads_only_a_400_passkey_required(status, body, expected):
+    out = _run_2({"/api/x": [{"status": status, "body": body}]}, """
+        authFetch("/api/x").then((resp) => window.alekSession.needsPasskey(resp))
+          .then((needed) => console.log(JSON.stringify({ needed })));
+    """)
+    assert out["needed"] is expected
+
+
+def test_the_cabinet_steps_up_and_retries_once_when_adding_or_removing_needs_a_passkey():
+    html = (STATIC / "cabinet.html").read_text(encoding="utf-8")
+    add = re.search(r"async function addPasskeyHere\(\) \{.*?\n      }\n", html, re.S).group(0)
+    remove = re.search(r"async function removePasskey\(id\) \{.*?\n      }\n", html, re.S).group(0)
+    assert 'outcome === "passkey_required"' in add and "ensurePasskey()" in add and add.count("addPasskey()") == 2
+    assert "needsPasskey(" in remove and "ensurePasskey()" in remove and remove.count("authFetch(") == 2

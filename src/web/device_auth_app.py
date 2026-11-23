@@ -38,7 +38,7 @@ from ..domain.device_label import describe_device
 from ..domain.device_session import DeviceSession, SessionAuthKind, SessionRevokeReason
 from ..domain.exceptions import AccessDeniedError
 from ..domain.passkey import Passkey
-from ..domain.passkey_ceremony import PasskeyRejected
+from ..domain.passkey_ceremony import PasskeyFreshRequired, PasskeyRejected
 from ..domain.safe_redirect import safe_return_path
 from ..services.device_session_service import DeviceSessionService
 from ..utils.logger import logger
@@ -110,6 +110,10 @@ def create_device_auth_blueprint(verifier: CabinetSessionVerifier, device_sessio
     def _unconfigured():
         return jsonify({"error": "Passkeys not configured"}), 501
 
+    def _passkey_required():
+        # 400, never 401: authFetch answers a 401 with a refresh and a re-send (src/web/CLAUDE.md).
+        return jsonify({"error": "passkey_required"}), 400
+
     @bp.route("/api/user/devices", methods=["GET"])
     @auth_required
     async def list_devices():
@@ -166,7 +170,10 @@ def create_device_auth_blueprint(verifier: CabinetSessionVerifier, device_sessio
             user, _ = await auth_service.resume_session(g.user_id)
         except AccessDeniedError:
             return jsonify({"error": "Access not authorized"}), 403
-        start = await passkeys.begin_registration(user, session)
+        try:
+            start = await passkeys.begin_registration(user, session)
+        except PasskeyFreshRequired:
+            return _passkey_required()
         return await _with_nonce({"options": start.options}, REGISTER_COOKIE, start.nonce, passkeys.CHALLENGE_TTL_S)
 
     @bp.route("/api/user/passkeys/register/verify", methods=["POST"])
@@ -186,6 +193,8 @@ def create_device_auth_blueprint(verifier: CabinetSessionVerifier, device_sessio
             return jsonify({"error": "Access not authorized"}), 403
         try:
             passkey = await passkeys.finish_registration(nonce, credential, user, session)
+        except PasskeyFreshRequired:
+            response = await make_response(jsonify({"error": "passkey_required"}), 400)
         except PasskeyRejected:
             response = await make_response(jsonify({"error": "passkey_refused"}), 400)
         else:
@@ -198,7 +207,14 @@ def create_device_auth_blueprint(verifier: CabinetSessionVerifier, device_sessio
     async def remove_passkey(cred_hash: str):
         if passkeys is None:
             return _unconfigured()
-        if not await passkeys.remove(g.user_id, cred_hash):
+        session = await device_sessions.current(g.user_id, g.session_id)
+        if session is None:
+            return jsonify({"error": "Session ended"}), 400
+        try:
+            removed = await passkeys.remove(g.user_id, cred_hash, session)
+        except PasskeyFreshRequired:
+            return _passkey_required()
+        if not removed:
             return jsonify({"error": "No such passkey"}), 404
         return jsonify({"removed": 1}), 200
 

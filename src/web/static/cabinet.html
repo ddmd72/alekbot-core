@@ -3576,7 +3576,9 @@
       }
 
       async function addPasskeyHere() {
-        const outcome = await addPasskey();
+        let outcome = await addPasskey();
+        // The user already has a passkey: adding another needs a fresh assertion on this session. Step up, retry once.
+        if (outcome === "passkey_required") outcome = (await window.alekSession.ensurePasskey()) ? await addPasskey() : "failed";
         rememberPasskeyOffer();
         if (outcome === "added") showToast(t("passkeys.added"));
         else if (outcome === "exists") showToast(t("passkeys.exists"));
@@ -3588,7 +3590,12 @@
       async function removePasskey(id) {
         if (!confirm(t("passkeys.confirm_remove"))) return;
         try {
-          const res = await authFetch(`${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`, { method: "POST", credentials: "include" });
+          const url = `${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`;
+          let res = await authFetch(url, { method: "POST", credentials: "include" });
+          // A fresh passkey assertion is needed while the user has a passkey: step up, retry once.
+          if (!res.ok && (await window.alekSession.needsPasskey(res.clone())) && (await window.alekSession.ensurePasskey())) {
+            res = await authFetch(url, { method: "POST", credentials: "include" });
+          }
           if (!res.ok) throw new Error();
         } catch {
           showToast(t("passkeys.failed"), "error");

@@ -13,7 +13,7 @@
    enrols a passkey from this session ("Add Face ID"). WebAuthn speaks ArrayBuffers and the server JSON with
    base64url, so both carry the conversion.
 
-   Exposes window.alekSession = { authFetch, ensureSession, ensurePasskey, addPasskey }. Served anonymously at
+   Exposes window.alekSession = { authFetch, ensureSession, ensurePasskey, addPasskey, needsPasskey }. Served anonymously at
    /auth/session.js. */
 (function () {
   "use strict";
@@ -182,17 +182,28 @@
       .catch(function () { return false; });
   }
 
+  // True when the server refused a passkey change for want of a fresh passkey assertion on this session (400
+  // {"error": "passkey_required"}): the caller runs ensurePasskey() and retries once.
+  function needsPasskey(resp) {
+    if (resp.status !== 400) return Promise.resolve(false);
+    return resp.json().then(function (b) { return !!b && b.error === "passkey_required"; }, function () { return false; });
+  }
+
   // Enrols a passkey from this session. Resolves "added", "exists" (this keychain already holds one of the user's
-  // passkeys), "cancelled" or "failed".
+  // passkeys), "cancelled", "passkey_required" (see needsPasskey) or "failed".
   function addPasskey() {
     if (!supported()) return Promise.resolve("failed");
     return postJSON("/api/user/passkeys/register/options")
-      .then(function (resp) { return is2xx(resp) ? resp.json() : null; })
+      .then(function (resp) { return is2xx(resp) ? resp.json() : needsPasskey(resp).then(function (n) { return n ? "passkey_required" : null; }); })
       .then(function (body) {
+        if (body === "passkey_required") return body;
         if (!body) return "failed";
         return navigator.credentials.create({ publicKey: creationOptions(body.options) })
           .then(function (cred) { return postJSON("/api/user/passkeys/register/verify", { credential: credentialJSON(cred) }); })
-          .then(function (resp) { return is2xx(resp) ? "added" : "failed"; });
+          .then(function (resp) {
+            if (is2xx(resp)) return "added";
+            return needsPasskey(resp).then(function (n) { return n ? "passkey_required" : "failed"; });
+          });
       })
       .catch(function (e) {
         if (e && e.name === "InvalidStateError") return "exists";
@@ -202,5 +213,5 @@
   }
 
   window.alekSession = { authFetch: authFetch, ensureSession: ensureSession, ensurePasskey: ensurePasskey,
-                         addPasskey: addPasskey };
+                         addPasskey: addPasskey, needsPasskey: needsPasskey };
 })();

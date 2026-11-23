@@ -22,7 +22,7 @@ from src.domain.billing import AccountTier, BillingAccount
 from src.domain.device_session import DeviceSession, SessionAuthKind, SessionRevokeReason
 from src.domain.device_session_policy import DeviceSessionPolicy as P
 from src.domain.passkey import Passkey, PasskeyKind, credential_hash
-from src.domain.passkey_ceremony import PasskeyRejected
+from src.domain.passkey_ceremony import PasskeyFreshRequired, PasskeyRejected
 from src.domain.user import UserProfile
 from src.services.device_session_service import DeviceSessionService
 from src.services.localization_service import LocalizationService
@@ -474,3 +474,91 @@ async def test_by_default_the_nonce_and_challenge_are_random_and_the_clock_is_no
     stored = await service.finish_registration(first.nonce, world.authenticator.register(first.options), ALEX,
                                                PHONE_SESSION)
     assert before <= stored.created_at <= datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------------------------- changing the set
+
+class TestChangingPasskeysNeedsAFreshAssertion:
+    """§7.3: with a live passkey, adding or removing one needs a fresh assertion on the caller's own session;
+    otherwise a live session alone could switch the call-start check off."""
+
+    async def step_up(self, world, sid="sid-phone"):
+        start = await world.service.begin_step_up("user-alex", sid)
+        await world.service.finish_step_up(start.nonce, world.authenticator.sign_in(start.options), "user-alex", sid)
+
+    async def with_passkey(self, world):
+        """A passkey enrolled while the user had none (free), both sessions stored and never proved."""
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(MAC_SESSION)
+        return await world.enrol()
+
+    async def test_the_first_enrolment_needs_no_assertion(self, world):
+        await world.repo.create(PHONE_SESSION)
+        assert (await world.enrol()).user_id == "user-alex"
+
+    async def test_removing_is_refused_without_a_fresh_assertion_and_changes_nothing(self, world):
+        stored = await self.with_passkey(world)
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION)
+        assert world.repo.passkeys[stored.cred_hash].revoked_at is None
+        assert len(world.channels.sent) == 1                                  # only the "added" notice
+
+    async def test_removing_all_then_starting_a_call_is_refused_at_the_remove_step(self, world):
+        stored = await self.with_passkey(world)
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION)
+        assert await world.service.call_start_allowed("user-alex", "sid-phone") is False
+
+    async def test_removing_is_allowed_with_a_fresh_assertion_on_the_callers_session(self, world):
+        stored = await self.with_passkey(world)
+        await self.step_up(world)
+        assert await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION) is True
+        assert await world.service.live_passkeys("user-alex") == []
+
+    async def test_a_stale_assertion_no_longer_allows_a_change(self, world):
+        stored = await self.with_passkey(world)
+        await self.step_up(world)
+        world.clock.now = T0 + timedelta(minutes=5)
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION)
+
+    async def test_an_assertion_on_another_session_does_not_help(self, world):
+        stored = await self.with_passkey(world)
+        await self.step_up(world, sid="sid-mac")
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION)
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.begin_registration(ALEX, PHONE_SESSION)
+
+    async def test_a_session_object_claiming_freshness_is_not_believed(self, world):
+        stored = await self.with_passkey(world)
+        claimed = PHONE_SESSION.model_copy(update={"passkey_at": T0})
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.remove("user-alex", stored.cred_hash, claimed)
+
+    async def test_adding_is_refused_without_a_fresh_assertion_and_allowed_with_one(self, world):
+        await self.with_passkey(world)
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.begin_registration(ALEX, PHONE_SESSION)
+        await self.step_up(world)
+        second = await world.enrol()
+        assert len(await world.service.live_passkeys("user-alex")) == 2 and second.user_id == "user-alex"
+
+    async def test_finishing_is_refused_when_the_assertion_went_stale_between_begin_and_finish(self, world):
+        await self.with_passkey(world)
+        await self.step_up(world)
+        start = await world.service.begin_registration(ALEX, PHONE_SESSION)
+        world.clock.now = T0 + timedelta(minutes=5)
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.finish_registration(
+                start.nonce, world.authenticator.register(start.options), ALEX, PHONE_SESSION)
+        assert len(await world.service.live_passkeys("user-alex")) == 1
+
+    async def test_a_registration_begun_before_the_first_passkey_cannot_finish_without_proof(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(MAC_SESSION)
+        late = await world.service.begin_registration(ALEX, MAC_SESSION)         # the user had none then
+        await world.enrol(PHONE_SESSION)                                          # the owner's first, free
+        with pytest.raises(PasskeyFreshRequired):
+            await world.service.finish_registration(
+                late.nonce, SoftAuthenticator(RP, ORIGIN).register(late.options), ALEX, MAC_SESSION)

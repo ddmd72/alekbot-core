@@ -467,3 +467,57 @@ async def test_without_the_passkey_service_every_passkey_route_is_501_and_a_call
     resp = await world.client.open(path, method=method, json={})
     assert resp.status_code == 501
     assert (await world.start_call()).status_code == 201
+
+
+# ---------------------------------------------------------------------------------------------- changing the set
+
+class TestChangingPasskeysNeedsAFreshAssertion:
+    """§7.3: with a passkey, removing or adding one needs a fresh assertion on the session: 400 `passkey_required`
+    (never 401: authFetch would refresh and re-send a spent nonce)."""
+
+    PASSKEY_REQUIRED = {"error": "passkey_required"}
+
+    async def test_the_first_enrolment_is_free(self, world):
+        await world.google_sign_in()
+        assert (await world.enrol()).status_code == 201
+
+    async def test_removing_is_400_passkey_required_without_a_fresh_assertion_and_removes_nothing(self, world):
+        await world.google_sign_in()
+        row = (await (await world.enrol()).get_json())["passkey"]
+        resp = await world.post(f"/api/user/passkeys/{row['id']}/remove")
+        assert resp.status_code == 400 and await resp.get_json() == self.PASSKEY_REQUIRED
+        assert len((await (await world.client.get("/api/user/passkeys")).get_json())["passkeys"]) == 1
+
+    async def test_the_bypass_remove_all_then_start_a_call_is_stopped_at_the_remove_step(self, world):
+        await world.google_sign_in()
+        row = (await (await world.enrol()).get_json())["passkey"]
+        assert (await world.post(f"/api/user/passkeys/{row['id']}/remove")).status_code == 400
+        resp = await world.start_call()
+        assert resp.status_code == 403 and await resp.get_json() == {"error": "passkey_required"}
+
+    async def test_removing_after_a_step_up_works(self, world):
+        await world.google_sign_in()
+        row = (await (await world.enrol()).get_json())["passkey"]
+        assert (await world.step_up()).status_code == 200
+        resp = await world.post(f"/api/user/passkeys/{row['id']}/remove")
+        assert resp.status_code == 200 and await resp.get_json() == {"removed": 1}
+
+    async def test_adding_a_second_is_400_passkey_required_at_options_and_at_verify(self, world):
+        await world.google_sign_in()
+        await world.enrol()
+        refused = await world.post("/api/user/passkeys/register/options")
+        assert refused.status_code == 400 and await refused.get_json() == self.PASSKEY_REQUIRED
+        assert (await world.step_up()).status_code == 200
+        options = await world.post("/api/user/passkeys/register/options")
+        assert options.status_code == 200
+        credential = world.authenticator.register((await options.get_json())["options"])
+        world.kit.clock.advance(minutes=5)                                  # the assertion went stale meanwhile
+        resp = await world.post("/api/user/passkeys/register/verify", {"credential": credential})
+        assert resp.status_code == 400 and await resp.get_json() == self.PASSKEY_REQUIRED
+        assert len((await (await world.client.get("/api/user/passkeys")).get_json())["passkeys"]) == 1
+
+    async def test_adding_a_second_after_a_step_up_works(self, world):
+        await world.google_sign_in()
+        await world.enrol()
+        await world.step_up()
+        assert (await world.enrol()).status_code == 201

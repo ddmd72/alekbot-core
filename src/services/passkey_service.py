@@ -15,6 +15,10 @@ unknown, expired or already used nonce is refused, and a challenge serves exactl
   counter advance is written in one transaction (`touch_passkey`), so a replayed or cloned assertion racing the real
   one loses. It returns the user_id only: the caller runs `resume_session` and starts the device session.
 - **Removal** revokes one passkey of the user and tells the owner.
+- **Changing the set** (enrol, finish enrolling, remove) of a user who already has a live passkey needs a fresh
+  passkey assertion on the caller's own session (`_require_fresh`, read from the store): otherwise a live session
+  alone could remove every passkey, or add its own, and switch the call-start check off. Refused with
+  `PasskeyFreshRequired`. A user without a live passkey enrols freely.
 - **The call-start step-up** (§7.3, §13 decision 1): a voice call start of a user with a live passkey needs a passkey
   assertion on the session less than `DeviceSessionPolicy.CALL_PASSKEY_GRACE` old (`call_start_allowed`); a user
   without one starts as before. The step-up is a sign-in ceremony bound to the user and the session that began it: the
@@ -32,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, NoReturn,
 from ..domain.device_session import DeviceSession
 from ..domain.device_session_policy import DeviceSessionPolicy
 from ..domain.passkey import Passkey, PasskeyKind, credential_hash
-from ..domain.passkey_ceremony import CeremonyStart, PasskeyRejected
+from ..domain.passkey_ceremony import CeremonyStart, PasskeyFreshRequired, PasskeyRejected
 from ..domain.ui_messages import UIMessage
 from ..domain.user import UserProfile
 from ..ports.device_session_repository import DeviceSessionRepository
@@ -97,6 +101,7 @@ class PasskeyService:
         passkeys are excluded, so the browser refuses to register one of them again."""
         if session.user_id != user.user_id:
             _refuse(f"session {session.sid[:8]} is not a session of {user.user_id[:8]}")
+        await self._require_fresh(user.user_id, session)
         live = [p.credential_id for p in await self._repo.list_passkeys(user.user_id) if p.revoked_at is None]
         challenge, nonce = self._new_challenge(), self._new_nonce()
         name = user.email or user.user_id
@@ -114,6 +119,7 @@ class PasskeyService:
         record = await self._take(nonce, _REGISTER)
         if record.get("user_id") != user.user_id or record.get("sid") != session.sid or session.user_id != user.user_id:
             _refuse(f"registration challenge not begun by {user.user_id[:8]} in session {session.sid[:8]}")
+        await self._require_fresh(user.user_id, session)
         verified = await self._verifier.verify_registration(response, challenge=self._challenge_of(record))
         now = self._clock()
         passkey = Passkey(
@@ -189,9 +195,11 @@ class PasskeyService:
 
     # ------------------------------------------------------------------ removal
 
-    async def remove(self, user_id: str, cred_hash: str) -> bool:
-        """Revoke one passkey of `user_id` and tell the owner. False for an unknown passkey, one of another user
-        (refused, nothing written) or one already revoked."""
+    async def remove(self, user_id: str, cred_hash: str, session: DeviceSession) -> bool:
+        """Revoke one passkey of `user_id` and tell the owner; `session` is the caller's own and must carry a fresh
+        passkey assertion while the user has a live passkey (`PasskeyFreshRequired` otherwise). False for an unknown
+        passkey, one of another user (refused, nothing written) or one already revoked."""
+        await self._require_fresh(user_id, session)
         passkey = await self._repo.get_passkey(cred_hash)
         if passkey is None or passkey.user_id != user_id:
             logger.warning(f"⛔ Passkey removal refused: key={cred_hash[:8]} is not a passkey of {user_id[:8]}")
@@ -203,6 +211,18 @@ class PasskeyService:
         return True
 
     # ------------------------------------------------------------------ helpers
+
+    async def _require_fresh(self, user_id: str, session: DeviceSession) -> None:
+        """Refuse unless the user has no live passkey or the caller's own session (re-read from the store, never the
+        object the caller holds) was proved by a passkey assertion less than `CALL_PASSKEY_GRACE` ago."""
+        if not await self.live_passkeys(user_id):
+            return
+        stored = await self._repo.get(session.sid)
+        if (stored is not None and stored.user_id == user_id and stored.revoked_at is None
+                and DeviceSessionPolicy.passkey_fresh(stored, self._clock())):
+            return
+        logger.warning(f"⛔ Passkey change refused: user={user_id[:8]} sid={session.sid[:8]} has no fresh assertion")
+        raise PasskeyFreshRequired(f"session {session.sid[:8]} has no fresh passkey assertion")
 
     async def _take(self, nonce: str, purpose: str) -> Dict[str, Any]:
         """Consume the challenge record `nonce` names; refused when absent, expired, used, or of another ceremony."""

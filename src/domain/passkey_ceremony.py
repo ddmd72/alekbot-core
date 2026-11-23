@@ -42,3 +42,9 @@ class CeremonyStart:
 class PasskeyRejected(Exception):
     """A ceremony refused: an unknown, expired or replayed challenge, a response that does not verify, an unknown or
     revoked passkey, or a counter that did not advance. The message is for the log, never for the browser."""
+
+
+class PasskeyFreshRequired(PasskeyRejected):
+    """Changing the user's passkeys (adding or removing one) was refused because the user already has a live passkey
+    and the session has no fresh assertion of one (§7.3). The caller answers `passkey_required` so the page runs the
+    step-up and retries; it is not a failed ceremony."""
