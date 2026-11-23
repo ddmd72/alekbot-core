@@ -314,3 +314,35 @@ async def test_a_failing_sink_does_not_break_the_final_path(monkeypatch, caplog)
 
     assert "[Worker] background_empty_answer alert failed: webhook down" in caplog.messages
     assert rig.doc(note_id) is None
+
+
+class FailingNoticeNotifier(Notifier):
+    async def notify_ui_notice(self, user_id: str, account_id: str, message: UIMessage, **fields: str) -> bool:
+        raise RuntimeError("channel down")
+
+
+async def test_a_failing_not_run_notice_still_removes_the_one_time_note_and_acks(monkeypatch):
+    rig = Rig(EMPTY)
+    note_id = await rig.seed(monkeypatch)
+    rig.notifier = FailingNoticeNotifier(EMPTY, rig.order)
+    rig.task = ExecuteReminderTask(
+        notes_port=rig.notes, user_repo=rig.users, ensure_agents=rig._ensure,
+        notification_service=rig.notifier, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
+
+    assert await rig.run(note_id) == ({"status": "empty_answer_final"}, 200)
+    assert rig.doc(note_id) is None
+
+
+async def test_a_failing_delete_after_the_stamp_still_acks_the_fire(monkeypatch, caplog):
+    rig = Rig()
+    note_id = await rig.seed(monkeypatch)
+
+    async def refuse(**_: Any) -> None:
+        raise RuntimeError("delete refused")
+
+    monkeypatch.setattr(rig.notes, "delete_note", refuse)
+    with caplog.at_level(logging.INFO):
+        assert await rig.run(note_id) == ({"status": "ok"}, 200)
+
+    assert rig.doc(note_id).get("last_delivered_due") == T0
+    assert f"[Worker] execute_reminder: ok note={note_id} user={USER[:8]} due={T0.isoformat()}" in caplog.messages
