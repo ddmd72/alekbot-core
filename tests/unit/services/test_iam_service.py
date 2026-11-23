@@ -226,3 +226,35 @@ class TestIAMServiceAuthorizationExtended:
 
         assert decision.action == "reject"
         assert "Invalid parameters" in decision.message
+
+
+class TestIAMServiceAccountLock:
+    """The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a locked user's every chat message gets the fixed lock
+    reply and no user, read fresh from the store at each message; the whitelist is not even read."""
+
+    async def _iam(self):
+        from tests.support.locked_user import AlexStore
+        from tests.support.mcp_gate_fakes import FakeWhitelistRepo
+        store = await AlexStore().seed()
+        whitelist = FakeWhitelistRepo(emails=("alex@example.com", "other@example.com"))
+        return store, whitelist, IAMService(user_repo=store.users, account_repo=AsyncMock(), whitelist_repo=whitelist)
+
+    async def test_a_locked_user_is_refused_with_the_lock_reply_on_every_platform(self):
+        from src.services.iam_service import ACCOUNT_LOCKED_REPLY
+        store, whitelist, iam = await self._iam()
+        await store.lock()
+        whitelist.error = RuntimeError("the whitelist must not be read for a locked user")
+
+        for platform, platform_user_id in (("slack", "U-alex"), ("telegram", "7001")):
+            decision = await iam.authorize(platform, platform_user_id=platform_user_id)
+            assert (decision.action, decision.user, decision.message) == ("reject", None, ACCOUNT_LOCKED_REPLY)
+        assert iam.get_rejection_message(platform="slack", reason="locked") == ACCOUNT_LOCKED_REPLY
+
+    async def test_the_lock_takes_effect_at_the_next_message_and_spares_other_users(self):
+        store, _, iam = await self._iam()
+        assert (await iam.authorize("slack", platform_user_id="U-alex")).action == "allow"
+
+        await store.lock()
+
+        assert (await iam.authorize("slack", platform_user_id="U-alex")).action == "reject"
+        assert (await iam.authorize("slack", platform_user_id="U-other")).action == "allow"

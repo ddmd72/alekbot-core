@@ -434,3 +434,79 @@ async def test_submit_transcript_xai_usage_records_tokens_without_seconds_and_pr
     account_id, model, tokens, cost = quota_service.record_usage.await_args.args
     assert (account_id, model, tokens) == ("a1", "grok-voice-think-fast-2.0", 750)
     assert cost > 0  # priced by the seconds leg, not by the token count
+
+
+# ------------------------------------------------------------------ the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
+
+class _LockWorld:
+    """The blueprint over a real ephemeral store and the real user store, alex locked; the voice MCP token kind and
+    Lelik are recorders that must stay untouched for a locked user."""
+
+    async def build(self):
+        from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
+        from src.services.inactive_user_check import InactiveUserCheck
+        from tests.support.locked_user import AlexStore
+        from tests.support.voice_tickets import DIGEST_KEY
+        self.users = await AlexStore().seed()
+        await self.users.lock()
+        self.store = FirestoreEphemeralStore(self.users.db, "voice_ephemeral")
+        self.tokens = AsyncMock()
+        self.tokens.mint.return_value = None
+        self.lelik_asked = []
+
+        async def lelik(user_id):
+            self.lelik_asked.append(user_id)
+            return None
+
+        app = Quart(__name__)
+        app.register_blueprint(create_voice_control_plane_blueprint(
+            ephemeral_store=self.store, quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
+            summary_consumer=AsyncMock(), oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(),
+            lelik_agent_provider=lelik, digest_key=DIGEST_KEY, voice_mcp_tokens=self.tokens, voice_mcp_minting=True,
+            inactive_users=InactiveUserCheck(self.users.users)))
+        self.client = app.test_client()
+        return self
+
+    async def ticket(self, ticket: str, user_id: str) -> None:
+        await self.store.set(ticket_key(ticket), {"user_id": user_id, "account_id": "acct", "mode": "companion",
+                                                  "voice": {"provider": "xai"}}, ttl_s=300)
+        await self.store.set(f"voice_one_call:{user_id}", {"call": ticket}, ttl_s=300)
+
+
+async def test_session_config_refuses_a_locked_users_ticket_before_any_token():
+    w = await _LockWorld().build()
+    await w.ticket("t-alex", "user-alex")
+
+    response = await w.client.post("/voice/session-config", json={"ticket": "t-alex"})
+
+    assert response.status_code == 403 and await response.get_json() == {"error": "account locked"}
+    w.tokens.mint.assert_not_awaited()
+    assert await w.store.get(ticket_key("t-alex")) is None     # the ticket is consumed, never served again
+
+
+async def test_session_config_serves_another_users_ticket():
+    w = await _LockWorld().build()
+    await w.ticket("t-other", "user-other")
+
+    response = await w.client.post("/voice/session-config", json={"ticket": "t-other"})
+
+    assert response.status_code == 200 and (await response.get_json())["user_id"] == "user-other"
+
+
+async def test_delegate_refuses_a_locked_user_and_never_asks_lelik():
+    w = await _LockWorld().build()
+
+    response = await w.client.post("/voice/delegate", json={"user_id": "user-alex", "account_id": "acct-alex",
+                                                            "request": "what is on my list"})
+
+    assert response.status_code == 403 and await response.get_json() == {"error": "account locked"}
+    assert w.lelik_asked == []
+
+
+async def test_delegate_of_another_user_reaches_lelik():
+    w = await _LockWorld().build()
+
+    response = await w.client.post("/voice/delegate", json={"user_id": "user-other", "account_id": "acct-other",
+                                                            "request": "what is on my list"})
+
+    assert response.status_code == 503 and w.lelik_asked == ["user-other"]

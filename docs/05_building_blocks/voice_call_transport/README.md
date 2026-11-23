@@ -170,6 +170,8 @@ the relay's own identity). Routes in
 - `/voice/session-config`: redeems the ticket. 404 when the marker names another owner (the call was replaced before the
   relay arrived); mints the voice MCP tokens and reads the resume handle (at redemption, so a stored ticket holds
   neither); extends the marker last.
+  A locked account (`UserProfile.is_active` false, `CABINET_DEVICE_SESSIONS_RFC.md` §7.8) is refused with 403 here,
+  before any provider token is minted or resume handle taken (web and phone calls both pass here).
 - `/voice/submit-transcript`: usage, AMD and mode lookups, resume handle, summary, turn recording, then the marker
   release in a `finally` that must never be skipped.
 - `/voice/delegate`: runs one specialist delegation shielded from the handler (Quart cancels a handler whose client
@@ -177,7 +179,7 @@ the relay's own identity). Routes in
   chat: delegate and `/voice/delegate/abandon` each write their own marker first and only an atomic `get_and_delete` of
   the result posts, so at most one side does. A failure is kept as a flag, never as text. Interpreter calls never post
   late answers, with the `VOICE_MCP_TOOLS` knob on or off (the call mode is read for every delegation and stored on the
-  kept result).
+  kept result). A locked account is refused with 403 here too; the call itself runs to its end.
 - `/voice/relay-warmup`: see the keep-alive trap.
 
 ### Control channel (page to relay)

@@ -45,6 +45,10 @@ One authorization server fronts two protected resources, each its own FastMCP ap
   own drive operations. Nothing that writes is registered. What a call may see is each drive's *connector access*
   (set in the Cabinet; unset means nothing).
 
+Every tool call of both apps reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
+`ACCOUNT_LOCKED_TOOL_ERROR` for a locked account (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8): an access token issued before
+the lock still verifies until it expires.
+
 A third thing lives here because it shares the verifiers: the **voice token kind**, a per-call, read-only token that
 lets Lelik's xAI voice session call the drive resource.
 
@@ -131,8 +135,9 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
    `error=access_denied`. The user who is logged into the Cabinet at the moment of Approve is the identity the token
    carries.
 5. **Code exchange** (`/token`). The SDK checks client secret, expiry, redirect URI and PKCE, then
-   `finalize_auth_code` consumes the code and mints the access token and a refresh token with a new `grant_id`.
-6. **Refresh.** `rotate_refresh_token` re-reads the user (exists, has an email, whitelisted); failing that it revokes the
+   `finalize_auth_code` consumes the code and mints the access token and a refresh token with a new `grant_id`; the
+   code of a user whose account is locked (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8) is consumed and refused.
+6. **Refresh.** `rotate_refresh_token` re-reads the user (exists, is active, has an email, whitelisted); failing that it revokes the
    presented token and answers `invalid_grant`, and a repository error fails closed. It re-binds the grant's resource
    and scopes, then revokes the old token and saves the new one (revoke first, so a replayed token cannot mint). The
    code exchange itself does not re-check the whitelist.

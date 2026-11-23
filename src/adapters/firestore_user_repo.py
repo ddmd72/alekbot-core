@@ -47,8 +47,9 @@ class FirestoreUserRepository(UserRepository):
 
     Firestore mechanics (the port states the observable contract): collection `EnvironmentConfig.domain_users_collection`,
     document id `user_id`, body `UserProfile.model_dump()` written with a plain `set` (no precondition) by create_user,
-    update_user and unlink_platform_identity; update_user_fields is an `update` of the given dotted paths and
-    `updated_at` (a missing document raises NotFound). Lookups are single-field equality queries with `limit(1)`
+    and update_user; unlink_platform_identity (the `platform_identities.<platform>` path, `DELETE_FIELD`) and
+    update_user_fields (the given dotted paths) are an `update` of those paths and `updated_at` (a missing document
+    raises NotFound). Lookups are single-field equality queries with `limit(1)`
     (`platform_identities.<platform>` is a dotted path). link_platform_identity reads the user and queries the identity
     inside one transaction, then sets the whole document.
     """
@@ -220,13 +221,16 @@ class FirestoreUserRepository(UserRepository):
         if not user:
             raise ValueError(f"User {user_id} not found")
 
-        # Remove platform identity if exists
+        # Remove platform identity if exists. A field-level update: a whole-document rewrite would undo a lock
+        # (`is_active=False`) committed between the read and the write.
         if platform in user.platform_identities:
             del user.platform_identities[platform]
             user.updated_at = datetime.now(timezone.utc)
 
-            # Persist to Firestore
-            await self.users_col.document(user_id).set(user.model_dump())
+            await self.users_col.document(user_id).update({
+                f"platform_identities.{platform}": firestore.DELETE_FIELD,
+                "updated_at": user.updated_at,
+            })
 
             logger.info(
                 f"🔓 Unlinked platform identity: user {user_id} → {platform}"

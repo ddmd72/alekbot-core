@@ -178,6 +178,9 @@ Things that break silently. The deploy-substitution and `config.get()` traps are
 - **Two delivery paths for prompt text:** tokens (`PROTOCOL_*`, `OUTPUT_FORMAT_*`, …) live in Firestore and ship by token
   upload, not by deploy; texts in `src/domain/*_texts.py` and `src/locales/` ship by code deploy.
 - **Code-written text never claims the system's voice:** a tool result says `Tool note:`/`Tool error:`, never `[System: …]`/`SYSTEM:`; current-turn code text sent into the user channel goes through `wrap_system` with the turn's key (`SYSTEM_TURN_FINGERPRINT_RFC.md`).
+- **An inactive user is refused at every entry point; a new entry point adds the check** (read the stored user fresh,
+  never the agent factory's cached profile). `tests/unit/test_locked_user_entry_points.py` lists the entry points and
+  fails on an unclassified route (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8).
 - **Relay `--max-instances=1` is a pairing constraint** (both SFU legs must land on one process): scale calls with relay
   shards, never by raising it (`decisions/voice_web_transport_cloudflare_sfu.md`).
 

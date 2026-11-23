@@ -414,6 +414,35 @@ async def test_of_concurrent_revokes_of_one_active_token_exactly_one_says_it_rev
     assert store.docs(REFRESH)[sha("rt-a")]["revoked_at"] is not None
 
 
+async def test_revoking_a_users_tokens_revokes_each_live_one_of_that_user_only(store):
+    # CABINET_DEVICE_SESSIONS_RFC §7.6, §7.8: the kill switch and the account lock end every connector grant
+    await store.repo.save_refresh_token(refresh("rt-a", "cli-a", user_id="usr-1", grant_id="grant-a"))
+    await store.repo.save_refresh_token(refresh("rt-b", "cli-b", user_id="usr-1"))
+    await store.repo.save_refresh_token(refresh("rt-old", "cli-a", user_id="usr-1", revoked_at=PAST))
+    await store.repo.save_refresh_token(refresh("rt-x", "cli-a", user_id="usr-x"))
+    before = {h: dict(doc) for h, doc in store.docs(REFRESH).items()}
+    assert await store.repo.revoke_user_refresh_tokens("usr-1", NOW) == 2
+    docs = store.docs(REFRESH)
+    assert (docs[sha("rt-a")]["revoked_at"], docs[sha("rt-b")]["revoked_at"]) == (NOW, NOW)
+    for value in ("rt-a", "rt-b"):
+        assert {k: v for k, v in docs[sha(value)].items() if k != "revoked_at"} == {
+            k: v for k, v in before[sha(value)].items() if k != "revoked_at"}
+    assert docs[sha("rt-old")]["revoked_at"] == PAST
+    assert docs[sha("rt-x")] == before[sha("rt-x")]
+    assert await store.repo.has_active_grant("usr-1", "grant-a", NOW) is False
+    assert await store.repo.revoke_user_refresh_tokens("usr-1", NOW) == 0
+    assert await store.repo.revoke_user_refresh_tokens("usr-nobody", NOW) == 0
+
+
+async def test_a_token_revoked_with_its_users_tokens_is_refused_at_the_token_endpoint(store):
+    await store.repo.save_client(client("cli-a"))
+    await store.repo.save_refresh_token(refresh())
+    await store.repo.revoke_user_refresh_tokens("usr-cli-a", NOW)
+    status, body = await store.exchange_refresh("cli-a", "rt-a")
+    assert (status, body["error"]) == (400, "invalid_grant")
+    assert list(store.docs(REFRESH)) == [sha("rt-a")]
+
+
 async def test_of_concurrent_exchanges_of_one_refresh_token_exactly_one_succeeds(store):
     await store.repo.save_refresh_token(refresh())
     store.db.collection(REFRESH).yield_on_get = True      # both exchanges read the token before either revokes it

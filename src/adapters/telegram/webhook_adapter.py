@@ -200,7 +200,9 @@ class TelegramWebhookAdapter(PlatformPort):
             # Extract text from message or caption (for photos/videos)
             text = message.text or message.caption or ""
             
-            logger.debug(f"📝 Extracted text: '{text}' (text={message.text is not None}, caption={message.caption is not None})")
+            # A `$` command's text is never logged: it may be a facts PIN or the duress code (CABINET §7.9).
+            shown = "<command>" if unwrapped(text).startswith("$") else f"'{text}'"
+            logger.debug(f"📝 Extracted text: {shown} (text={message.text is not None}, caption={message.caption is not None})")
 
             # 1. IAM Authorization (SAME PATTERN AS SLACK)
             decision = await self.iam_service.authorize("telegram", platform_user_id=telegram_user_id)

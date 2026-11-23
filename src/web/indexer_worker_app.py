@@ -14,7 +14,9 @@ The indexer service (`indexer_main.py`) serves exactly two routes:
   own continuation, and a Cloud Tasks retry on top would only duplicate it. An unknown task type is
   a 400 (a bug in the sender, never retried into success), and so is a payload without `user_id` and
   `connection_id` (MULTI_DRIVE_RFC §8: a tick is per connection); an exception the tick did not handle is
-  a 500, so the queue's retry config applies. Without a tick service (the first pass of the two-pass
+  a 500, so the queue's retry config applies. A tick for a user whose stored profile is inactive (the account lock,
+  CABINET_DEVICE_SESSIONS_RFC §7.8) answers 200 `{"skipped": "user_inactive"}` before any drive call; the user is read
+  fresh per delivery (`inactive_users`; a read error answers 500 and the queue retries). Without a tick service (the first pass of the two-pass
   first deploy: `DRIVE_INDEXER_URL` not known yet) the service still starts, so the deploy step
   succeeds, and `/worker` answers 503; nothing enqueues to it until the second pass. The indexer
   deploys after the main service (cloudbuild-dev.yaml), so on that second pass a task can meet the
@@ -35,6 +37,7 @@ from .worker_oidc_verifier import verify_worker_oidc
 
 if TYPE_CHECKING:
     from ..services.drive_indexing_service import DriveIndexingService
+    from ..services.inactive_user_check import InactiveUserCheck
 
 OidcVerifier = Callable[[Optional[str]], Awaitable[bool]]
 
@@ -72,7 +75,9 @@ def indexer_audiences(indexer_url: Optional[str]) -> Optional[Collection[str]]:
 
 
 def create_indexer_worker_blueprint(indexing: "Optional[DriveIndexingService]",
-                                    oidc_verifier: OidcVerifier) -> Blueprint:
+                                    oidc_verifier: OidcVerifier, *,
+                                    inactive_users: "Optional[InactiveUserCheck]" = None) -> Blueprint:
+    """`inactive_users` None: no account-lock check (`indexer_main` always passes it; the entry-point test pins that)."""
     bp = Blueprint("indexer_worker", __name__)
 
     @bp.route("/health", methods=["GET"])
@@ -102,6 +107,9 @@ def create_indexer_worker_blueprint(indexing: "Optional[DriveIndexingService]",
         if scope is None:   # MULTI_DRIVE_RFC §8: a tick is per connection; a payload without one is refused
             logger.warning("[Indexer] drive_sync without a valid user_id and connection_id: refused")
             return jsonify({"error": "missing user_id or connection_id"}), 400
+        if inactive_users is not None and await inactive_users.is_inactive(scope.user_id):
+            logger.warning(f"🔒 [Indexer] drive_sync skipped: user {scope.user_id[:8]} is inactive (account lock)")
+            return jsonify({"skipped": "user_inactive"}), 200
         try:
             result = await indexing.tick(scope, parse_nudge(payload))
         except Exception as exc:

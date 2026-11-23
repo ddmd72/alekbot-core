@@ -319,6 +319,10 @@ class MCPAuthorizationService:
         code_obj = await self._repo.consume_auth_code(code)
         if code_obj is None:
             raise MCPInvalidGrant("authorization code not found or already used")
+        if await self._user_inactive(code_obj.user_id):
+            # A code issued from a Cabinet session just before the account lock: consumed, never exchanged.
+            logger.warning(f"MCP code exchange refused: user={code_obj.user_id[:8]} reason=inactive")
+            raise MCPInvalidGrant("grant no longer allowed")
 
         now = datetime.now(timezone.utc)
         grant_id = self._new_grant_id()
@@ -497,11 +501,20 @@ class MCPAuthorizationService:
     # Internals
     # -----------------------------------------------------------------
 
+    async def _user_inactive(self, user_id: str) -> bool:
+        """Whether the stored user exists and is inactive (the account lock, CABINET_DEVICE_SESSIONS_RFC §7.8), read
+        fresh. A read error propagates (no token is minted)."""
+        user = await self._user_repo.get_user(user_id)
+        return user is not None and not user.is_active
+
     async def _allow_reason(self, user_id: str) -> Optional[str]:
-        """None when the user exists, has an email and is whitelisted; otherwise the refusal reason."""
+        """None when the user exists, is active (not locked: CABINET_DEVICE_SESSIONS_RFC §7.8), has an email and is
+        whitelisted; otherwise the refusal reason."""
         user = await self._user_repo.get_user(user_id)
         if user is None:
             return "no_user"
+        if not user.is_active:
+            return "inactive"
         if not user.email:
             return "no_email"
         if not (await self._whitelist_repo.get_whitelist()).is_allowed(user.email):

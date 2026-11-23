@@ -13,13 +13,17 @@ a version counter read before the await and compared under the lock right before
 `ChannelBindingService._versions`): a read that began before a revocation never writes its live record back.
 `revoke_all` cannot know the sids of reads in flight, so it advances an epoch that is part of every version.
 
+`revoke_all` (the kill switch, §7.6) also ends every MCP connector grant of the user through the injected
+`revoke_connector_grants` (the MCP refresh-token store's user-wide revocation), so this service imports nothing of MCP;
+it runs even when the session revocation raised.
+
 Role and tier claims come from the `user` and `account` the caller loaded (at sign-in, or `resume_session` before a
 refresh), never from the record or an earlier token.
 """
 import asyncio
 import secrets
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from ..domain.billing import BillingAccount
 from ..domain.device_session import DeviceSession, SessionAuthKind, SessionRevokeReason
@@ -55,8 +59,12 @@ class DeviceSessionService:
 
     def __init__(self, repo: DeviceSessionRepository, session_service: "SessionService",
                  notifications: "UserNotificationService", *, clock: Callable[[], datetime] = _utcnow,
-                 new_sid: Callable[[], str] = _new_sid, new_secret: Callable[[], str] = _new_secret) -> None:
+                 new_sid: Callable[[], str] = _new_sid, new_secret: Callable[[], str] = _new_secret,
+                 revoke_connector_grants: Optional[Callable[[str, datetime], Awaitable[int]]] = None) -> None:
+        """`revoke_connector_grants(user_id, now)` revokes every MCP refresh token of the user and returns how many;
+        None: `revoke_all` revokes no connector grant (a service without the MCP server)."""
         self._repo = repo
+        self._revoke_connector_grants = revoke_connector_grants
         self._sessions = session_service
         self._notifications = notifications
         self._clock = clock
@@ -153,11 +161,20 @@ class DeviceSessionService:
         return revoked
 
     async def revoke_all(self, user_id: str, reason: SessionRevokeReason) -> int:
-        """Revoke every session of `user_id` (the kill switch). Returns how many were revoked."""
-        count = await self._repo.revoke_all(user_id, reason, self._clock())
-        async with self._lock:
-            self._epoch += 1
-            self._cache.clear()
+        """Revoke every session and passkey of `user_id` and cancel a pending facts PIN reset (the kill switch, also the
+        account lock's step), then every MCP connector grant of the user. Returns how many sessions were revoked. The
+        grants are revoked even when the session revocation raised; that error is then raised after it."""
+        now = self._clock()
+        try:
+            count = await self._repo.revoke_all(user_id, reason, now)
+        finally:
+            async with self._lock:
+                self._epoch += 1
+                self._cache.clear()
+            if self._revoke_connector_grants is not None:
+                grants = await self._revoke_connector_grants(user_id, now)
+                logger.info(f"🔒 MCP connector grants revoked with the sessions: user={user_id[:8]} count={grants} "
+                            f"reason={reason.value}")
         return count
 
     async def current(self, user_id: str, sid: str) -> Optional[DeviceSession]:

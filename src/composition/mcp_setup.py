@@ -32,7 +32,7 @@ from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientReposit
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..agents.memory_search_agent import FactsMemoryAgent
-from ..domain.mcp import normalize_queries, queries_dropped
+from ..domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, normalize_queries, queries_dropped
 from ..domain.memory_search_format import format_search_result
 from ..domain.memory_search_texts import NO_RECORDS_TEXT, QUERIES_FIELD_TEXT
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
@@ -40,6 +40,7 @@ from ..domain.request_context import RequestContext
 from ..ports.cipher_port import CipherPort
 from ..ports.user_repository import UserRepository
 from ..ports.whitelist_repository import WhitelistRepository
+from ..services.inactive_user_check import InactiveUserCheck
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..utils.logger import logger
 from .mcp_sdk_oauth_provider import AlekAccessToken, MCPSdkOAuthProvider
@@ -119,6 +120,9 @@ def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
 class MCPComponents:
     fastmcp: FastMCP
     authorization_service: MCPAuthorizationService
+    # The account-lock check of every connector tool call (CABINET_DEVICE_SESSIONS_RFC §7.8): the facts tool uses it,
+    # and main.py hands it to the drive connector.
+    inactive_users: InactiveUserCheck
 
 
 # The tool description is load-bearing — it's the only lever we have on
@@ -200,7 +204,8 @@ def build_mcp_components(
             (never here: main.py swallows this build's errors, so a missing
             key would read as "MCP off", not as a failed start)
         digest_key: the verify-only digest key, built there too
-        user_repo / whitelist_repo: read by the authorization service at every refresh rotation
+        user_repo / whitelist_repo: read by the authorization service at every refresh rotation; the user is also
+            read fresh at every tool call, which refuses a locked account (`inactive_users`)
 
     Returns:
         MCPComponents with the FastMCP instance and the authorization
@@ -233,6 +238,7 @@ def build_mcp_components(
         consent_request_ttl=auth_config.mcp_consent_request_ttl,
     )
     sdk_provider = MCPSdkOAuthProvider(mcp_service)
+    inactive_users = InactiveUserCheck(user_repo)
 
     # --- FastMCP instance with full AS+RS in-process ---
     #
@@ -303,6 +309,12 @@ def build_mcp_components(
         user_id = access_token.user_id
         account_id = access_token.account_id
 
+        # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): an access token issued before it verifies until it
+        # expires; the stored user, read fresh, refuses the call.
+        if await inactive_users.is_inactive(user_id):
+            logger.warning(f"🔒 MCP get_user_context: user={user_id[:8]} is inactive (account lock), refused")
+            raise ToolError(ACCOUNT_LOCKED_TOOL_ERROR)
+
         # The only legitimate input rejection: nothing to search on at all.
         # This is also the only branch allowed to instruct the model, because
         # it is the only one the server cannot resolve on its own.
@@ -337,4 +349,5 @@ def build_mcp_components(
     return MCPComponents(
         fastmcp=fastmcp,
         authorization_service=mcp_service,
+        inactive_users=inactive_users,
     )

@@ -77,3 +77,20 @@ async def test_link_oauth_denied_returns_403(app, kit):
         resp = await client.post("/auth/link-oauth", json={"code": "c", "state": "s1"})
 
     assert resp.status_code == 403
+
+
+async def test_callback_for_a_locked_account_shows_the_locked_page_without_a_session(app, auth_service, kit):
+    from src.domain.exceptions import AccountLockedError
+    auth_service.handle_oauth_callback.side_effect = AccountLockedError("user-alex is inactive")
+
+    async with app.test_client() as client:
+        client.set_cookie("localhost", "oauth_state", "s1")
+        resp = await client.get("/auth/callback?code=c&state=s1")
+
+    body = await resp.get_data(as_text=True)
+    assert resp.status_code == 403 and "text/html" in resp.headers["Content-Type"]
+    assert "Account locked" in body and "not allowed to sign in" not in body
+    set_cookies = " ".join(resp.headers.get_all("Set-Cookie"))
+    assert f"{ACCESS_COOKIE}=" not in set_cookies and f"{REFRESH_COOKIE}=" not in set_cookies
+    assert "oauth_state=;" in set_cookies
+    assert kit.repo.sessions == {}

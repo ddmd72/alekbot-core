@@ -135,3 +135,31 @@ class TestOidcGate:
         assert indexer_audiences(" https://indexer.example.invalid/ ") == (
             "https://indexer.example.invalid", "https://indexer.example.invalid/worker")
         assert indexer_audiences(None) is None and indexer_audiences("") is None
+
+
+class TestAccountLock:
+    """A tick for a locked user (CABINET_DEVICE_SESSIONS_RFC §7.8) is acknowledged as skipped before any drive call."""
+
+    async def _app(self):
+        from src.services.inactive_user_check import InactiveUserCheck
+        from tests.support.locked_user import AlexStore
+        store = await AlexStore().seed()
+        await store.lock()
+        indexing = AsyncMock()
+        indexing.tick.return_value = TickResult("done", {"observed": 1})
+        app = Quart(__name__)
+        app.register_blueprint(create_indexer_worker_blueprint(indexing, AsyncMock(return_value=True),
+                                                               inactive_users=InactiveUserCheck(store.users)))
+        return app, indexing
+
+    async def test_a_locked_users_tick_is_skipped(self):
+        app, indexing = await self._app()
+        resp = await app.test_client().post("/worker", json=_task(ConnectionScope("user-alex", "c1")))
+        assert resp.status_code == 200 and await resp.get_json() == {"skipped": "user_inactive"}
+        indexing.tick.assert_not_called()
+
+    async def test_another_users_tick_runs(self):
+        app, indexing = await self._app()
+        resp = await app.test_client().post("/worker", json=_task(ConnectionScope("user-other", "c1")))
+        assert resp.status_code == 200 and (await resp.get_json())["status"] == "done"
+        indexing.tick.assert_awaited_once_with(ConnectionScope("user-other", "c1"), None)

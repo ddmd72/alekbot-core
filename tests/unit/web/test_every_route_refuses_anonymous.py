@@ -39,6 +39,7 @@ from src.services.geo_mark_service import GeoMarkService
 from src.services.short_link_service import ShortLinkService
 from src.web import user_cabinet_app
 from src.web.device_auth_app import create_device_auth_blueprint
+from src.web.facts_pin_app import create_facts_pin_blueprint
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
 from src.web.geo_mark_app import create_geo_mark_blueprint
@@ -107,6 +108,10 @@ def _cabinet(p: Probe):
         fact_review_store=w("fact_review_store"), fact_answer_service=w("fact_answer_service"),
         localization=w("localization"), connectors=ConnectorRegistry(),
     ), {}
+
+
+def _facts_pin(p: Probe):
+    return create_facts_pin_blueprint(cabinet_sessions(), p.wire("facts_pin"), p.wire("device_sessions")), {}
 
 
 def _device_auth(p: Probe):
@@ -247,6 +252,7 @@ FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_user_cabinet_blueprint": _cabinet,
     "create_oauth_blueprint": _oauth,
     "create_device_auth_blueprint": _device_auth,
+    "create_facts_pin_blueprint": _facts_pin,
     "create_microsoft_tasks_webhook_blueprint": _ms_tasks,
     "create_file_access_blueprint": _file_access,
     "create_short_link_blueprint": _short_link,

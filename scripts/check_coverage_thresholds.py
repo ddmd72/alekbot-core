@@ -110,6 +110,18 @@ THRESHOLDS: Dict[str, float] = {
     "src/services/passkey_service.py":              100.0,
     # Passkey routes (P7): the devices list, enrolment, the call-start step-up and the anonymous passkey sign-in.
     "src/web/device_auth_app.py":                   100.0,
+    # Facts PIN and account lock (P7): the PIN record's rules, its store with the lock transaction, the PIN service and
+    # the lock's follow-up.
+    "src/domain/facts_pin.py":                      100.0,
+    "src/domain/facts_pin_policy.py":               100.0,
+    "src/adapters/firestore_facts_pin_repo.py":     100.0,
+    "src/services/facts_pin_service.py":            100.0,
+    "src/services/account_lock_service.py":         100.0,
+    # The account lock at every entry point (P7, CABINET_DEVICE_SESSIONS_RFC §7.8, §7.9): the check, the chat code
+    # replies and the /worker route that skips a locked user's task.
+    "src/services/inactive_user_check.py":          100.0,
+    "src/domain/facts_pin_chat.py":                 100.0,
+    "src/web/main_service_routes.py":               100.0,
 }
 
 

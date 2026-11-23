@@ -455,3 +455,33 @@ class TestLastLines:
                                                 version=3, state="archived", text="Tom's plan for Acme Hamburg.")
         text = text_of(await world.call("get_note", item_ref=ref("d1")))
         assert text.split("\n") == NEUTRAL and "Acme Hamburg" not in text
+
+
+class TestAccountLock:
+    """A drive token issued before the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8) still verifies; the stored user,
+    read fresh at the call, refuses every tool with the lock tool error, before any read."""
+
+    async def _world(self, monkeypatch):
+        from src.domain.user import UserProfile
+        from src.services.inactive_user_check import InactiveUserCheck
+        from tests.support.locked_user import AlexStore
+        store = AlexStore()
+        await store.users.create_user(UserProfile(user_id="u1", email="alex@example.com", account_id="acc1"))
+        world = await World().build()
+        check = InactiveUserCheck(store.users)
+        monkeypatch.setattr(world, "fresh_app", lambda: build_drive_mcp_app(
+            authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=world.tools, inactive_users=check))
+        return world, store
+
+    async def test_a_locked_users_tool_call_is_the_lock_error_and_reads_nothing(self, monkeypatch):
+        from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR
+        world, store = await self._world(monkeypatch)
+        text_of(await world.call("search_drive", query="Tom's plan"))
+        assert world.search.queries == ["Tom's plan"]
+
+        await store.lock("u1")
+
+        for name, arguments in (("search_drive", {"query": "Tom's plan"}), ("open_drive_file", {"file_ref": ref("d1")})):
+            res = await world.call(name, **arguments)
+            assert res["isError"] is True and res["content"][0]["text"] == ACCOUNT_LOCKED_TOOL_ERROR
+        assert world.search.queries == ["Tom's plan"] and world.conversion.downloads == []

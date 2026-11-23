@@ -10,9 +10,9 @@ class UserRepository(ABC):
     - Legacy: complexity overrides with an empty tier are dropped on read; unknown keys are ignored on read and dropped
       by the next create/update. A record that fails UserProfile validation otherwise: no writer produces one;
       behaviour pending the data audit.
-    - Atomicity: create_user, update_user and unlink_platform_identity replace the whole record with no precondition;
-      of two concurrent read-change-write updates of one user only the last survives. update_user_fields writes only
-      the named fields (and updated_at), so concurrent updates of other fields are kept.
+    - Atomicity: create_user and update_user replace the whole record with no precondition;
+      of two concurrent read-change-write updates of one user only the last survives. update_user_fields and
+      unlink_platform_identity write only the named fields (and updated_at), so concurrent updates of other fields are kept.
       link_platform_identity checks the identity and writes in one atomic step.
     - Errors: backend errors propagate.
     """

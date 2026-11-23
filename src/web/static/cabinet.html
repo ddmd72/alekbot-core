@@ -145,6 +145,16 @@
         display: none !important;
       }
 
+      #facts-pin-gate {
+        display: none;
+      }
+      #section-memory.pin-locked #facts-pin-gate {
+        display: block;
+      }
+      #section-memory.pin-locked > :not(.hero-header):not(#facts-pin-gate) {
+        display: none;
+      }
+
       /* ─── Typography & Utilities ────────────────────────── */
       h1,
       h2,
@@ -1326,6 +1336,25 @@
             </p>
           </div>
 
+          <!-- Facts PIN gate (CABINET_DEVICE_SESSIONS_RFC §7.7): shown instead of the tab's content while it is locked -->
+          <div id="facts-pin-gate" class="card" style="max-width: 420px">
+            <div class="card-body">
+              <h3 id="facts-pin-title" style="font-size:18px;font-weight:600;margin-bottom:6px"></h3>
+              <p id="facts-pin-desc" style="font-size:14px;color:var(--text-muted);margin-bottom:12px"></p>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                <input id="facts-pin-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:120px"
+                  onkeydown="if (event.key === 'Enter') unlockFacts();" aria-labelledby="facts-pin-title">
+                <button id="facts-pin-unlock" class="btn btn-black" onclick="unlockFacts()"></button>
+              </div>
+              <p id="facts-pin-error" role="alert" style="font-size:14px;color:var(--danger-text);margin-top:12px"></p>
+              <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
+                <button id="facts-pin-forgot" class="btn btn-secondary" onclick="forgotPin()"></button>
+                <button id="facts-pin-reset-cancel" class="btn btn-secondary hidden" onclick="cancelPinReset()"></button>
+              </div>
+              <p id="facts-pin-reset-note" class="hidden" style="font-size:14px;color:var(--text-muted);margin-top:12px"></p>
+            </div>
+          </div>
+
           <div class="search-container reveal">
             <div class="search-bar">
               <input
@@ -1799,6 +1828,45 @@
               <div id="reminders-list" style="font-size:14px;color:var(--text-muted)">Loading...</div>
             </div>
           </div>
+          <!-- Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7) -->
+          <div class="card reveal" id="pin-card" style="max-width: 640px; margin-top: 20px">
+            <div class="card-body">
+              <h3 id="pin-title" style="font-size:18px;font-weight:600;margin-bottom:6px">Facts PIN</h3>
+              <p id="pin-desc" style="font-size:14px;color:var(--text-muted);margin-bottom:12px"></p>
+              <p id="pin-state" style="font-size:14px;font-weight:600;margin-bottom:12px"></p>
+              <div id="pin-set-form">
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+                  <div style="flex:1;min-width:130px"><label id="pin-label-new" for="pin-new" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2" for="pin-new2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <div style="flex:1;min-width:130px"><label id="pin-label-duress" for="pin-duress" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2" for="pin-duress2" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                </div>
+                <button id="pin-set-btn" class="btn btn-primary" onclick="submitPinSet()"></button>
+              </div>
+              <div id="pin-manage" class="hidden">
+                <h4 id="pin-change-title" style="font-size:15px;font-weight:600;margin-bottom:8px"></h4>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+                  <div style="flex:1;min-width:130px"><label id="pin-label-current-change" for="pin-current-change" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-change" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <div style="flex:1;min-width:130px"><label id="pin-label-new-c" for="pin-new-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-new2-c" for="pin-new2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-new2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <div style="flex:1;min-width:130px"><label id="pin-label-duress-c" for="pin-duress-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div><div style="flex:1;min-width:130px"><label id="pin-label-duress2-c" for="pin-duress2-c" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-duress2-c" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                </div>
+                <button id="pin-change-btn" class="btn btn-primary" onclick="submitPinChange()"></button>
+                <h4 id="pin-remove-title" style="font-size:15px;font-weight:600;margin:20px 0 8px"></h4>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
+                  <div style="flex:1;min-width:130px"><label id="pin-label-current-remove" for="pin-current-remove" style="font-size:13px;font-weight:600;color:var(--text-muted)"></label><input id="pin-current-remove" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:100%;margin-top:4px"></div>
+                  <button id="pin-remove-btn" class="btn btn-danger" onclick="submitPinRemove()"></button>
+                </div>
+                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+                  <button id="pin-forgot" class="btn btn-secondary" onclick="forgotPin()"></button>
+                  <button id="pin-reset-cancel" class="btn btn-secondary hidden" onclick="cancelPinReset()"></button>
+                </div>
+                <p id="pin-reset-note" class="hidden" style="font-size:14px;color:var(--text-muted);margin-top:12px"></p>
+              </div>
+              <p id="pin-message" role="alert" style="font-size:14px;margin-top:12px"></p>
+              <div id="pin-logout-offer" class="hidden" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                <span id="pin-logout-text" style="font-size:14px"></span>
+                <button id="pin-logout-btn" class="btn btn-secondary" onclick="logoutOtherDevices()"></button>
+              </div>
+            </div>
+          </div>
         </section>
       </main>
     </div>
@@ -1894,6 +1962,46 @@
           "passkeys.offer_text": "Sign in faster next time: add Face ID (a passkey) on this device.",
           "passkeys.offer_add": "Add Face ID",
           "passkeys.offer_dismiss": "Not now",
+          "pin.title": "Facts PIN",
+          "pin.desc": "Optional. Asks for a four-digit PIN before the Memory tab shows your facts. The duress code locks your account if someone forces you to open it.",
+          "pin.state_none": "No PIN is set: the Memory tab opens without one.",
+          "pin.state_set": "A PIN is set: the Memory tab asks for it.",
+          "pin.new": "New PIN",
+          "pin.new_again": "New PIN again",
+          "pin.duress": "Duress code",
+          "pin.duress_again": "Duress code again",
+          "pin.current": "Current PIN",
+          "pin.set": "Set PIN",
+          "pin.change_title": "Change PIN",
+          "pin.change": "Change PIN",
+          "pin.remove_title": "Remove PIN",
+          "pin.remove": "Remove PIN",
+          "pin.forgot": "Forgot PIN",
+          "pin.reset_confirm": "A reset takes 24 hours. You will get a message in chat when it is requested and when it is done, and you can cancel before then. Ask for it now?",
+          "pin.reset_pending": "PIN reset requested. It takes effect at {time}; then you can set a new PIN or none.",
+          "pin.reset_cancel": "Cancel reset",
+          "pin.done_set": "PIN set.",
+          "pin.done_changed": "PIN changed.",
+          "pin.done_removed": "PIN removed.",
+          "pin.done_reset": "Reset requested.",
+          "pin.done_cancelled": "Reset cancelled.",
+          "pin.logout_offer": "Your PIN changed or is being reset. Log out every other device to be safe?",
+          "pin.err_mismatch": "The two entries do not match.",
+          "pin.err_not_four_digits": "Use exactly four digits.",
+          "pin.err_trivial": "Too easy to guess: avoid repeats, runs such as 1234 and the most common codes.",
+          "pin.err_duress_same_as_pin": "The duress code must differ from the PIN.",
+          "pin.err_wrong_code": "Wrong PIN. Attempts left: {n}.",
+          "pin.err_already_set": "A PIN is already set.",
+          "pin.err_no_pin": "No PIN is set.",
+          "pin.err_invalid_body": "Fill in every field.",
+          "pin.err_session_ended": "This session has ended. Sign in again.",
+          "pin.err_reset_refused": "To reset the PIN, sign in with Google again and ask within five minutes.",
+          "pin.err_no_reset_pending": "No reset is pending.",
+          "pin.err_failed": "Could not complete this. Try again.",
+          "pin.account_locked": "Account locked.",
+          "pin.gate_title": "Memory is locked",
+          "pin.gate_desc": "Enter your PIN to see your facts. It stays open for 15 minutes or until you leave this tab.",
+          "pin.unlock": "Unlock",
           "settings.title": "Settings",
           "settings.subtitle": "Preferences that personalise how Alek works for you.",
           "settings.tz.title": "Timezone",
@@ -2249,6 +2357,46 @@
           "passkeys.offer_text": "Наступного разу входь швидше: додай Face ID (ключ доступу) на цьому пристрої.",
           "passkeys.offer_add": "Додати Face ID",
           "passkeys.offer_dismiss": "Не зараз",
+          "pin.title": "PIN для фактів",
+          "pin.desc": "Необов'язково. Просить чотиризначний PIN, перш ніж вкладка «Пам'ять» покаже твої факти. Код примусу блокує обліковий запис, якщо тебе змушують його відкрити.",
+          "pin.state_none": "PIN не задано: вкладка «Пам'ять» відкривається без нього.",
+          "pin.state_set": "PIN задано: вкладка «Пам'ять» просить його.",
+          "pin.new": "Новий PIN",
+          "pin.new_again": "Новий PIN ще раз",
+          "pin.duress": "Код примусу",
+          "pin.duress_again": "Код примусу ще раз",
+          "pin.current": "Поточний PIN",
+          "pin.set": "Задати PIN",
+          "pin.change_title": "Змінити PIN",
+          "pin.change": "Змінити PIN",
+          "pin.remove_title": "Прибрати PIN",
+          "pin.remove": "Прибрати PIN",
+          "pin.forgot": "Забув PIN",
+          "pin.reset_confirm": "Скидання триває 24 години. Ти отримаєш повідомлення в чаті, коли його запитано і коли воно завершиться, а до того можна скасувати. Запитати зараз?",
+          "pin.reset_pending": "Скидання PIN запитано. Воно набуде чинності {time}; тоді можна задати новий PIN або жодного.",
+          "pin.reset_cancel": "Скасувати скидання",
+          "pin.done_set": "PIN задано.",
+          "pin.done_changed": "PIN змінено.",
+          "pin.done_removed": "PIN прибрано.",
+          "pin.done_reset": "Скидання запитано.",
+          "pin.done_cancelled": "Скидання скасовано.",
+          "pin.logout_offer": "PIN змінено або скидається. Вийти на всіх інших пристроях для безпеки?",
+          "pin.err_mismatch": "Два введення не збігаються.",
+          "pin.err_not_four_digits": "Потрібно рівно чотири цифри.",
+          "pin.err_trivial": "Надто легко вгадати: уникай повторів, послідовностей на кшталт 1234 і найпоширеніших кодів.",
+          "pin.err_duress_same_as_pin": "Код примусу має відрізнятися від PIN.",
+          "pin.err_wrong_code": "Хибний PIN. Залишилось спроб: {n}.",
+          "pin.err_already_set": "PIN уже задано.",
+          "pin.err_no_pin": "PIN не задано.",
+          "pin.err_invalid_body": "Заповни кожне поле.",
+          "pin.err_session_ended": "Цей сеанс завершено. Увійди знову.",
+          "pin.err_reset_refused": "Щоб скинути PIN, увійди через Google ще раз і запитай упродовж п'яти хвилин.",
+          "pin.err_no_reset_pending": "Жодного скидання не очікується.",
+          "pin.err_failed": "Не вдалося виконати. Спробуй ще раз.",
+          "pin.account_locked": "Обліковий запис заблоковано.",
+          "pin.gate_title": "Пам'ять заблоковано",
+          "pin.gate_desc": "Введи PIN, щоб побачити свої факти. Доступ триває 15 хвилин або доки ти не залишиш цю вкладку.",
+          "pin.unlock": "Розблокувати",
           "settings.title": "Налаштування",
           "settings.subtitle": "Персоналізуйте роботу Alek під себе.",
           "settings.tz.title": "Часовий пояс",
@@ -2604,6 +2752,46 @@
           "passkeys.offer_text": "Connectez-vous plus vite la prochaine fois : ajoutez Face ID (une clé d'accès) sur cet appareil.",
           "passkeys.offer_add": "Ajouter Face ID",
           "passkeys.offer_dismiss": "Plus tard",
+          "pin.title": "PIN des faits",
+          "pin.desc": "Facultatif. Demande un PIN à quatre chiffres avant que l'onglet Mémoire n'affiche vos faits. Le code de contrainte verrouille votre compte si l'on vous force à l'ouvrir.",
+          "pin.state_none": "Aucun PIN n'est défini : l'onglet Mémoire s'ouvre sans.",
+          "pin.state_set": "Un PIN est défini : l'onglet Mémoire le demande.",
+          "pin.new": "Nouveau PIN",
+          "pin.new_again": "Nouveau PIN, encore une fois",
+          "pin.duress": "Code de contrainte",
+          "pin.duress_again": "Code de contrainte, encore une fois",
+          "pin.current": "PIN actuel",
+          "pin.set": "Définir le PIN",
+          "pin.change_title": "Changer le PIN",
+          "pin.change": "Changer le PIN",
+          "pin.remove_title": "Supprimer le PIN",
+          "pin.remove": "Supprimer le PIN",
+          "pin.forgot": "PIN oublié",
+          "pin.reset_confirm": "Une réinitialisation prend 24 heures. Vous recevrez un message dans le chat à la demande et à la fin, et vous pouvez l'annuler d'ici là. La demander maintenant ?",
+          "pin.reset_pending": "Réinitialisation du PIN demandée. Elle prend effet le {time} ; vous pourrez alors définir un nouveau PIN ou aucun.",
+          "pin.reset_cancel": "Annuler la réinitialisation",
+          "pin.done_set": "PIN défini.",
+          "pin.done_changed": "PIN modifié.",
+          "pin.done_removed": "PIN supprimé.",
+          "pin.done_reset": "Réinitialisation demandée.",
+          "pin.done_cancelled": "Réinitialisation annulée.",
+          "pin.logout_offer": "Votre PIN a changé ou est en cours de réinitialisation. Déconnecter tous les autres appareils par précaution ?",
+          "pin.err_mismatch": "Les deux saisies ne correspondent pas.",
+          "pin.err_not_four_digits": "Utilisez exactement quatre chiffres.",
+          "pin.err_trivial": "Trop facile à deviner : évitez les répétitions, les suites comme 1234 et les codes les plus courants.",
+          "pin.err_duress_same_as_pin": "Le code de contrainte doit différer du PIN.",
+          "pin.err_wrong_code": "PIN erroné. Essais restants : {n}.",
+          "pin.err_already_set": "Un PIN est déjà défini.",
+          "pin.err_no_pin": "Aucun PIN n'est défini.",
+          "pin.err_invalid_body": "Remplissez tous les champs.",
+          "pin.err_session_ended": "Cette session est terminée. Reconnectez-vous.",
+          "pin.err_reset_refused": "Pour réinitialiser le PIN, reconnectez-vous avec Google et faites la demande dans les cinq minutes.",
+          "pin.err_no_reset_pending": "Aucune réinitialisation en attente.",
+          "pin.err_failed": "Impossible de terminer. Réessayez.",
+          "pin.account_locked": "Compte verrouillé.",
+          "pin.gate_title": "La mémoire est verrouillée",
+          "pin.gate_desc": "Saisissez votre PIN pour voir vos faits. L'accès dure 15 minutes ou jusqu'à ce que vous quittiez cet onglet.",
+          "pin.unlock": "Déverrouiller",
           "settings.title": "Param\u00e8tres",
           "settings.subtitle": "Pr\u00e9f\u00e9rences pour personnaliser Alek.",
           "settings.tz.title": "Fuseau horaire",
@@ -2959,6 +3147,46 @@
           "passkeys.offer_text": "Entra más rápido la próxima vez: añade Face ID (una llave de acceso) en este dispositivo.",
           "passkeys.offer_add": "Añadir Face ID",
           "passkeys.offer_dismiss": "Ahora no",
+          "pin.title": "PIN de los hechos",
+          "pin.desc": "Opcional. Pide un PIN de cuatro dígitos antes de que la pestaña Memoria muestre tus hechos. El código de coacción bloquea tu cuenta si alguien te obliga a abrirla.",
+          "pin.state_none": "No hay PIN: la pestaña Memoria se abre sin él.",
+          "pin.state_set": "Hay un PIN: la pestaña Memoria lo pide.",
+          "pin.new": "PIN nuevo",
+          "pin.new_again": "PIN nuevo otra vez",
+          "pin.duress": "Código de coacción",
+          "pin.duress_again": "Código de coacción otra vez",
+          "pin.current": "PIN actual",
+          "pin.set": "Fijar PIN",
+          "pin.change_title": "Cambiar PIN",
+          "pin.change": "Cambiar PIN",
+          "pin.remove_title": "Quitar PIN",
+          "pin.remove": "Quitar PIN",
+          "pin.forgot": "Olvidé el PIN",
+          "pin.reset_confirm": "Un restablecimiento tarda 24 horas. Recibirás un mensaje en el chat al solicitarlo y al terminar, y puedes cancelarlo antes. ¿Solicitarlo ahora?",
+          "pin.reset_pending": "Restablecimiento del PIN solicitado. Surte efecto el {time}; entonces podrás fijar un PIN nuevo o ninguno.",
+          "pin.reset_cancel": "Cancelar el restablecimiento",
+          "pin.done_set": "PIN fijado.",
+          "pin.done_changed": "PIN cambiado.",
+          "pin.done_removed": "PIN quitado.",
+          "pin.done_reset": "Restablecimiento solicitado.",
+          "pin.done_cancelled": "Restablecimiento cancelado.",
+          "pin.logout_offer": "Tu PIN cambió o se está restableciendo. ¿Cerrar la sesión en todos los demás dispositivos por seguridad?",
+          "pin.err_mismatch": "Las dos entradas no coinciden.",
+          "pin.err_not_four_digits": "Usa exactamente cuatro dígitos.",
+          "pin.err_trivial": "Demasiado fácil de adivinar: evita repeticiones, secuencias como 1234 y los códigos más comunes.",
+          "pin.err_duress_same_as_pin": "El código de coacción debe ser distinto del PIN.",
+          "pin.err_wrong_code": "PIN incorrecto. Intentos restantes: {n}.",
+          "pin.err_already_set": "Ya hay un PIN.",
+          "pin.err_no_pin": "No hay PIN.",
+          "pin.err_invalid_body": "Rellena todos los campos.",
+          "pin.err_session_ended": "Esta sesión terminó. Inicia sesión de nuevo.",
+          "pin.err_reset_refused": "Para restablecer el PIN, inicia sesión con Google otra vez y solicítalo en cinco minutos.",
+          "pin.err_no_reset_pending": "No hay ningún restablecimiento pendiente.",
+          "pin.err_failed": "No se pudo completar. Inténtalo de nuevo.",
+          "pin.account_locked": "Cuenta bloqueada.",
+          "pin.gate_title": "La memoria está bloqueada",
+          "pin.gate_desc": "Introduce tu PIN para ver tus hechos. Queda abierta 15 minutos o hasta que salgas de esta pestaña.",
+          "pin.unlock": "Desbloquear",
           "settings.title": "Ajustes",
           "settings.subtitle": "Preferencias para personalizar Alek.",
           "settings.tz.title": "Zona horaria",
@@ -3266,6 +3494,32 @@
         "#passkey-offer-text":        "passkeys.offer_text",
         "#passkey-offer-add":         "passkeys.offer_add",
         "#passkey-offer-dismiss":     "passkeys.offer_dismiss",
+        "#pin-title": "pin.title",
+        "#pin-desc": "pin.desc",
+        "#pin-label-new": "pin.new",
+        "#pin-label-new2": "pin.new_again",
+        "#pin-label-duress": "pin.duress",
+        "#pin-label-duress2": "pin.duress_again",
+        "#pin-set-btn": "pin.set",
+        "#pin-change-title": "pin.change_title",
+        "#pin-label-current-change": "pin.current",
+        "#pin-label-new-c": "pin.new",
+        "#pin-label-new2-c": "pin.new_again",
+        "#pin-label-duress-c": "pin.duress",
+        "#pin-label-duress2-c": "pin.duress_again",
+        "#pin-change-btn": "pin.change",
+        "#pin-remove-title": "pin.remove_title",
+        "#pin-label-current-remove": "pin.current",
+        "#pin-remove-btn": "pin.remove",
+        "#pin-forgot": "pin.forgot",
+        "#pin-reset-cancel": "pin.reset_cancel",
+        "#pin-logout-text": "pin.logout_offer",
+        "#pin-logout-btn": "devices.logout_others",
+        "#facts-pin-title": "pin.gate_title",
+        "#facts-pin-desc": "pin.gate_desc",
+        "#facts-pin-unlock": "pin.unlock",
+        "#facts-pin-forgot": "pin.forgot",
+        "#facts-pin-reset-cancel": "pin.reset_cancel",
         "#nav-call":                  "nav.call",
         "#nav-mobile-call .tab-label":           "nav.call",
         "#nav-modes":                 "nav.modes",
@@ -3330,6 +3584,7 @@
 
         // Re-render dynamic sections that are currently visible
         const active = document.querySelector(".section.active");
+        if (active && active.id === "section-settings") renderPinSettings();
         if (active && active.id === "section-integrations") {
           loadPlatforms();
           loadGmailStatus();
@@ -3353,7 +3608,7 @@
         const lang = _currentLang;
         if (factDomainsLang === lang) return;
         try {
-          const res = await authFetch(
+          const res = await factsFetch(
             `${API}/api/user/fact-domains?lang=${encodeURIComponent(lang)}`,
             { credentials: "include" },
           );
@@ -3404,6 +3659,7 @@
       const _visitedSections = new Set();
 
       function navigate(name) {
+        if (_activeSection === "memory" && name !== "memory") relockFacts();
         if (name !== "integrations" && _driveStatusTimer) {
           clearTimeout(_driveStatusTimer);
           _driveStatusTimer = null;
@@ -3439,9 +3695,7 @@
 
         _activeSection = name;
 
-        const isInitialLoad = factsMode === "idle";
-
-        if (name === "memory" && isInitialLoad) browseInit();
+        if (name === "memory") enterMemory();
         if (name === "integrations") {
           loadPlatforms();
           loadGmailStatus();
@@ -3449,7 +3703,7 @@
           loadDriveStatus();
         }
         if (name === "team") loadCodes();
-        if (name === "settings") loadSettings();
+        if (name === "settings") { loadSettings(); loadFactsPinSettings(); }
         if (name === "devices") loadDevices();
         if (name === "devices") loadPasskeys();
       }
@@ -3632,6 +3886,223 @@
       function dismissPasskeyOffer() {
         rememberPasskeyOffer();
       }
+
+      /* ── Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7) ─── */
+      // The server decides; the page only asks. A code is typed into a field, sent once and cleared: it is never kept,
+      // logged or put in a URL, and every text shown is set as text (never as markup).
+      const NO_PIN = { has_pin: false, unlocked: false, reset_due_at: null, can_request_reset: false };
+      let factsPin = { ...NO_PIN };
+      const PIN_FIELDS = ["pin-new", "pin-new2", "pin-duress", "pin-duress2", "pin-current-change", "pin-new-c",
+        "pin-new2-c", "pin-duress-c", "pin-duress2-c", "pin-current-remove", "facts-pin-input"];
+
+      function pinValue(id) {
+        return document.getElementById(id).value;
+      }
+
+      function clearPinFields() {
+        for (const id of PIN_FIELDS) document.getElementById(id).value = "";
+      }
+
+      async function pinRequest(method, path, body) {
+        const init = { method, credentials: "include" };
+        if (body !== undefined) {
+          init.headers = { "Content-Type": "application/json" };
+          init.body = JSON.stringify(body);
+        }
+        const res = await authFetch(`${API}/api/user/facts-pin${path}`, init);
+        let data = null;
+        try { data = await res.json(); } catch { /* a 204 has no body */ }
+        return { ok: res.ok, status: res.status, data };
+      }
+
+      async function loadFactsPin() {
+        try {
+          const r = await pinRequest("GET", "");
+          if (r.ok && r.data) factsPin = r.data;
+        } catch {
+          // the facts routes refuse a locked tab themselves (403 facts_locked), whatever this read says
+        }
+        return factsPin;
+      }
+
+      function pinErrorText(data) {
+        const error = data && data.error;
+        const key = `pin.err_${error}`;
+        const text = t(key);
+        if (error === "account_locked") return t("pin.account_locked");
+        if (text === key) return t("pin.err_failed");
+        return text.replace("{n}", String(data.attempts_left));
+      }
+
+      function pinMessage(text, isError) {
+        const el = document.getElementById("pin-message");
+        el.textContent = text;
+        el.style.color = isError ? "var(--danger-text)" : "var(--text-muted)";
+      }
+
+      function pinWhen(iso) {
+        return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+      }
+
+      function renderPinReset() {
+        const due = factsPin.reset_due_at;
+        const text = due ? t("pin.reset_pending").replace("{time}", pinWhen(due)) : "";
+        for (const prefix of ["pin", "facts-pin"]) {
+          const note = document.getElementById(`${prefix}-reset-note`);
+          note.textContent = text;
+          note.classList.toggle("hidden", !due);
+          document.getElementById(`${prefix}-reset-cancel`).classList.toggle("hidden", !due);
+          document.getElementById(`${prefix}-forgot`).classList.toggle("hidden", !!due);
+        }
+      }
+
+      function renderPinSettings() {
+        const has = factsPin.has_pin;
+        document.getElementById("pin-set-form").classList.toggle("hidden", has);
+        document.getElementById("pin-manage").classList.toggle("hidden", !has);
+        document.getElementById("pin-state").textContent = t(has ? "pin.state_set" : "pin.state_none");
+        renderPinReset();
+      }
+
+      async function loadFactsPinSettings() {
+        await loadFactsPin();
+        renderPinSettings();
+      }
+
+      // "Account locked": the duress code or the fifth wrong code in a row. Every session is gone with the lock.
+      function onAccountLocked() {
+        clearPinFields();
+        pinMessage(t("pin.account_locked"), true);
+        document.getElementById("facts-pin-error").textContent = t("pin.account_locked");
+        document.getElementById("facts-pin-input").disabled = true;
+        document.getElementById("facts-pin-unlock").disabled = true;
+        document.getElementById("section-memory").classList.add("pin-locked");
+      }
+
+      function pinFailed(r) {
+        if (r.status === 423) { onAccountLocked(); return; }
+        pinMessage(pinErrorText(r.data), true);
+      }
+
+      async function afterPinChange(r, doneKey, offerLogout) {
+        clearPinFields();
+        if (!r.ok) { pinFailed(r); return; }
+        pinMessage(t(doneKey), false);
+        document.getElementById("pin-logout-offer").classList.toggle("hidden", !offerLogout);
+        await loadFactsPinSettings();
+      }
+
+      async function submitPinSet() {
+        const r = await pinRequest("POST", "/set", {
+          pin: pinValue("pin-new"), pin_confirm: pinValue("pin-new2"),
+          duress: pinValue("pin-duress"), duress_confirm: pinValue("pin-duress2"),
+        });
+        await afterPinChange(r, "pin.done_set", false);
+      }
+
+      async function submitPinChange() {
+        const r = await pinRequest("POST", "/change", {
+          current: pinValue("pin-current-change"),
+          pin: pinValue("pin-new-c"), pin_confirm: pinValue("pin-new2-c"),
+          duress: pinValue("pin-duress-c"), duress_confirm: pinValue("pin-duress2-c"),
+        });
+        await afterPinChange(r, "pin.done_changed", true);
+      }
+
+      async function submitPinRemove() {
+        const r = await pinRequest("POST", "/remove", { current: pinValue("pin-current-remove") });
+        await afterPinChange(r, "pin.done_removed", false);
+      }
+
+      // A forgotten PIN: the reset takes 24 hours (the server says when), needs a fresh Google sign-in, can be cancelled.
+      async function forgotPin() {
+        if (!confirm(t("pin.reset_confirm"))) return;
+        const r = await pinRequest("POST", "/reset");
+        if (!r.ok) {
+          if (r.status === 423) { onAccountLocked(); return; }
+          const text = pinErrorText(r.data);
+          pinMessage(text, true);
+          document.getElementById("facts-pin-error").textContent = text;
+          return;
+        }
+        pinMessage(t("pin.done_reset"), false);
+        document.getElementById("pin-logout-offer").classList.remove("hidden");
+        await loadFactsPin();
+        renderPinSettings();
+      }
+
+      async function cancelPinReset() {
+        const r = await pinRequest("POST", "/reset/cancel");
+        if (!r.ok) { pinFailed(r); return; }
+        pinMessage(t("pin.done_cancelled"), false);
+        await loadFactsPin();
+        renderPinSettings();
+      }
+
+      /* The Memory tab's gate: locked while a PIN is set and this session is not unlocked. */
+      function showFactsGate() {
+        document.getElementById("facts-pin-error").textContent = "";
+        document.getElementById("section-memory").classList.add("pin-locked");
+        renderPinReset();
+      }
+
+      function hideFactsGate() {
+        document.getElementById("section-memory").classList.remove("pin-locked");
+      }
+
+      async function enterMemory() {
+        await loadFactsPin();
+        if (_activeSection !== "memory") return;
+        if (factsPin.has_pin && !factsPin.unlocked) { showFactsGate(); return; }
+        hideFactsGate();
+        if (factsMode === "idle") browseInit();
+      }
+
+      async function unlockFacts() {
+        const r = await pinRequest("POST", "/unlock", { pin: pinValue("facts-pin-input") });
+        clearPinFields();
+        if (r.status === 423) { onAccountLocked(); return; }
+        if (!r.ok) {
+          document.getElementById("facts-pin-error").textContent = pinErrorText(r.data);
+          return;
+        }
+        factsPin.unlocked = true;
+        hideFactsGate();
+        if (factsMode === "idle") browseInit();
+      }
+
+      // A facts call that answers 403 facts_locked (the unlock ended, or another tab relocked): back to the gate.
+      async function factsFetch(url, opts) {
+        const res = await authFetch(url, opts);
+        if (res.status === 403) {
+          let data = null;
+          try { data = await res.clone().json(); } catch { /* not the guard's answer */ }
+          if (data && data.error === "facts_locked") {
+            factsPin = { ...factsPin, has_pin: true, unlocked: false };
+            forgetFacts();
+            if (_activeSection === "memory") showFactsGate();
+          }
+        }
+        return res;
+      }
+
+      // Nothing of the facts stays on the page once the tab is locked or left.
+      function forgetFacts() {
+        factsMode = "idle";
+        document.getElementById("facts-container").innerHTML = "";
+      }
+
+      // Leaving the tab or closing the page relocks the session (best effort: the 15-minute end is the guarantee).
+      function relockFacts() {
+        if (!factsPin.has_pin || !factsPin.unlocked) return;
+        factsPin.unlocked = false;
+        forgetFacts();
+        try {
+          navigator.sendBeacon(`${API}/api/user/facts-pin/relock`, new Blob([], { type: "application/json" }));
+        } catch { /* the unlock ends by itself */ }
+      }
+
+      window.addEventListener("pagehide", relockFacts);
 
       /* ── Settings ────────────────────────────────────── */
       async function loadSettings() {
@@ -4055,7 +4526,7 @@
         const countEl = document.getElementById("facts-count");
         document.getElementById("facts-pagination").innerHTML = "";
         try {
-          const res = await authFetch(`${API}/api/user/facts/recently-closed`, {
+          const res = await factsFetch(`${API}/api/user/facts/recently-closed`, {
             credentials: "include",
           });
           if (!res.ok) throw new Error("Failed to load facts");
@@ -4101,7 +4572,7 @@
       async function loadReviewQuestions() {
         const box = document.getElementById("review-questions");
         try {
-          const res = await authFetch(`${API}/api/user/facts/review-queue`, {
+          const res = await factsFetch(`${API}/api/user/facts/review-queue`, {
             credentials: "include",
           });
           if (!res.ok) {
@@ -4358,7 +4829,7 @@
           .querySelectorAll("button")
           .forEach((b) => (b.disabled = true));
         try {
-          const res = await authFetch(`${API}/api/user/facts/review-answers`, {
+          const res = await factsFetch(`${API}/api/user/facts/review-answers`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -4408,7 +4879,7 @@
             ? `&cursor=${encodeURIComponent(browseCursor)}`
             : "";
           const sp = factsState === "stale" ? "&state=stale" : "";
-          const res = await authFetch(
+          const res = await factsFetch(
             `${API}/api/user/facts/browse?limit=50${sp}${dp}${cp}`,
             { credentials: "include" },
           );
@@ -4476,7 +4947,7 @@
         factsMode = "search";
 
         try {
-          const res = await authFetch(`${API}/api/user/facts/search`, {
+          const res = await factsFetch(`${API}/api/user/facts/search`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -6563,7 +7034,7 @@
         btn.textContent = "Deleting...";
         btn.disabled = true;
         try {
-          const res = await authFetch(
+          const res = await factsFetch(
             `${API}/api/user/facts/${fact.id}/invalidate`,
             { method: "POST", credentials: "include" },
           );

@@ -71,7 +71,7 @@ from ..domain.drive_tool_texts import FIND_PASSAGES, LIST_FOLDER, OPEN_DRIVE_FIL
 from ..domain.drive_wide_batch import parse_batch, parse_wide
 from ..domain.drive_withheld import Withheld
 from ..domain.exceptions import ConnectorTextsUnavailable, DriveLinkFolder, DriveLinkRefused
-from ..domain.mcp import normalize_phrase
+from ..domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, normalize_phrase
 from ..domain.mcp_resource import DRIVE_PATH, MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
 from ..domain.voice_mcp_token import VOICE_RESULT_MAX_CHARS, McpTokenKind, tool_permitted
@@ -82,6 +82,7 @@ from ..domain.user_drive import (
     DrivePathError,
     DriveRefRefused,
 )
+from ..services.inactive_user_check import InactiveUserCheck
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..services.voice_mcp_token_service import VoiceMcpTokenService, is_voice_token
 from ..ports.quota_service import QuotaService
@@ -153,9 +154,11 @@ class DriveTokenVerifier:
 def build_drive_mcp_app(
     *, authorization_service: MCPAuthorizationService, auth_config: AuthConfig,
     tools: Optional[DriveConnectorTools] = None, voice_tokens: Optional[VoiceMcpTokenService] = None,
+    inactive_users: Optional[InactiveUserCheck] = None,
 ) -> FastMCP:
-    """The drive app; `tools` None (the knob off) lists no tool; `voice_tokens` None refuses every voice token. Raises
-    when a registered tool strays from the contract (its name, its parameters)."""
+    """The drive app; `tools` None (the knob off) lists no tool; `voice_tokens` None refuses every voice token;
+    `inactive_users` refuses every tool call of a locked account (CABINET_DEVICE_SESSIONS_RFC §7.8; None: no check, and
+    main.py always passes it). Raises when a registered tool strays from the contract (its name, its parameters)."""
     drive_uri = drive_resource_uri(auth_config.mcp_resource_uri)
     parsed = urlparse(auth_config.mcp_resource_uri)
     issuer_root = f"{parsed.scheme}://{parsed.netloc}"
@@ -176,14 +179,15 @@ def build_drive_mcp_app(
     if tools is None:
         return FastMCP(**settings)
     app = TokenTextFastMCP(texts=tools.texts, initial=tools.initial_texts, **settings)
-    _register_tools(app, tools)
+    _register_tools(app, tools, inactive_users)
     _check_contract(app)
     return app
 
 
-def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
+def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools,
+                    inactive_users: Optional[InactiveUserCheck] = None) -> None:
     ops = tools.operations
-    call = _Caller(app, tools.quota)
+    call = _Caller(app, tools.quota, inactive_users)
 
     @app.tool(name=SEARCH_DRIVE, meta={MAX_RESULT_SIZE_META_KEY: RESULT_MAX_CHARS})
     async def search_drive(ctx: Context, query: _Text = "", folder: _Text = "", drives: _Joined = "",
@@ -261,11 +265,13 @@ def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
 
 
 class _Caller:
-    """Runs one tool call: auth, texts, context, timeout, compose, guard, span, log."""
+    """Runs one tool call: auth (and the account lock), texts, context, timeout, compose, guard, span, log."""
 
-    def __init__(self, app: TokenTextFastMCP, quota: Optional[QuotaService] = None) -> None:
+    def __init__(self, app: TokenTextFastMCP, quota: Optional[QuotaService] = None,
+                 inactive_users: Optional[InactiveUserCheck] = None) -> None:
         self._app = app
         self._quota = quota
+        self._inactive_users = inactive_users
 
     async def run(self, tool: str, op: DriveOp, ctx: Context, run: _Run, *,
                   paging: Optional[ConnectorPaging] = None) -> CallToolResult:
@@ -278,6 +284,11 @@ class _Caller:
         # unset (the chat's own reads, LELIK_VOICE_MCP_RFC §5.3, O3) and under the voice result cap (§8, O5).
         voice = token.kind is McpTokenKind.VOICE
         client = " client=voice" if voice else ""
+        # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a token issued before it verifies until it expires; the
+        # stored user, read fresh, refuses the call before any read.
+        if self._inactive_users is not None and await self._inactive_users.is_inactive(user_id):
+            logger.warning(f"🔒 [DriveMCP] tool={tool} user={user_id[:8]} status=account_locked{client}")
+            return _error_result(ACCOUNT_LOCKED_TOOL_ERROR)
         with start_span(f"mcp.drive.{tool}", {"tool": tool}) as span:
             if voice:
                 span.set_attribute("client", "voice")
@@ -384,13 +395,14 @@ def _check_contract(app: FastMCP) -> None:
             raise RuntimeError(f"drive connector tool {info.name} strays from the contract: {params} != {expected}")
 
 
-def build_drive_mcp_or_none(authorization_service, auth_config, tools=None, voice_tokens=None):
+def build_drive_mcp_or_none(authorization_service, auth_config, tools=None, voice_tokens=None, inactive_users=None):
     """The drive connector's app, or None when its build fails: the facts connector must keep running. `tools` None:
     the app lists no tool (only the auth-seam tests build it so; `main()` always passes the tools). `voice_tokens`
-    None: every voice MCP token is refused (no `VOICE_MCP_SIGNING_KEY`)."""
+    None: every voice MCP token is refused (no `VOICE_MCP_SIGNING_KEY`). `inactive_users`: the account-lock check of
+    every tool call (`main()` always passes the facts connector's)."""
     try:
         return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config, tools=tools,
-                                   voice_tokens=voice_tokens)
+                                   voice_tokens=voice_tokens, inactive_users=inactive_users)
     except Exception as drive_err:
         logger.error(f"❌ Failed to initialize drive MCP connector: {drive_err}", exc_info=True)
         logger.warning("🤖 Bot will continue without the drive connector")

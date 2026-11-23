@@ -231,6 +231,7 @@ tests/unit/test_dockerfile_sandbox.py :: skipif :: not _IMAGE or shutil.which('d
 tests/unit/test_dockerfile_sandbox_render_browser.py :: skip :: 'docker daemon not running' :: x1  # ci: the same docker assumption: skips only without a daemon
 tests/unit/test_dockerfile_sandbox_render_browser.py :: skipif :: shutil.which('docker') is None :: x1  # ci: assumes the runner's docker daemon (the test builds the render image); the skip report shows whether it ran
 tests/unit/test_firestore_database_explicit.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
+tests/unit/test_locked_user_entry_points.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/test_main_boots_offline.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/test_main_doc_delivery_wiring.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/test_main_telegram_blueprint_failure.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
@@ -269,6 +270,7 @@ tests/unit/web/test_cabinet_drive_row_collapsed.py :: skipif :: shutil.which('no
 tests/unit/web/test_cabinet_drive_scope_saves_at_once.py :: skipif :: shutil.which('node') is None :: x7  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_drive_unreadable_list.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_escape_html.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_cabinet_facts_pin_ui.py :: skipif :: shutil.which('node') is None :: x22  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_xss_sinks.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_ask_lelik.py :: skipif :: shutil.which('node') is None :: x9  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_control_channel.py :: skipif :: shutil.which('node') is None :: x6  # ci: node is on the ubuntu-latest runner image

@@ -36,9 +36,11 @@ src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (memory_setup.py FactLifecycleSweepService)
 src.adapters.firestore_fact_review_store.FirestoreFactReviewStore 1  # by-design single instance, held by the ServiceContainer as fact_review_store and shared by FactReviewService, FactAnswerService and FactQuestionTexts (Facts S4 T10a)
+src.adapters.firestore_facts_pin_repo.FirestoreFactsPinRepository 1  # by-design the one facts PIN store, held by FactsPinService; its check writes the account lock flag (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.7)
 src.adapters.firestore_indexed_email_repo.FirestoreIndexedEmailRepository 1  # by-design single instance
 src.adapters.firestore_invite_code_repo.FirestoreInviteCodeRepository 1  # by-design single instance
 src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-design single instance
+src.adapters.firestore_mcp_client_repository.FirestoreMCPClientRepository 1  # by-design the graph's one, whose user-wide refresh-token revocation DeviceSessionService.revoke_all holds (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.6); main.py's MCP server wiring builds its own outside the graph
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
 src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as lease in memory_setup.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
@@ -122,6 +124,7 @@ src.handlers.conversation_handler.ConversationHandler 2  # by-design one per pla
 src.handlers.worker_handler.WorkerHandler 1  # by-design the only /worker dispatcher
 src.infrastructure.agent_coordinator.AgentCoordinator 1  # by-design one registry of live agents; a second would route to a different set
 src.infrastructure.agent_registry.AgentRegistry 1  # by-design one declaration registry shared by the coordinator and the factory
+src.services.account_lock_service.AccountLockService 1  # by-design the one lock follow-up, held by FactsPinService (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.8)
 src.services.agent_context_builder.AgentContextBuilder 1  # by-design single instance
 src.services.agent_fallback_service.AgentFallbackService 1  # by-design single instance
 src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
@@ -167,6 +170,7 @@ src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instanc
 src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (memory_setup.py, Facts S4 T8a, T10a)
 src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service and the one people-card store (memory_search_setup.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); held by the agent factory and the companion context assembler (agents_setup.py, companion_setup.py)
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
+src.services.facts_pin_service.FactsPinService 1  # by-design the one facts PIN service, on the graph for the later PIN routes and chat branch (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.7)
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
 src.services.file_link_service.FileLinkService 1  # by-design single instance
@@ -175,6 +179,7 @@ src.services.geo_mark_turn_task.GeoMarkTurnTask 1  # by-design the one geo_mark_
 src.services.gmail_reconnect_flag.GmailReconnectFlag 1  # by-design the one Gmail reconnect flag, held by WorkerHandler (email indexing) and by the daily_email_review runner
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
+src.services.inactive_user_check.InactiveUserCheck 1  # by-design the one account-lock check of the graph, held by UserNotificationService and handed by main() to /worker and the voice routes (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.8)
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (memory_setup.py, Facts S4 T8g)
 src.services.integration_reconnect_service.IntegrationReconnectService 1  # by-design single instance
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance

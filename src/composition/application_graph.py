@@ -68,7 +68,10 @@ from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
+from src.services.account_lock_service import AccountLockService
 from src.services.device_session_service import DeviceSessionService
+from src.services.facts_pin_service import FactsPinService
+from src.services.inactive_user_check import InactiveUserCheck
 from src.services.passkey_service import PasskeyService
 from src.services.call_text_file_service import CallTextFileService
 from src.services.fact_answer_service import FactAnswerService
@@ -117,6 +120,9 @@ class ApplicationGraph:
     session_service: SessionService
     device_sessions: DeviceSessionService    # revocable Cabinet sessions (CABINET_DEVICE_SESSIONS_RFC §7.1)
     passkeys: PasskeyService                 # passkey enrolment and sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3)
+    facts_pin: FactsPinService               # the opt-in facts PIN and duress code (§7.7); routes in web/facts_pin_app.py
+    account_lock: AccountLockService         # what follows the account lock (§7.8); fired by facts_pin
+    inactive_users: InactiveUserCheck        # the account-lock check main() gives /worker and the voice routes (§7.8)
     auth_service: AuthenticationService
     auth_registry: AuthProviderRegistry
     auth_config: AuthConfig
@@ -202,10 +208,12 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     languages = build_languages(config, user_repo=identity.user_repo, account_repo=identity.account_repo)
     notifications = build_notifications(config, db_client, env_config, coordinator=coordinator,
                                         session_store=container.session_store, media_storage=delivery.media_storage,
-                                        link_service=delivery.link_service, languages=languages)
+                                        link_service=delivery.link_service, languages=languages,
+                                        inactive_users=identity.inactive_users)
     device_auth = build_device_auth(db_client, env_config, session_service=identity.session_service,
                                     notification_service=notifications.service,
-                                    oauth_redirect_uri=boot.auth_config.oauth_redirect_uri)
+                                    oauth_redirect_uri=boot.auth_config.oauth_redirect_uri, cipher=boot.cipher,
+                                    digest_key=boot.digest_key)
     device_sessions = device_auth.sessions
     jobs = build_background_jobs(container=container, coordinator=coordinator,
                                  notification_service=notifications.service, task_queue=ops.task_queue,
@@ -230,7 +238,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     chat, slack_adapter = _build_slack(config, db_client, container=container, coordinator=coordinator, boot=boot,
                                        identity=identity, ops=ops, routing=routing, documents=documents,
                                        delivery=delivery, languages=languages, notifications=notifications,
-                                       agents=agents, memory=memory, device_sessions=device_sessions)
+                                       agents=agents, memory=memory, device_sessions=device_sessions,
+                                       facts_pin=device_auth.facts_pin)
     worker_handler = _build_worker_handler(
         db_client, env_config, container=container, identity=identity, ops=ops, delivery=delivery,
         notifications=notifications, jobs=jobs, companions=companions, agents=agents, integrations=integrations,
@@ -245,7 +254,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         user_repo=identity.user_repo, whitelist_repo=identity.whitelist_repo, account_repo=identity.account_repo,
         invite_service=identity.invite_service, cabinet_facts=memory.cabinet_facts, fact_answers=memory.fact_answers,
         quota_service=ops.quota_service, alert_sink=ops.alert_sink, session_service=identity.session_service,
-        device_sessions=device_sessions, passkeys=device_auth.passkeys,
+        device_sessions=device_sessions, passkeys=device_auth.passkeys, facts_pin=device_auth.facts_pin,
+        account_lock=device_auth.account_lock, inactive_users=identity.inactive_users,
         auth_service=identity.auth_service, auth_registry=identity.auth_registry, auth_config=boot.auth_config,
         deploy_topology=boot.deploy_topology,
         connect_service=integrations.connect, credential_revocation=integrations.credential_revocation,
@@ -319,7 +329,8 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
                  boot: BootChecks, identity: Identity, ops: Operations, routing: SessionRouting,
                  documents: DocumentBackends, delivery: FileDelivery, languages: Languages,
                  notifications: Notifications, agents: Agents, memory: Memory,
-                 device_sessions: DeviceSessionService) -> Tuple[ChatServices, HTTPModeAdapter]:
+                 device_sessions: DeviceSessionService,
+                 facts_pin: FactsPinService) -> Tuple[ChatServices, HTTPModeAdapter]:
     """The ConversationHandler dependencies both platforms share, held once, and the Slack adapter over them and the
     notifications' Slack app. The fallback service (Smart failed or timed out → Quick → a synthetic apology) is built
     here for the chat handlers only."""
@@ -350,6 +361,7 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
         doc_delivery_service=delivery.doc_delivery_service,
         geo_mark_service=geo_marks,
         device_sessions=device_sessions,
+        facts_pin=facts_pin,
     )
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=notifications.slack_app,

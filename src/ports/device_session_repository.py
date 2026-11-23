@@ -7,7 +7,8 @@ refreshes of one sid cannot both rotate), a revoke, the record of a passkey asse
 advance (so two assertions with one counter
 cannot both pass), and `revoke_all` over every session and passkey of a user (so a sign-in or refresh racing the kill
 switch either sees it or retries after it). Sessions and passkeys share one port because `revoke_all` must cover both
-in one transaction.
+in one transaction; it also cancels the user's pending facts PIN reset (§7.6, §7.7) there. A session also carries its
+facts PIN unlock (`set_facts_unlock`, §7.7).
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -54,8 +55,14 @@ class DeviceSessionRepository(ABC):
 
     @abstractmethod
     async def revoke_all(self, user_id: str, reason: SessionRevokeReason, now: datetime) -> int:
-        """Revoke every not yet revoked session and passkey of the user, in one transaction (passkeys at `now`, with no
-        reason: a passkey record has none). Returns how many sessions it revoked."""
+        """Revoke every not yet revoked session and passkey of the user, and cancel the user's pending facts PIN reset
+        (§7.6), in one transaction (passkeys at `now`, with no reason: a passkey record has none). Returns how many
+        sessions it revoked."""
+
+    @abstractmethod
+    async def set_facts_unlock(self, sid: str, until: Optional[datetime], now: datetime) -> bool:
+        """Set the session's `facts_unlocked_until` to `until` (None relocks), in one transaction. False, and nothing
+        written, when the session is absent or not live at `now` (`DeviceSessionPolicy.is_live`)."""
 
     # ------------------------------------------------------------------ passkeys (§7.3)
 

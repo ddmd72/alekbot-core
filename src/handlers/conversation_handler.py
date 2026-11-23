@@ -42,6 +42,8 @@ from ..domain.chat_text import unwrapped
 from ..domain.geo_mark import LINK_TTL_S, GeoFix, GeoLinkBinding
 from ..domain.history_context_block import history_context_block
 from ..domain.device_session import SessionRevokeReason
+from ..domain.facts_pin_chat import is_code_command, reply_for
+from ..domain.facts_pin_policy import PinSurface
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
@@ -202,6 +204,7 @@ class ConversationHandler(ConversationHandlerPort):
         # geo marks (GEO_MARKS_RFC §4.5, §4.6): `$geo` and the platform-native share; None answers "unavailable"
         self._geo_marks = commands.geo_marks
         self._device_sessions = commands.device_sessions   # `$devices` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
+        self._facts_pin = commands.facts_pin   # `$<digits>`, `$pin cancel` (CABINET_DEVICE_SESSIONS_RFC §7.9, §7.7)
         # turn_ids whose long-turn flow runs in this process (final review C1). With one
         # instance, a RUNNING record not in here belongs to an attempt that died. Plain
         # set ops with no await between test and change, so no lock is needed.
@@ -1497,7 +1500,11 @@ class ConversationHandler(ConversationHandlerPort):
         from ..domain.request_context import RequestContext
         
         async with RequestContext(user_id=context.user_id, account_id=context.account_id):
-            if command == "admin_cache_reset":
+            if is_code_command(command):
+                # First: a code is never logged and never reaches the unknown-command reply, which echoes it.
+                await self._handle_pin_code(command, context, response_channel)
+
+            elif command == "admin_cache_reset":
                 logger.info(f"🔥 ADMIN: Cache reset command received from user {context.user_id[:8]}")
                 
                 # ARCHITECTURE FIX: Use facade instead of reaching into factory internals.
@@ -1634,6 +1641,9 @@ class ConversationHandler(ConversationHandlerPort):
             elif command.split()[:1] == ["devices"]:
                 await self._handle_devices_command(command, context, response_channel)
 
+            elif command.split()[:1] == ["pin"]:
+                await self._handle_pin_command(command, context, response_channel)
+
             elif command in ("new", "reset"):
                 # Topic marker — acknowledged by bot. SlackChannelHistorySource
                 # uses these as history boundaries (fetch stops at marker).
@@ -1643,8 +1653,10 @@ class ConversationHandler(ConversationHandlerPort):
                 )
 
             else:
+                # A command that is mostly digits may be a mistyped PIN (`$1234.`, `$12 34`): never echoed.
+                shown = command if sum(c.isdigit() for c in command) * 2 <= len(command) else "…"
                 await response_channel.send_message(
-                    self._ui_string(context, UIMessage.UNKNOWN_COMMAND, command=command),
+                    self._ui_string(context, UIMessage.UNKNOWN_COMMAND, command=shown),
                     thread_id=context.thread_id
                 )
 
@@ -1765,6 +1777,54 @@ class ConversationHandler(ConversationHandlerPort):
                          command, context.user_id[:8], e, exc_info=True)
             text = self._ui_string(context, UIMessage.DEVICES_UNAVAILABLE)
         await send(text, thread_id=context.thread_id)
+
+    # ------------------------------------------------------------------
+    # The facts PIN in chat (CABINET_DEVICE_SESSIONS_RFC §7.9, §7.7)
+    # ------------------------------------------------------------------
+
+    async def _handle_pin_code(self, code: str, context: MessageContext, response_channel: ResponseChannel) -> None:
+        """`$<digits>`: one attempt with `code` from chat (`FactsPinService.check`, surface chat). The duress code locks
+        the account and the reply is the lock notice; the real PIN clears the counter and the reply says to change it;
+        another code counts as wrong ("Wrong code (n left)"; the fifth in a row locks); a user without a PIN gets the
+        fixed no-PIN line and nothing is counted (`facts_pin_chat.reply_for`). The code is never logged and never
+        echoed: the log lines carry the outcome, or the error's type, only."""
+        send = response_channel.send_message
+        if self._facts_pin is None:
+            await send(self._ui_string(context, UIMessage.FACTS_PIN_CHAT_UNAVAILABLE), thread_id=context.thread_id)
+            return
+        try:
+            outcome = await self._facts_pin.check(context.user_id, context.account_id, code, PinSurface.CHAT)
+        except Exception as e:
+            logger.error("❌ [ConversationHandler] $<code> check failed for user %s: %s",
+                         context.user_id[:8], type(e).__name__)
+            await send(self._ui_string(context, UIMessage.FACTS_PIN_CHAT_UNAVAILABLE), thread_id=context.thread_id)
+            return
+        logger.info("🔢 [ConversationHandler] $<code> for user %s: %s", context.user_id[:8], outcome.verdict.value)
+        message, fields = reply_for(outcome)
+        await send(self._ui_string(context, message, **fields), thread_id=context.thread_id)
+
+    async def _handle_pin_command(self, command: str, context: MessageContext,
+                                  response_channel: ResponseChannel) -> None:
+        """`$pin cancel` ends a pending facts PIN reset ("Not you?" in the reset notice); any other `$pin` gets the
+        usage line."""
+        send = response_channel.send_message
+        if command.split()[1:] != ["cancel"]:
+            await send(self._ui_string(context, UIMessage.FACTS_PIN_USAGE), thread_id=context.thread_id)
+            return
+        if self._facts_pin is None:
+            await send(self._ui_string(context, UIMessage.FACTS_PIN_CHAT_UNAVAILABLE), thread_id=context.thread_id)
+            return
+        try:
+            cancelled = await self._facts_pin.cancel_reset(context.user_id)
+        except Exception as e:
+            logger.error("❌ [ConversationHandler] $pin cancel failed for user %s: %s",
+                         context.user_id[:8], type(e).__name__, exc_info=True)
+            await send(self._ui_string(context, UIMessage.FACTS_PIN_CHAT_UNAVAILABLE), thread_id=context.thread_id)
+            return
+        logger.warning("⛔ [ConversationHandler] $pin cancel for user %s: %s", context.user_id[:8],
+                       "reset cancelled" if cancelled else "no reset pending")
+        message = UIMessage.FACTS_PIN_RESET_CANCELLED if cancelled else UIMessage.FACTS_PIN_NO_RESET_PENDING
+        await send(self._ui_string(context, message), thread_id=context.thread_id)
 
     # ------------------------------------------------------------------
     # Channel Binding commands

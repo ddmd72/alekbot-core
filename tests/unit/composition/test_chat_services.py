@@ -29,6 +29,7 @@ HELD_AS = {
     "long_turn_service": "_long_turns",
     "doc_delivery_service": "_doc_delivery_service",
     "device_sessions": "_device_sessions",
+    "facts_pin": "_facts_pin",
 }
 
 

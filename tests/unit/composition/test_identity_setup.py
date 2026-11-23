@@ -62,7 +62,8 @@ def test_the_repositories_are_shared_and_the_sign_in_runs_over_the_auth_config(e
     assert session.secret_key == SECRET
     notices = object()
     device_auth = identity_setup.build_device_auth(db, env, session_service=session, notification_service=notices,  # type: ignore[arg-type]
-                                                   oauth_redirect_uri="https://cabinet.example.com/auth/callback")
+                                                   oauth_redirect_uri="https://cabinet.example.com/auth/callback",
+                                                       cipher=None, digest_key=b"digest-1")  # type: ignore[arg-type]
     device_sessions = device_auth.sessions
     assert device_sessions._sessions is session and device_sessions._notifications is notices
 
@@ -95,7 +96,8 @@ def test_the_device_sessions_and_passkeys_share_one_store_and_the_rp_is_the_call
     identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
 
     auth = build_device_auth(db, env, session_service=identity.session_service, notification_service="notices",  # type: ignore[arg-type]
-                             oauth_redirect_uri="https://cabinet.example.com/auth/callback")
+                             oauth_redirect_uri="https://cabinet.example.com/auth/callback", cipher=None,  # type: ignore[arg-type]
+                             digest_key=b"d")
 
     sessions, passkeys = auth.sessions, auth.passkeys
     assert passkeys._repo is sessions._repo
@@ -123,3 +125,24 @@ def test_the_relying_party_is_the_callbacks_host_and_origin(uri, rp):
 def test_a_callback_without_scheme_or_host_refuses_the_start(uri):
     with pytest.raises(ValueError, match="no scheme or host"):
         passkey_relying_party(uri)
+
+
+def test_the_kill_switch_reaches_the_pin_reset_and_the_mcp_grants_and_the_pin_can_lock(env):
+    db = EvalDb()
+    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+    cipher = object()
+
+    auth = build_device_auth(db, env, session_service=identity.session_service, notification_service="notices",  # type: ignore[arg-type]
+                             oauth_redirect_uri="https://cabinet.example.com/auth/callback", cipher=cipher,  # type: ignore[arg-type]
+                             digest_key=b"digest-1")
+
+    sessions, pin, lock = auth.sessions, auth.facts_pin, auth.account_lock
+    assert sessions._repo._facts_pins.name == env.facts_pin_collection
+    grants = sessions._revoke_connector_grants.__self__
+    assert (grants._refresh.name, grants._cipher, grants._digest_key) == (
+        env.mcp_refresh_tokens_collection, cipher, b"digest-1")
+    assert (pin._repo._col.name, pin._repo._users.name) == (env.facts_pin_collection, env.domain_users_collection)
+    assert (pin._sessions, pin._lock, pin._notifications, pin._digest_key) == (sessions._repo, lock, "notices",
+                                                                              b"digest-1")
+    assert (lock._device_sessions, lock._notifications) == (sessions, "notices")
+    assert env.facts_pin_collection.endswith("facts_pin_v1")

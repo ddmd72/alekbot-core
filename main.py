@@ -18,6 +18,7 @@ from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.web.cabinet_auth import CabinetSessionVerifier
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.device_auth_app import create_device_auth_blueprint
+from src.web.facts_pin_app import create_facts_pin_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
@@ -140,6 +141,7 @@ async def main():
             drive_connections=app.container.drive_connection_service,
             drive_notes=app.container.drive_note_service,
             drive_disconnect=app.drive_disconnect_service,
+            facts_pin=app.facts_pin,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
@@ -183,6 +185,8 @@ async def main():
                 main_app.register_blueprint(cabinet_bp)
                 main_app.register_blueprint(create_device_auth_blueprint(
                     cabinet_sessions, app.device_sessions, passkeys=app.passkeys, auth_service=app.auth_service))
+                main_app.register_blueprint(create_facts_pin_blueprint(
+                    cabinet_sessions, app.facts_pin, app.device_sessions))
                 main_app.register_blueprint(ms_tasks_webhook_bp)
 
                 # /f/<token> capability route for private file access
@@ -349,6 +353,7 @@ async def main():
                         voice_mcp_tokens=voice_mcp_tokens,
                         voice_mcp_minting=voice_mcp_tools_enabled(),
                         resume_service=build_voice_resume_service(store=voice_ephemeral_store),
+                        inactive_users=app.inactive_users,   # the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
                     )
                 )
                 logger.info(
@@ -481,6 +486,7 @@ async def main():
                 main_app.register_blueprint(create_main_service_blueprint(
                     worker_handler, _worker_oidc_gate,
                     static_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static"),
+                    inactive_users=app.inactive_users,   # the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
                 ))
 
                 # ====================================================================
@@ -531,7 +537,8 @@ async def main():
                         logger.warning("🤖 Bot will continue without the drive connector")
                     else:
                         drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
-                                                            tools=drive_tools, voice_tokens=voice_mcp_tokens)
+                                                            tools=drive_tools, voice_tokens=voice_mcp_tokens,
+                                                            inactive_users=mcp_components.inactive_users)
                         if drive_mcp is not None:
                             main_app.register_blueprint(create_drive_link_blueprint(drive_links))
                 except Exception as mcp_err:

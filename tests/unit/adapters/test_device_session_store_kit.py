@@ -11,10 +11,12 @@ from pathlib import Path
 import pytest
 
 from src.adapters.firestore_device_session_repo import FirestoreDeviceSessionRepository
+from src.adapters.firestore_facts_pin_repo import FirestoreFactsPinRepository
 from src.domain.device_session import DeviceSession, SessionAuthKind, SessionRevokeReason
 from src.domain.device_session_policy import DeviceSessionPolicy as P, RefreshOutcome, refresh_secret_hash
 from src.domain.passkey import Passkey, PasskeyKind
 from tests.support.device_session_repo import FakeDeviceSessionRepository
+from tests.support.facts_pin_repo import FakeFactsPinRepository
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 SESSIONS = "eval_auth_device_sessions_v1"
@@ -355,3 +357,84 @@ class TestPasskeyAssertion:
         repo, _ = firestore_repo(kit_db)
         await repo.record_passkey_assertion("sid-unknown-0123456789", "user-alex", T0)
         assert "Passkey assertion not recorded" in caplog.text and "sid-unknown-0123456789" not in caplog.text
+
+
+# ---------------------------------------------------------------------------------------------- the facts PIN (§7.6, §7.7)
+
+PINS, USERS = "eval_facts_pin_v1", "eval_domain_users_v2"
+
+
+class LinkedStores:
+    """The device store and the facts PIN store on one backend, linked as production links them."""
+
+    def __init__(self, kind, kit_db) -> None:
+        if kind == "firestore":
+            db = kit_db(indexes=INDEXES_FILE, groups={SESSIONS: "development_auth_device_sessions_v1",
+                                                      PASSKEYS: "development_auth_passkeys_v1",
+                                                      PINS: "development_facts_pin_v1",
+                                                      USERS: "development_domain_users_v2"})
+            self.pins = FirestoreFactsPinRepository(db, PINS, USERS)
+            self.repo = FirestoreDeviceSessionRepository(db, SESSIONS, PASSKEYS, facts_pin_collection=PINS)
+        else:
+            self.pins = FakeFactsPinRepository()
+            self.repo = FakeDeviceSessionRepository(facts_pins=self.pins)
+
+
+@pytest.fixture(params=["firestore", "fake"])
+def linked(request, kit_db):
+    return LinkedStores(request.param, kit_db)
+
+
+class TestFactsPinRules:
+    async def test_a_session_round_trips_with_its_facts_unlock(self, repo):
+        stored = session(facts_unlocked_until=T0 + timedelta(minutes=15, microseconds=3))
+        assert await repo.create(stored) is True
+        assert await repo.get("sid-1") == stored
+
+    async def test_unlock_and_relock_write_only_the_unlock(self, repo):
+        await repo.create(session())
+        until = T0 + timedelta(minutes=20)
+        assert await repo.set_facts_unlock("sid-1", until, T0 + timedelta(minutes=5)) is True
+        assert await repo.get("sid-1") == session(facts_unlocked_until=until)
+        assert await repo.set_facts_unlock("sid-1", None, T0 + timedelta(minutes=6)) is True
+        assert await repo.get("sid-1") == session()
+
+    @pytest.mark.parametrize("stored, now", [
+        (session(revoked_at=T0, revoke_reason=LOGOUT), T0 + timedelta(minutes=1)),
+        (session(), T0 + P.IDLE_TTL),
+    ], ids=["revoked", "idle"])
+    async def test_a_dead_session_is_never_unlocked(self, repo, stored, now):
+        await repo.create(stored)
+        assert await repo.set_facts_unlock("sid-1", now + timedelta(minutes=15), now) is False
+        assert await repo.get("sid-1") == stored
+        assert await repo.set_facts_unlock("sid-unknown", now, now) is False
+        assert await repo.get("sid-unknown") is None
+
+    async def test_revoke_all_cancels_the_users_pending_reset_and_keeps_the_codes(self, linked):
+        await linked.pins.set_codes("user-alex", "pin-digest", "duress-digest", T0, replace=False)
+        await linked.pins.request_reset("user-alex", T0)
+        await linked.pins.set_codes("user-other", "pin-other", "duress-other", T0, replace=False)
+        await linked.pins.request_reset("user-other", T0)
+        await linked.repo.create(session("sid-a"))
+        now = T0 + timedelta(hours=1)
+        assert await linked.repo.revoke_all("user-alex", KILL, now) == 1
+        alex = await linked.pins.get("user-alex")
+        assert (alex.reset_requested_at, alex.reset_due_at, alex.updated_at) == (None, None, now)
+        assert (alex.pin_digest, alex.duress_digest) == ("pin-digest", "duress-digest")
+        assert (await linked.pins.get("user-other")).reset_requested_at == T0
+        assert (await linked.repo.get("sid-a")).revoked_at == now
+
+    async def test_revoke_all_without_a_pending_reset_or_a_pin_touches_no_pin_record(self, linked):
+        await linked.pins.set_codes("user-alex", "pin-digest", "duress-digest", T0, replace=False)
+        before = await linked.pins.get("user-alex")
+        assert await linked.repo.revoke_all("user-alex", KILL, T0 + timedelta(hours=1)) == 0
+        assert await linked.pins.get("user-alex") == before
+        assert await linked.repo.revoke_all("user-nobody", KILL, T0) == 0
+        assert await linked.pins.get("user-nobody") is None
+
+    async def test_the_unlock_field_is_written_only_once_set(self, kit_db):
+        repo, db = firestore_repo(kit_db)
+        await repo.create(session())
+        assert "facts_unlocked_until" not in db.collection(SESSIONS).docs["sid-1"]
+        await repo.set_facts_unlock("sid-1", T0 + timedelta(minutes=15), T0)
+        assert db.collection(SESSIONS).docs["sid-1"]["facts_unlocked_until"] == T0 + timedelta(minutes=15)

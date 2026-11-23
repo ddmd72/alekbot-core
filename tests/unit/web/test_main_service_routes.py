@@ -134,3 +134,58 @@ async def test_favicon_is_the_logo_png():
     assert response.status_code == 200
     assert response.mimetype == "image/png"
     assert (await response.get_data()).startswith(b"\x89PNG")
+
+
+# ------------------------------------------------------------------ the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
+
+async def _locked_client(worker: _FakeWorker):
+    from src.services.inactive_user_check import InactiveUserCheck
+    from tests.support.locked_user import AlexStore
+    store = await AlexStore().seed()
+    await store.lock()
+    app = Quart(__name__)
+    app.register_blueprint(create_main_service_blueprint(worker, _Gate(True), static_dir=STATIC_DIR,
+                                                         inactive_users=InactiveUserCheck(store.users)))
+    return app.test_client(), store
+
+
+@pytest.mark.parametrize("payload", [
+    {"task_type": "execute_reminder", "user_id": "user-alex", "note_id": "n1"},
+    {"task_type": "agent_execution", "context": {"user_id": "user-alex", "account_id": "acct-alex"}},
+], ids=["user_id", "context.user_id"])
+async def test_a_task_for_a_locked_user_is_acknowledged_as_skipped_and_never_runs(payload):
+    worker = _FakeWorker()
+    client, _ = await _locked_client(worker)
+
+    response = await client.post("/worker", json=payload)
+
+    assert response.status_code == 200
+    assert await response.get_json() == {"skipped": "user_inactive"}
+    assert worker.calls == []
+
+
+@pytest.mark.parametrize("payload", [
+    {"task_type": "fact_review", "user_id": "user-other"},
+    {"task_type": "agent_execution", "context": {"user_id": "user-nobody"}},
+    {"task_type": "fire_due_reminders"},
+    {"task_type": "agent_execution", "context": "not a dict", "user_id": ""},
+    {"event": {"type": "message"}, "session_id": "s1"},
+], ids=["active_user", "unknown_user", "no_user", "malformed_user", "queued_slack_event"])
+async def test_a_task_for_anyone_else_still_runs(payload):
+    worker = _FakeWorker()
+    client, _ = await _locked_client(worker)
+
+    response = await client.post("/worker", json=payload)
+
+    assert response.status_code == 200 and [call[0] for call in worker.calls] == [payload]
+
+
+async def test_a_failed_user_read_is_a_500_and_the_task_does_not_run():
+    from unittest.mock import AsyncMock
+    worker = _FakeWorker()
+    client, store = await _locked_client(worker)
+    store.users.get_user = AsyncMock(side_effect=RuntimeError("store down"))
+
+    response = await client.post("/worker", json={"task_type": "fact_review", "user_id": "user-other"})
+
+    assert response.status_code == 500 and worker.calls == []
