@@ -84,6 +84,13 @@ def test_a_failed_step_up_goes_to_google():
     assert out["log"]["assigned"][0].startswith("/auth/login/google?next=")
 
 
+def test_a_failed_step_up_on_remove_goes_to_google_with_the_devices_tab_next():
+    out = _cabinet("removePasskey('k1')", marker="true", step_up="false")
+    assert out["log"]["stepUps"] == 1 and out["log"]["removes"] == 1
+    next_url = parse_qs(urlparse(out["log"]["assigned"][0]).query)["next"][0]
+    assert next_url == "/cabinet?tab=devices&resume=remove_passkey&id=k1"
+
+
 def test_remove_without_marker_goes_to_google_with_the_encoded_id():
     out = _cabinet("removePasskey('a/b+c=')", marker="false")
     assert out["log"]["stepUps"] == 0

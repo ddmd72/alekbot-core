@@ -391,7 +391,9 @@ def test_needs_passkey_reads_only_a_400_passkey_required(status, body, expected)
 
 def test_the_cabinet_steps_up_and_retries_once_when_adding_or_removing_needs_a_passkey():
     html = (STATIC / "cabinet.html").read_text(encoding="utf-8")
-    add = re.search(r"async function addPasskeyHere\(\) \{.*?\n      }\n", html, re.S).group(0)
-    remove = re.search(r"async function removePasskey\(id\) \{.*?\n      }\n", html, re.S).group(0)
-    assert 'outcome === "passkey_required"' in add and "ensurePasskey()" in add and add.count("addPasskey()") == 2
-    assert "needsPasskey(" in remove and "ensurePasskey()" in remove and remove.count("authFetch(") == 2
+    add = re.search(r"async function addPasskeyHere\(resumed\) \{.*?\n      }\n", html, re.S).group(0)
+    remove = re.search(r"async function removePasskey\(id, resumed\) \{.*?\n      }\n", html, re.S).group(0)
+    step_up = re.search(r"async function stepUpIfLocal\(\) \{.*?\n      }\n", html, re.S).group(0)
+    assert "ensurePasskey()" in step_up
+    assert 'outcome === "passkey_required"' in add and "stepUpIfLocal()" in add and add.count("addPasskey()") == 2
+    assert "needsPasskey(" in remove and "stepUpIfLocal()" in remove and remove.count("authFetch(") == 2
