@@ -247,3 +247,26 @@ def test_an_owner_also_loads_the_team_codes_in_settings_and_leaving_memory_reloc
       navigate("memory"); calls.length = 0; navigate("team");
       process.stdout.write(JSON.stringify(calls));""")
     assert out[0] == "relockFacts" and out[-1] == "loadCodes"
+
+
+_SECTIONS_JS = (STATIC / "cabinet-sections.js").read_text(encoding="utf-8")
+
+
+@_node
+@pytest.mark.parametrize(("active", "reloaded"), [("settings", True), ("home", False), ("memory", False)])
+def test_adding_a_passkey_refreshes_the_list_while_settings_is_open(active, reloaded):
+    add = re.search(r"\n(      async function addPasskeyHere\(\) \{.*?\n      \})\n", _SECTIONS_JS, re.S).group(1)
+    script = f"""
+      const calls = [];
+      let _activeSection = {json.dumps(active)};
+      const addPasskey = async () => "added";
+      const window = {{ alekSession: {{ ensurePasskey: async () => true }} }};
+      const document = {{ getElementById: () => null }};
+      const t = (k) => k, showToast = () => {{}}, rememberPasskeyOffer = () => {{}};
+      const loadPasskeys = () => calls.push("loadPasskeys");
+      {add}
+      addPasskeyHere().then((outcome) => process.stdout.write(JSON.stringify({{outcome, calls}})));
+    """
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"outcome": "added", "calls": ["loadPasskeys"] if reloaded else []}

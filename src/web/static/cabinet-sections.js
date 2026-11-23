@@ -166,7 +166,7 @@
         if (outcome === "added") showToast(t("passkeys.added"));
         else if (outcome === "exists") showToast(t("passkeys.exists"));
         else if (outcome === "failed") showToast(t("passkeys.failed"), "error");
-        if (document.getElementById("section-devices").classList.contains("active")) loadPasskeys();
+        if (_activeSection === "settings") loadPasskeys();   // the passkey list sits in Settings
         return outcome;
       }
 
