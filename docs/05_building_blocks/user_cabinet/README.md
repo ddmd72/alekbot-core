@@ -8,6 +8,7 @@ covers:
   src/web/static/cabinet-strings.js
   src/web/static/cabinet-shell.js
   src/web/static/cabinet-sections.js
+  src/web/static/cabinet-settings.js
   src/web/static/cabinet-home.js
 -->
 # User Cabinet
@@ -18,8 +19,11 @@ The Cabinet is the owner's web page for what chat is a poor place for: seeing an
 connecting and disconnecting integrations (Gmail, drives, Microsoft To Do), and setting personal preferences (language,
 timezone, schedules, reminders, team invites). It is one page served at `/cabinet`: a shell
 (`src/web/static/cabinet.html`: header, menu, section markup) and its assets (`cabinet.css`, `cabinet-strings.js`,
-`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-home.js`: one stylesheet and plain scripts sharing one global scope, no build), with
-five sections: Home, Memory, Drives, Reminders, Settings ([CABINET_REDESIGN_RFC](../../10_rfcs/CABINET_REDESIGN_RFC.md)).
+`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-settings.js`, `cabinet-home.js`: one stylesheet and plain scripts
+sharing one global scope, loaded in that order, no build), with five sections: Home, Memory, Drives, Reminders, Settings
+([CABINET_REDESIGN_RFC](../../10_rfcs/CABINET_REDESIGN_RFC.md)). Settings (`cabinet-settings.js`, RFC §5.1) is groups of
+collapsed rows (Account, Profile, Connections, Security, Voice, More), one row open at a time; a switch or a select
+saves at once, City alone has a Save button.
 Behind it is one Quart blueprint of JSON routes behind the JWT session that the OAuth sign-in set.
 
 What it is not: it is not a second way to write memory (a correction is a message the user sends in chat, see Flows),
@@ -103,6 +107,9 @@ per question; one failure shows as `"error"` for that question and does not stop
 
 ### Integrations
 
+Gmail, Microsoft To Do and the Telegram/Slack/phone links are rows of Settings → Connections; the drive card is the
+Drives section, which the Drives row opens.
+
 1. `GET /api/connectors` tells the page which connect buttons to draw; the connect link is `/auth/connect/<kind>`
    (OAuth block). The Cabinet holds no list of kinds.
 2. Gmail: `/api/gmail/status` reports the connection, the index frontiers and the running job. `/api/gmail/index`
@@ -121,7 +128,8 @@ per question; one failure shows as `"error"` for that question and does not stop
 
 ### Settings
 
-- Language (`/api/user/language`): `LanguagePreferenceService.set_preference` writes the config, swaps the user's
+- Language (`/api/user/language`): the Interface language and Reply language rows both send the pair
+  (`preferred_language`, `agent_mirror`). `LanguagePreferenceService.set_preference` writes the config, swaps the user's
   `LANG_*` prompt-override token, invalidates the prompt cache and notifies the bot, so the change is seen in chat.
   A code that is not a supported language (or not a string) is refused with 400 and nothing is stored.
   Details: [localization_system](../localization_system/README.md). A POST without `agent_mirror` means mirror.
@@ -135,9 +143,9 @@ per question; one failure shows as `"error"` for that question and does not stop
 
 ### Devices and passkeys
 
-The Devices tab (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5) lists the live sessions with
-"Log out", "Log out all other devices" and "Log out all devices", and under them the user's live passkeys
-(`GET /api/user/passkeys`), each with "Remove". "Add Face ID for faster sign-in" runs the enrolment
+Settings → Security (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5): the Devices row lists the
+live sessions with "Log out", "Log out all other devices" and "Log out all devices"; the Face ID and passkeys row lists
+the user's live passkeys (`GET /api/user/passkeys`), each with "Remove"; "If a phone is lost" holds the steps. "Add Face ID for faster sign-in" runs the enrolment
 (`/api/user/passkeys/register/options`, then `/register/verify`) from this session, through `session.js`
 `addPasskey`; the user is loaded with `resume_session`, so an inactive or de-listed user cannot add one. After a Google
 sign-in (`offer` in the list answer) the page shows a banner offering the same, once: a dismissal or an attempt is
@@ -146,8 +154,8 @@ When the user already has a passkey, adding or removing one needs a fresh proof 
 a Google sign-in under 5 minutes old. A browser that holds a local passkey marker (`alek.hasPasskey`, set on a passkey registration, sign-in or step-up)
 runs the step-up and retries once; any other browser, or a failed step-up, goes straight to
 `/auth/login/google?next=/cabinet?tab=devices&resume=add_passkey` (`remove_passkey&id=` for a removal), so the empty
-iOS passkey sheet never opens. On return the Cabinet consumes the flag and starts the change itself, showing the Add
-button with a hint if the browser refuses WebAuthn without a tap.
+iOS passkey sheet never opens. The return opens the passkeys row; the Cabinet consumes the flag and starts the change
+itself, showing the Add button with a hint in that row if the browser refuses WebAuthn without a tap.
 Labels and platform hints are User-Agent words, escaped in the page.
 
 ### The facts PIN
@@ -161,8 +169,12 @@ page relocks it (`sendBeacon` to `/facts-pin/relock`; the 15 minutes are the gua
 `src/web/facts_pin_app.py` behind the Cabinet gate: status, `set` (PIN and duress code, each typed twice), `change` and
 `remove` (both need the current PIN), `reset` and `reset/cancel` (a forgotten PIN: 24 hours, a Google sign-in under five
 minutes old). A wrong code is 400 `wrong_code` with `attempts_left`; the duress code and the fifth wrong code in a row
-are both 423 `account_locked`. Never a 401 (`authFetch` would re-send), never a code in an answer or a log. The settings
-card sets, changes and removes the PIN and offers "Log out all other devices" after a change or a reset request. A new
+are both 423 `account_locked`. Never a 401 (`authFetch` would re-send), never a code in an answer or a log. The Memory PIN
+row of Settings → Security (CABINET_REDESIGN_RFC §5.3) shows one state at a time: set in two steps (PIN, then the duress
+code), change in three (current PIN, new PIN, duress code), remove, forgot → pending → cancel. A wrong current PIN goes
+back to the first step with the attempts left and the typed codes cleared; the page checks only the codes' shape (four
+digits, typed alike, duress unlike the PIN) before a request, the server keeps every rule. It offers "Log out all other
+devices" after a change or a reset request. A new
 facts route without the decorator fails `test_facts_pin_app.py`.
 
 ### Platforms, invites, team

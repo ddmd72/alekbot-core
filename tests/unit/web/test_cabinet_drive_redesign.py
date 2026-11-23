@@ -455,30 +455,6 @@ def test_the_picker_lives_outside_the_card_and_is_a_modal_dialog():
     assert re.search(r"\.dv-overlay \{ position: fixed;", _HTML)
 
 
-# -------------------------------------------------------------------------------- the Integrations layout
-
-def test_the_drive_card_is_full_width_in_drives_and_the_tiles_grid_sits_in_settings():
-    # CABINET_REDESIGN_RFC §4: Integrations -> Drives (the drive card) and Settings (the platform, Gmail, To Do tiles).
-    drives = _between('<section id="section-drives"', "</section>")
-    assert 'id="drive-container"' in drives and "integration-bento" not in drives
-    assert _HTML.count('class="integration-bento"') == 1
-    settings = _between('<section id="section-settings"', '<section id="section-reminders"')
-    grid = settings[settings.index('class="integration-bento"'):settings.index('id="devices-title"')]
-    for tile in ('id="platforms-container"', 'id="gmail-container"', 'id="tasks-container"'):
-        assert tile in grid, tile
-    assert 'id="drive-container"' not in settings
-
-
-def test_the_tiles_are_compact_two_columns_and_do_not_stretch():
-    css = _between("/* ─── Integrations Section", "/* Long privacy text")
-    assert re.search(r"\.integration-bento \{[^}]*align-items: start;", css, re.S)
-    assert "grid-template-columns: 1fr;" in css and "repeat(2, minmax(0, 1fr))" in css and "min-width: 768px" in css
-    card = re.search(r"\.integration-card \{(.*?)\}", css, re.S).group(1)
-    assert "padding: 20px;" in card and "text-align: left;" in card and "align-items: flex-start;" in card
-    assert "padding: 40px" not in css and "text-align: center" not in css
-    assert "display: contents;" in css.split(".integration-contents")[1]
-
-
 # ---------------------------------------------------------------------------------------------- the i18n
 
 def _code_keys() -> set:
