@@ -9,6 +9,7 @@ covers:
   src/web/static/cabinet-shell.js
   src/web/static/cabinet-sections.js
   src/web/static/cabinet-settings.js
+  src/web/static/cabinet-home.js
   src/web/static/cabinet-memory.js
 -->
 # User Cabinet
@@ -19,8 +20,9 @@ The Cabinet is the owner's web page for what chat is a poor place for: seeing an
 connecting and disconnecting integrations (Gmail, drives, Microsoft To Do), and setting personal preferences (language,
 timezone, schedules, reminders, team invites). It is one page served at `/cabinet`: a shell
 (`src/web/static/cabinet.html`: header, menu, section markup) and its assets (`cabinet.css`, `cabinet-strings.js`,
-`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-settings.js`, `cabinet-memory.js`: one stylesheet and plain scripts
-sharing one global scope, loaded in that order, no build), with five sections: Home, Memory, Drives, Reminders, Settings
+`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-settings.js`, `cabinet-home.js`, `cabinet-memory.js`: one
+stylesheet and plain scripts sharing one global scope, loaded in that order, no build), with five sections: Home,
+Memory, Drives, Reminders, Settings
 ([CABINET_REDESIGN_RFC](../../10_rfcs/CABINET_REDESIGN_RFC.md)). Settings (`cabinet-settings.js`, RFC §5.1) is groups of
 collapsed rows (Account, Profile, Connections, Security, Voice, More), one row open at a time; a switch or a select
 saves at once, City alone has a Save button.
@@ -53,7 +55,13 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
    cached page outlived deploys), and the page's assets at `/cabinet/assets/<name>`, only the names of `CABINET_ASSETS`
    (anything else is `404`; the main app has no static folder), with the same `no-cache`. Neither needs a session;
    every `/api/...` call does. The open section is kept in `?tab=` (old values `integrations`, `devices`, `team` are
-   aliases; a connect return opens the place of its connector).
+   aliases; a connect return opens the place of its connector). Home is the default section, on a phone and a computer
+   alike (no or an unknown `tab`); a bare `/cabinet` no longer redirects a phone to the call page (the Home call
+   button is the way there).
+   Home's tiles each show one status line (`cabinet-home.js`), read in parallel from routes the page already uses:
+   Memory from `GET /api/user/facts-pin` (and `facts/review-queue` only when the facts are open, never a fact),
+   Drives from `GET /api/drive/connections`, Reminders from `GET /api/user/reminders` and `/api/user/timezone`,
+   Settings from `GET /api/gmail/status` and `/api/tasks/microsoft/status`. A failed read leaves a neutral line.
 2. Every API route is wrapped by `src/web/cabinet_auth.py::make_auth_required`: a Bearer header or the `__Host-access`
    cookie goes to `CabinetSessionVerifier.identify` (the JWT with its `sid`, then `DeviceSessionService.is_live`);
    `g.user_id`, `g.account_id`, `g.role` and `g.session_id` come only from a verified token of a live session. A bad,

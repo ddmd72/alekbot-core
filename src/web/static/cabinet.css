@@ -1696,6 +1696,16 @@
         cursor: pointer;
       }
 
+      /* ─── Home status lines (CABINET_REDESIGN_RFC §5.0) ──── */
+      .c-tile-status {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        min-height: 1.35em;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+      }
       /* ─── Memory (CABINET_REDESIGN_RFC §5.2) ──────────────────────────────────────────────────────────
          Every child of the section stays a direct child (the PIN gate's rule above hides them while it is locked),
          so the one 760 px column is set on each of them. The select with counts (`c-pick*`) is the brand sheet's

@@ -1,5 +1,5 @@
 /* The Cabinet shell (CABINET_REDESIGN_RFC §4, §6): app state, i18n plumbing, navigation, addresses, init.
-   Loaded after cabinet-strings.js and before cabinet-sections.js; the three plain scripts share one global
+   Loaded after cabinet-strings.js and before cabinet-sections.js and cabinet-home.js; the plain scripts share one global
    scope, so a top-level statement here may not call a function of a later file at load time.
    The indentation is the old inline script's, kept on purpose: the text tests find functions by it. */
       const { authFetch, addPasskey } = window.alekSession;
@@ -84,6 +84,7 @@
           loadTasksStatus();
         }
         if (changed && active && active.id === "section-drives") loadDriveStatus();
+        if (changed && active && active.id === "section-home") loadHome();
         if (active && active.id === "section-memory" && factDomainsLang !== _currentLang) {
           loadFactDomains().then(() => {
             if (factsMode !== "idle") renderMemoryControls();
@@ -117,8 +118,8 @@
       // Old ?tab= values keep working: the call pages' "← Cabinet" link is ?tab=integrations, and bookmarks hold the
       // rest. Their content now sits in these sections.
       const SECTION_ALIASES = { integrations: "drives", devices: "settings", team: "settings" };
-      // Drives, today's Integrations through its alias, until Home's status lines land (RFC §8 step 2).
-      const DEFAULT_SECTION = "drives";
+      // Home on a phone and a computer alike (RFC §4): no tab and an unknown tab open it.
+      const DEFAULT_SECTION = "home";
 
       // A section name, an old alias or anything else, as the section to open.
       function resolveSection(name) {
@@ -191,6 +192,7 @@
         _activeSection = name;
         writeAddress(name);
 
+        if (name === "home") loadHome();
         if (name === "memory") enterMemory();
         if (name === "drives") loadDriveStatus();
         if (name === "reminders") loadReminders();
@@ -212,20 +214,7 @@
       }
 
       /* ── Init ────────────────────────────────────────── */
-      // On a phone the Cabinet's front door is the call screen. Only a bare /cabinet redirects:
-      // ?tab= (the call screen's back link) and OAuth/invite return params stay here.
-      function redirectPhoneToCall() {
-        const qs = new URLSearchParams(window.location.search);
-        const isPhone = window.matchMedia("(max-width: 767px) and (pointer: coarse)").matches;
-        if (isPhone && [...qs.keys()].length === 0) {
-          window.location.replace("/cabinet/call");
-          return true;
-        }
-        return false;
-      }
-
       async function init() {
-        if (redirectPhoneToCall()) return;
         try {
           const res = await authFetch(`${API}/auth/me`, { credentials: "include" });
           if (!res.ok) throw new Error("Not authenticated");
