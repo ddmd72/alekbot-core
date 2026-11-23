@@ -11,7 +11,7 @@ import pytest
 from tests.unit.web.cabinet_source import cabinet_source
 
 _HTML = cabinet_source()
-_KEYS = ["nav.devices", "devices.title", "devices.subtitle", "devices.current", "devices.created", "devices.last_used",
+_KEYS = ["devices.title", "devices.subtitle", "devices.current", "devices.created", "devices.last_used",
          "devices.kind_google", "devices.logout", "devices.logout_others", "devices.logout_all", "devices.confirm_all",
          "devices.confirm_others", "devices.empty", "devices.failed", "devices.done", "devices.lost_title",
          "devices.lost_intro", "devices.lost_1", "devices.lost_2", "devices.lost_3"]
