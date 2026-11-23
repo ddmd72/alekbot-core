@@ -1672,3 +1672,57 @@
         box-shadow: var(--shadow-sm);
         font-weight: 600;
       }
+
+      /* ── Reminders (CABINET_REDESIGN_RFC §5.5) — rows, and the one form placed in a row or above the list ── */
+      #section-reminders [hidden] {
+        display: none !important;
+      }
+      .c-rem-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--c-s3);
+      }
+      .c-rem-head .c-title {
+        margin: 0;
+      }
+      .c-rem-note {
+        padding: var(--c-s4);
+        font-size: 15px;
+        color: var(--c-text-2);
+      }
+      .c-rem-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .c-rem-sub {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px var(--c-s3);
+        font-size: 14px;
+        color: var(--c-text-2);
+      }
+      .c-rem-repeat {
+        overflow-wrap: anywhere;
+      }
+      .c-rem.editing .c-rem-view {
+        display: none;
+      }
+      .c-rem-new .c-rem-form {
+        padding-top: var(--c-s4);
+      }
+      .c-rem-form .c-input {
+        max-width: none;
+      }
+      .c-rem-form textarea.c-input {
+        resize: vertical;
+      }
+      .c-rem-pair {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--c-s3);
+      }
