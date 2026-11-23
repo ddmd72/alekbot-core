@@ -132,6 +132,11 @@ per question; one failure shows as `"error"` for that question and does not stop
 Gmail, Microsoft To Do and the Telegram/Slack/phone links are rows of Settings → Connections; the drive card is the
 Drives section, which the Drives row opens.
 
+The Drives section draws a loading line while its first read runs (`cabinet-sections.js::loadDriveStatus`; the
+connections, deep-research-copy and connectors reads run in parallel) and, when that read fails, an error line with a
+Retry button. Once the card is drawn, a re-open or the 2-minute poll keeps it as it is, whatever the read does. The
+call pages (`call.html`, `call_modes.html`) link back to `/cabinet` (Home), not to a section.
+
 1. `GET /api/connectors` tells the page which connect buttons to draw; the connect link is `/auth/connect/<kind>`
    (OAuth block). The Cabinet holds no list of kinds.
 2. Gmail: `/api/gmail/status` reports the connection, the index frontiers and the running job. `/api/gmail/index`

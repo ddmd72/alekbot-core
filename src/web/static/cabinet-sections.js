@@ -59,15 +59,31 @@
       // Shared escaper alias (the reminders and the connection cards use it); the reminders logic is cabinet-reminders.js.
       function esc(s) { return escapeHtml(s); }
 
+      // Nothing rendered yet (the first load, or a retry): one neutral line while it runs, an error with Retry when it
+      // fails. Once the card is drawn a re-open or the poll keeps it as it is, whatever the read does.
+      function showDriveLoading() {
+        document.getElementById("drive-container").innerHTML = `<p class="c-hint" role="status">${t("drives.loading")}</p>`;
+      }
+      function showDriveLoadError() {
+        document.getElementById("drive-container").innerHTML = `
+          <p class="c-mem-error" role="alert">${t("drives.load_failed")}</p>
+          <div class="c-btns"><button type="button" class="c-btn c-sec" id="drive-retry" onclick="loadDriveStatus()">${t("drives.retry")}</button></div>`;
+      }
+
       async function loadDriveStatus() {
+        const firstLoad = _driveStatusSnapshot === null;
+        if (firstLoad) showDriveLoading();
         try {
-          const res = await authFetch(`${API}/api/drive/connections`, {
-            credentials: "include",
-          });
+          // The two small reads run beside the connections read, not after it.
+          const [res, drCopy, connectors] = await Promise.all([
+            authFetch(`${API}/api/drive/connections`, { credentials: "include" }),
+            loadDeepResearchCopy(),
+            loadConnectors(),
+          ]);
           if (!res.ok) throw new Error();
           const data = await res.json();
-          data.dr_copy = await loadDeepResearchCopy();
-          data.add_kinds = (await loadConnectors()).filter((c) => c.integration === "drive");
+          data.dr_copy = drCopy;
+          data.add_kinds = connectors.filter((c) => c.integration === "drive");
           for (const row of data.connections) {
             row.reconnect_href = row.reconnect
               ? `/auth/connect/${encodeURIComponent(row.kind)}?credential=${encodeURIComponent(row.reconnect.credential_id)}`
@@ -92,7 +108,9 @@
             renderDriveStatus(data);
           }
           scheduleDriveStatusPoll(!!(data.indexing && data.indexing.building));
-        } catch {}
+        } catch {
+          if (_driveStatusSnapshot === null) showDriveLoadError();
+        }
       }
 
       // While the first build runs the card's numbers move: re-poll every 2 min, only while the card shows

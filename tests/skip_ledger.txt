@@ -269,6 +269,7 @@ tests/unit/web/test_cabinet_drive_redesign.py :: skipif :: shutil.which('node') 
 tests/unit/web/test_cabinet_drive_row_collapsed.py :: skipif :: shutil.which('node') is None :: x4  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_drive_scope_saves_at_once.py :: skipif :: shutil.which('node') is None :: x7  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_drive_unreadable_list.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_cabinet_drives_loading.py :: skipif :: shutil.which('node') is None :: x4  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_escape_html.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_facts_pin_ui.py :: skipif :: shutil.which('node') is None :: x16  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_home.py :: skipif :: shutil.which('node') is None :: x14  # ci: node is on the ubuntu-latest runner image
