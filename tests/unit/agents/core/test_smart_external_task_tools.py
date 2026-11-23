@@ -77,6 +77,16 @@ async def test_when_the_service_refuses_the_worker_list_no_tool_is_offered(world
     assert declared(llm) == set()
 
 
+async def test_when_the_worker_list_fails_no_tool_is_offered_and_the_turn_still_answers(world, monkeypatch):
+    async def broken(user_id):
+        raise RuntimeError("store unavailable")
+
+    monkeypatch.setattr(world.workers, "list_workers", broken)
+    llm, response = await run(world, [text("ok")])
+    assert declared(llm) == set()
+    assert response.status == AgentStatus.SUCCESS
+
+
 async def test_the_worker_enum_is_this_executions_registered_labels():
     world = await ExternalTaskWorld().seed(("research", "calendar-watch"))
     llm, _ = await run(world, [text("ok")])
