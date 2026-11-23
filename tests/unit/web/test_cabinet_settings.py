@@ -130,8 +130,12 @@ _OPERATIONS = {
             ("markup", "onclick=\"pinShow('remove')\""), ("markup", "onclick=\"pinShow('forgot')\"")],
     "devices": [("renderDevices", 'onclick="logoutDevice(this.dataset.sid, !!this.dataset.current)"'),
                 ("markup", 'onclick="logoutOtherDevices()"'), ("markup", 'onclick="logoutAllDevices()"')],
+    # A change without a passkey proof goes to the Google sign-in by itself and resumes in this row (main's #511).
     "passkeys": [("renderPasskeys", 'onclick="removePasskey(this.dataset.id)"'), ("markup", 'onclick="addPasskeyHere()"'),
-                 ("markup", 'id="passkeys-google-proof-link" class="c-btn c-blk" href="/auth/login/google"')],
+                 ("addPasskeyHere", 'window.location.assign(googleProofUrl("add_passkey"))'),
+                 ("removePasskey", 'window.location.assign(googleProofUrl("remove_passkey", id))'),
+                 ("googleProofUrl", '"/auth/login/google?next="'),
+                 ("resumePasskeyFlow", 'getElementById("passkeys-resume-hint")')],
     "lost": [("markup", 'id="devices-lost-1"'), ("markup", 'id="devices-lost-2"'), ("markup", 'id="devices-lost-3"')],
     "team": [("markup", 'onclick="generateTeamInvite()"'), ("generateTeamInvite", 'onclick="copyDeepLink()"'),
              ("loadCodes", 'getElementById("codes-list-container")')],
@@ -139,7 +143,8 @@ _OPERATIONS = {
 # The renderer's target, which must sit in the row's body.
 _TARGETS = {"platformItem": None, "renderPlatforms": "platforms-container", "renderGmailStatus": "gmail-container",
             "triggerGmailIndex": None, "renderServiceStatus": "tasks-container", "renderDevices": "devices-list",
-            "renderPasskeys": "passkeys-list", "generateTeamInvite": "generated-code-container",
+            "renderPasskeys": "passkeys-list", "addPasskeyHere": None, "removePasskey": None, "googleProofUrl": None,
+            "resumePasskeyFlow": "passkeys-resume-hint", "generateTeamInvite": "generated-code-container",
             "loadCodes": "codes-list-container"}
 
 
