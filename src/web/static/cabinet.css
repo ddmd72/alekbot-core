@@ -1695,3 +1695,14 @@
         color: var(--c-text);
         cursor: pointer;
       }
+
+      /* ─── Home status lines (CABINET_REDESIGN_RFC §5.0) ──── */
+      .c-tile-status {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        min-height: 1.35em;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+      }
