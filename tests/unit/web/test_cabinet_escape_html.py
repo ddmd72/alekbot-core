@@ -5,16 +5,16 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
+from tests.unit.web.cabinet_source import cabinet_source
+
 _ATTACK = """<img src=x onerror="alert('&amp;')">"""
 
 
 def _function():
-    match = re.search(r"\n(\s*function escapeHtml\(str\) \{.*?\n\s*\})\n", _HTML.read_text(encoding="utf-8"), re.S)
+    match = re.search(r"\n(\s*function escapeHtml\(str\) \{.*?\n\s*\})\n", cabinet_source(), re.S)
     assert match, "escapeHtml not found"
     return match.group(1)
 

@@ -8,13 +8,13 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from tests.unit.web.call_page_harness import session_prelude
+from tests.unit.web.cabinet_source import cabinet_source
 
-_HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html").read_text(encoding="utf-8")
+_HTML = cabinet_source()
 CONNECTORS = [
     {"kind": "gmail", "integration": "mail", "label": "Gmail"},
     {"kind": "microsoft_todo", "integration": "tasks", "label": "Microsoft To Do"},

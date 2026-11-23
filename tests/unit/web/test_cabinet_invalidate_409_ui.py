@@ -1,13 +1,12 @@
 """Facts S2 · T7: on a 409 the Cabinet shows a short owner-facing message and reloads the list, so a stale row (a merged or
 superseded id) does not stay and answer 409 on every retry (a static check of the page source)."""
 import re
-from pathlib import Path
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
+from tests.unit.web.cabinet_source import cabinet_source
 
 
 def _invalidate_fact_direct():
-    page = _HTML.read_text(encoding="utf-8")
+    page = cabinet_source()
     match = re.search(r"async function invalidateFactDirect\(\) \{.*?\n      \}\n", page, re.S)
     assert match
     return match.group(0)

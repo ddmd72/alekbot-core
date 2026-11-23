@@ -1,13 +1,12 @@
 """The Memory page refreshes in place (a static check of the page source): answering review questions neither flashes the
 skeleton nor drops the owner's ticked rows, and "Load more" appends instead of rebuilding every card."""
 import re
-from pathlib import Path
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
+from tests.unit.web.cabinet_source import cabinet_source
 
 
 def _function(name: str) -> str:
-    match = re.search(rf"\n(\s*(?:async )?function {name}\(.*?\)\s*\{{.*?\n      \}})\n", _HTML.read_text(encoding="utf-8"), re.S)
+    match = re.search(rf"\n(\s*(?:async )?function {name}\(.*?\)\s*\{{.*?\n      \}})\n", cabinet_source(), re.S)
     assert match, name
     return match.group(1)
 
@@ -59,7 +58,7 @@ def test_a_facts_refresh_that_finds_nothing_new_leaves_the_cards_alone():
 
 
 def test_long_question_lists_show_a_page_and_a_show_more_button():
-    page = _HTML.read_text(encoding="utf-8")
+    page = cabinet_source()
     assert "const REVIEW_PAGE = 10;" in page
     assert "reviewQuestions.filter((q) => q.group === group);\n        if (qs.length === 0) return \"\";\n        const shown = qs.slice(0, reviewShown[group]);" in page
     assert "data-show-more" in _function("onReviewClick")
@@ -67,5 +66,5 @@ def test_long_question_lists_show_a_page_and_a_show_more_button():
 
 
 def test_show_more_has_a_text_in_every_language():
-    page = _HTML.read_text(encoding="utf-8")
+    page = cabinet_source()
     assert len(re.findall(r'"questions\.show_more": "[^"]+"', page)) == 4

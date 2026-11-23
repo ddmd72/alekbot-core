@@ -2,7 +2,6 @@
 language, shown only while the user's drive_transcribe_enabled flag is on (and, since T-R34, the kill switch: its own
 cases are test_cabinet_transcribe_switch_gate.py), with no toggle."""
 from unittest.mock import AsyncMock, MagicMock
-from pathlib import Path
 
 import pytest
 from quart import Quart
@@ -15,6 +14,7 @@ from tests.support.cabinet_session_kit import cabinet_session_for
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import cabinet_drive
+from tests.unit.web.cabinet_source import cabinet_source
 
 _AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
@@ -32,7 +32,7 @@ def test_the_sentences_are_translated():
 
 
 def test_disclosure_only_when_enabled():
-    html = Path("src/web/static/cabinet.html").read_text(encoding="utf-8")
+    html = cabinet_source()
     assert 'ix.transcribe_enabled ? " " + t("drive.transcribe_disclosure") : ""' in html
     assert html.count("drive.transcribe_disclosure") == 5   # four dictionaries and the one conditional use
     assert "transcribe_toggle" not in html and "drive-transcribe-toggle" not in html   # no toggle (G24)

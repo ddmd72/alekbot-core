@@ -1,12 +1,11 @@
 """Every drive-index string of the Cabinet exists in en/uk/fr/es (USER_DRIVE_INDEXING_RFC §6, §17.7)."""
 import re
-from pathlib import Path
 
 import pytest
 
 from src.domain.drive_index import ErrorCategory
+from tests.unit.web.cabinet_source import cabinet_source
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 LANGS = ("en", "uk", "fr", "es")
 NEW_KEYS = (
     "drive.index_title", "drive.index_disclosure", "drive.index_off_confirm", "drive.needs_reconnect",
@@ -19,7 +18,7 @@ NEW_KEYS = (
 
 
 def _dicts():
-    html = _HTML.read_text(encoding="utf-8")
+    html = cabinet_source()
     body = re.search(r"const LANG_DICT = \{(.*?)\n      \};", html, re.S).group(1)
     out = {}
     for lang in LANGS:

@@ -2,7 +2,6 @@
 sentence names the `_Transcripts` folder and its Archive (under the existing rule: the user's flag and the switch); the
 indexing disclosure and the opt-out confirmation carry the clause that the folder and the archived transcripts outlive an
 opt-out, shown whenever the user has a mirror root."""
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,10 +15,11 @@ from tests.support.cabinet_session_kit import cabinet_session_for
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import cabinet_drive
+from tests.unit.web.cabinet_source import cabinet_source
 
 _AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
-_HTML = Path("src/web/static/cabinet.html").read_text(encoding="utf-8")
+_HTML = cabinet_source()
 
 
 @pytest.mark.parametrize("lang", LANGS)

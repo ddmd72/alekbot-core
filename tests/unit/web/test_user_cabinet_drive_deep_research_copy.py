@@ -4,7 +4,6 @@ The toggle is the user's explicit consent; default off. GET/PUT /api/drive/deep-
 shape as /api/drive/indexing.
 """
 import re
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,10 +14,10 @@ from src.domain.user import UserBotConfig
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
+from tests.unit.web.cabinet_source import cabinet_source
 
 _AUTH = {"Authorization": "Bearer token"}
 _URL = "/api/drive/deep-research-copy"
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 LANGS = ("en", "uk", "fr", "es")
 KEYS = ("drive.dr_copy_title", "drive.dr_copy_disclosure", "drive.index_disclosure_dr_copy",
         "toast.drive_dr_copy_on", "toast.drive_dr_copy_off", "toast.drive_dr_copy_failed")
@@ -100,7 +99,7 @@ class TestPut:
 
 
 def _dicts():
-    html = _HTML.read_text(encoding="utf-8")
+    html = cabinet_source()
     body = re.search(r"const LANG_DICT = \{(.*?)\n      \};", html, re.S).group(1)
     out = {}
     for lang in LANGS:

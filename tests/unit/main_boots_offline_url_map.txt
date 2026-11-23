@@ -45,6 +45,7 @@ GET /auth/login/google
 GET /auth/me
 GET /auth/session.js
 GET /cabinet
+GET /cabinet/assets/<name>
 GET /cabinet/call
 GET /cabinet/call/icon-<int:size>.png
 GET /cabinet/call/interpreter

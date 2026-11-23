@@ -8,19 +8,23 @@ than the reverse order commits — and the worker's load_job_for_execution()
 alek_debug.log incident 2026-08-31, job 5696f822: enqueue-then-persist
 order produced a real 404, rescued only by Cloud Tasks' automatic retry).
 """
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from quart import Quart
 
 from src.domain.email import IndexingJob
-from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.web.user_cabinet_app import CABINET_ASSETS, create_user_cabinet_blueprint
 from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
 
 _AUTH: dict = {}   # the Bearer header of the app's one signed-in session, set by `_app()`
 
+_STATIC = Path(__file__).resolve().parents[3] / "src" / "web" / "static"
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
 
@@ -112,3 +116,38 @@ class TestCabinetPage:
         resp = await app.test_client().get("/cabinet")
         assert resp.status_code == 200
         assert resp.headers["Cache-Control"] == "no-cache"
+
+
+class TestCabinetAssets:
+    """/cabinet/assets/<name> serves the Cabinet page's own files from an allowlist (CABINET_REDESIGN_RFC §6)."""
+
+    @staticmethod
+    def _client():
+        return _app(email_indexing_service=MagicMock(), email_job_repo=MagicMock(),
+                    task_queue=MagicMock(), oauth_credentials_port=MagicMock()).test_client()
+
+    @pytest.mark.parametrize("name", sorted(CABINET_ASSETS))
+    async def test_an_allowlisted_asset_is_served_with_its_type_and_revalidated(self, name):
+        resp = await self._client().get(f"/cabinet/assets/{name}")
+        assert resp.status_code == 200
+        assert resp.headers["Content-Type"].split(";")[0] == CABINET_ASSETS[name]
+        assert resp.headers["Cache-Control"] == "no-cache"
+        assert await resp.get_data() == (_STATIC / name).read_bytes()
+
+    def test_the_allowlist_is_exactly_what_the_shell_loads(self):
+        shell = (_STATIC / "cabinet.html").read_text(encoding="utf-8")
+        assert set(re.findall(r'(?:href|src)="/cabinet/assets/([^"]+)"', shell)) == set(CABINET_ASSETS)
+
+    @pytest.mark.parametrize("path", [
+        "/cabinet/assets/cabinet.html",            # a static file, but not an asset of the page
+        "/cabinet/assets/session.js",
+        "/cabinet/assets/call.html",
+        "/cabinet/assets/unknown.js",
+        "/cabinet/assets/..%2Fuser_cabinet_app.py",
+        "/cabinet/assets/%2E%2E%2Fuser_cabinet_app.py",
+        "/cabinet/assets/../user_cabinet_app.py",
+        "/cabinet/assets/static/cabinet.css",
+    ])
+    async def test_anything_else_is_not_found(self, path):
+        resp = await self._client().get(path)
+        assert resp.status_code == 404

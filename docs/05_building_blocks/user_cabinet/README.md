@@ -4,6 +4,10 @@ covers:
   src/web/cabinet_auth.py
   src/web/facts_pin_app.py
   src/web/static/cabinet.html
+  src/web/static/cabinet.css
+  src/web/static/cabinet-strings.js
+  src/web/static/cabinet-shell.js
+  src/web/static/cabinet-sections.js
 -->
 # User Cabinet
 
@@ -11,9 +15,11 @@ covers:
 
 The Cabinet is the owner's web page for what chat is a poor place for: seeing and pruning what the bot remembers,
 connecting and disconnecting integrations (Gmail, drives, Microsoft To Do), and setting personal preferences (language,
-timezone, schedules, reminders, team invites). It is one HTML page (`src/web/static/cabinet.html`, vanilla JS, four
-sections: Memory, Integrations, Team, Settings) served at `/cabinet`, and one Quart blueprint of JSON routes behind the
-JWT session that the OAuth sign-in set.
+timezone, schedules, reminders, team invites). It is one page served at `/cabinet`: a shell
+(`src/web/static/cabinet.html`: header, menu, section markup) and its assets (`cabinet.css`, `cabinet-strings.js`,
+`cabinet-shell.js`, `cabinet-sections.js`: one stylesheet and plain scripts sharing one global scope, no build), with
+five sections: Home, Memory, Drives, Reminders, Settings ([CABINET_REDESIGN_RFC](../../10_rfcs/CABINET_REDESIGN_RFC.md)).
+Behind it is one Quart blueprint of JSON routes behind the JWT session that the OAuth sign-in set.
 
 What it is not: it is not a second way to write memory (a correction is a message the user sends in chat, see Flows),
 its routes call services and repositories through ports, and the rules that live in the route closure are listed under Invariants and traps; it it does not own
@@ -39,7 +45,10 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
 ### Page load and session
 
 1. `src/web/user_cabinet_app.py::create_user_cabinet_blueprint` serves `/cabinet` with `Cache-Control: no-cache` (a
-   cached page outlived deploys). The page itself needs no session; every `/api/...` call does.
+   cached page outlived deploys), and the page's assets at `/cabinet/assets/<name>`, only the names of `CABINET_ASSETS`
+   (anything else is `404`; the main app has no static folder), with the same `no-cache`. Neither needs a session;
+   every `/api/...` call does. The open section is kept in `?tab=` (old values `integrations`, `devices`, `team` are
+   aliases; a connect return opens the place of its connector).
 2. Every API route is wrapped by `src/web/cabinet_auth.py::make_auth_required`: a Bearer header or the `__Host-access`
    cookie goes to `CabinetSessionVerifier.identify` (the JWT with its `sid`, then `DeviceSessionService.is_live`);
    `g.user_id`, `g.account_id`, `g.role` and `g.session_id` come only from a verified token of a live session. A bad,

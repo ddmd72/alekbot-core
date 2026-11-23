@@ -4,7 +4,6 @@ options (a missing question still reaches `apply` and is told `not_found`); the 
 one bulk bar per group and escapes every id. The answer service is a small stub with the card's `answer_options`."""
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Set
 from unittest.mock import MagicMock
 
@@ -19,11 +18,11 @@ from src.domain.fact_review_question import TEXT_KEYS, FactReviewQuestion
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
+from tests.unit.web.cabinet_source import cabinet_source
 
 TOKEN = {"Authorization": "Bearer t"}
 ACC, USER, OTHER = "acc-1", "user-1", "user-2"
 T0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
-HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 LANGS = ("en", "uk", "fr", "es")
 KEYS = ("questions.invoices_title", "questions.one_kind")
 
@@ -168,7 +167,7 @@ async def test_another_users_question_is_still_a_403_before_any_answer_is_read()
 # ------------------------------------------------------------------------------------------------ the page
 
 def _page() -> str:
-    return HTML.read_text(encoding="utf-8")
+    return cabinet_source()
 
 
 def _dicts() -> Dict[str, Dict[str, str]]:

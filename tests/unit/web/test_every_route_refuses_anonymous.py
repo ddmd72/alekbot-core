@@ -279,6 +279,8 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
     ("create_landing_blueprint", "GET", "/robots.txt"): "crawler policy",
     ("create_user_cabinet_blueprint", "GET", "/health"): "health check, no data",
     ("create_user_cabinet_blueprint", "GET", "/cabinet"): "static Cabinet shell; every datum comes from the gated API",
+    ("create_user_cabinet_blueprint", "GET", "/cabinet/assets/<name>"):
+        "the Cabinet shell's static stylesheet and scripts, an allowlist of names; every datum comes from the gated API",
     ("create_voice_web_call_blueprint", "GET", "/cabinet/call"): "static call page; the call API is gated",
     ("create_voice_web_call_blueprint", "GET", "/cabinet/call/manifest.webmanifest"):
         "Home Screen install: iOS fetches it without the session cookie",

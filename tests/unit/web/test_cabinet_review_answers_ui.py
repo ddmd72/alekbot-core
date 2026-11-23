@@ -2,20 +2,19 @@
 server (the question view's `options`), never from strings in the page; every result the route can answer has its text in
 en/uk/fr/es; a closed fact has no button, and no server id lands in an inline handler or unescaped."""
 import re
-from pathlib import Path
 
 import pytest
 
 from src.domain.fact_answer_result import AnswerResult
+from tests.unit.web.cabinet_source import cabinet_source
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 LANGS = ("en", "uk", "fr", "es")
 RESULTS = [r.value for r in AnswerResult] + ["error"]
 STRINGS = ["questions.mark_selected", "questions.select", "questions.none_selected", "questions.failed"]
 
 
 def _page() -> str:
-    return _HTML.read_text(encoding="utf-8")
+    return cabinet_source()
 
 
 def _dicts():

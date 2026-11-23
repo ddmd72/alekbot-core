@@ -5,6 +5,7 @@ from quart import Quart
 from src.web.cabinet_auth import ACCESS_COOKIE
 from src.web.landing_app import create_landing_blueprint
 from tests.support.cabinet_session_kit import CabinetSessionKit
+from tests.unit.web.cabinet_source import cabinet_source
 
 
 _KIT = CabinetSessionKit()
@@ -108,8 +109,7 @@ def test_every_external_link_opens_in_a_new_tab():
 
 
 def test_cabinet_logout_lands_on_the_public_page_not_the_login():
-    from pathlib import Path
-    js = Path("src/web/static/cabinet.html").read_text()
+    js = cabinet_source()
     body = js[js.index("async function logout()"):]
     body = body[:body.index("</script>")]
 

@@ -10,8 +10,10 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from tests.unit.web.cabinet_source import cabinet_source
+
 _STATIC = Path(__file__).resolve().parents[3] / "src/web/static"
-_HTML = (_STATIC / "cabinet.html").read_text(encoding="utf-8")
+_HTML = cabinet_source()
 _SESSION = (_STATIC / "session.js").read_text(encoding="utf-8")
 _NODE = shutil.which("node") is None
 pytestmark = pytest.mark.skipif(_NODE, reason="node not installed")
@@ -33,8 +35,9 @@ def _node(script: str) -> dict:
 _CABINET = """
   const log = {{ stepUps: 0, adds: 0, removes: 0, assigned: [], replaced: [], hint: false, toasts: [] }};
   const hintEl = {{ classList: {{ remove: () => {{ log.hint = true; }} }} }};
-  const els = {{ "passkeys-resume-hint": hintEl, "section-devices": {{ classList: {{ contains: () => false }} }} }};
+  const els = {{ "passkeys-resume-hint": hintEl }};
   const document = {{ getElementById: (id) => els[id] }};
+  const _activeSection = "settings";   // the passkeys card sits in Settings (CABINET_REDESIGN_RFC §4)
   const t = (k) => k;
   const showToast = (m) => log.toasts.push(m);
   const rememberPasskeyOffer = () => {{}};

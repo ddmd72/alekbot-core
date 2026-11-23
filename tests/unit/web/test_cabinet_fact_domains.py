@@ -4,7 +4,6 @@ list filtered by profile `domain_keys`, and the field the badge reads (`primary_
 reviewer edit, fact profile PR 13: the old `domain` fallback is gone). Real routes and repository on the evaluating Firestore fake (index refusal on); the page itself is read as
 text for the parts only it holds."""
 import copy
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -20,9 +19,9 @@ from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.unit.web.gate_fakes import expired_token
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
 from tests.support.fact_lifecycle_world import make_fact_world
+from tests.unit.web.cabinet_source import cabinet_source
 
 TOKEN = {"Authorization": "Bearer t"}
-PAGE = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 
 
 def _app(repo: Any = None) -> Quart:
@@ -228,7 +227,7 @@ async def test_the_search_list_carries_the_profile_domain(world):
 
 @pytest.fixture(scope="module")
 def page() -> str:
-    return PAGE.read_text(encoding="utf-8")
+    return cabinet_source()
 
 
 def test_the_page_has_no_domain_map_of_its_own(page):
