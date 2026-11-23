@@ -338,7 +338,7 @@ def test_every_facts_route_carries_the_guard(site):
     assert sorted(rule.rule for rule in rules) == sorted([
         "/api/user/facts", "/api/user/fact-domains", "/api/user/facts/browse", "/api/user/facts/recently-closed",
         "/api/user/facts/review-queue", "/api/user/facts/review-answers", "/api/user/facts/search",
-        "/api/user/facts/<fact_id>/invalidate"])
+        "/api/user/facts/<fact_id>/invalidate", "/api/user/facts/domain-counts"])
     unguarded = [rule.rule for rule in rules if not getattr(site.app.view_functions[rule.endpoint], GUARD_MARK, False)]
     assert unguarded == [], f"a facts route without @facts_unlock_required: {unguarded}"
 
