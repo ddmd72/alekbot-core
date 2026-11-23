@@ -766,3 +766,14 @@ async def test_cached_context_raises_on_a_backend_failure(store, monkeypatch):
     monkeypatch.setattr(store.repo.user_context_col, "document", boom)
     with pytest.raises(RuntimeError):
         await store.repo.get_biographical_context_cached(ACC)
+
+
+async def test_get_active_facts_returns_the_stored_directive_flag(store):
+    """Mutation survivor: `directive` must stay in the select projection of get_active_facts."""
+    await store.repo.add_fact(make_fact("rule", directive=True))
+    await store.repo.add_fact(make_fact("plain"))
+
+    by_id = {f.id: f for f in await store.repo.get_active_facts(ACC)}
+
+    assert by_id["f-rule"].directive is True
+    assert by_id["f-plain"].directive is False

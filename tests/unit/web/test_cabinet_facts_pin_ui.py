@@ -1,5 +1,7 @@
-"""Cabinet -> the facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7): the settings card, the Memory tab's gate, the relock on
-leaving, every string in four languages, and the page logic run under node when it is installed. The page only asks:
+"""Cabinet -> the facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7): the Settings row (its step flow is
+CABINET_REDESIGN_RFC §5.3; the steps themselves are tested in `test_cabinet_settings.py`), the Memory tab's gate, the
+relock on leaving, the reset request and its cancel, every string in four languages, and the page logic run under node
+when it is installed. The page only asks:
 a code is sent once and cleared, never kept; every text is set as text. Codes in this file are `0001` and `0002` only."""
 import json
 import re
@@ -16,8 +18,10 @@ for _m in re.finditer(r'"(pin\.[a-z_0-9]+)": "([^"]+)"', _HTML):
     _EN.setdefault(_m.group(1), _m.group(2))     # the English block comes first
 _KEYS = sorted(_EN)
 _FUNCTIONS = ["pinValue", "clearPinFields", "pinRequest", "loadFactsPin", "pinErrorText", "pinMessage", "pinWhen",
-              "renderPinReset", "renderPinSettings", "loadFactsPinSettings", "onAccountLocked", "pinFailed",
-              "afterPinChange", "submitPinSet", "submitPinChange", "submitPinRemove", "forgotPin", "cancelPinReset",
+              "renderPinReset", "pinRest", "pinShow", "setSettingsChip", "renderPinSettings", "loadFactsPinSettings",
+              "onAccountLocked", "pinFailed", "pinFlowFailed", "afterPinChange", "pinPairError", "pinStepError",
+              "pinDuressError", "submitPinSet", "submitPinChange", "submitPinRemove", "forgotPin", "requestPinReset",
+              "cancelPinReset",
               "showFactsGate", "hideFactsGate", "enterMemory", "unlockFacts", "factsFetch", "forgetFacts",
               "relockFacts"]
 needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -25,6 +29,12 @@ needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node not i
 
 def _function(name: str) -> str:
     match = re.search(r"\n(\s*(?:async )?function " + name + r"\(.*?\n      \})\n", _HTML, re.S)
+    assert match, name
+    return match.group(1)
+
+
+def _const(name: str) -> str:
+    match = re.search(r"\n(      const " + name + r" = .*?;)\n", _HTML, re.S)
     assert match, name
     return match.group(1)
 
@@ -93,7 +103,7 @@ const els = new Proxy({}, {get: (o, id) => o[id] ??= (() => {
     classList: {add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c),
       toggle: (c, on) => { (on === undefined ? !classes.has(c) : on) ? classes.add(c) : classes.delete(c); }}};
 })()});
-const document = {getElementById: (id) => els[id]};
+const document = {getElementById: (id) => els[id], querySelector: () => null};
 const API = "";
 const calls = [];
 let browsed = 0, beacons = [], asked = true, replies = [];
@@ -119,6 +129,8 @@ def _run(body: str):
               "let factsPin = { ...NO_PIN };\n" \
               'const PIN_FIELDS = ["pin-new", "pin-new2", "pin-duress", "pin-duress2", "pin-current-change", ' \
               '"pin-new-c", "pin-new2-c", "pin-duress-c", "pin-duress2-c", "pin-current-remove", "facts-pin-input"];\n' \
+              + "\n".join(_const(name) for name in ("PIN_STEPS", "PIN_INPUT_STEPS", "PIN_ERROR_STEPS")) + "\n" \
+              + 'let _pinStep = "", _openSettingsRow = "pin";\n' \
               + "\n".join(_function(name) for name in _FUNCTIONS)
     script = (_PREAMBLE % {"en": json.dumps(_EN), "sources": sources}) + "(async () => {\n" + body + "\n})().then(" \
              "(out) => process.stdout.write(JSON.stringify(out)));"
@@ -227,44 +239,8 @@ def test_a_broken_beacon_is_not_an_error():
     assert out is False
 
 
-@needs_node
-def test_setting_a_pin_sends_each_code_twice_clears_the_fields_and_reloads_the_status():
-    out = _run("""for (const [id, v] of [["pin-new", "0001"], ["pin-new2", "0001"], ["pin-duress", "0002"], ["pin-duress2", "0002"]])
-        els[id].value = v;
-      replies = [{status: 200, body: {status: "done"}}, {status: 200, body: {has_pin: true, unlocked: false}}];
-      await submitPinSet();
-      return [calls[0], els["pin-new"].value, els["pin-message"].textContent, cls("pin-manage"), cls("pin-set-form"),
-        cls("pin-logout-offer")];""")
-    assert out[0] == {"url": "/api/user/facts-pin/set", "method": "POST", "body": {
-        "pin": "0001", "pin_confirm": "0001", "duress": "0002", "duress_confirm": "0002"}}
-    assert out[1:] == ["", "PIN set.", [], ["hidden"], ["hidden"]]
 
 
-@needs_node
-def test_changing_the_pin_sends_the_current_one_and_offers_to_log_out_the_others():
-    out = _run("""els["pin-current-change"].value = "0001";
-      for (const [id, v] of [["pin-new-c", "0002"], ["pin-new2-c", "0002"], ["pin-duress-c", "0001"], ["pin-duress2-c", "0001"]])
-        els[id].value = v;
-      replies = [{status: 200, body: {status: "done"}}, {status: 200, body: {has_pin: true}}];
-      await submitPinChange(); return [calls[0].body, cls("pin-logout-offer"), els["pin-message"].textContent];""")
-    assert out[0] == {"current": "0001", "pin": "0002", "pin_confirm": "0002", "duress": "0001",
-                      "duress_confirm": "0001"}
-    assert out[1:] == [[], "PIN changed."]
-
-
-@needs_node
-def test_removing_the_pin_sends_the_current_one_and_a_refusal_shows_its_text():
-    out = _run("""els["pin-current-remove"].value = "0002";
-      replies = [{status: 400, body: {error: "wrong_code", attempts_left: 4}}]; await submitPinRemove();
-      return [calls[0].body, els["pin-message"].textContent, els["pin-message"].style.color, els["pin-current-remove"].value];""")
-    assert out == [{"current": "0002"}, "Wrong PIN. Attempts left: 4.", "var(--danger-text)", ""]
-
-
-@needs_node
-def test_a_lock_while_changing_the_pin_shows_account_locked():
-    out = _run("""replies = [{status: 423, body: {error: "account_locked"}}]; await submitPinChange();
-      return els["pin-message"].textContent;""")
-    assert out == "Account locked."
 
 
 @needs_node
@@ -278,12 +254,6 @@ def test_forgot_pin_asks_first_then_requests_the_reset_and_offers_the_logout():
         cls("pin-reset-cancel"), cls("pin-forgot"), cls("facts-pin-forgot")];""")
     assert out == [0, "/api/user/facts-pin/reset", "Reset requested.", [], True, [], ["hidden"], ["hidden"]]
 
-
-@needs_node
-def test_a_refused_reset_says_to_sign_in_with_google_again_in_both_places():
-    out = _run("""replies = [{status: 403, body: {error: "reset_refused"}}]; await forgotPin();
-      return [els["pin-message"].textContent, els["facts-pin-error"].textContent];""")
-    assert out == [_EN["pin.err_reset_refused"]] * 2
 
 
 @needs_node
@@ -302,12 +272,3 @@ def test_cancelling_a_reset_clears_the_notice_and_a_refusal_is_shown():
       replies = [{status: 409, body: {error: "no_reset_pending"}}]; await cancelPinReset();
       return [shown, after, els["pin-message"].textContent];""")
     assert out == [[], ["Reset cancelled.", ["hidden"], []], _EN["pin.err_no_reset_pending"]]
-
-
-@needs_node
-def test_the_settings_card_shows_the_set_form_without_a_pin_and_the_manage_form_with_one():
-    out = _run("""replies = [{status: 200, body: {has_pin: false}}]; await loadFactsPinSettings();
-      const none = [cls("pin-set-form"), cls("pin-manage"), els["pin-state"].textContent];
-      replies = [{status: 200, body: {has_pin: true}}]; await loadFactsPinSettings();
-      return [none, [cls("pin-set-form"), cls("pin-manage"), els["pin-state"].textContent]];""")
-    assert out == [[[], ["hidden"], _EN["pin.state_none"]], [["hidden"], [], _EN["pin.state_set"]]]

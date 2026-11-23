@@ -13,7 +13,7 @@
    enrols a passkey from this session ("Add Face ID"). WebAuthn speaks ArrayBuffers and the server JSON with
    base64url, so both carry the conversion.
 
-   Exposes window.alekSession = { authFetch, ensureSession, ensurePasskey, addPasskey, needsPasskey }. Served anonymously at
+   Exposes window.alekSession = { authFetch, ensureSession, ensurePasskey, addPasskey, needsPasskey, hasLocalPasskey }. Served anonymously at
    /auth/session.js. */
 (function () {
   "use strict";
@@ -166,6 +166,23 @@
     return typeof window.PublicKeyCredential !== "undefined" && !!(navigator.credentials && navigator.credentials.get);
   }
 
+  // A per-browser marker: this browser completed a passkey registration, sign-in or step-up, so its keychain probably
+  // holds one of the user's passkeys. Without it a passkey sheet would open empty (iOS: "no passkeys saved, scan a QR
+  // code"), so a page goes straight to Google instead. Storage may be absent or refuse: then there is no marker.
+  var PASSKEY_MARK = "alek.hasPasskey";
+
+  function hasLocalPasskey() {
+    try { return localStorage.getItem(PASSKEY_MARK) === "1"; } catch (e) { return false; }
+  }
+
+  function markPasskey() {
+    try { localStorage.setItem(PASSKEY_MARK, "1"); } catch (e) { /* no marker */ }
+  }
+
+  function clearPasskey() {
+    try { localStorage.removeItem(PASSKEY_MARK); } catch (e) { /* no marker */ }
+  }
+
   // Resolves true when a call may start: no fresh passkey is needed, or the sheet just gave one the server took.
   // False when it was cancelled, refused, or could not run (the server refuses the start in that case too).
   function ensurePasskey() {
@@ -177,9 +194,13 @@
         if (!supported()) return false;
         return navigator.credentials.get({ publicKey: requestOptions(body.options) })
           .then(function (cred) { return postJSON("/api/user/passkeys/step-up/verify", { credential: credentialJSON(cred) }); })
-          .then(is2xx);
+          .then(function (resp) { var ok = is2xx(resp); if (ok) markPasskey(); return ok; });
       })
-      .catch(function () { return false; });
+      .catch(function (e) {
+        // No credential on this device (or a cancelled sheet): the marker was wrong, or is not worth trusting.
+        if (e && e.name === "NotAllowedError") clearPasskey();
+        return false;
+      });
   }
 
   // True when the server refused a passkey change for want of a fresh passkey assertion on this session (400
@@ -201,17 +222,17 @@
         return navigator.credentials.create({ publicKey: creationOptions(body.options) })
           .then(function (cred) { return postJSON("/api/user/passkeys/register/verify", { credential: credentialJSON(cred) }); })
           .then(function (resp) {
-            if (is2xx(resp)) return "added";
+            if (is2xx(resp)) { markPasskey(); return "added"; }
             return needsPasskey(resp).then(function (n) { return n ? "passkey_required" : "failed"; });
           });
       })
       .catch(function (e) {
-        if (e && e.name === "InvalidStateError") return "exists";
+        if (e && e.name === "InvalidStateError") { markPasskey(); return "exists"; }
         if (e && e.name === "NotAllowedError") return "cancelled";
         return "failed";
       });
   }
 
   window.alekSession = { authFetch: authFetch, ensureSession: ensureSession, ensurePasskey: ensurePasskey,
-                         addPasskey: addPasskey, needsPasskey: needsPasskey };
+                         addPasskey: addPasskey, needsPasskey: needsPasskey, hasLocalPasskey: hasLocalPasskey };
 })();

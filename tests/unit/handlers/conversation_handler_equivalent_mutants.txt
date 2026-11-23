@@ -16,3 +16,5 @@ d843bf05  # inner except of the failure-line send in _finish_long_turn: the orig
 6826086a  # handle_message error-reply except (L1123) is the last statement of the outer except and nothing follows try/except/finally; the finally still runs on return; only the log differs
 6e784676  # _close_long_turn_in_session (L1398): the try/except is the last statement of a -> None function; return None skips only the log line
 2fc4d62d  # _handle_skill_save (L2050): the history-append try/except is the last statement of a -> None function, after SKILL_SAVED was sent; return None skips only the log line
+6988cb2e  # handle_message error-reply except (L1091) is the last statement of the outer except and nothing follows try/except/finally; the finally still runs on return; only the log differs
+2c67c5ea  # _close_long_turn_in_session (L1365): the try/except is the last statement of a -> None function; return None skips only the log line

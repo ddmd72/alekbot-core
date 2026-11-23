@@ -8,7 +8,7 @@
       let currentUser = null;
       let allFacts = [];
 
-      // Selector → translation key (for static DOM elements)
+      // Selector → translation key (for static DOM elements); cabinet-settings.js adds the Settings section's own.
       const I18N_SELECTORS = {
         "#nav-home":                  "nav.home",
         "#nav-mobile-home .c-bar-label":         "nav.home",
@@ -29,46 +29,9 @@
         "#home-tile-settings .c-tile-title":     "nav.settings",
         "#drives-title":              "nav.drives",
         "#reminders-title":           "nav.reminders",
-        "#settings-account-label":    "settings.account",
-        "#settings-logout":           "settings.logout",
-        "#devices-title":             "devices.title",
-        "#devices-subtitle":          "devices.subtitle",
-        "#devices-logout-others":     "devices.logout_others",
-        "#devices-logout-all":        "devices.logout_all",
-        "#devices-lost-title":        "devices.lost_title",
-        "#devices-lost-intro":        "devices.lost_intro",
-        "#devices-lost-1":            "devices.lost_1",
-        "#devices-lost-2":            "devices.lost_2",
-        "#devices-lost-3":            "devices.lost_3",
-        "#passkeys-title":            "passkeys.title",
-        "#passkeys-subtitle":         "passkeys.subtitle",
-        "#passkeys-add":              "passkeys.add",
         "#passkey-offer-text":        "passkeys.offer_text",
         "#passkey-offer-add":         "passkeys.offer_add",
         "#passkey-offer-dismiss":     "passkeys.offer_dismiss",
-        "#passkeys-google-proof-text": "passkeys.google_proof_text",
-        "#passkeys-google-proof-link": "passkeys.google_proof",
-        "#pin-title": "pin.title",
-        "#pin-desc": "pin.desc",
-        "#pin-label-new": "pin.new",
-        "#pin-label-new2": "pin.new_again",
-        "#pin-label-duress": "pin.duress",
-        "#pin-label-duress2": "pin.duress_again",
-        "#pin-set-btn": "pin.set",
-        "#pin-change-title": "pin.change_title",
-        "#pin-label-current-change": "pin.current",
-        "#pin-label-new-c": "pin.new",
-        "#pin-label-new2-c": "pin.new_again",
-        "#pin-label-duress-c": "pin.duress",
-        "#pin-label-duress2-c": "pin.duress_again",
-        "#pin-change-btn": "pin.change",
-        "#pin-remove-title": "pin.remove_title",
-        "#pin-label-current-remove": "pin.current",
-        "#pin-remove-btn": "pin.remove",
-        "#pin-forgot": "pin.forgot",
-        "#pin-reset-cancel": "pin.reset_cancel",
-        "#pin-logout-text": "pin.logout_offer",
-        "#pin-logout-btn": "devices.logout_others",
         "#facts-pin-title": "pin.gate_title",
         "#facts-pin-desc": "pin.gate_desc",
         "#facts-pin-unlock": "pin.unlock",
@@ -78,29 +41,6 @@
         "#memory-subtitle":           "memory.subtitle",
         "#memory-search-btn":         "memory.search_btn",
         "#back-to-browse-btn":        "memory.clear",
-        "#integrations-title":        "integrations.title",
-        "#integrations-subtitle":     "integrations.subtitle",
-        "#team-title":                "team.title",
-        "#team-subtitle":             "team.subtitle",
-        "#team-generate-btn":         "team.generate_invite",
-        "#settings-title":            "settings.title",
-        "#settings-subtitle":         "settings.subtitle",
-        "#settings-tz-title":         "settings.tz.title",
-        "#settings-tz-desc":          "settings.tz.desc",
-        "#settings-tz-save":          "btn.save",
-        "#settings-lang-title":       "settings.lang.title",
-        "#settings-lang-desc":        "settings.lang.desc",
-        "#settings-lang-ui-label":    "settings.lang.ui_label",
-        "#settings-lang-bot-label":   "settings.lang.bot_label",
-        "#settings-lang-save":        "btn.save",
-        "#settings-voice-title":      "settings.voice.title",
-        "#settings-voice-desc":       "settings.voice.desc",
-        "#settings-voice-save":       "btn.save",
-        "#lang-mirror-btn":           "settings.lang.mirror",
-        "#lang-fixed-btn":            "settings.lang.fixed",
-        "#settings-dr-title":         "settings.dr.title",
-        "#settings-dr-desc":          "settings.dr.desc",
-        "#settings-dr-label":         "settings.dr.label",
         "#settings-rem-title":        "settings.rem.title",
         "#settings-rem-desc":         "settings.rem.desc",
       };
@@ -311,6 +251,7 @@
           const connectReturn = qs.get("connected") || qs.get("connect_error");
           navigate(sectionFor(qs, connectReturn ? await loadConnectors() : []));
           offerPasskey();
+          await resumePasskeyFlow(qs).catch(() => {});
         } catch {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);

@@ -115,12 +115,14 @@ def test_the_drive_card_is_the_drives_section_and_the_reminders_card_its_own_sec
         assert marker not in _element("section-settings"), marker
 
 
-def test_settings_holds_the_old_sections_content_in_order():
+def test_settings_holds_the_old_sections_content_in_the_order_of_its_groups():
+    # CABINET_REDESIGN_RFC §5.1: Account, Profile, Connections, Security (the PIN row's body, devices, passkeys, the
+    # lost phone), More (deep research, team).
     settings = _element("section-settings")
     order = ['id="user-email"', 'id="settings-tz-title"', 'id="location-input"', 'id="settings-lang-title"',
-             'id="settings-voice-title"', 'id="settings-dr-title"', 'id="pin-card"', 'id="platforms-container"',
-             'id="gmail-container"', 'id="tasks-container"', 'id="devices-list"', 'id="passkeys-list"',
-             'id="devices-lost-title"', 'id="settings-team"', 'id="team-generate-btn"', 'id="codes-list-container"']
+             'id="settings-voice-title"', 'id="platforms-container"', 'id="gmail-container"', 'id="tasks-container"',
+             'id="srow-pin-body"', 'id="devices-list"', 'id="passkeys-list"', 'id="devices-lost-title"',
+             'id="settings-dr-title"', 'id="settings-team"', 'id="team-generate-btn"', 'id="codes-list-container"']
     positions = [settings.index(marker) for marker in order]
     assert positions == sorted(positions)
 
@@ -255,7 +257,7 @@ _SECTIONS_JS = (STATIC / "cabinet-sections.js").read_text(encoding="utf-8")
 @_node
 @pytest.mark.parametrize(("active", "reloaded"), [("settings", True), ("home", False), ("memory", False)])
 def test_adding_a_passkey_refreshes_the_list_while_settings_is_open(active, reloaded):
-    add = re.search(r"\n(      async function addPasskeyHere\(\) \{.*?\n      \})\n", _SECTIONS_JS, re.S).group(1)
+    add = re.search(r"\n(      async function addPasskeyHere\(resumed\) \{.*?\n      \})\n", _SECTIONS_JS, re.S).group(1)
     script = f"""
       const calls = [];
       let _activeSection = {json.dumps(active)};

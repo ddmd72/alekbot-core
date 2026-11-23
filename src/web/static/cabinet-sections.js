@@ -1,113 +1,11 @@
 /* The Cabinet's sections (CABINET_REDESIGN_RFC §6): the rest of the old inline script, in its old order, until
-   later steps split it per section. Loaded after cabinet-strings.js and cabinet-shell.js; Memory is in
-   cabinet-memory.js (step 4).
+   later steps split it per section (Settings is cabinet-settings.js and Memory cabinet-memory.js, both loaded after
+   this file). Loaded after cabinet-strings.js and cabinet-shell.js. The facts PIN block comes last: Settings' PIN row
+   continues it, and the Memory section's gate (cabinet-memory.js) calls into it.
    The indentation is the old inline script's, kept on purpose: the text tests find functions by it. */
-      /* ── Devices (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6) ─── */
-      // label and platform_hint are the browser's User-Agent text: untrusted, always escaped.
-      function renderDevices(devices) {
-        const list = document.getElementById("devices-list");
-        if (!devices.length) {
-          list.innerHTML = `<p style="color:var(--text-subtle);font-style:italic">${escapeHtml(t("devices.empty"))}</p>`;
-          return;
-        }
-        const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-        list.innerHTML = devices.map((d) => {
-          const current = d.is_current
-            ? ` <span class="fact-domain-badge">${escapeHtml(t("devices.current"))}</span>`
-            : "";
-          const kind = d.auth_kind === "google" ? t("devices.kind_google")
-            : d.auth_kind === "passkey" ? t("devices.kind_passkey") : d.auth_kind;
-          return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-              <div style="flex:1">
-                <div style="font-weight:600;color:var(--text-main);font-size:15px">${escapeHtml(d.label)}${current}</div>
-                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(d.platform_hint)} · ${escapeHtml(kind)}</div>
-                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(t("devices.created"))}: ${escapeHtml(when(d.created_at))} · ${escapeHtml(t("devices.last_used"))}: ${escapeHtml(when(d.last_seen_at))}</div>
-              </div>
-              <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" data-sid="${escapeHtml(d.sid)}" data-current="${d.is_current ? "1" : ""}" onclick="logoutDevice(this.dataset.sid, !!this.dataset.current)">${escapeHtml(t("devices.logout"))}</button>
-            </div>
-          </div>`;
-        }).join("");
-      }
-
-      async function loadDevices() {
-        try {
-          const res = await authFetch(`${API}/api/user/devices`, { credentials: "include" });
-          if (!res.ok) throw new Error();
-          renderDevices((await res.json()).devices || []);
-        } catch {
-          showToast(t("devices.failed"), "error");
-        }
-      }
-
-      async function postDevices(path) {
-        const res = await authFetch(`${API}/api/user/devices/${path}`, { method: "POST", credentials: "include" });
-        if (!res.ok) throw new Error();
-      }
-
-      async function logoutDevice(sid, isCurrent) {
-        try {
-          await postDevices(`${encodeURIComponent(sid)}/logout`);
-        } catch {
-          showToast(t("devices.failed"), "error");
-          return;
-        }
-        if (isCurrent) { window.location.href = "/"; return; }
-        showToast(t("devices.done"));
-        loadDevices();
-      }
-
-      async function logoutOtherDevices() {
-        if (!confirm(t("devices.confirm_others"))) return;
-        try {
-          await postDevices("logout-others");
-        } catch {
-          showToast(t("devices.failed"), "error");
-          return;
-        }
-        showToast(t("devices.done"));
-        loadDevices();
-      }
-
-      async function logoutAllDevices() {
-        if (!confirm(t("devices.confirm_all"))) return;
-        try {
-          await postDevices("logout-all");
-        } catch {
-          showToast(t("devices.failed"), "error");
-          return;
-        }
-        window.location.href = "/";
-      }
-
       /* ── Passkeys (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5) ─── */
       // label and platform_hint are the User-Agent text of the session that added the passkey: untrusted, escaped.
       const PASSKEY_OFFER_KEY = "alek.passkeyOffer";
-
-      function renderPasskeys(passkeys) {
-        const list = document.getElementById("passkeys-list");
-        if (!passkeys.length) {
-          list.innerHTML = `<p style="color:var(--text-subtle);font-style:italic">${escapeHtml(t("passkeys.empty"))}</p>`;
-          return;
-        }
-        const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-        list.innerHTML = passkeys.map((p) => {
-          const synced = p.synced ? ` · ${escapeHtml(t("passkeys.synced"))}` : "";
-          const used = p.last_used_at
-            ? `${escapeHtml(t("passkeys.last_used"))}: ${escapeHtml(when(p.last_used_at))}`
-            : escapeHtml(t("passkeys.never_used"));
-          return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-              <div style="flex:1">
-                <div style="font-weight:600;color:var(--text-main);font-size:15px">${escapeHtml(p.label)}</div>
-                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(p.platform_hint)}${synced}</div>
-                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${escapeHtml(t("devices.created"))}: ${escapeHtml(when(p.created_at))} · ${used}</div>
-              </div>
-              <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" data-id="${escapeHtml(p.id)}" onclick="removePasskey(this.dataset.id)">${escapeHtml(t("passkeys.remove"))}</button>
-            </div>
-          </div>`;
-        }).join("");
-      }
 
       async function fetchPasskeys() {
         const res = await authFetch(`${API}/api/user/passkeys`, { credentials: "include" });
@@ -115,35 +13,12 @@
         return res.json();
       }
 
-      async function loadPasskeys() {
-        try {
-          renderPasskeys((await fetchPasskeys()).passkeys || []);
-        } catch {
-          showToast(t("devices.failed"), "error");
-        }
-      }
-
-      // A passkey change without a passkey proof (the step-up failed, was cancelled, or this browser holds no passkey
-      // of the user): the page offers a fresh Google sign-in instead, which the server accepts as proof too (RFC §7.3).
-      // It returns here, to Settings (the `devices` alias), and the user taps the button again.
-      function googleProofUrl() {
-        return "/auth/login/google?next=" + encodeURIComponent("/cabinet?tab=devices");
-      }
-
-      function showGoogleProof() {
-        const box = document.getElementById("passkeys-google-proof");
-        if (!box) return;
-        document.getElementById("passkeys-google-proof-link").href = googleProofUrl();
-        box.classList.remove("hidden");
-      }
-
-      async function addPasskeyHere() {
+      async function addPasskeyHere(resumed) {
         let outcome = await addPasskey();
-        // The user already has a passkey: adding another needs a fresh proof on this session. Step up, retry once;
-        // when the step-up cannot run, offer the Google sign-in.
         if (outcome === "passkey_required") {
-          if (await window.alekSession.ensurePasskey()) outcome = await addPasskey();
-          else { outcome = "failed"; showGoogleProof(); }
+          if (await stepUpIfLocal()) outcome = await addPasskey();
+          else if (!resumed) { window.location.assign(googleProofUrl("add_passkey")); return "redirect"; }
+          if (outcome === "passkey_required") outcome = "failed";
         }
         rememberPasskeyOffer();
         if (outcome === "added") showToast(t("passkeys.added"));
@@ -151,25 +26,6 @@
         else if (outcome === "failed") showToast(t("passkeys.failed"), "error");
         if (_activeSection === "settings") loadPasskeys();   // the passkey list sits in Settings
         return outcome;
-      }
-
-      async function removePasskey(id) {
-        if (!confirm(t("passkeys.confirm_remove"))) return;
-        try {
-          const url = `${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`;
-          let res = await authFetch(url, { method: "POST", credentials: "include" });
-          // A fresh proof is needed while the user has a passkey: step up and retry once, else offer Google.
-          if (!res.ok && (await window.alekSession.needsPasskey(res.clone()))) {
-            if (await window.alekSession.ensurePasskey()) res = await authFetch(url, { method: "POST", credentials: "include" });
-            else showGoogleProof();
-          }
-          if (!res.ok) throw new Error();
-        } catch {
-          showToast(t("passkeys.failed"), "error");
-          return;
-        }
-        showToast(t("devices.done"));
-        loadPasskeys();
       }
 
       // Storage can be absent or refuse (a private window): then the offer simply shows again next time.
@@ -198,337 +54,6 @@
 
       function dismissPasskeyOffer() {
         rememberPasskeyOffer();
-      }
-
-      /* ── Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7) ─── */
-      // The server decides; the page only asks. A code is typed into a field, sent once and cleared: it is never kept,
-      // logged or put in a URL, and every text shown is set as text (never as markup).
-      const NO_PIN = { has_pin: false, unlocked: false, reset_due_at: null, can_request_reset: false };
-      let factsPin = { ...NO_PIN };
-      const PIN_FIELDS = ["pin-new", "pin-new2", "pin-duress", "pin-duress2", "pin-current-change", "pin-new-c",
-        "pin-new2-c", "pin-duress-c", "pin-duress2-c", "pin-current-remove", "facts-pin-input"];
-
-      function pinValue(id) {
-        return document.getElementById(id).value;
-      }
-
-      function clearPinFields() {
-        for (const id of PIN_FIELDS) document.getElementById(id).value = "";
-      }
-
-      async function pinRequest(method, path, body) {
-        const init = { method, credentials: "include" };
-        if (body !== undefined) {
-          init.headers = { "Content-Type": "application/json" };
-          init.body = JSON.stringify(body);
-        }
-        const res = await authFetch(`${API}/api/user/facts-pin${path}`, init);
-        let data = null;
-        try { data = await res.json(); } catch { /* a 204 has no body */ }
-        return { ok: res.ok, status: res.status, data };
-      }
-
-      async function loadFactsPin() {
-        try {
-          const r = await pinRequest("GET", "");
-          if (r.ok && r.data) factsPin = r.data;
-        } catch {
-          // the facts routes refuse a locked tab themselves (403 facts_locked), whatever this read says
-        }
-        return factsPin;
-      }
-
-      function pinErrorText(data) {
-        const error = data && data.error;
-        const key = `pin.err_${error}`;
-        const text = t(key);
-        if (error === "account_locked") return t("pin.account_locked");
-        if (text === key) return t("pin.err_failed");
-        return text.replace("{n}", String(data.attempts_left));
-      }
-
-      function pinMessage(text, isError) {
-        const el = document.getElementById("pin-message");
-        el.textContent = text;
-        el.style.color = isError ? "var(--danger-text)" : "var(--text-muted)";
-      }
-
-      function pinWhen(iso) {
-        return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-      }
-
-      function renderPinReset() {
-        const due = factsPin.reset_due_at;
-        const text = due ? t("pin.reset_pending").replace("{time}", pinWhen(due)) : "";
-        for (const prefix of ["pin", "facts-pin"]) {
-          const note = document.getElementById(`${prefix}-reset-note`);
-          note.textContent = text;
-          note.classList.toggle("hidden", !due);
-          document.getElementById(`${prefix}-reset-cancel`).classList.toggle("hidden", !due);
-          document.getElementById(`${prefix}-forgot`).classList.toggle("hidden", !!due);
-        }
-      }
-
-      function renderPinSettings() {
-        const has = factsPin.has_pin;
-        document.getElementById("pin-set-form").classList.toggle("hidden", has);
-        document.getElementById("pin-manage").classList.toggle("hidden", !has);
-        document.getElementById("pin-state").textContent = t(has ? "pin.state_set" : "pin.state_none");
-        renderPinReset();
-      }
-
-      async function loadFactsPinSettings() {
-        await loadFactsPin();
-        renderPinSettings();
-      }
-
-      // "Account locked": the duress code or the fifth wrong code in a row. Every session is gone with the lock.
-      function onAccountLocked() {
-        clearPinFields();
-        pinMessage(t("pin.account_locked"), true);
-        document.getElementById("facts-pin-error").textContent = t("pin.account_locked");
-        document.getElementById("facts-pin-input").disabled = true;
-        document.getElementById("facts-pin-unlock").disabled = true;
-        document.getElementById("section-memory").classList.add("pin-locked");
-      }
-
-      function pinFailed(r) {
-        if (r.status === 423) { onAccountLocked(); return; }
-        pinMessage(pinErrorText(r.data), true);
-      }
-
-      async function afterPinChange(r, doneKey, offerLogout) {
-        clearPinFields();
-        if (!r.ok) { pinFailed(r); return; }
-        pinMessage(t(doneKey), false);
-        document.getElementById("pin-logout-offer").classList.toggle("hidden", !offerLogout);
-        await loadFactsPinSettings();
-      }
-
-      async function submitPinSet() {
-        const r = await pinRequest("POST", "/set", {
-          pin: pinValue("pin-new"), pin_confirm: pinValue("pin-new2"),
-          duress: pinValue("pin-duress"), duress_confirm: pinValue("pin-duress2"),
-        });
-        await afterPinChange(r, "pin.done_set", false);
-      }
-
-      async function submitPinChange() {
-        const r = await pinRequest("POST", "/change", {
-          current: pinValue("pin-current-change"),
-          pin: pinValue("pin-new-c"), pin_confirm: pinValue("pin-new2-c"),
-          duress: pinValue("pin-duress-c"), duress_confirm: pinValue("pin-duress2-c"),
-        });
-        await afterPinChange(r, "pin.done_changed", true);
-      }
-
-      async function submitPinRemove() {
-        const r = await pinRequest("POST", "/remove", { current: pinValue("pin-current-remove") });
-        await afterPinChange(r, "pin.done_removed", false);
-      }
-
-      // A forgotten PIN: the reset takes 24 hours (the server says when), needs a fresh Google sign-in, can be cancelled.
-      async function forgotPin() {
-        if (!confirm(t("pin.reset_confirm"))) return;
-        const r = await pinRequest("POST", "/reset");
-        if (!r.ok) {
-          if (r.status === 423) { onAccountLocked(); return; }
-          const text = pinErrorText(r.data);
-          pinMessage(text, true);
-          document.getElementById("facts-pin-error").textContent = text;
-          return;
-        }
-        pinMessage(t("pin.done_reset"), false);
-        document.getElementById("pin-logout-offer").classList.remove("hidden");
-        await loadFactsPin();
-        renderPinSettings();
-      }
-
-      async function cancelPinReset() {
-        const r = await pinRequest("POST", "/reset/cancel");
-        if (!r.ok) { pinFailed(r); return; }
-        pinMessage(t("pin.done_cancelled"), false);
-        await loadFactsPin();
-        renderPinSettings();
-      }
-
-      /* ── Settings ────────────────────────────────────── */
-      async function loadSettings() {
-        try {
-          const res = await authFetch(`${API}/api/user/timezone`, { credentials: "include" });
-          if (!res.ok) throw new Error();
-          const data = await res.json();
-          const sel = document.getElementById("timezone-input");
-          sel.value = data.timezone || "UTC";
-          if (!sel.value) sel.value = "UTC"; // fallback if stored value not in list
-        } catch {
-          showToast("Failed to load settings", "error");
-        }
-        try {
-          const locRes = await authFetch(`${API}/api/user/location`, { credentials: "include" });
-          if (locRes.ok) {
-            const locData = await locRes.json();
-            document.getElementById("location-input").value = locData.location || "";
-          }
-        } catch { /* silent */ }
-        await loadLanguage();
-        await loadVoiceLanguages();
-        await loadDeepResearch();
-      }
-
-      async function loadDeepResearch() {
-        try {
-          const res = await authFetch(`${API}/api/user/deep-research`, { credentials: "include" });
-          if (!res.ok) return;
-          const data = await res.json();
-          document.getElementById("dr-second-pass").checked = data.second_pass || false;
-        } catch { /* silent */ }
-      }
-
-      async function saveDeepResearch() {
-        const secondPass = document.getElementById("dr-second-pass").checked;
-        try {
-          const res = await authFetch(`${API}/api/user/deep-research`, {
-            method: "PUT",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ second_pass: secondPass }),
-          });
-          if (!res.ok) throw new Error();
-          showToast(secondPass ? "Two-pass mode enabled" : "Single-pass mode", "success");
-        } catch {
-          showToast("Failed to save deep research settings", "error");
-        }
-      }
-
-      async function saveTimezone() {
-        const tz = document.getElementById("timezone-input").value.trim();
-        if (!tz) { showToast("Enter a timezone", "error"); return; }
-        try {
-          const res = await authFetch(`${API}/api/user/timezone`, {
-            method: "PUT",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ timezone: tz }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(err.error || "Invalid timezone", "error");
-            return;
-          }
-          showToast(t("toast.tz_saved"), "success");
-        } catch {
-          showToast(t("toast.tz_failed"), "error");
-        }
-      }
-
-      async function saveLocation() {
-        const loc = document.getElementById("location-input").value.trim();
-        try {
-          const res = await authFetch(`${API}/api/user/location`, {
-            method: "PUT",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ location: loc }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(err.error || "Failed to save location", "error");
-            return;
-          }
-          showToast("Location saved", "success");
-        } catch {
-          showToast("Failed to save location", "error");
-        }
-      }
-
-      /* ── Language settings ───────────────────────────── */
-      let _langUiSelected = "";
-      let _langMirrorSelected = true;
-
-      function setLangUI(lang) {
-        _langUiSelected = lang;
-        const sel = document.getElementById("lang-ui-select");
-        if (sel) sel.value = lang;
-        applyTranslations(lang);
-      }
-
-      function setLangMirror(mirror) {
-        _langMirrorSelected = mirror;
-        const mirrorBtn = document.getElementById("lang-mirror-btn");
-        const fixedBtn = document.getElementById("lang-fixed-btn");
-        if (mirrorBtn) mirrorBtn.classList.toggle("active", mirror);
-        if (fixedBtn) fixedBtn.classList.toggle("active", !mirror);
-      }
-
-      /* ── Voice message languages ──────────────────────── */
-      /* A checkbox per language, not a multi-select: any number may be spoken, and the
-         provider treats the list as *possible* languages with no stated precedence, so
-         there is no order for the user to arrange. */
-
-      async function loadVoiceLanguages() {
-        try {
-          const res = await authFetch(`${API}/api/user/voice-languages`, { credentials: "include" });
-          if (!res.ok) return;
-          const data = await res.json();
-          const selected = new Set(data.voice_languages || []);
-          document.querySelectorAll(".voice-lang").forEach((cb) => {
-            cb.checked = selected.has(cb.value);
-          });
-        } catch { /* non-fatal */ }
-      }
-
-      async function saveVoiceLanguages() {
-        const codes = Array.from(document.querySelectorAll(".voice-lang:checked")).map((cb) => cb.value);
-        try {
-          const res = await authFetch(`${API}/api/user/voice-languages`, {
-            method: "PUT",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ voice_languages: codes }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(err.error || t("toast.voice_failed"), "error");
-            return;
-          }
-          showToast(t("toast.voice_saved"), "success");
-        } catch {
-          showToast(t("toast.voice_failed"), "error");
-        }
-      }
-
-      async function loadLanguage() {
-        try {
-          const res = await authFetch(`${API}/api/user/language`, { credentials: "include" });
-          if (!res.ok) return;
-          const data = await res.json();
-          setLangUI(data.preferred_language || "");
-          setLangMirror(data.agent_mirror !== false);
-        } catch { /* non-fatal */ }
-      }
-
-      async function saveLanguage() {
-        try {
-          const body = {
-            preferred_language: _langUiSelected || null,
-            agent_mirror: _langMirrorSelected,
-          };
-          const res = await authFetch(`${API}/api/user/language`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(err.error || t("toast.lang_failed"), "error");
-            return;
-          }
-          showToast(t("toast.lang_saved"), "success");
-        } catch {
-          showToast(t("toast.lang_failed"), "error");
-        }
       }
 
       /* ── Bot Reminders ────────────────────────────────── */
@@ -647,506 +172,6 @@
           showToast("Reminder deleted", "success");
           await loadReminders();
         } catch { showToast("Failed to delete", "error"); }
-      }
-
-      /* ── Integrations ────────────────────────────────── */
-      async function loadPlatforms() {
-        try {
-          const res = await authFetch(`${API}/api/user/platforms`, {
-            credentials: "include",
-          });
-          const data = res.ok ? await res.json() : { platforms: {} };
-          renderPlatforms(data.platforms || {});
-        } catch {
-          renderPlatforms({});
-        }
-      }
-
-      function renderPlatforms(platforms) {
-        const container = document.getElementById("platforms-container");
-        container.innerHTML = `
-          ${platformCard("slack", platforms.slack, "Slack", t("platform.slack_desc"), "U0AC...")}
-          ${platformCard("telegram", platforms.telegram, "Telegram", t("platform.telegram_desc"), "123456789")}
-        `;
-        observeElements();
-      }
-
-      function platformCard(id, linkedId, label, description, placeholder) {
-        const linked = !!linkedId;
-        return `
-        <div class="card integration-card reveal">
-          <div class="integration-icon">
-            ${id === "slack" ? `<svg width="32" height="32" viewBox="0 0 24 24" fill="#E01E5A"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.523-2.522v-2.522h2.523zM15.165 17.688a2.527 2.527 0 0 1-2.523-2.523 2.526 2.526 0 0 1 2.523-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>` : `<svg width="32" height="32" viewBox="0 0 24 24" fill="#0088cc"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.121l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.94z"/></svg>`}
-          </div>
-          <h3 class="integration-title">${label}</h3>
-          <p class="integration-description">${description}</p>
-
-          <div class="integration-status">
-            <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
-            <span>${linked ? `${t("platform.connected")}: ${escapeHtml(linkedId)}` : t("platform.not_connected")}</span>
-          </div>
-
-          <div class="integration-actions">
-            ${
-              linked
-                ? `<button onclick="unlinkPlatform('${id}')" class="btn btn-secondary">${t("platform.disconnect")}</button>`
-                : `<input id="input-${id}" type="text" placeholder="${placeholder}" class="inp" />
-                   <button onclick="linkPlatform('${id}', '${label}')" class="btn btn-black">${t("platform.link_account")}</button>`
-            }
-          </div>
-        </div>`;
-      }
-
-      async function linkPlatform(id, label) {
-        const input = document.getElementById(`input-${id}`);
-        const value = input.value.trim();
-        if (!value) {
-          showToast("Enter your " + label + " ID", "error");
-          return;
-        }
-        try {
-          const isTg = id === "telegram";
-          const res = await authFetch(
-            `${API}${isTg ? "/api/user/link-telegram" : "/api/user/link-platform"}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify(
-                isTg
-                  ? { telegram_user_id: value }
-                  : { platform: id, platform_user_id: value },
-              ),
-            },
-          );
-          if (!res.ok) {
-            const e = await res.json();
-            throw new Error(e.error || "Link failed");
-          }
-          showToast(`${label} linked`, "success");
-          loadPlatforms();
-        } catch (e) {
-          showToast(e.message, "error");
-        }
-      }
-
-      async function unlinkPlatform(platform) {
-        if (!confirm(`Disconnect ${platform}?`)) return;
-        try {
-          const res = await authFetch(
-            `${API}/api/user/link-platform?platform=${platform}`,
-            { method: "DELETE", credentials: "include" },
-          );
-          if (!res.ok) throw new Error("Unlink failed");
-          showToast(`${platform} disconnected`, "success");
-          loadPlatforms();
-        } catch (e) {
-          showToast(e.message, "error");
-        }
-      }
-
-      /* ── Connectors (MULTI_DRIVE_RFC §5.2): the connect links come from GET /api/connectors ── */
-      // Keyed by integration, never by connector kind: the Cabinet holds no kind of its own.
-      const CONNECTED_TOAST_KEYS = {
-        mail: "toast.gmail_connected",
-        tasks: "toast.todo_connected",
-        drive: "toast.drive_connected",
-      };
-      const SCOPE_TOASTS = {
-        mail: "Google did not grant access to your mail — reconnect and tick the Gmail checkbox",
-        tasks: "Google did not grant access to your tasks — reconnect and tick the Tasks checkbox",
-      };
-      let _connectorsPromise = null;
-
-      function loadConnectors() {
-        if (!_connectorsPromise) {
-          _connectorsPromise = authFetch(`${API}/api/connectors`, { credentials: "include" })
-            .then((res) => (res.ok ? res.json() : { connectors: [] }))
-            .then((body) => body.connectors || [])
-            .catch(() => {
-              _connectorsPromise = null; // a failed read is retried on the next render
-              return [];
-            });
-        }
-        return _connectorsPromise;
-      }
-
-      // The connect (or, with a credential id, reconnect) link of an integration; "" when no connector offers it.
-      async function connectHref(integration, credentialId) {
-        const connector = (await loadConnectors()).find((c) => c.integration === integration);
-        if (!connector) return "";
-        const base = `/auth/connect/${encodeURIComponent(connector.kind)}`;
-        return credentialId ? `${base}?credential=${encodeURIComponent(credentialId)}` : base;
-      }
-
-      // An <a> button to `href`, or nothing when the integration has no connector here.
-      function connectButton(href, label) {
-        return href ? `<a href="${escapeHtml(href)}" class="btn btn-black">${label}</a>` : "";
-      }
-
-      // The callback's ?connected=<kind> / ?connect_error=<status>&kind=<kind>, named by the connector's label.
-      async function showConnectToasts(qs) {
-        const connected = qs.get("connected");
-        const error = qs.get("connect_error");
-        if (!connected && !error) return;
-        const connectors = await loadConnectors();
-        const connector = connectors.find((c) => c.kind === (connected || qs.get("kind")));
-        const label = connector ? connector.label : "Integration";
-        if (connected) {
-          const key = connector && CONNECTED_TOAST_KEYS[connector.integration];
-          showToast(key ? t(key) : `${label} connected`, "success");
-          return;
-        }
-        if (error === "scope")
-          showToast((connector && SCOPE_TOASTS[connector.integration]) ||
-            `${label} did not get the access it needs — reconnect and allow every permission asked`, "error");
-        else if (error === "account")
-          showToast(`${label}: you signed in with another account — reconnect with the account this connection uses`, "error");
-        else
-          showToast(`${label} connection error`, "error");
-      }
-
-      async function loadGmailStatus() {
-        try {
-          const [statusRes, autoIndexRes, dailyReviewRes] = await Promise.all([
-            authFetch(`${API}/api/gmail/status`, { credentials: "include" }),
-            authFetch(`${API}/api/gmail/auto-index`, { credentials: "include" }),
-            authFetch(`${API}/api/gmail/daily-review`, { credentials: "include" }),
-          ]);
-          if (!statusRes.ok) throw new Error();
-          const data = await statusRes.json();
-          if (autoIndexRes.ok) {
-            const ai = await autoIndexRes.json();
-            data.auto_index_enabled = ai.enabled;
-            data.auto_index_hour = ai.hour;
-          }
-          if (dailyReviewRes.ok) {
-            const dr = await dailyReviewRes.json();
-            data.daily_review_enabled = dr.enabled;
-            data.daily_review_hour = dr.hour;
-          }
-          data.connect_href = await connectHref("mail");
-          data.reconnect_href = await connectHref("mail", data.credential_id);
-          renderGmailStatus(data);
-        } catch {
-          // Graceful degradation
-        }
-      }
-
-      async function saveDailyReview(enabled, hour) {
-        try {
-          const res = await authFetch(`${API}/api/gmail/daily-review`, {
-            method: "PUT",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled, hour }),
-          });
-          if (!res.ok) throw new Error();
-          showToast(t("toast.daily_review_saved"), "success");
-        } catch {
-          showToast(t("toast.daily_review_failed"), "error");
-        }
-      }
-
-      async function saveGmailAutoIndex(enabled, hour) {
-        try {
-          const res = await authFetch(`${API}/api/gmail/auto-index`, {
-            method: "PUT",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled, hour }),
-          });
-          if (!res.ok) throw new Error();
-          showToast(enabled ? `Auto-index enabled at ${hour}:00` : "Auto-index disabled", "success");
-        } catch {
-          showToast("Failed to save auto-index settings", "error");
-        }
-      }
-
-      function renderGmailStatus(data) {
-        const container = document.getElementById("gmail-container");
-
-        const linked = data.connected;
-        // R1: the saved connection is gone while Gmail was connected before (SECRETS_AT_REST_RFC §6.2)
-        const missing = !linked && !!data.reconnect_needed;
-        const needsReconnect = (linked && !!data.needs_reconnect) || missing;
-        const indexActive = linked && !!data.indexing_active;
-        const activeJobId = data.active_job_id || null;
-
-        let statusText = needsReconnect
-          ? t("gmail.needs_reconnect")
-          : linked ? t("platform.connected") : t("platform.not_connected");
-        const statusDotClass = needsReconnect
-          ? "needs-reconnect"
-          : linked ? "connected" : "disconnected";
-        const reconnectHtml = needsReconnect
-          ? `<div style="margin-bottom:16px; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${missing ? t("gmail.reconnect_hint_missing") : t("gmail.reconnect_hint")}</div>`
-          : "";
-
-        let metaHtml = "";
-        if (linked) {
-          const fmt = (iso) =>
-            iso
-              ? new Date(iso).toLocaleDateString("en-US", {
-                  month: "short",
-                  year: "numeric",
-                })
-              : null;
-          const from = fmt(data.oldest_indexed_through),
-            to = fmt(data.indexed_through);
-          const cov =
-            from && to ? `${from} – ${to}` : to ? `Up to ${to}` : "Not indexed";
-
-          metaHtml = `
-            <div style="font-size:14px; color:var(--text-muted); margin-bottom:16px;">
-              <b>Coverage:</b> ${cov}
-              ${data.indexed_through ? `<br><a href="#" onclick="deleteGmailData(); return false;" style="color:var(--accent-danger); font-size:13px; margin-top:4px; display:inline-block;">Delete Data</a>` : ""}
-            </div>
-          `;
-        }
-
-        let autoIndexHtml = "";
-        let dailyReviewHtml = "";
-        if (linked) {
-          const makeHourOptions = (selectedHour) =>
-            Array.from({length: 24}, (_, h) =>
-              `<option value="${h}" ${h === selectedHour ? "selected" : ""}>${String(h).padStart(2,"0")}:00</option>`
-            ).join("");
-
-          const aiEnabled = !!data.auto_index_enabled;
-          const aiHour = data.auto_index_hour ?? 8;
-          autoIndexHtml = `
-            <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                <label style="font-size:14px; font-weight:500; cursor:pointer;" for="ai-toggle">${t("gmail.auto_index")}</label>
-                <input type="checkbox" id="ai-toggle" ${aiEnabled ? "checked" : ""}
-                  onchange="document.getElementById('ai-hour-row').style.display=this.checked?'flex':'none'; saveGmailAutoIndex(this.checked, parseInt(document.getElementById('ai-hour').value))"
-                  style="width:18px;height:18px;cursor:pointer;">
-              </div>
-              <div id="ai-hour-row" style="display:${aiEnabled ? "flex" : "none"}; align-items:center; gap:8px; margin-top:10px;">
-                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.run_at")}</span>
-                <select id="ai-hour" onchange="saveGmailAutoIndex(true, parseInt(this.value))"
-                  style="font-size:13px; padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-primary);">
-                  ${makeHourOptions(aiHour)}
-                </select>
-                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.in_your_tz")}</span>
-              </div>
-            </div>
-          `;
-
-          const drEnabled = !!data.daily_review_enabled;
-          const drHour = data.daily_review_hour ?? 9;
-          dailyReviewHtml = `
-            <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                <label style="font-size:14px; font-weight:500; cursor:pointer;" for="dr-toggle">${t("gmail.daily_review")}</label>
-                <input type="checkbox" id="dr-toggle" ${drEnabled ? "checked" : ""}
-                  onchange="document.getElementById('dr-hour-row').style.display=this.checked?'flex':'none'; saveDailyReview(this.checked, parseInt(document.getElementById('dr-hour').value))"
-                  style="width:18px;height:18px;cursor:pointer;">
-              </div>
-              <div id="dr-hour-row" style="display:${drEnabled ? "flex" : "none"}; align-items:center; gap:8px; margin-top:10px;">
-                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.run_at")}</span>
-                <select id="dr-hour" onchange="saveDailyReview(true, parseInt(this.value))"
-                  style="font-size:13px; padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-primary);">
-                  ${makeHourOptions(drHour)}
-                </select>
-                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.in_your_tz")}</span>
-              </div>
-            </div>
-          `;
-        }
-
-        let actionButtons = missing
-          ? connectButton(data.connect_href, t("gmail.reconnect"))
-          : !linked
-          ? connectButton(data.connect_href, t("platform.connect_gmail"))
-          : needsReconnect
-          ? `${connectButton(data.reconnect_href, t("gmail.reconnect"))}
-             <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`
-          : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? t("platform.indexing") : t("platform.index_emails")}</button>
-             ${indexActive && activeJobId ? `<button data-job-id="${escapeHtml(activeJobId)}" onclick="cancelGmailIndex(this.dataset.jobId, this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
-             <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`;
-
-        container.innerHTML = `
-          <div class="card integration-card gmail-card reveal">
-            <div class="integration-icon">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#EA4335" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-            </div>
-            <h3 class="integration-title">Gmail</h3>
-            <p class="integration-description">${t("platform.gmail_desc")}</p>
-
-            <div class="integration-status">
-              <div class="status-dot ${statusDotClass}"></div>
-              <span>${statusText}</span>
-            </div>
-
-            ${reconnectHtml}
-            ${metaHtml}
-            ${autoIndexHtml}
-            ${dailyReviewHtml}
-
-            <div class="integration-actions">
-              ${actionButtons}
-            </div>
-          </div>
-        `;
-        observeElements();
-      }
-
-      function triggerGmailIndex() {
-        renderModal(
-          "index-gmail",
-          "Index Gmail",
-          `<div style="margin-bottom: 24px;">
-            <label style="margin-bottom: 12px; font-size:18px;">Index Mode</label>
-            <div style="display:flex;flex-direction:column;gap:16px; background:var(--bg-active); padding:16px; border-radius:16px;">
-              <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
-                <input type="radio" name="index-mode" value="incremental" checked onchange="updateIndexModal()" style="width:20px;height:20px;"> Incremental (New only)
-              </label>
-              <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
-                <input type="radio" name="index-mode" value="backfill" onchange="updateIndexModal()" style="width:20px;height:20px;"> Backfill (To specific date)
-              </label>
-            </div>
-          </div>
-          <div id="backfill-date-row" style="display:none; margin-bottom: 24px;">
-            <label for="backfill-until-input">Index until date</label>
-            <input type="date" id="backfill-until-input" class="inp" />
-          </div>
-          <div id="index-pages-row" style="margin-bottom: 24px;">
-            <label for="index-pages-input">Max pages to fetch</label>
-            <input type="number" id="index-pages-input" class="inp" value="1" min="1" placeholder="Empty = fetch all" />
-          </div>`,
-          `<button onclick="closeModal()" class="btn btn-secondary">Cancel</button>
-           <button id="modal-index-btn" onclick="submitIndexModal()" class="btn btn-primary">Start Indexing</button>`,
-        );
-      }
-
-      function updateIndexModal() {
-        const mode = document.querySelector(
-          'input[name="index-mode"]:checked',
-        ).value;
-        document.getElementById("backfill-date-row").style.display =
-          mode === "backfill" ? "block" : "none";
-        if (mode === "incremental")
-          document.getElementById("index-pages-input").value = "1";
-        if (mode === "backfill")
-          document.getElementById("index-pages-input").value = "";
-      }
-
-      async function submitIndexModal() {
-        const mode = document.querySelector(
-          'input[name="index-mode"]:checked',
-        ).value;
-        const pagesEl = document.getElementById("index-pages-input");
-        const maxPages = Math.max(1, parseInt(pagesEl.value) || 1);
-        const backfillUntil =
-          (document.getElementById("backfill-until-input") || {}).value || null;
-
-        if (mode === "backfill" && !backfillUntil) {
-          showToast("Select date for Backfill", "error");
-          return;
-        }
-
-        const btn = document.getElementById("modal-index-btn");
-        btn.textContent = "Starting...";
-        btn.disabled = true;
-
-        const body = { mode };
-        if (mode === "incremental" || pagesEl.value.trim())
-          body.max_pages = maxPages;
-        if (mode === "backfill" && backfillUntil)
-          body.backfill_until = backfillUntil;
-
-        try {
-          const res = await authFetch(`${API}/api/gmail/index`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          closeModal();
-          if (res.status === 202) {
-            showToast("Indexing started in background.", "success");
-            loadGmailStatus();
-          } else if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(`Error: ${err.error || res.status}`, "error");
-          } else {
-            const data = await res.json();
-            showToast(`Done: ${data.emails_stored} stored`, "success");
-            loadGmailStatus();
-          }
-        } catch (e) {
-          showToast(`Error: ${e.message}`, "error");
-          btn.textContent = "Start";
-          btn.disabled = false;
-        }
-      }
-
-      async function cancelGmailIndex(jobId, btn) {
-        if (!confirm("Cancel indexing?")) return;
-        btn.textContent = "Canceling...";
-        btn.disabled = true;
-        try {
-          const res = await authFetch(`${API}/api/gmail/jobs/${jobId}/cancel`, {
-            method: "POST",
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          showToast("Indexing canceled.", "success");
-          loadGmailStatus();
-        } catch {
-          showToast("Error canceling", "error");
-          btn.textContent = "Cancel";
-          btn.disabled = false;
-        }
-      }
-
-      async function deleteGmailData() {
-        if (!confirm("Delete all indexed emails? Cannot be undone.")) return;
-        try {
-          const res = await authFetch(`${API}/api/gmail/data`, {
-            method: "DELETE",
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          showToast("Data deleted.", "success");
-          loadGmailStatus();
-        } catch {
-          showToast("Failed to delete", "error");
-        }
-      }
-
-      async function disconnectGmail() {
-        if (!confirm("Disconnect Gmail? Indexed data remains.")) return;
-        try {
-          const res = await authFetch(`${API}/api/gmail/disconnect`, {
-            method: "DELETE",
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          showToast("Gmail disconnected.", "success");
-          loadGmailStatus();
-        } catch {
-          showToast("Failed to disconnect", "error");
-        }
-      }
-
-      async function loadTasksStatus() {
-        try {
-          const res = await authFetch(`${API}/api/tasks/microsoft/status`, {
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          const data = await res.json();
-          data.connect_href = await connectHref("tasks");
-          renderServiceStatus(
-            "tasks",
-            "Microsoft To Do",
-            t("platform.tasks_desc"),
-            data,
-          );
-        } catch {}
       }
 
       async function loadDriveStatus() {
@@ -2450,148 +1475,6 @@
         loadDriveStatus();
       }
 
-      function renderServiceStatus(id, name, description, data) {
-        // Specifically targets tasks-container
-        const container = document.getElementById("tasks-container");
-
-        const linked = data.connected;
-        // R1: the saved connection is gone while a primary list shows a past connection (SECRETS_AT_REST_RFC §6.2)
-        const missing = !linked && !!data.reconnect_needed;
-
-        let statusText = missing ? t("todo.needs_reconnect") : linked ? t("platform.connected") : t("platform.not_connected");
-        const statusDotClass = missing ? "needs-reconnect" : linked ? "connected" : "disconnected";
-        const reconnectHtml = missing
-          ? `<div style="margin-bottom:16px; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${t("todo.reconnect_hint_missing")}</div>`
-          : "";
-
-        const actionButtons = linked
-          ? `<button onclick="disconnectService('${id}')" class="btn btn-secondary">${t("platform.disconnect_account")}</button>`
-          : missing
-          ? connectButton(data.connect_href, t("todo.reconnect"))
-          : connectButton(data.connect_href, t("platform.connect_todo"));
-
-        container.innerHTML = `
-          <div class="card integration-card tasks-card reveal">
-            <div class="integration-icon">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0078D4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-            </div>
-            <h3 class="integration-title">${name}</h3>
-            <p class="integration-description">${description}</p>
-            
-            <div class="integration-status">
-              <div class="status-dot ${statusDotClass}"></div>
-              <span>${statusText}</span>
-            </div>
-
-            ${reconnectHtml}
-
-            <div class="integration-actions">
-              ${actionButtons}
-            </div>
-          </div>
-        `;
-        observeElements();
-      }
-
-      async function disconnectService(id) {
-        const name = "MS ToDo";
-        if (!confirm(`Disconnect ${name}?`)) return;
-        try {
-          const res = await authFetch(`${API}/api/tasks/microsoft/disconnect`, {
-            method: "DELETE",
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          showToast(`${name} disconnected`, "success");
-          loadTasksStatus();
-        } catch (e) {
-          showToast("Error disconnecting", "error");
-        }
-      }
-
-      /* ── Team invites ────────────────────────────────── */
-      async function generateTeamInvite() {
-        const email = prompt("Enter email to invite:");
-        if (!email || !email.trim()) return;
-        try {
-          const res = await authFetch(`${API}/api/user/invite-codes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              type: "team_invite",
-              email: email.trim(),
-              role: "MEMBER",
-            }),
-          });
-          if (!res.ok) throw new Error("Could not create invite");
-          const data = await res.json();
-          const deepLink = `${window.location.origin}/join?code=${encodeURIComponent(data.code)}`;
-          const expiry = new Date(data.expires_at).toLocaleString();
-          const el = document.getElementById("generated-code-container");
-          el.classList.remove("hidden");
-          el.innerHTML = `
-        <div class="invite-code-box reveal">
-          <p style="margin-bottom:8px; font-weight:600; color:var(--text-main);">Share this code</p>
-          <div class="code-display">${escapeHtml(data.code)}</div>
-          <p style="font-size: 14px; margin-bottom: 8px; color:var(--text-muted);">Copy it now, it will not be shown again.</p>
-          <p style="font-size: 14px; margin-bottom: 24px;">Valid until ${expiry}</p>
-          
-          <div class="invite-link-wrapper">
-            <input type="text" id="deep-link-input" value="${escapeHtml(deepLink)}" readonly style="flex:1; background:transparent; border:none; padding:12px 20px; font-size:16px; outline:none; color:var(--text-main);" />
-            <button onclick="copyDeepLink()" class="btn btn-black" style="padding: 10px 24px;">Copy Link</button>
-          </div>
-        </div>`;
-          setTimeout(
-            () => el.querySelector(".reveal").classList.add("visible"),
-            50,
-          );
-          loadCodes();
-        } catch (e) {
-          showToast(e.message, "error");
-        }
-      }
-
-      async function loadCodes() {
-        try {
-          const res = await authFetch(`${API}/api/user/invite-codes`, {
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          const data = await res.json();
-          const list = document.getElementById("codes-list-container");
-          if (!data.invites.length) {
-            list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 64px 24px; font-size:18px;">No codes generated yet.</div>`;
-            return;
-          }
-          list.innerHTML = `
-        <table class="codes-table">
-          <thead><tr><th>Code</th><th>Status</th><th>Created</th><th>Used</th></tr></thead>
-          <tbody>${data.invites
-            .map(
-              (c) => `
-            <tr>
-              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${escapeHtml(c.hint ? "\u2026" + c.hint : "\u2014")}</span></td>
-              <td><span class="status-badge ${c.is_valid ? "active" : "used"}">${c.is_valid ? "Active" : "Used"}</span></td>
-              <td>${new Date(c.created_at).toLocaleDateString()}</td>
-              <td>${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>
-            </tr>`,
-            )
-            .join("")}
-          </tbody>
-        </table>`;
-        } catch (e) {
-          showToast("Error loading codes", "error");
-        }
-      }
-
-      function copyDeepLink() {
-        navigator.clipboard.writeText(
-          document.getElementById("deep-link-input").value,
-        );
-        showToast(t("toast.link_copied"), "success");
-      }
-
       /* ── Modals & Toasts ──────────────────────────────── */
       function renderModal(id, title, body, footer) {
         const container = document.getElementById("modal-container");
@@ -2651,7 +1534,6 @@
         }, 4000);
       }
 
-
       // Numeric entities built from the char code: no entity literal in the source that an editor could decode
       // back into the raw character (which is how this function once became a no-op).
       function escapeHtml(str) {
@@ -2664,4 +1546,123 @@
           credentials: "include",
         });
         window.location.href = "/";
+      }
+
+      /* ── Facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7): its state and its requests ─── */
+      // The server decides; the page only asks. A code is typed into a field, sent once and cleared: it is never kept,
+      // logged or put in a URL, and every text shown is set as text (never as markup). The Settings row that sets,
+      // changes and removes the PIN is the first block of cabinet-settings.js, right after this one; the Memory section's
+      // gate (unlock, relock, the guarded facts fetch) is in cabinet-memory.js.
+      const NO_PIN = { has_pin: false, unlocked: false, reset_due_at: null, can_request_reset: false };
+      let factsPin = { ...NO_PIN };
+      const PIN_FIELDS = ["pin-new", "pin-new2", "pin-duress", "pin-duress2", "pin-current-change", "pin-new-c",
+        "pin-new2-c", "pin-duress-c", "pin-duress2-c", "pin-current-remove", "facts-pin-input"];
+
+      function pinValue(id) {
+        return document.getElementById(id).value;
+      }
+
+      function clearPinFields() {
+        for (const id of PIN_FIELDS) document.getElementById(id).value = "";
+      }
+
+      async function pinRequest(method, path, body) {
+        const init = { method, credentials: "include" };
+        if (body !== undefined) {
+          init.headers = { "Content-Type": "application/json" };
+          init.body = JSON.stringify(body);
+        }
+        const res = await authFetch(`${API}/api/user/facts-pin${path}`, init);
+        let data = null;
+        try { data = await res.json(); } catch { /* a 204 has no body */ }
+        return { ok: res.ok, status: res.status, data };
+      }
+
+      async function loadFactsPin() {
+        try {
+          const r = await pinRequest("GET", "");
+          if (r.ok && r.data) factsPin = r.data;
+        } catch {
+          // the facts routes refuse a locked tab themselves (403 facts_locked), whatever this read says
+        }
+        return factsPin;
+      }
+
+      function pinErrorText(data) {
+        const error = data && data.error;
+        const key = `pin.err_${error}`;
+        const text = t(key);
+        if (error === "account_locked") return t("pin.account_locked");
+        if (text === key) return t("pin.err_failed");
+        return text.replace("{n}", String(data.attempts_left));
+      }
+
+      // The message line of the Settings row: an error, a done, or nothing (hidden).
+      function pinMessage(text, isError) {
+        const el = document.getElementById("pin-message");
+        el.textContent = text;
+        el.classList.toggle("hidden", !text);
+        el.classList.toggle("c-msg-err", !!isError);
+        el.classList.toggle("c-msg-ok", !isError);
+      }
+
+      function pinWhen(iso) {
+        return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+      }
+
+      function renderPinReset() {
+        const due = factsPin.reset_due_at;
+        const text = due ? t("pin.reset_pending").replace("{time}", pinWhen(due)) : "";
+        for (const prefix of ["pin", "facts-pin"]) {
+          const note = document.getElementById(`${prefix}-reset-note`);
+          note.textContent = text;
+          note.classList.toggle("hidden", !due);
+          document.getElementById(`${prefix}-reset-cancel`).classList.toggle("hidden", !due);
+          document.getElementById(`${prefix}-forgot`).classList.toggle("hidden", !!due);
+        }
+      }
+
+      // "Account locked": the duress code or the fifth wrong code in a row. Every session is gone with the lock.
+      function onAccountLocked() {
+        clearPinFields();
+        pinMessage(t("pin.account_locked"), true);
+        document.getElementById("facts-pin-error").textContent = t("pin.account_locked");
+        document.getElementById("facts-pin-input").disabled = true;
+        document.getElementById("facts-pin-unlock").disabled = true;
+        document.getElementById("section-memory").classList.add("pin-locked");
+      }
+
+      function pinFailed(r) {
+        if (r.status === 423) { onAccountLocked(); return; }
+        pinMessage(pinErrorText(r.data), true);
+      }
+
+      // A forgotten PIN: the reset takes 24 hours (the server says when), needs a fresh Google sign-in, can be cancelled.
+      // The Memory gate asks first; the Settings row explains it in its own step, then requests.
+      async function forgotPin() {
+        if (!confirm(t("pin.reset_confirm"))) return;
+        await requestPinReset();
+      }
+
+      async function requestPinReset() {
+        const r = await pinRequest("POST", "/reset");
+        if (!r.ok) {
+          if (r.status === 423) { onAccountLocked(); return; }
+          const text = pinErrorText(r.data);
+          pinMessage(text, true);
+          document.getElementById("facts-pin-error").textContent = text;
+          return;
+        }
+        pinMessage(t("pin.done_reset"), false);
+        document.getElementById("pin-logout-offer").classList.remove("hidden");
+        await loadFactsPin();
+        renderPinSettings();
+      }
+
+      async function cancelPinReset() {
+        const r = await pinRequest("POST", "/reset/cancel");
+        if (!r.ok) { pinFailed(r); return; }
+        pinMessage(t("pin.done_cancelled"), false);
+        await loadFactsPin();
+        renderPinSettings();
       }
