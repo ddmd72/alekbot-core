@@ -175,12 +175,13 @@ class TestPasskeyStart:
     """A passkey sign-in (CABINET_DEVICE_SESSIONS_RFC §7.3, §7.5): it sends no new-sign-in notice, and the session
     starts proved by a passkey for a call start; a Google one is announced and does not."""
 
-    async def test_a_passkey_session_sends_no_notice_and_starts_proved_by_the_passkey(self, world):
-        hostile = "iPhone — Home Screen {time} <!channel>"
-        session, _, _ = await world.service.start(ALEX, ALEX_ACCOUNT, label=hostile, platform_hint=hostile,
-                                                  auth_kind=SessionAuthKind.PASSKEY)
+    async def test_a_passkey_start_sends_no_notice_and_still_creates_the_session(self, world):
+        session, token, secret = await world.service.start(
+            ALEX, ALEX_ACCOUNT, label=PHONE, platform_hint=PHONE, auth_kind=SessionAuthKind.PASSKEY)
         assert world.channels.sent == [] and world.channels.sent_literal == []
+        assert world.repo.sessions == {"sid-1": session}
         assert (session.auth_kind, session.passkey_at) == (SessionAuthKind.PASSKEY, T0)
+        assert world.sid_of(token) == "sid-1" and secret == "secret-1"
 
     async def test_a_google_session_is_announced_as_google_and_starts_unproved(self, world):
         session, _, _ = await world.start()
@@ -387,21 +388,3 @@ class TestConnectorGrants:
         with pytest.raises(RuntimeError, match="store down"):
             await service.revoke_all("user-alex", KILL)
         assert set(grants.revoked_at) == {"rt-claude", "rt-desktop"}
-
-
-class TestPasskeyStartSendsNoNotice:
-    """A passkey sign-in sends no new-sign-in notice (the enrolment was announced; the device's biometrics gate it);
-    a Google one sends exactly one."""
-
-    async def test_a_passkey_start_sends_no_notice_and_still_creates_the_session(self, world):
-        session, token, secret = await world.service.start(
-            ALEX, ALEX_ACCOUNT, label=PHONE, platform_hint=PHONE, auth_kind=SessionAuthKind.PASSKEY)
-        assert world.channels.sent == [] and world.channels.sent_literal == []
-        assert world.repo.sessions == {"sid-1": session}
-        assert (session.auth_kind, session.passkey_at) == (SessionAuthKind.PASSKEY, T0)
-        assert world.sid_of(token) == "sid-1" and secret == "secret-1"
-
-    async def test_a_google_start_sends_the_sign_in_notice_once(self, world):
-        await world.start()
-        [(_, _, text)] = world.channels.sent_literal
-        assert PHONE in text and "$devices off" in text
