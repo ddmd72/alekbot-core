@@ -1,4 +1,5 @@
-"""Cabinet -> Devices (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6): the nav items, the section with the lost-phone checklist,
+"""Cabinet -> Settings, the devices block (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6; in Settings since CABINET_REDESIGN_RFC
+§4): Settings loading it, the block with the lost-phone checklist,
 every string in all four languages, and `renderDevices` escaping a hostile label (run under node when installed)."""
 import json
 import re
@@ -22,10 +23,18 @@ def _function(name: str) -> str:
     return match.group(1)
 
 
-def test_nav_items_and_section_exist():
-    assert "navigate('devices')" in _HTML and 'id="nav-devices"' in _HTML and 'id="nav-mobile-devices"' in _HTML
-    assert 'id="section-devices"' in _HTML
-    assert 'if (name === "devices") loadDevices();' in _HTML
+def _settings_loads() -> str:
+    """What `navigate` loads when Settings opens (the Devices section moved into Settings, CABINET_REDESIGN_RFC §4)."""
+    nav = re.search(r"\n      function navigate\(name\) \{.*?\n      \}\n", _HTML, re.S).group(0)
+    return "".join(re.findall(r'if \(name === "settings"\) \{(.*?)\}', nav, re.S))
+
+
+def test_the_devices_block_sits_in_settings_and_opening_settings_loads_it():
+    assert "navigate('devices')" not in _HTML and 'id="nav-devices"' not in _HTML and 'id="nav-mobile-devices"' not in _HTML
+    assert "section-devices" not in _HTML       # no section of that name, and no code that still looks one up
+    settings = _HTML[_HTML.index('<section id="section-settings"'):_HTML.index('<section id="section-reminders"')]
+    assert 'id="devices-list"' in settings
+    assert "loadDevices();" in _settings_loads()
 
 
 @pytest.mark.parametrize("key", _KEYS)
@@ -87,7 +96,7 @@ def test_every_passkey_string_is_in_all_four_languages(key):
 
 def test_the_devices_tab_lists_the_passkeys_under_the_sessions_and_offers_to_add_one():
     assert _HTML.index('id="devices-list"') < _HTML.index('id="passkeys-list"') < _HTML.index('id="devices-lost-title"')
-    assert 'onclick="addPasskeyHere()"' in _HTML and 'if (name === "devices") loadPasskeys();' in _HTML
+    assert 'onclick="addPasskeyHere()"' in _HTML and "loadPasskeys();" in _settings_loads()
     assert "const { authFetch, addPasskey } = window.alekSession;" in _HTML
     for element in ("passkeys-title", "passkeys-subtitle", "passkeys-add", "passkey-offer-text", "passkey-offer-add",
                     "passkey-offer-dismiss"):

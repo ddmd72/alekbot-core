@@ -1,8 +1,8 @@
 """The Cabinet drive card after the redesign: a summary that opens into problem banners and four tabs (Overview / Access /
 Search index / Settings, Disconnect at the bottom of Settings), the state chip and its priority, the empty-scope state
 keyed off the server's `scope.empty_means` (never a provider), the counters (three tiles, `unresolved` on its own line,
-only labelled keys), the folder-picker dialog with its Save (n) button and unsaved-changes bar, the Integrations tab
-layout (compact tiles, the drive card full width below them) and the i18n of every new `drive.*` key.
+only labelled keys), the folder-picker dialog with its Save (n) button and unsaved-changes bar, the layout (compact
+tiles in Settings, the drive card full width in Drives) and the i18n of every new `drive.*` key.
 
 The static checks read the page; the behavioural ones run the drive script's own functions under node when node is
 installed, over a fake DOM that keeps what the renderers write. Invented cast only."""
@@ -457,13 +457,16 @@ def test_the_picker_lives_outside_the_card_and_is_a_modal_dialog():
 
 # -------------------------------------------------------------------------------- the Integrations layout
 
-def test_the_drive_card_sits_full_width_below_the_tiles():
-    section = _between('<section id="section-integrations"', "<!-- Team Section -->")
+def test_the_drive_card_is_full_width_in_drives_and_the_tiles_grid_sits_in_settings():
+    # CABINET_REDESIGN_RFC §4: Integrations -> Drives (the drive card) and Settings (the platform, Gmail, To Do tiles).
+    drives = _between('<section id="section-drives"', "</section>")
+    assert 'id="drive-container"' in drives and "integration-bento" not in drives
+    assert _HTML.count('class="integration-bento"') == 1
+    settings = _between('<section id="section-settings"', '<section id="section-reminders"')
+    grid = settings[settings.index('class="integration-bento"'):settings.index('id="devices-title"')]
     for tile in ('id="platforms-container"', 'id="gmail-container"', 'id="tasks-container"'):
-        assert section.index(tile) < section.index('id="drive-container"'), tile
-    grid_end = section.index('<!-- The drive card: full width below the tiles -->')
-    assert section.index('id="tasks-container"') < grid_end < section.index('id="drive-container"')
-    assert section.count('class="integration-bento"') == 1 and section.index('class="integration-bento"') < section.index('id="gmail-container"')
+        assert tile in grid, tile
+    assert 'id="drive-container"' not in settings
 
 
 def test_the_tiles_are_compact_two_columns_and_do_not_stretch():

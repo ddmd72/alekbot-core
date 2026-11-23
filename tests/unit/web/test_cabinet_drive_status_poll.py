@@ -14,10 +14,10 @@ def test_poll_interval_is_two_minutes():
     assert "const DRIVE_STATUS_POLL_MS = 120000;" in _HTML
 
 
-def test_poll_runs_only_while_visible_and_on_the_integrations_section():
+def test_poll_runs_only_while_visible_and_on_the_drives_section():
     block = _poll_block()
     assert 'document.visibilityState === "visible"' in block
-    assert '_activeSection === "integrations"' in block
+    assert '_activeSection === "drives"' in block
 
 
 def test_poll_starts_only_while_the_card_shows_building():
@@ -31,4 +31,4 @@ def test_render_only_when_the_data_changed():
 
 def test_leaving_the_section_clears_the_timer():
     nav = re.search(r"function navigate\(name\) \{(.*?)const sec", _HTML, re.S).group(1)
-    assert 'name !== "integrations"' in nav and "clearTimeout(_driveStatusTimer)" in nav
+    assert 'name !== "drives"' in nav and "clearTimeout(_driveStatusTimer)" in nav
