@@ -173,6 +173,7 @@ Two consequences:
 | `auth_kind`, `auth_at` | How and when the session was signed in (`google` or `passkey`) |
 | `created_at`, `last_seen_at`, `expires_at` | `expires_at` = `created_at` + 30 days |
 | `refresh_hash`, `prev_refresh_hash`, `rotated_at` | The rotating refresh secret |
+| `passkey_at` | When a passkey assertion last proved the session (its passkey sign-in, or the step-up before a call, §7.3) |
 | `facts_unlocked_until` | §7.7 |
 | `revoked_at`, `revoke_reason` | Set by logout, the devices list, the kill switch or the account lock |
 | `purge_after` | Firestore TTL field: `last_seen_at` + 30 days |
