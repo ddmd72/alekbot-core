@@ -1,7 +1,7 @@
 # RFC: External task queue
 
-**Status:** Proposed (2026-11-23).
-**Owner's map:** none yet — a building block README is written at implementation.
+**Status:** Accepted (2026-11-23); step 1 implemented, steps 2–5 pending.
+**Owner's map:** `docs/05_building_blocks/external_task_queue/README.md`.
 The decisions are in §2. Every example below is invented: the user is Alex Doe, the worker labels are `research` and
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
 changed in the Example School term calendar".
@@ -1038,12 +1038,9 @@ Each step is one or more PRs and is usable on its own.
 
 ## 10. Open questions
 
-1. **Does claude.ai's dynamic registration send a `scope`?** The tasks scope is deliberately not a default. If the
-   client registers without a scope and asks for the tasks resource only at authorize time, `/authorize` refuses
-   "scope not registered" (§3).
-   - This must be checked against a live registration before step 4.
-   - If the client sends no scope, the options are a registration path that adds the tasks scope on the user's
-     approval, or keys only for that client.
+1. **Does claude.ai's dynamic registration send a `scope`?** Closed. claude.ai sends its own single scope at dynamic
+   registration, one per connector, so a resource that advertises its own scope gets a registration carrying it.
+   - Still to check at the OAuth step (step 4): the scope requested at authorize time matches the registered one.
 
 All other questions of the first draft are closed by D11–D13 and E1–E7 (§2).
 

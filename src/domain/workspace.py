@@ -10,6 +10,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel
@@ -20,6 +21,9 @@ from .skill import SKILL_FILE_EXTENSIONS
 
 WORKSPACE_TOOL = "workspace"
 WORKSPACE_REF_PREFIX = "workspace:"
+# The untrusted mark of a file written by an execution that had read outside content (a web page, a worker's
+# result): what it wrote may repeat that content, so later reads treat the file as outside content too.
+TAINTED_EXECUTION_MARK = "tainted_execution"
 COMMANDS: Tuple[str, ...] = (
     "view", "create", "str_replace", "insert", "delete", "rename", "copy", "history", "restore", "grep",
 )
@@ -247,6 +251,16 @@ class WorkspaceEntry(BaseModel):
     delete_id: Optional[str] = None
     renamed_to: Optional[str] = None
     restored_from: Optional[int] = None
+    untrusted: Optional[str] = None  # the provenance mark of outside content (`external_task:<id>`); None: trusted
+
+
+class MarkedWrite(str, Enum):
+    """The outcome of `write_marked`: the file was written, an earlier attempt's file (same mark) stays as it is, or
+    the path holds a file with another provenance and is left alone."""
+
+    WRITTEN = "written"
+    REUSED = "reused"
+    TAKEN = "taken"
 
 
 class WorkspaceBlob(BaseModel):
@@ -260,6 +274,7 @@ class WorkspaceWriteMeta(BaseModel):
     origin: str
     fire: Optional[str] = None
     restored_from: Optional[int] = None
+    untrusted: Optional[str] = None
 
 
 class WorkspaceDeleteMeta(BaseModel):
@@ -711,11 +726,13 @@ def render_grep(
     *,
     context: int = GREP_DEFAULT_CONTEXT,
     files_only: bool = False,
+    wrap_hits: Optional[Callable[[str, str], Optional[str]]] = None,
 ) -> Tuple[str, int]:
     """(text, number of matches found) of a grep over `files` (path, decoded text), already in the order to show.
 
     A match is one matching line. At most GREP_MAX_MATCHES match lines and GREP_MAX_OUTPUT_BYTES are shown, then the
-    trailer; the header counts everything found.
+    trailer; the header counts everything found. `wrap_hits(path, hit lines)` returns the marked form of one file's hit
+    lines (they follow the path line), or None to leave them as they are (a file with no untrusted mark).
     """
     found = [(path, text, matching_lines(text, matcher)) for path, text in files]
     found = [f for f in found if f[2]]
@@ -748,6 +765,9 @@ def render_grep(
                 if k:
                     block.append("--")
                 block += [f"{n}{':' if n in hit_set else '-'}{_cut_line(src[n - 1])}" for n in range(lo, hi + 1)]
+            wrapped = wrap_hits(path, "\n".join(block[1:])) if wrap_hits is not None else None
+            if wrapped is not None:
+                block = [path, wrapped]
         size = sum(len(b.encode("utf-8")) + 1 for b in block)
         if used + size > GREP_MAX_OUTPUT_BYTES:
             capped = True
@@ -883,6 +903,9 @@ class WorkspaceCall:
     # at a middle line valid, and nothing else (D18).
     line_known: Mapping[str, int] = field(default_factory=dict)
     references: WorkspaceReferences = field(default_factory=WorkspaceReferences)
+    # The mark every write of this command carries when its execution had read outside content (the handler's
+    # `is_tainted`); None for an execution that had not. A file that is already flagged keeps its own mark.
+    write_mark: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -893,3 +916,6 @@ class WorkspaceResult:
     failed: bool = False
     generations: Mapping[str, Optional[int]] = field(default_factory=dict)
     line_generations: Mapping[str, int] = field(default_factory=dict)
+    # The text holds bytes of a flagged file (wrapped as outside content); the handler passes it on as
+    # `ToolResult.untrusted`.
+    untrusted: bool = False

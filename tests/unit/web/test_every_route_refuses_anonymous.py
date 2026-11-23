@@ -29,6 +29,7 @@ from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.slack.http_adapter import HTTPModeAdapter
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
+from src.composition.external_task_api_setup import build_external_task_api_limiter
 from src.composition.mcp_setup import build_mcp_components
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from src.domain import sandbox_contract as sc
@@ -39,6 +40,7 @@ from src.services.geo_mark_service import GeoMarkService
 from src.services.short_link_service import ShortLinkService
 from src.web import user_cabinet_app
 from src.web.device_auth_app import create_device_auth_blueprint
+from src.web.external_task_api import create_external_task_api_blueprint
 from src.web.facts_pin_app import create_facts_pin_blueprint
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
@@ -247,6 +249,15 @@ def _geo_mark(p: Probe):
     return create_geo_mark_blueprint(service), {}
 
 
+# The worker REST endpoint (EXTERNAL_TASK_QUEUE_RFC §5.5): a request with no worker key is refused before the service, the
+# user store or the whitelist; it writes nothing (the `401` limits are counted in memory).
+def _external_task_api(p: Probe):
+    limiter = build_external_task_api_limiter(
+        p.db(), SimpleNamespace(worker_task_dedup_collection="p7_worker_task_dedup"))
+    return create_external_task_api_blueprint(
+        p.wire("external_tasks"), limiter=limiter, user_repo=p.wire("users"), whitelist_repo=p.wire("whitelist")), {}
+
+
 # The key is how main.py / indexer_main.py / sandbox_main.py name the factory (see the static check below).
 FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_user_cabinet_blueprint": _cabinet,
@@ -258,6 +269,7 @@ FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_short_link_blueprint": _short_link,
     "create_drive_link_blueprint": _drive_link,     # reviewer edit, drive MCP slice 4
     "create_geo_mark_blueprint": _geo_mark,
+    "create_external_task_api_blueprint": _external_task_api,
     "create_voice_control_plane_blueprint": _voice_control_plane,
     "create_voice_webhook_blueprint": _voice_webhook,
     "create_voice_web_call_blueprint": _voice_web_call,

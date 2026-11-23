@@ -185,6 +185,13 @@ smart_local:workspace.path  # stored tests/unit/agents/core/test_smart_local_too
 smart_local:workspace.pattern  # read-only grep input, never stored
 smart_local:workspace.regex  # read-only grep matcher flag, never stored
 smart_local:workspace.source  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_tasks:cancel_external_task.task_id  # stored tests/unit/agents/core/test_smart_task_tools_e2e.py::test_a_cancelled_task_stores_the_cancellation_of_the_task_id_it_names
+smart_tasks:create_external_task.text  # stored tests/unit/agents/core/test_smart_task_tools_e2e.py::test_a_created_task_stores_worker_title_and_text
+smart_tasks:create_external_task.title  # stored tests/unit/agents/core/test_smart_task_tools_e2e.py::test_a_created_task_stores_worker_title_and_text
+smart_tasks:create_external_task.worker  # stored tests/unit/agents/core/test_smart_task_tools_e2e.py::test_a_created_task_stores_worker_title_and_text
+smart_tasks:get_external_task.task_id  # read-only task lookup, never stored
+smart_tasks:list_external_tasks.status  # read-only listing filter, never stored
+smart_tasks:list_external_tasks.worker  # read-only listing filter, never stored
 tasks:create_task.body  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
 tasks:create_task.due_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
 tasks:create_task.importance  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index

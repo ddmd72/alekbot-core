@@ -124,6 +124,8 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
             metadata["fire"] = meta.fire
         if meta.restored_from is not None:
             metadata["restored_from"] = str(meta.restored_from)
+        if meta.untrusted:
+            metadata["untrusted"] = meta.untrusted
         blob = bucket.blob(key)
         blob.metadata = metadata
         if path.startswith(SCRATCH_FOLDER):
@@ -215,4 +217,5 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
             delete_id=meta.get("delete_id"),
             renamed_to=meta.get("renamed_to"),
             restored_from=int(restored) if restored.isdigit() else None,
+            untrusted=meta.get("untrusted") or None,
         )

@@ -22,6 +22,9 @@ from ..services.deep_research_notice_sender import DeepResearchNoticeSender
 from ..services.disabled_task import DisabledTask
 from ..services.email_review_service import EmailReviewService
 from ..services.execute_reminder_task import ExecuteReminderTask
+from ..services.external_task_delivery_task import ExternalTaskDeliveryTask
+from ..services.external_task_service import ExternalTaskService
+from ..services.external_task_timer_task import ExternalTaskTimerTask
 from ..services.geo_mark_turn_task import GeoMarkTurnTask
 from ..services.gmail_reconnect_flag import GmailReconnectFlag
 from ..services.provider_registry import ProviderRegistry
@@ -30,6 +33,7 @@ from ..services.task_dispatch_service import TaskDispatchService
 from ..services.user_notification_service import UserNotificationService
 from ..services.video_generation_delivery import deliver_video
 from ..services.video_generation_polling_task import VideoGenerationPollingTask
+from ..services.workspace_service import WorkspaceService
 
 
 def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRepository,
@@ -42,9 +46,12 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
                        gmail_reconnect_flag: GmailReconnectFlag,
                        account_repo: Optional[AccountRepository],
                        geo_mark_turn: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None,
+                       external_tasks: Optional[ExternalTaskService] = None,
+                       workspace: Optional[WorkspaceService] = None,
                        ) -> Mapping[str, WorkerTask]:
     """Task type -> runner for every task served outside `WorkerHandler`. `geo_mark_turn` is the platform's runner of
-    a queued `$geo` question (the Slack adapter's entry); None: the task answers 501."""
+    a queued `$geo` question (the Slack adapter's entry); None: the task answers 501. `external_tasks` None (no task
+    queue): the two external task types answer 501; `workspace` None: a delivered result gets no workspace copy."""
     tasks: Dict[str, WorkerTask] = {}
     empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=alert_sink)
     if notes_port is None:
@@ -91,4 +98,15 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
         tasks["billing_daily_summary"] = BillingDailySummaryTask(
             billing_webhook=alert_sink, account_repo=account_repo, user_repo=user_repo)
     tasks["geo_mark_turn"] = GeoMarkTurnTask(run_turn=geo_mark_turn)
+    if external_tasks is None:
+        tasks["external_task_timer"] = DisabledTask(
+            "external_task_timer: external task queue not configured", 501,
+            {"error": "external tasks not configured"})
+        tasks["external_task_deliver"] = DisabledTask(
+            "external_task_deliver: external task queue not configured", 501,
+            {"error": "external tasks not configured"})
+    else:
+        tasks["external_task_timer"] = ExternalTaskTimerTask(external_tasks=external_tasks)
+        tasks["external_task_deliver"] = ExternalTaskDeliveryTask(
+            external_tasks=external_tasks, workspace=workspace, notification_service=notification_service)
     return tasks

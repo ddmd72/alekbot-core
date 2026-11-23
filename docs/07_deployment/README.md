@@ -355,7 +355,7 @@ are never deleted (nothing breaks).
 | `<prefix>long_turns` | long-turn registry records |
 | `<prefix>skill_drafts` and `draft_files` | unsaved skill drafts (30 days) and their staged file contents |
 | `<prefix>memory_fact_drafts` | unconfirmed memory-fact drafts (7 days) |
-| `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h) |
+| `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h), external task API per-worker rate windows (two windows after the window starts) |
 | `<prefix>drive_model_usage` | monthly drive model-usage documents (the `{user}:initial` document has no `expires_at`) |
 | `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
 | `<prefix>geo_mark_links` | one-time `$geo` location links (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps unused links |
@@ -371,7 +371,7 @@ gcloud firestore fields ttls update expires_at --collection-group=<collection-gr
   --enable-ttl --database=us-production --project=<PROJECT_ID>
 ```
 
-Five collections expire on a different field, **`purge_after`**, which exists only in storage:
+Seven collections expire on a different field, **`purge_after`**, which exists only in storage:
 
 | Collection group | What expires |
 |---|---|
@@ -380,6 +380,8 @@ Five collections expire on a different field, **`purge_after`**, which exists on
 | `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written) |
 | `<prefix>audio_transcripts` | cached transcripts of opened chat audio (90 days after they were written; chat uploads themselves are deleted after 30 days by the bucket lifecycle) |
 | `<prefix>drive_links` | the drive connector's one-time download links (a day after issue; a link itself dies 5 minutes after issue, checked on read) |
+| `<prefix>external_tasks` | external task records (30 days after the task reaches a final state; a task still open has no `purge_after`) |
+| `<prefix>external_task_results` | the stored result text of a done external task (30 days after the task is done, the same instant as its task record) |
 
 ```bash
 gcloud firestore fields ttls update purge_after --collection-group=<collection-group> \

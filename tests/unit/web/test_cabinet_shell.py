@@ -166,8 +166,8 @@ globalThis.IntersectionObserver = class { observe() {} unobserve() {} };
 const LANG_DICT = { en: {} };
 let _driveStatusTimer = null, _driveStatusSnapshot = null;
 for (const name of ["loadHome", "relockFacts", "enterMemory", "loadDriveStatus", "loadReminders", "loadSettings",
-                    "loadFactsPinSettings", "loadPlatforms", "loadGmailStatus", "loadTasksStatus", "loadDevices",
-                    "loadPasskeys", "loadCodes"]) {
+                    "loadFactsPinSettings", "loadPlatforms", "loadGmailStatus", "loadTasksStatus", "loadExternalWorkers",
+                    "loadDevices", "loadPasskeys", "loadCodes"]) {
   globalThis[name] = () => calls.push(name);
 }
 """
@@ -221,9 +221,9 @@ def test_a_connect_return_opens_the_place_of_its_connector_whatever_the_tab(quer
     ("integrations", "drives", ["loadDriveStatus"]),
     ("reminders", "reminders", ["loadReminders"]),
     ("settings", "settings", ["loadSettings", "loadFactsPinSettings", "loadPlatforms", "loadGmailStatus",
-                              "loadTasksStatus", "loadDevices", "loadPasskeys"]),
+                              "loadTasksStatus", "loadExternalWorkers", "loadDevices", "loadPasskeys"]),
     ("devices", "settings", ["loadSettings", "loadFactsPinSettings", "loadPlatforms", "loadGmailStatus",
-                             "loadTasksStatus", "loadDevices", "loadPasskeys"]),
+                             "loadTasksStatus", "loadExternalWorkers", "loadDevices", "loadPasskeys"]),
 ])
 def test_navigate_opens_the_section_marks_both_menus_writes_the_address_and_loads_its_content(name, opened, loads):
     out = _run(f"""navigate({json.dumps(name)});

@@ -75,10 +75,11 @@
    "collection": "worker_task_dedup",
    "field": "expires_at",
    "deleted_by": "ttl-policy",
-   "what_expires": "Cloud Tasks claims (1 h), daily-review marks (48 h)",
+   "what_expires": "Cloud Tasks claims (1 h), daily-review marks (48 h), external task API per-worker rate windows (two windows after the window starts)",
    "writers": [
     "src/adapters/firestore_task_claim_store.py",
-    "src/adapters/firestore_dedup_store.py"
+    "src/adapters/firestore_dedup_store.py",
+    "src/adapters/firestore_window_counter.py"
    ]
   },
   {
@@ -323,6 +324,28 @@
     "src/adapters/firestore_drive_link_store.py",
     "src/domain/drive_link.py",
     "src/services/drive_link_service.py"
+   ]
+  },
+  {
+   "id": "external_tasks",
+   "collection": "external_tasks",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "external task records (30 days after the task reaches a final state; a task still open has no `purge_after`)",
+   "writers": [
+    "src/adapters/firestore_external_task_store.py",
+    "src/domain/external_task.py",
+    "src/domain/external_task_rules.py"
+   ]
+  },
+  {
+   "id": "external_task_results",
+   "collection": "external_task_results",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "the stored result text of a done external task (30 days after the task is done, the same instant as its task record)",
+   "writers": [
+    "src/adapters/firestore_external_task_store.py"
    ]
   }
  ]

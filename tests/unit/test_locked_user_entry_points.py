@@ -51,6 +51,8 @@ ENTRY_POINTS: Dict[str, str] = {
     "mcp_grants": "MCPAuthorizationService: the code exchange, the refresh rotation, the drive-link grant",
     "mcp_facts_tool": "build_mcp_components get_user_context: a call on an access token already issued",
     "mcp_drive_tools": "build_drive_mcp_or_none (inactive_users): every drive tool call",
+    "external_task_api": "create_external_task_api_blueprint (resolve_key, over the service's account-lock check): "
+                         "every worker call of /external-tasks/v1",
     "cabinet_sessions": "AccountLockService.lock step 2: every device session revoked (the gate then answers 401)",
 }
 
@@ -98,6 +100,10 @@ ROUTE_ROWS: Dict[Tuple[str, str], str] = {
     ("POST", "/worker"): "worker",
     ("POST", "/voice/session-config"): "voice_session_config",
     ("POST", "/voice/delegate"): "voice_delegate",
+    **{(m, f"/external-tasks/v1{rule}"): "external_task_api" for m, rule in (
+        ("GET", "/tasks"), ("POST", "/claim"), ("POST", "/tasks/<task_id>/renew"),
+        ("POST", "/tasks/<task_id>/result"), ("POST", "/tasks/<task_id>/release"),
+        ("POST", "/tasks/<task_id>/fail"))},
     **{(m, rule): "cabinet_sessions" for m, rule in (
         ("GET", "/auth/me"), ("POST", "/auth/link-oauth"), ("GET", "/auth/connect/<kind>"),
         ("GET", "/auth/connect/callback"), ("GET", "/mcp/consent"), ("POST", "/mcp/consent"), ("GET", "/cabinet/docs"),
@@ -447,6 +453,41 @@ async def _mcp_drive(w: World) -> None:
     result = json.loads(data)["result"]
     assert result["isError"] is True and result["content"][0]["text"] == ACCOUNT_LOCKED_TOOL_ERROR
     assert reads.calls == []
+
+
+@probe("external_task_api")
+async def _external_task_api(w: World) -> None:
+    """A worker with a live key of the locked user: the flag is on and the worker and key are written into the stores
+    directly (the service refuses to mint for a locked user), and a claim on the blueprint main.py builds is refused
+    with the lock's code."""
+    from src.adapters.firestore_external_worker_store import FirestoreExternalWorkerStore
+    from src.composition.external_task_api_setup import build_external_task_api_limiter
+    from src.config.environment import EnvironmentConfig
+    from src.domain.external_worker import ExternalWorker
+    from src.domain.external_worker_key import (
+        WORKER_KEY_DIGEST_PURPOSE,
+        WORKER_KEY_PREFIX,
+        ExternalWorkerKey,
+        key_hint,
+    )
+    from src.domain.secret_digest import keyed_digest
+    from src.web.external_task_api import create_external_task_api_blueprint
+    assert w.app.external_tasks is not None
+    env, now = EnvironmentConfig(), datetime.now(timezone.utc)
+    await w.db.collection(env.domain_users_collection).document(USER).update({"config.external_tasks_enabled": True})
+    raw = WORKER_KEY_PREFIX + "E" * 43
+    store = FirestoreExternalWorkerStore(w.db, env)
+    assert await store.create_worker(ExternalWorker(worker_id="wrk-1", user_id=USER, account_id=ACCOUNT,
+                                                    label="research", created_at=now, updated_at=now), 10) is None
+    assert await store.create_key(ExternalWorkerKey(
+        key_digest=keyed_digest(w.app.digest_key, WORKER_KEY_DIGEST_PURPOSE, raw), user_id=USER, account_id=ACCOUNT,
+        worker_id="wrk-1", hint=key_hint(raw), created_at=now), 3) is None
+    app = Quart("external_task_api")
+    app.register_blueprint(create_external_task_api_blueprint(
+        w.app.external_tasks, limiter=build_external_task_api_limiter(w.db, env), user_repo=w.app.user_repo,
+        whitelist_repo=w.app.whitelist_repo))
+    response = await app.test_client().post("/external-tasks/v1/claim", headers={"Authorization": f"Bearer {raw}"})
+    assert (response.status_code, await response.get_json()) == (403, {"code": "account_locked"})
 
 
 @probe("cabinet_sessions")

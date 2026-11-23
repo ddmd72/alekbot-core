@@ -64,7 +64,7 @@ class TestCreate:
         r = await svc.run(_call(known={P: e.generation}), "create", {"path": P, "content": "new"})
         assert r.text.startswith(f"overwritten workspace:{P} · generation ") and r.text.endswith(" · 1 line · 3 B")
         assert store.live_text(USER, P) == "new"
-        assert store.calls == [("put", P)]  # no cap check for an overwrite
+        assert store.calls == [("list", P), ("put", P)]  # the live flag read; no cap check for an overwrite
 
     async def test_overwrite_after_someone_else_wrote_is_a_conflict(self):
         svc, store = _svc()

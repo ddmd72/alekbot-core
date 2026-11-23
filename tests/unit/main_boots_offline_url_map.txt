@@ -1,5 +1,7 @@
 # main() serves /health twice: the Cabinet's route is registered first and shadows main()'s (design D7)
 DELETE /api/drive/connections/<connection_id>
+DELETE /api/external-workers/<worker_id>
+DELETE /api/external-workers/<worker_id>/keys/<key_id>
 DELETE /api/gmail/data
 DELETE /api/gmail/disconnect
 DELETE /api/tasks/disconnect
@@ -12,6 +14,7 @@ GET /api/connectors
 GET /api/drive/connections
 GET /api/drive/connections/<connection_id>/folders
 GET /api/drive/deep-research-copy
+GET /api/external-workers
 GET /api/gmail/auto-index
 GET /api/gmail/daily-review
 GET /api/gmail/jobs/<job_id>
@@ -62,6 +65,7 @@ GET /cabinet/docs
 GET /cabinet/docs/
 GET /cabinet/docs/<path:filename>
 GET /d/<link_id>
+GET /external-tasks/v1/tasks
 GET /f/<token>
 GET /f/<token>/raw
 GET /favicon.ico
@@ -75,6 +79,8 @@ GET /robots.txt
 GET /s/<code>
 GET /static/<path:filename>
 POST /api/drive/connections/<connection_id>/scope/preview
+POST /api/external-workers
+POST /api/external-workers/<worker_id>/keys
 POST /api/gmail/index
 POST /api/gmail/jobs/<job_id>/cancel
 POST /api/tasks/microsoft/reindex
@@ -115,6 +121,11 @@ POST /auth/logout
 POST /auth/passkey/options
 POST /auth/passkey/verify
 POST /auth/refresh
+POST /external-tasks/v1/claim
+POST /external-tasks/v1/tasks/<task_id>/fail
+POST /external-tasks/v1/tasks/<task_id>/release
+POST /external-tasks/v1/tasks/<task_id>/renew
+POST /external-tasks/v1/tasks/<task_id>/result
 POST /geo/<link_id>
 POST /mcp/consent
 POST /slack/commands

@@ -223,6 +223,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.skill_service = services.skill_service
         self.memory_fact_service = services.memory_fact_service
         self.workspace_service = services.workspace_service
+        self.external_tasks = services.external_tasks
         self.drive_note_service = services.drive_note_service
         self.drive_notes_enabled = services.drive_notes_enabled
         self.long_turn_registry = long_turn_registry
@@ -450,7 +451,7 @@ class UserAgentFactory(AgentFactoryPort):
             thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
             skill_service=self.skill_service,
             memory_fact_service=self.memory_fact_service,
-            workspace_service=self.workspace_service,
+            workspace_service=self.workspace_service, external_tasks=self.external_tasks,
             long_turn_registry=self.long_turn_registry,
         )
 

@@ -18,7 +18,7 @@ import json
 import os
 import secrets
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.email_open_texts import (
@@ -72,12 +72,21 @@ class ToolResult:
     # Set when this call successfully dispatched an ASYNC intent (the coordinator returned only
     # an acknowledgement; the deliverable arrives later). Fed into DelegationResult.async_dispatches.
     async_intent: Optional[str] = None
+    # The text holds outside content (a flagged workspace file's bytes). A structured signal for the execution taint
+    # rule, beside the wrapper matching on the text.
+    untrusted: bool = False
 
 
 DELEGATE_TOOL_NAME = "delegate_to_specialist"
 
 # A tool the calling agent serves itself (e.g. Smart's use_skill) — never goes to the coordinator.
 LocalToolHandler = Callable[[ToolCall], Awaitable[ToolResult]]
+
+# Told of the chat messages a long turn picks up as "meanwhile" notes, before the model reads them.
+ChatObserver = Callable[[Sequence[Message]], None]
+
+# Told of every tool batch before the model reads its results: `(tool_calls, tool_results)`, one result per call.
+ToolBatchObserver = Callable[[Sequence[ToolCall], Sequence[ToolResult]], None]
 
 
 @dataclass
@@ -402,6 +411,8 @@ class DelegationEngine:
         use_turn_clock: bool = False,
         allow_delegation: bool = True,
         turn_key: Optional[str] = None,
+        observe: Optional[ToolBatchObserver] = None,
+        observe_chat: Optional[ChatObserver] = None,
     ) -> DelegationResult:
         """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
 
@@ -431,6 +442,8 @@ class DelegationEngine:
                     use_turn_clock=use_turn_clock,
                     allow_delegation=allow_delegation,
                     turn_key=turn_key,
+                    observe=observe,
+                    observe_chat=observe_chat,
                     temp_files=temp_files,
                 )
             finally:
@@ -452,6 +465,8 @@ class DelegationEngine:
         use_turn_clock: bool = False,
         allow_delegation: bool = True,
         turn_key: Optional[str] = None,
+        observe: Optional[ToolBatchObserver] = None,
+        observe_chat: Optional[ChatObserver] = None,
         temp_files: Optional[List[str]] = None,
     ) -> DelegationResult:
         """Run the delegation loop.
@@ -494,6 +509,12 @@ class DelegationEngine:
                       held for the whole run: the keyed notes, the argument scrub and the
                       tool-result hygiene use it. None (every specialist) = none of
                       them. Never forwarded to dispatch, the coordinator or context.
+            observe: Optional callback `(tool_calls, tool_results)`, called once per tool batch after it ran
+                     and before the model's next call, so the caller learns what the model is about to read
+                     (the external task queue's taint rule, EXTERNAL_TASK_QUEUE_RFC §5.3). Not called for the
+                     co-emitted siblings of the terminal call: the model never reads those. Never forwarded.
+            observe_chat: Optional callback `(messages)`, called with the chat messages a long turn is about to
+                          show the model as a "meanwhile" note (a saved model message flagged tainted among them).
         """
         if turn_key is not None:
             require_valid_key(turn_key)
@@ -514,7 +535,7 @@ class DelegationEngine:
 
         for turn in range(max_turns):
             if clock is not None and clock.marked:
-                await self._append_chat_since(clock, history, turn_key)
+                await self._append_chat_since(clock, history, turn_key, observe_chat)
             wrap_up = clock is not None and (
                 budget_out or clock.in_reserve() or turn == max_turns - 1
             )
@@ -698,6 +719,9 @@ class DelegationEngine:
                 accumulated_structured,
             )
 
+            if observe is not None:
+                observe(response.tool_calls, tool_results)
+
             # --- Append model message + tool responses to history ---
             # Guard: tool_calls and tool_results must be 1:1. zip() would silently
             # truncate on a skew, leaving a tool_use with no tool_result (or vice
@@ -750,6 +774,7 @@ class DelegationEngine:
     @staticmethod
     async def _append_chat_since(
         clock, history: List[Message], turn_key: Optional[str] = None,
+        observe_chat: Optional[ChatObserver] = None,
     ) -> None:
         """RFC §5.5: what was said in this session since the run's snapshot."""
         if clock.fetch_since is None:
@@ -764,6 +789,8 @@ class DelegationEngine:
         if not fresh:
             return
         clock.seen_until = max(m.created_at for m in fresh)
+        if observe_chat is not None:
+            observe_chat(fresh)
         if turn_key:
             lines = [neutralize_system_tag(line)[0] for line in chat_since_lines(fresh)]
             note = wrap_system(MEANWHILE_HEADER, turn_key)

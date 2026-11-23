@@ -495,6 +495,8 @@ class FirestoreSessionStore(SessionStore):
                 "parts": [],
                 "created_at": msg.created_at,
             }
+            if msg.execution_tainted:       # written only when set: other records stay byte-identical
+                msg_dict["execution_tainted"] = True
 
             for part in msg.parts:
                 part_dict: Dict[str, Any] = {}
@@ -557,6 +559,7 @@ class FirestoreSessionStore(SessionStore):
                 parts=parts,
                 raw_content=msg_dict.get("raw_content"),
                 created_at=msg_dict.get("created_at", time.time()),
+                execution_tainted=bool(msg_dict.get("execution_tainted", False)),
             )
             history.append(message)
 

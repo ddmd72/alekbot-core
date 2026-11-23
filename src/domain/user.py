@@ -341,6 +341,11 @@ class UserBotConfig(BaseModel):
 
     # Deep Research: two-pass mode (second pass = critic reviews first result)
     deep_research_second_pass: bool = False
+
+    # External task queue (EXTERNAL_TASK_QUEUE_RFC §5.10, D7, D12): off by default; set only by an operator's direct
+    # database write, never by a Cabinet route, a `$` command or an API. ExternalTaskService reads it fresh on every
+    # operation.
+    external_tasks_enabled: bool = False
     
     # ========================================================================
     # NEW Biographical Keywords (2026-02-07): Configurable query keywords

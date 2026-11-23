@@ -67,8 +67,32 @@ from ...infrastructure.memory_fact_tools import (
     build_propose_memory_facts_tool_declaration,
     make_propose_memory_facts_handler,
 )
+from ...infrastructure.external_task_tools import (
+    build_cancel_external_task_declaration,
+    build_create_external_task_declaration,
+    build_get_external_task_declaration,
+    build_list_external_tasks_declaration,
+    build_list_external_workers_declaration,
+    make_cancel_handler,
+    make_create_handler,
+    make_get_handler,
+    make_list_handler,
+    make_list_workers_handler,
+)
+from ...infrastructure.taint_tracker import TaintTracker
+from ...domain.execution_taint import EXECUTION_TAINTED_KEY
+from ...domain.external_task import TaskOrigin
+from ...domain.external_task_refusal import ExternalTaskRefused
+from ...domain.external_task_texts import (
+    CANCEL_EXTERNAL_TASK_TOOL,
+    CREATE_EXTERNAL_TASK_TOOL,
+    GET_EXTERNAL_TASK_TOOL,
+    LIST_EXTERNAL_TASKS_TOOL,
+    LIST_EXTERNAL_WORKERS_TOOL,
+)
 
 if TYPE_CHECKING:
+    from ...services.external_task_service import ExternalTaskService
     from ...services.history_summary_service import HistorySummaryService
     from ...services.memory_fact_service import MemoryFactService
     from ...services.skill_service import SkillService
@@ -240,6 +264,7 @@ class SmartResponseAgent(BaseAgent):
         memory_fact_service: Optional["MemoryFactService"] = None,
         workspace_service: Optional["WorkspaceService"] = None,
         turn_key_source: Optional[TurnKeySource] = None,
+        external_tasks: Optional["ExternalTaskService"] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -261,6 +286,7 @@ class SmartResponseAgent(BaseAgent):
         self.long_turn_registry = long_turn_registry
         self.memory_fact_service = memory_fact_service
         self.workspace_service = workspace_service
+        self.external_tasks = external_tasks
         # Draws the key of each attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8); `_run` draws it, as a local.
         self._turn_key_source: TurnKeySource = turn_key_source or draw_turn_key
 
@@ -504,6 +530,13 @@ class SmartResponseAgent(BaseAgent):
                 current_message_parts=current_message_parts,
                 context_window=self.CONTEXT_WINDOW
             )
+            # One taint tracker per attempt (EXTERNAL_TASK_QUEUE_RFC §5.3, execution taint), shared by the engine
+            # (it observes every tool batch and every chat note) and `create`. The loaded history is read BEFORE the
+            # copies below: a saved model message carries the flag of the turn that wrote it.
+            taint = TaintTracker()
+            taint.observe_request(conversation_history)
+            if (message.context.get("metadata") or {}).get("forwarded"):
+                taint.mark()      # a forwarded message is someone else's text
             conversation_history, neutralised = neutralize_history(conversation_history)
             if neutralised:
                 logger.warning("[SmartResponseAgent] neutralised %d system-tag look-alikes in history", neutralised)
@@ -538,6 +571,16 @@ class SmartResponseAgent(BaseAgent):
                     )
                 )
 
+            # The external task tools (EXTERNAL_TASK_QUEUE_RFC §5.3, E2): interactive turns of a flagged user only.
+            # Not in a Smart reached through delegation (`ask_alek`, `send_to_chat`): its call chain is in the context,
+            # and the model there is not the owner's own turn.
+            taint.observe_request(clean_history, extra_static_blocks or ())
+            if (self.external_tasks and prompt_user_id and message.context.get("interactive_delivery")
+                    and not self._reached_by_delegation(message)
+                    and self.user_config.external_tasks_enabled):
+                local_tools = dict(local_tools or {})
+                await self._add_external_task_tools(tools, local_tools, prompt_user_id, message, session_id, taint)
+
             # Every path, interactive or not (D2, D5): background writes are labelled with their origin, not
             # forbidden. Outside `if skills:` — a skills-store failure must not take the workspace away (§7.1).
             if self.workspace_service and prompt_user_id:
@@ -552,6 +595,7 @@ class SmartResponseAgent(BaseAgent):
                         skills=tuple((s.name, s.body) for s in skills),
                         notes=tuple(n for n in agent_notes if isinstance(n, dict)),
                     ),
+                    is_tainted=lambda: taint.tainted,
                 )
 
             running = await self._load_running_jobs(prompt_user_id, message)
@@ -591,13 +635,29 @@ class SmartResponseAgent(BaseAgent):
                     fallback_ctx_override=eff.ctx,
                 )
 
+            # A flagged reminder in the prompt: its text came from an execution that read outside content.
+            if any(n.get("untrusted") for n in agent_notes if isinstance(n, dict)):
+                taint.mark()
+            engine_context = {
+                **message.context,
+                NATIVE_FORMATS_KEY: to_plain(eff.ctx.provider.native_formats(eff.ctx.model_name)),
+                EXECUTION_TAINTED_KEY: taint.tainted,
+            }
+
+            def observe_batch(calls: Any, results: Any) -> None:
+                taint.observe_batch(calls, results)
+                # Each delegation copies the context when it dispatches: a specialist (the reminders agent) sees
+                # whether this execution had read outside content by the end of the previous batch.
+                engine_context[EXECUTION_TAINTED_KEY] = taint.tainted
+
+            def observe_chat(messages: Any) -> None:
+                taint.observe_request(messages)
+                engine_context[EXECUTION_TAINTED_KEY] = taint.tainted
+
             delegation_result = await engine.execute(
                 call_llm=call_llm_for_engine,
                 base_request=base_request,
-                context={
-                    **message.context,
-                    NATIVE_FORMATS_KEY: to_plain(eff.ctx.provider.native_formats(eff.ctx.model_name)),
-                },
+                context=engine_context,
                 max_turns=clock.max_loop_turns if clock is not None else self.MAX_DELEGATION_TURNS,
                 terminal_tool="deliver_response",
                 intent_fanout=dict(self._descriptor.intent_fanout),
@@ -607,6 +667,8 @@ class SmartResponseAgent(BaseAgent):
                 local_tools=local_tools,
                 use_turn_clock=True,
                 turn_key=turn_key,
+                observe=observe_batch,
+                observe_chat=observe_chat,
             )
 
             if delegation_result.failed:
@@ -651,7 +713,9 @@ class SmartResponseAgent(BaseAgent):
             metadata = {
                 "model": eff.ctx.model_name,
                 "tokens": total_tokens,
-                "response_length": len(smart_response.text)
+                "response_length": len(smart_response.text),
+                # Saved on the model message: a later turn that loads it counts as having read outside content.
+                EXECUTION_TAINTED_KEY: taint.tainted,
             }
             if history_summary:
                 metadata["response_summary"] = history_summary
@@ -684,6 +748,46 @@ class SmartResponseAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error=f"Smart response failed: {str(e)}"
             )
+
+    def _reached_by_delegation(self, message: AgentMessage) -> bool:
+        """True when the coordinator's call chain is in the context: another agent delegated to this Smart."""
+        from ...infrastructure.agent_coordinator import AgentCoordinator
+        return bool(message.context.get(AgentCoordinator.CALL_CHAIN_KEY))
+
+    async def _add_external_task_tools(
+        self, tools: List[Dict[str, Any]], local_tools: Dict[str, Any], user_id: str, message: AgentMessage,
+        session_id: Optional[str], taint: TaintTracker,
+    ) -> None:
+        """Declare and serve the four external task tools. The `worker` enum is this execution's registered workers; with
+        none, `create_external_task` is left out (an empty enum is not a valid schema). When the service refuses the
+        list (the flag or the account lock changed under the cached profile), or fails, no tool is offered."""
+        service = self.external_tasks
+        assert service is not None
+        try:
+            workers = await service.list_workers(user_id)
+        except ExternalTaskRefused as e:
+            logger.info("[SmartResponseAgent] external task tools not offered: %s", e.reason.value)
+            return
+        except Exception as e:
+            logger.error("[SmartResponseAgent] external task tools not offered, worker list failed: %s",
+                         type(e).__name__, exc_info=True)
+            return
+        if workers:
+            origin = TaskOrigin(
+                platform=str(message.context.get("origin_platform") or ""),
+                channel_id=str(message.context.get("origin_channel_id") or ""),
+                session_id=str(session_id or ""),
+            )
+            tools.append(build_create_external_task_declaration(workers))
+            local_tools[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(service, user_id, origin, taint)
+        tools.append(build_list_external_tasks_declaration())
+        local_tools[LIST_EXTERNAL_TASKS_TOOL] = make_list_handler(service, user_id, taint)
+        tools.append(build_list_external_workers_declaration())
+        local_tools[LIST_EXTERNAL_WORKERS_TOOL] = make_list_workers_handler(service, user_id)
+        tools.append(build_get_external_task_declaration())
+        local_tools[GET_EXTERNAL_TASK_TOOL] = make_get_handler(service, user_id, taint)
+        tools.append(build_cancel_external_task_declaration())
+        local_tools[CANCEL_EXTERNAL_TASK_TOOL] = make_cancel_handler(service, user_id)
 
     def _build_smart_response(
         self, result: DelegationResult,
@@ -884,6 +988,7 @@ def create_smart_response_agent(
     long_turn_registry: Optional[LongTurnRegistry] = None,
     memory_fact_service: Optional["MemoryFactService"] = None,
     workspace_service: Optional["WorkspaceService"] = None,
+    external_tasks: Optional["ExternalTaskService"] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -919,5 +1024,6 @@ def create_smart_response_agent(
         long_turn_registry=long_turn_registry,
         memory_fact_service=memory_fact_service,
         workspace_service=workspace_service,
+        external_tasks=external_tasks,
     )
 

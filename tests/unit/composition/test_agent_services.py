@@ -44,10 +44,11 @@ def test_each_field_carries_the_containers_own_object(container):  # noqa: F811
     services = container.agent_services()
 
     names = [f.name for f in dataclasses.fields(AgentServices)]
-    assert set(names) == set(_CONTAINER_ATTRIBUTE) | {"fact_management_adapter_factory"}
+    assert set(names) == set(_CONTAINER_ATTRIBUTE) | {"fact_management_adapter_factory", "external_tasks"}
     for name, attribute in _CONTAINER_ATTRIBUTE.items():
         assert getattr(services, name) is getattr(container, attribute), name
     assert services.fact_management_adapter_factory == container.create_fact_management_adapter
+    assert services.external_tasks is None      # graph-built, not container-built: the graph sets it
 
 
 def test_the_bundle_is_frozen(container):  # noqa: F811
@@ -65,6 +66,8 @@ def test_the_production_factory_holds_the_containers_objects(prod_graph: ProdGra
     for f in dataclasses.fields(AgentServices):
         if f.name == "fact_management_adapter_factory":
             assert app.agent_factory.fact_management_adapter_factory == services.fact_management_adapter_factory
+        elif f.name == "external_tasks":       # graph-built: the factory holds the graph's one task service
+            assert app.external_tasks is not None and app.agent_factory.external_tasks is app.external_tasks
         else:
             assert getattr(app.agent_factory, f.name) is getattr(services, f.name), f.name
     # The consolidator's cache refresher is the graph's one context service (the bio-cycle slice).
