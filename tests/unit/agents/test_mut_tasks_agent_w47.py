@@ -6,13 +6,14 @@ import pytest
 from src.agents.tasks_agent import _resolve_zone
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["Nowhere/Land", "not-a-zone", "/etc/passwd", "../etc", "a\x00b", "", None],
-)
-def test_unusable_zone_name_resolves_to_utc(name):
-    assert _resolve_zone(name) is timezone.utc or str(_resolve_zone(name)) == "UTC"
-    assert _resolve_zone(name) is not None
+@pytest.mark.parametrize("name", ["Nowhere/Land", "not-a-zone", "/etc/passwd", "../etc", "a\x00b"])
+def test_refused_zone_name_resolves_to_the_utc_singleton(name):
+    assert _resolve_zone(name) is timezone.utc
+
+
+@pytest.mark.parametrize("name", ["", None])
+def test_empty_zone_name_resolves_to_utc(name):
+    assert str(_resolve_zone(name)) == "UTC"
 
 
 def test_unknown_name_is_the_utc_singleton():

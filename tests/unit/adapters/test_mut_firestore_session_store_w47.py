@@ -1,5 +1,5 @@
 """Mutation kill for `FirestoreSessionStore.remove_head`: the cut refreshes the session document's `updated_at`."""
-import asyncio
+from datetime import datetime, timezone
 
 from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.domain.llm import Message, MessagePart
@@ -14,9 +14,9 @@ async def test_remove_head_refreshes_updated_at_of_the_session_document():
     store = FirestoreSessionStore(db, SESS, max_history_length=10, batch_size=2)
     for text in ("first", "second", "third"):
         await store.append_messages_batch(SID, [Message(role="user", parts=[MessagePart(text=text)])], owner_id="usr-1")
-    before = db.collection(SESS).docs[SID]["updated_at"]
+    before = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    db.collection(SESS).docs[SID]["updated_at"] = before   # an old stamp: the cut must replace it, no clock race
     head = (await store.load_session(SID)).history[:2]
-    await asyncio.sleep(0.01)                         # the fake stamps SERVER_TIMESTAMP from the real clock
 
     assert await store.remove_head(SID, head) is True
 
