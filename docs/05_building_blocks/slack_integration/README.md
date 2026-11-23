@@ -1,4 +1,5 @@
 <!-- living-doc
+audited: 2026-11-23
 covers:
   src/adapters/slack/
   src/composition/slack_adapter_factory.py
@@ -118,6 +119,8 @@ notification path to it. Interactive messages escape the same way before capping
 - **Unauthorized users.** `authorize` runs per processed message; a `reject` posts `decision.message` (the registration
   instruction from `IAMService.get_rejection_message`) and starts no turn. `handle_geo_mark_turn` re-authorizes and
   refuses a user that is not the link's owner.
+- **A `$` command's text is never logged.** It can carry a facts PIN or the duress code, so the file-message log line in
+  `_process_message_event` prints `<command>` instead of a text preview (`http_adapter.py`, the `preview` variable).
 - **Threads.** `_reply_to_metadata` sets `reply_to_message_id` only for a reply inside a thread, never for a thread's
   own parent message.
 - **Bound channels read history from Slack.** `SlackChannelHistorySource.fetch` maps a message to the `model` role when
