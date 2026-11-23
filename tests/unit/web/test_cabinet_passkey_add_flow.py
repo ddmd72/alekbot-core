@@ -10,8 +10,10 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from tests.unit.web.cabinet_source import cabinet_source
+
 _STATIC = Path(__file__).resolve().parents[3] / "src/web/static"
-_HTML = (_STATIC / "cabinet.html").read_text(encoding="utf-8")
+_HTML = cabinet_source()
 _SESSION = (_STATIC / "session.js").read_text(encoding="utf-8")
 _NODE = shutil.which("node") is None
 pytestmark = pytest.mark.skipif(_NODE, reason="node not installed")
