@@ -355,6 +355,48 @@ async def test_paginated_default_page_size_is_100(store):
     assert len(facts) == 100 and cursor == facts[-1].id
 
 
+# ------------------------------------------------------------------------------------- count_facts_by_domain
+
+_SPORT = dict(primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT])
+_INSURANCE = dict(primary_domain=Domain.TRANSPORT, domain_keys=[Domain.TRANSPORT, Domain.MONEY])
+
+
+async def _counted(store):
+    await store.repo.add_fact(make_fact("morning yoga 30 min", age_days=1, **_SPORT))
+    await store.repo.add_fact(make_fact("evening swimming 45 min", age_days=2, **_SPORT))
+    await store.repo.add_fact(make_fact("Alex's car insurance with Example Mutual Insurance", age_days=3, **_INSURANCE))
+    await store.repo.add_fact(make_fact("plays tennis on Sundays", age_days=4))
+    await store.repo.add_fact(make_fact("evening swimming 45 min, stale", age_days=5, state=FactState.STALE, **_SPORT))
+    await store.repo.add_fact(make_fact("morning yoga 30 min, theirs", account=OTHER, **_SPORT))
+    await store.repo.add_fact(make_fact("morning yoga 30 min, archived", state=FactState.ARCHIVED, **_SPORT))
+    put_raw(store, "undated", "morning yoga 30 min, undated", entity=_SPORT, created_at=DROP)
+
+
+async def test_counts_give_the_total_and_every_asked_key_zero_included(store):
+    await _counted(store)
+    total, counts = await store.repo.count_facts_by_domain(ACC, "current", [Domain.SPORT, Domain.MONEY, Domain.FOOD])
+    assert (total, counts) == (4, {Domain.SPORT: 2, Domain.MONEY: 1, Domain.FOOD: 0})
+    assert await store.repo.count_facts_by_domain(ACC, "stale", [Domain.SPORT]) == (1, {Domain.SPORT: 1})
+
+
+@pytest.mark.parametrize("state", ["current", "stale"])
+async def test_every_count_is_the_length_of_the_paginated_listing(store, state):
+    await _counted(store)
+    keys = [Domain.SPORT, Domain.TRANSPORT, Domain.MONEY, Domain.FOOD]
+    total, counts = await store.repo.count_facts_by_domain(ACC, state, keys)
+    assert total == sum(len(page) for page in await _pages(store, 2, state=state))
+    for key in keys:
+        assert counts[key] == sum(len(page) for page in await _pages(store, 2, state=state, domain_key=key)), key
+
+
+@pytest.mark.h1_only("reads the fake collection's query log (executed) to show no count ran")
+@pytest.mark.parametrize("state", ["archived", "invalidated", "closed", "STALE"])
+async def test_counting_a_state_that_is_not_listable_raises_before_any_read(store, state):
+    with pytest.raises(ValueError):
+        await store.repo.count_facts_by_domain(ACC, state, [Domain.SPORT])
+    assert store.db.collection(FACTS).executed == []
+
+
 # ------------------------------------------------------------------------------------------- search_facts
 
 async def _spread(store):

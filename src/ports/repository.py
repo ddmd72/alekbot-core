@@ -135,6 +135,26 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
+    async def count_facts_by_domain(
+        self, owner_id: str, state: str, domain_keys: Sequence[str],
+    ) -> Tuple[int, Dict[str, int]]:
+        """Count the `state` facts of account `owner_id`, in all and per registry key, as get_paginated_facts lists them.
+
+        Every number equals the length of the full listing get_paginated_facts gives for the same arguments: the total
+        with no `domain_key`, each key's count with that `domain_key`. So a fact whose `domain_keys` hold two of the keys
+        counts under both, and a fact not yet profiled counts in the total only; the per-key counts need not add up
+        to the total.
+
+        Args:
+            state: `"current"` or `"stale"`; anything else raises ValueError before any I/O.
+            domain_keys: the registry keys to count; each one is a key of the returned dict, zero included.
+
+        Returns: (total, {key: count}).
+        Legacy: a document without created_at is not counted, as it is absent from get_paginated_facts (observed).
+        """
+        pass
+
+    @abstractmethod
     async def search_facts(
         self,
         query_vector: List[float],

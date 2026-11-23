@@ -162,8 +162,8 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
 
     Documents and change tokens of the overlay stand in for the store's: a precondition is checked against the overlay
     token (a synthetic counter per written document) or, for a document the pass has not written, the live
-    `update_time`. Vector searches (which drop a hit the run closed, but add none), the paginated, lineage and domain
-    reads, `find_due_facts` and `stale_backlog` see the live store only; `get_fact_by_id`, `resolve_current`, the three
+    `update_time`. Vector searches (which drop a hit the run closed, but add none), the paginated, count, lineage and
+    domain reads, `find_due_facts` and `stale_backlog` see the live store only; `get_fact_by_id`, `resolve_current`, the three
     current-fact lists and the review's two reads (`get_stale_facts`, `get_recently_closed`) see the overlay too.
 
     Tenancy: `update_fact_fields` refuses with PermissionError when the document's `account_id` is not the one `stored`
@@ -428,6 +428,11 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
         domain_key: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
         return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, state, domain_key=domain_key)
+
+    async def count_facts_by_domain(
+        self, owner_id: str, state: str, domain_keys: Sequence[str],
+    ) -> Tuple[int, Dict[str, int]]:
+        return await self._real.count_facts_by_domain(owner_id, state, domain_keys)
 
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
         """The live stale list with the pass's own writes applied: a fact the run staled joins it, one it changed shows the
