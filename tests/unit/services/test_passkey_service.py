@@ -18,6 +18,7 @@ from src.adapters import firestore_ephemeral_store
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.webauthn_signer_verifier import WebAuthnSignerVerifier
+from src.domain.billing import AccountTier, BillingAccount
 from src.domain.device_session import DeviceSession, SessionAuthKind, SessionRevokeReason
 from src.domain.device_session_policy import DeviceSessionPolicy as P
 from src.domain.passkey import Passkey, PasskeyKind, credential_hash
@@ -343,6 +344,126 @@ class TestRemove:
 
 
 # ---------------------------------------------------------------------------------------------- defaults
+
+# ---------------------------------------------------------------------------------------------- call-start step-up
+
+class TestCallStartStepUp:
+    """§7.3, §13 decision 1: a call start of a user with a live passkey needs an assertion on the session under five
+    minutes old; the step-up ceremony gives one, bound to the user and the session that began it."""
+
+    async def step_up(self, world, sid="sid-phone", user_id="user-alex", **assertion):
+        start = await world.service.begin_step_up(user_id, sid)
+        await world.service.finish_step_up(start.nonce, world.authenticator.sign_in(start.options, **assertion),
+                                           user_id, sid)
+
+    async def test_a_user_without_a_live_passkey_starts_a_call_as_before(self, world):
+        assert await world.service.call_start_allowed("user-alex", "sid-unknown") is True
+        stored = await world.enrol()
+        await world.service.remove("user-alex", stored.cred_hash)
+        assert await world.service.live_passkeys("user-alex") == []
+        assert await world.service.call_start_allowed("user-alex", "sid-unknown") is True
+
+    async def test_with_a_passkey_a_session_never_proved_by_one_may_not_start(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.enrol()
+        assert await world.service.call_start_allowed("user-alex", "sid-phone") is False
+
+    @pytest.mark.parametrize("sid", ["sid-unknown", "sid-o"], ids=["unknown-session", "another-users-session"])
+    async def test_with_a_passkey_a_session_that_is_not_the_users_may_not_start(self, world, sid):
+        await world.repo.create(OTHER_SESSION)
+        await world.repo.record_passkey_assertion("sid-o", "user-other", T0)
+        await world.enrol()
+        assert await world.service.call_start_allowed("user-alex", sid) is False
+
+    async def test_a_step_up_records_the_assertion_and_the_use_and_lasts_five_minutes(self, world):
+        await world.repo.create(PHONE_SESSION)
+        stored = await world.enrol()
+        world.clock.now = T0 + timedelta(hours=1)
+        await self.step_up(world)
+        assert world.repo.sessions["sid-phone"].passkey_at == T0 + timedelta(hours=1)
+        assert world.repo.passkeys[stored.cred_hash].last_used_at == T0 + timedelta(hours=1)
+        world.clock.now = T0 + timedelta(hours=1, minutes=4, seconds=59)
+        assert await world.service.call_start_allowed("user-alex", "sid-phone") is True    # a redial after a drop
+        world.clock.now = T0 + timedelta(hours=1, minutes=5)
+        assert await world.service.call_start_allowed("user-alex", "sid-phone") is False
+
+    async def test_the_assertion_proves_only_its_own_session(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(MAC_SESSION)
+        await world.enrol()
+        await self.step_up(world, sid="sid-phone")
+        assert await world.service.call_start_allowed("user-alex", "sid-mac") is False
+
+    async def test_the_options_name_no_credential_and_require_user_verification(self, world):
+        start = await world.service.begin_step_up("user-alex", "sid-phone")
+        assert (start.options["rpId"], start.options["allowCredentials"], start.options["userVerification"]) == (
+            RP, [], "required")
+
+    @pytest.mark.parametrize("user_id, sid", [("user-alex", "sid-mac"), ("user-other", "sid-phone")],
+                             ids=["another-session", "another-user"])
+    async def test_a_step_up_finishes_only_where_it_began(self, world, user_id, sid):
+        await world.repo.create(PHONE_SESSION)
+        stored = await world.enrol()
+        start = await world.service.begin_step_up("user-alex", "sid-phone")
+        with pytest.raises(PasskeyRejected, match="step-up challenge not begun by"):
+            await world.service.finish_step_up(start.nonce, world.authenticator.sign_in(start.options), user_id, sid)
+        assert world.repo.sessions["sid-phone"].passkey_at is None
+        assert world.repo.passkeys[stored.cred_hash] == stored
+
+    async def test_a_passkey_of_another_user_cannot_step_up_this_session(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(OTHER_SESSION)
+        await world.enrol()
+        others = await world.enrol(session=OTHER_SESSION, user=OTHER)        # the last credential: the other user's
+        with pytest.raises(PasskeyRejected, match="is not a passkey of"):
+            await self.step_up(world)
+        assert world.repo.sessions["sid-phone"].passkey_at is None
+        assert world.repo.passkeys[others.cred_hash] == others                # its counter untouched
+
+    async def test_a_step_up_challenge_serves_one_finish(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.enrol()
+        start = await world.service.begin_step_up("user-alex", "sid-phone")
+        response = world.authenticator.sign_in(start.options)
+        await world.service.finish_step_up(start.nonce, response, "user-alex", "sid-phone")
+        with pytest.raises(PasskeyRejected, match="unknown, expired or already used"):
+            await world.service.finish_step_up(start.nonce, response, "user-alex", "sid-phone")
+
+    async def test_a_sign_in_challenge_cannot_finish_a_step_up(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.enrol()
+        start = await world.service.begin_sign_in()
+        with pytest.raises(PasskeyRejected, match="of another ceremony"):
+            await world.service.finish_step_up(start.nonce, world.authenticator.sign_in(start.options),
+                                               "user-alex", "sid-phone")
+
+    async def test_a_revoked_passkey_cannot_step_up(self, world):
+        await world.repo.create(PHONE_SESSION)
+        stored = await world.enrol()
+        await world.enrol(session=MAC_SESSION)                               # a second, live one keeps the gate on
+        await world.service.remove("user-alex", stored.cred_hash)
+        with pytest.raises(PasskeyRejected, match="is not a live passkey"):
+            await self.step_up(world, cred=world.authenticator.credentials[0])
+        assert world.repo.sessions["sid-phone"].passkey_at is None
+        assert await world.service.call_start_allowed("user-alex", "sid-phone") is False
+
+    async def test_an_ended_session_records_no_assertion(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.enrol()
+        await world.repo.revoke("sid-phone", SessionRevokeReason.LOGOUT, T0)
+        with pytest.raises(PasskeyRejected, match="could not record the assertion"):
+            await self.step_up(world)
+        assert world.repo.sessions["sid-phone"].passkey_at is None
+
+    async def test_a_passkey_sign_in_session_starts_proved(self, world):
+        sessions = DeviceSessionService(world.repo, SessionService(secret_key="k" * 40), world.notifier,
+                                        clock=world.clock, new_sid=lambda: "sid-new")
+        await world.enrol()
+        account = BillingAccount(account_id="acct-alex", tier=AccountTier.FAMILY, iam_policy={"user-alex": "owner"})
+        await sessions.start(ALEX, account, label=PHONE, platform_hint=PHONE, auth_kind=SessionAuthKind.PASSKEY)
+        assert world.repo.sessions["sid-new"].passkey_at == T0
+        assert await world.service.call_start_allowed("user-alex", "sid-new") is True
+
 
 async def test_by_default_the_nonce_and_challenge_are_random_and_the_clock_is_now(world):
     service = PasskeyService(world.repo, world.verifier, world.challenges, world.notifier)

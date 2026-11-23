@@ -300,3 +300,58 @@ class TestFirestoreDocuments:
         assert db.collection(PASSKEYS).docs["key-forged"].get("revoked_at") is None
         assert db.collection(PASSKEYS).docs["key-real"]["revoked_at"] == T0
         assert "does not match its stored cred_hash" in caplog.text
+
+
+# ---------------------------------------------------------------------------------------------- passkey assertions (§7.3)
+
+class TestPasskeyAssertion:
+    """`record_passkey_assertion`: the call-start step-up written on the session."""
+
+    async def test_it_sets_passkey_at_and_nothing_else(self, repo):
+        stored = session()
+        await repo.create(stored)
+        at = T0 + timedelta(hours=1, microseconds=5)
+        assert await repo.record_passkey_assertion("sid-1", "user-alex", at) is True
+        assert await repo.get("sid-1") == stored.model_copy(update={"passkey_at": at})
+
+    async def test_a_later_assertion_replaces_the_earlier_one(self, repo):
+        await repo.create(session())
+        await repo.record_passkey_assertion("sid-1", "user-alex", T0 + timedelta(minutes=1))
+        assert await repo.record_passkey_assertion("sid-1", "user-alex", T0 + timedelta(minutes=9)) is True
+        assert (await repo.get("sid-1")).passkey_at == T0 + timedelta(minutes=9)
+
+    async def test_an_unknown_sid_is_refused_and_creates_nothing(self, repo):
+        assert await repo.record_passkey_assertion("sid-unknown", "user-alex", T0) is False
+        assert await repo.get("sid-unknown") is None
+
+    async def test_another_users_session_is_refused_and_untouched(self, repo):
+        await repo.create(session())
+        assert await repo.record_passkey_assertion("sid-1", "user-other", T0) is False
+        assert (await repo.get("sid-1")).passkey_at is None
+
+    async def test_a_revoked_session_is_refused(self, repo):
+        await repo.create(session())
+        await repo.revoke("sid-1", LOGOUT, T0)
+        assert await repo.record_passkey_assertion("sid-1", "user-alex", T0 + timedelta(seconds=1)) is False
+        assert (await repo.get("sid-1")).passkey_at is None
+
+    @pytest.mark.parametrize("after", [P.IDLE_TTL, P.ABSOLUTE_TTL])
+    async def test_a_session_past_its_end_is_refused(self, repo, after):
+        await repo.create(session())
+        assert await repo.record_passkey_assertion("sid-1", "user-alex", T0 + after) is False
+        assert (await repo.get("sid-1")).passkey_at is None
+
+    async def test_firestore_stores_the_field_and_an_old_document_reads_it_as_none(self, kit_db):
+        repo, db = firestore_repo(kit_db)
+        await repo.create(session())
+        await repo.record_passkey_assertion("sid-1", "user-alex", T0 + timedelta(minutes=3))
+        assert db.collection(SESSIONS).docs["sid-1"]["passkey_at"] == T0 + timedelta(minutes=3)
+        old = {k: v for k, v in db.collection(SESSIONS).docs["sid-1"].items() if k != "passkey_at"}
+        old["sid"] = "sid-old"
+        db.collection(SESSIONS).docs["sid-old"] = old                     # a record written before the field existed
+        assert (await repo.get("sid-old")).passkey_at is None
+
+    async def test_firestore_logs_a_refusal_without_the_sid_in_full(self, kit_db, caplog):
+        repo, _ = firestore_repo(kit_db)
+        await repo.record_passkey_assertion("sid-unknown-0123456789", "user-alex", T0)
+        assert "Passkey assertion not recorded" in caplog.text and "sid-unknown-0123456789" not in caplog.text
