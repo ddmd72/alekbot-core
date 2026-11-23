@@ -271,7 +271,7 @@ short-lived httponly cookie.
 - **Lelik call start.** Every call start requires a fresh passkey assertion (about 1 s; it guards an unlocked phone
   in another person's hands; the passcode is accepted as fallback, F1). A 5-minute grace after the last assertion
   means a redial after a dropped call does not ask again.
-- **Changing the passkeys.** Removing or adding a passkey, when the user already has one, needs a fresh passkey assertion on the session (otherwise the call-start check could be switched off). The routes answer 400 `passkey_required`; the page runs the step-up and retries once. A user with no passkey enrols freely.
+- **Changing the passkeys.** Removing or adding a passkey, when the user already has one, needs a fresh proof on the caller's own session, either a passkey assertion (as for a call start) or a Google sign-in (`auth_kind` google, `auth_at` under 5 minutes; `DeviceSessionPolicy.change_proof_fresh`). Without one the call-start check could be switched off by a bare live session. Google is accepted because it is the root of trust (§7.6) and because a device whose passkey store does not sync with the existing passkey (Chrome on a Mac against Safari on an iPhone, Android against iPhone) could otherwise never enrol its own. The routes answer 400 `passkey_required`; the page runs the passkey step-up and retries once, and when the step-up cannot run (cancelled, no usable credential) it shows "Confirm with Google" (`/auth/login/google?next=/cabinet?tab=devices`); after that sign-in the user taps Add again. A user with no passkey enrols freely.
 
 ### 7.4 Frontend: refresh before login
 

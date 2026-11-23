@@ -16,7 +16,8 @@ unknown, expired or already used nonce is refused, and a challenge serves exactl
   one loses. It returns the user_id only: the caller runs `resume_session` and starts the device session.
 - **Removal** revokes one passkey of the user and tells the owner.
 - **Changing the set** (enrol, finish enrolling, remove) of a user who already has a live passkey needs a fresh
-  passkey assertion on the caller's own session (`_require_fresh`, read from the store): otherwise a live session
+  passkey assertion OR a fresh Google sign-in on the caller's own session (`_require_fresh`, read from the store;
+  Google lets a device whose passkey store does not sync with the existing passkey enrol its own): otherwise a live session
   alone could remove every passkey, or add its own, and switch the call-start check off. Refused with
   `PasskeyFreshRequired`. A user without a live passkey enrols freely.
 - **The call-start step-up** (§7.3, §13 decision 1): a voice call start of a user with a live passkey needs a passkey
@@ -214,15 +215,16 @@ class PasskeyService:
 
     async def _require_fresh(self, user_id: str, session: DeviceSession) -> None:
         """Refuse unless the user has no live passkey or the caller's own session (re-read from the store, never the
-        object the caller holds) was proved by a passkey assertion less than `CALL_PASSKEY_GRACE` ago."""
+        object the caller holds) was proved less than `CALL_PASSKEY_GRACE` ago by a passkey assertion or a Google sign-in
+        (`DeviceSessionPolicy.change_proof_fresh`)."""
         if not await self.live_passkeys(user_id):
             return
         stored = await self._repo.get(session.sid)
         if (stored is not None and stored.user_id == user_id and stored.revoked_at is None
-                and DeviceSessionPolicy.passkey_fresh(stored, self._clock())):
+                and DeviceSessionPolicy.change_proof_fresh(stored, self._clock())):
             return
-        logger.warning(f"⛔ Passkey change refused: user={user_id[:8]} sid={session.sid[:8]} has no fresh assertion")
-        raise PasskeyFreshRequired(f"session {session.sid[:8]} has no fresh passkey assertion")
+        logger.warning(f"⛔ Passkey change refused: user={user_id[:8]} sid={session.sid[:8]} has no fresh proof")
+        raise PasskeyFreshRequired(f"session {session.sid[:8]} has no fresh passkey assertion or Google sign-in")
 
     async def _take(self, nonce: str, purpose: str) -> Dict[str, Any]:
         """Consume the challenge record `nonce` names; refused when absent, expired, used, or of another ceremony."""
