@@ -19,6 +19,7 @@ from tests.support.cabinet_session_kit import cabinet_session_for
 from tests.unit.web.gate_fakes import expired_token
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
 from tests.support.fact_lifecycle_world import make_fact_world
+from tests.support.fact_store import FACTS
 from tests.unit.web.cabinet_source import cabinet_source
 
 TOKEN = {"Authorization": "Bearer t"}
@@ -165,6 +166,91 @@ async def test_the_dry_run_kit_forwards_the_domain_key_to_the_live_store(world):
     facts, _ = await NoWriteFactRepository(repo).get_paginated_facts(ACC, domain_key=Domain.TRANSPORT)
 
     assert [f.text for f in facts] == ["Alex's car insurance with Example Mutual Insurance"]
+
+
+# ------------------------------------------------------------------------------------------- the domain counts
+# GET /api/user/facts/domain-counts (CABINET_REDESIGN_RFC §5.2): the numbers of the Memory section's area select.
+
+SWIMMING = dict(primary_domain=Domain.SPORT, domain_keys=[Domain.SPORT])
+SKODA = dict(primary_domain=Domain.TRANSPORT, domain_keys=[Domain.TRANSPORT])
+
+
+async def _seed_counted(repo):
+    await repo.add_fact(make_fact("morning yoga 30 min", age_days=1, **YOGA))
+    await repo.add_fact(make_fact("evening swimming 45 min", age_days=2, **SWIMMING))
+    await repo.add_fact(make_fact("Alex's car insurance with Example Mutual Insurance", age_days=3, **INSURANCE))
+    await repo.add_fact(make_fact("plays tennis on Sundays", age_days=4))   # not profiled yet: no area
+    await repo.add_fact(make_fact("Alex owns the 2015 Skoda Fabia", age_days=5, state=FactState.STALE, **SKODA))
+    await repo.add_fact(make_fact("morning yoga 30 min, theirs", account=OTHER, **YOGA))
+
+
+async def test_the_counts_give_the_total_and_each_non_empty_area(world):
+    _, repo = world
+    await _seed_counted(repo)
+
+    status, body = await _get("/api/user/facts/domain-counts?state=current", repo)
+
+    assert status == 200
+    assert body == {"total": 4, "counts": {Domain.SPORT: 2, Domain.TRANSPORT: 1, Domain.MONEY: 1}}
+
+
+async def test_without_a_state_the_counts_are_of_the_current_facts_and_stale_counts_its_own(world):
+    _, repo = world
+    await _seed_counted(repo)
+
+    _, default = await _get("/api/user/facts/domain-counts", repo)
+    _, stale = await _get("/api/user/facts/domain-counts?state=stale", repo)
+
+    assert default["total"] == 4
+    assert stale == {"total": 1, "counts": {Domain.TRANSPORT: 1}}
+
+
+async def test_every_count_is_the_length_of_the_browse_list_with_the_same_filter(world):
+    _, repo = world
+    await _seed_counted(repo)
+
+    for state in ("current", "stale"):
+        _, body = await _get(f"/api/user/facts/domain-counts?state={state}", repo)
+        _, everything = await _get(f"/api/user/facts/browse?state={state}&limit=500", repo)
+        assert body["total"] == len(everything["facts"])
+        for key in fact_domains.cabinet_keys():
+            _, listed = await _get(f"/api/user/facts/browse?state={state}&domain={key}&limit=500", repo)
+            assert body["counts"].get(key, 0) == len(listed["facts"]), (state, key)
+
+
+async def test_another_accounts_facts_are_never_counted(world):
+    _, repo = world
+    await repo.add_fact(make_fact("morning yoga 30 min, theirs", account=OTHER, **YOGA))
+
+    status, body = await _get("/api/user/facts/domain-counts", repo)
+
+    assert (status, body) == (200, {"total": 0, "counts": {}})
+
+
+@pytest.mark.parametrize("state", ["closed", "archived", "invalidated", "STALE", "x"])
+async def test_a_state_that_is_not_listable_is_a_400_and_nothing_is_counted(world, state):
+    store, repo = world
+    await repo.add_fact(make_fact("morning yoga 30 min", **YOGA))
+    before = copy.deepcopy(store.docs)
+
+    status, body = await _get(f"/api/user/facts/domain-counts?state={state}", repo)
+
+    assert status == 400 and "state" in body["error"]
+    assert store.db.collection(FACTS).executed == [] and store.docs == before
+
+
+async def test_the_counts_refuse_a_request_without_a_session(world):
+    _, repo = world
+    assert (await _get("/api/user/facts/domain-counts", repo, headers={}))[0] == 401
+
+
+async def test_a_failing_count_is_a_500_without_details():
+    repo = MagicMock()
+    repo.count_facts_by_domain = MagicMock(side_effect=RuntimeError("store down: secret detail"))
+
+    status, body = await _get("/api/user/facts/domain-counts", repo)
+
+    assert (status, body) == (500, {"error": "Internal server error"})
 
 
 # ------------------------------------------------------------------------------------------- the badge fields
