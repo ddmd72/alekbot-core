@@ -48,13 +48,12 @@
         return res.json();
       }
 
-      async function addPasskeyHere() {
+      async function addPasskeyHere(resumed) {
         let outcome = await addPasskey();
-        // The user already has a passkey: adding another needs a fresh proof on this session. Step up, retry once;
-        // when the step-up cannot run, offer the Google sign-in.
         if (outcome === "passkey_required") {
-          if (await window.alekSession.ensurePasskey()) outcome = await addPasskey();
-          else { outcome = "failed"; showGoogleProof(); }
+          if (await stepUpIfLocal()) outcome = await addPasskey();
+          else if (!resumed) { window.location.assign(googleProofUrl("add_passkey")); return "redirect"; }
+          if (outcome === "passkey_required") outcome = "failed";
         }
         rememberPasskeyOffer();
         if (outcome === "added") showToast(t("passkeys.added"));

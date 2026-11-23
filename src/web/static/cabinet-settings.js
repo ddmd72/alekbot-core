@@ -224,8 +224,7 @@
         "#passkeys-title": "passkeys.title",
         "#passkeys-subtitle": "passkeys.subtitle",
         "#passkeys-add": "passkeys.add",
-        "#passkeys-google-proof-text": "passkeys.google_proof_text",
-        "#passkeys-google-proof-link": "passkeys.google_proof",
+        "#passkeys-resume-hint": "passkeys.resume_hint",
         "#devices-lost-title": "devices.lost_title",
         "#devices-lost-intro": "devices.lost_intro",
         "#devices-lost-1": "devices.lost_1",
@@ -302,7 +301,7 @@
           return { row, group: "connections" };
         }
         const tab = SETTINGS_ENTRY.get("tab");
-        // ?tab=devices is where "Confirm with Google" returns to add or remove a passkey (googleProofUrl).
+        // ?tab=devices is where the Google sign-in of a passkey change returns, to resume it (googleProofUrl).
         if (tab === "devices") return { row: "passkeys", group: "security" };
         if (tab === "team" && isOwner()) return { row: "team", group: "more" };
         return { row: "", group: "" };
@@ -1161,29 +1160,28 @@
         }
       }
 
-      // A passkey change without a passkey proof (the step-up failed, was cancelled, or this browser holds no passkey
-      // of the user): the page offers a fresh Google sign-in instead, which the server accepts as proof too (RFC §7.3).
-      // It returns here, to Settings with the passkeys row open (the `devices` alias), and the user taps the button again.
-      function googleProofUrl() {
-        return "/auth/login/google?next=" + encodeURIComponent("/cabinet?tab=devices");
+      // A passkey change needs a fresh proof (RFC §7.3). This browser holds a passkey of the user (a local marker) ->
+      // the Face ID step-up, retried once. Otherwise, or when the step-up fails, the page signs in with Google and
+      // comes back to Settings with the passkeys row open (the `devices` alias) and a resume flag that restarts the
+      // change. No passkey sheet ever opens on a device that holds no passkey (iOS shows it empty, with a QR code).
+      function googleProofUrl(resume, id) {
+        let next = "/cabinet?tab=devices&resume=" + resume;
+        if (id) next += "&id=" + encodeURIComponent(id);
+        return "/auth/login/google?next=" + encodeURIComponent(next);
       }
 
-      function showGoogleProof() {
-        const box = document.getElementById("passkeys-google-proof");
-        if (!box) return;
-        document.getElementById("passkeys-google-proof-link").href = googleProofUrl();
-        box.classList.remove("hidden");
+      async function stepUpIfLocal() {
+        return window.alekSession.hasLocalPasskey() && (await window.alekSession.ensurePasskey());
       }
 
-      async function removePasskey(id) {
-        if (!confirm(t("passkeys.confirm_remove"))) return;
+      async function removePasskey(id, resumed) {
+        if (!resumed && !confirm(t("passkeys.confirm_remove"))) return;
         try {
           const url = `${API}/api/user/passkeys/${encodeURIComponent(id)}/remove`;
           let res = await authFetch(url, { method: "POST", credentials: "include" });
-          // A fresh proof is needed while the user has a passkey: step up and retry once, else offer Google.
           if (!res.ok && (await window.alekSession.needsPasskey(res.clone()))) {
-            if (await window.alekSession.ensurePasskey()) res = await authFetch(url, { method: "POST", credentials: "include" });
-            else showGoogleProof();
+            if (await stepUpIfLocal()) res = await authFetch(url, { method: "POST", credentials: "include" });
+            else if (!resumed) { window.location.assign(googleProofUrl("remove_passkey", id)); return; }
           }
           if (!res.ok) throw new Error();
         } catch {
@@ -1192,6 +1190,31 @@
         }
         showToast(t("devices.done"));
         loadPasskeys();
+      }
+
+      // Right after the Google sign-in the flag is consumed (removed from the URL) and the change starts by itself.
+      // Safari allows WebAuthn without a tap since iOS 17.4; when it still refuses, the button and a hint are shown
+      // in the passkeys row, which ?tab=devices opened.
+      async function resumePasskeyFlow(qs) {
+        const resume = qs.get("resume");
+        if (!resume) return;
+        const id = qs.get("id");
+        try {
+          const clean = new URLSearchParams(window.location.search);
+          clean.delete("resume");
+          clean.delete("id");
+          const rest = clean.toString();
+          window.history.replaceState(null, "", window.location.pathname + (rest ? "?" + rest : ""));
+        } catch { /* the flag is still consumed here */ }
+        if (resume === "add_passkey") {
+          const outcome = await addPasskeyHere(true);
+          if (outcome === "cancelled") {
+            const hint = document.getElementById("passkeys-resume-hint");
+            if (hint) hint.classList.remove("hidden");
+          }
+        } else if (resume === "remove_passkey" && id) {
+          await removePasskey(id, true);
+        }
       }
 
       /* ── Settings → More: team invites (owners only) ────────────────────────── */

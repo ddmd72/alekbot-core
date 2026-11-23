@@ -251,6 +251,7 @@
           const connectReturn = qs.get("connected") || qs.get("connect_error");
           navigate(sectionFor(qs, connectReturn ? await loadConnectors() : []));
           offerPasskey();
+          await resumePasskeyFlow(qs).catch(() => {});
         } catch {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);
