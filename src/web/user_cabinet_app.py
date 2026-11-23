@@ -75,6 +75,15 @@ _LINK_PLATFORM_ALLOWED = frozenset({"slack"})
 MAX_BULK_ANSWERS = 50
 MALFORMED_ANSWER = "each answer needs a question_id and one of that question's options"
 
+# The Cabinet page's own files (CABINET_REDESIGN_RFC §6), served by /cabinet/assets/<name>: name -> mimetype. The main
+# app has no static folder, so only a name listed here is served; anything else is a 404.
+CABINET_ASSETS: Dict[str, str] = {
+    "cabinet.css": "text/css",
+    "cabinet-strings.js": "application/javascript",
+    "cabinet-shell.js": "application/javascript",
+    "cabinet-sections.js": "application/javascript",
+}
+
 
 async def _json_object_body() -> tuple[Optional[Dict[str, Any]], Optional[tuple]]:
     """The request body as a JSON object, for the Cabinet write routes that call it.
@@ -211,6 +220,18 @@ def create_user_cabinet_blueprint(
         static_file = os.path.join(current_dir, "static", "cabinet.html")
         response = await send_file(static_file)
         # Revalidate on every load: send_file's 12 h max-age served a stale page after deploys.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @bp.route("/cabinet/assets/<name>")
+    async def serve_cabinet_asset(name: str):
+        """Serve one file of the Cabinet page from the CABINET_ASSETS allowlist; any other name is a 404."""
+        mimetype = CABINET_ASSETS.get(name)
+        if mimetype is None:
+            abort(404)
+        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+        response = await send_file(os.path.join(static_dir, name), mimetype=mimetype)
+        # Revalidated on every load, like the page: a deploy must not pair a new shell with a stale asset.
         response.headers["Cache-Control"] = "no-cache"
         return response
 

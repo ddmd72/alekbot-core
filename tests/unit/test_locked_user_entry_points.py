@@ -62,7 +62,7 @@ NOT_A_USER_ENTRY: Dict[Tuple[str, str], str] = {
         "/cabinet/call/interpreter/icon-<int:size>.png", "/cabinet/call/interpreter/manifest.webmanifest",
         "/cabinet/call/manifest.webmanifest", "/cabinet/call/modes", "/cabinet/call/modes/manifest.webmanifest",
         "/cabinet/call/tutor", "/cabinet/call/tutor/icon-<int:size>.png", "/cabinet/call/tutor/manifest.webmanifest",
-        "/auth/session.js")},
+        "/auth/session.js", "/cabinet/assets/<name>")},
     ("GET", "/auth/login"): "starts a sign-in; the callback (google_sign_in) or the passkey verify decides",
     ("GET", "/auth/login/google"): "starts a Google sign-in; the callback (google_sign_in) decides",
     ("POST", "/auth/passkey/options"): "a random challenge before any user is known; the verify decides",
