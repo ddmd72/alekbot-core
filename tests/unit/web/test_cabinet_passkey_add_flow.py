@@ -35,8 +35,9 @@ def _node(script: str) -> dict:
 _CABINET = """
   const log = {{ stepUps: 0, adds: 0, removes: 0, assigned: [], replaced: [], hint: false, toasts: [] }};
   const hintEl = {{ classList: {{ remove: () => {{ log.hint = true; }} }} }};
-  const els = {{ "passkeys-resume-hint": hintEl, "section-devices": {{ classList: {{ contains: () => false }} }} }};
+  const els = {{ "passkeys-resume-hint": hintEl }};
   const document = {{ getElementById: (id) => els[id] }};
+  const _activeSection = "settings";   // the passkeys card sits in Settings (CABINET_REDESIGN_RFC §4)
   const t = (k) => k;
   const showToast = (m) => log.toasts.push(m);
   const rememberPasskeyOffer = () => {{}};
