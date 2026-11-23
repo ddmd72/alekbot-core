@@ -64,6 +64,14 @@ class FakeDeviceSessionRepository(DeviceSessionRepository):
             self.sessions[sid] = session.model_copy(update={"revoked_at": now, "revoke_reason": reason})
             return True
 
+    async def record_passkey_assertion(self, sid: str, user_id: str, at: datetime) -> bool:
+        async with self._lock:
+            session = self.sessions.get(sid)
+            if session is None or session.user_id != user_id or not DeviceSessionPolicy.is_live(session, at):
+                return False
+            self.sessions[sid] = session.model_copy(update={"passkey_at": at})
+            return True
+
     async def revoke_all(self, user_id: str, reason: SessionRevokeReason, now: datetime) -> int:
         async with self._lock:
             live = [s for s in self.sessions.values() if s.user_id == user_id and s.revoked_at is None]
