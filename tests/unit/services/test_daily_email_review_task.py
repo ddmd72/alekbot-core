@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 from src.domain.agent import AgentStatus
 from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notification_kind import NotificationKind
@@ -169,3 +171,10 @@ async def test_a_failed_delivery_without_an_error_names_it_delivery_failed():
     body, status = await rig.task(PAYLOAD, {})
 
     assert (status, body["error"]) == (500, "delivery_failed")
+
+
+@pytest.mark.parametrize("raw", ["not-a-date", "2026-13-45", ""])
+def test_slot_date_unparseable_string_uses_utc_date(monkeypatch, raw):
+    """An unusable `slot_date` falls back to the UTC date of the run, never to an empty string."""
+    pin_datetime(monkeypatch, module, datetime(2026, 3, 4, 23, 30, tzinfo=timezone.utc))
+    assert DailyEmailReviewTask._slot_date(raw) == "2026-03-04"

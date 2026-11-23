@@ -104,7 +104,10 @@
                 authenticatorAttachment: cred.authenticatorAttachment || null } });
             })
             .then(function (resp) { if (resp.status !== 200) throw new Error("verify"); return resp.json(); })
-            .then(function (body) { location.replace(body.next); })
+            .then(function (body) {
+              try { localStorage.setItem("alek.hasPasskey", "1"); } catch (e) { /* no marker */ }
+              location.replace(body.next);
+            })
             // No passkey on this device, a cancelled sheet, or a refusal: Google is the way in.
             .catch(toGoogle);
         });
