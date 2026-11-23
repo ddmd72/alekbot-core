@@ -163,7 +163,7 @@ globalThis.history = { state: null, replaceState: (state, title, url) => address
 globalThis.IntersectionObserver = class { observe() {} unobserve() {} };
 const LANG_DICT = { en: {} };
 let _driveStatusTimer = null, _driveStatusSnapshot = null;
-for (const name of ["relockFacts", "enterMemory", "loadDriveStatus", "loadReminders", "loadSettings",
+for (const name of ["loadHome", "relockFacts", "enterMemory", "loadDriveStatus", "loadReminders", "loadSettings",
                     "loadFactsPinSettings", "loadPlatforms", "loadGmailStatus", "loadTasksStatus", "loadDevices",
                     "loadPasskeys", "loadCodes"]) {
   globalThis[name] = () => calls.push(name);
@@ -181,10 +181,10 @@ def _run(body: str) -> object:
 
 @_node
 @pytest.mark.parametrize(("tab", "section"), [
-    (None, "drives"), ("", "drives"), ("home", "home"), ("memory", "memory"), ("drives", "drives"),
+    (None, "home"), ("", "home"), ("home", "home"), ("memory", "memory"), ("drives", "drives"),
     ("reminders", "reminders"), ("settings", "settings"),
     ("integrations", "drives"), ("devices", "settings"), ("team", "settings"),
-    ("nonsense", "drives"), ("constructor", "drives"), ("__proto__", "drives"),
+    ("nonsense", "home"), ("constructor", "home"), ("__proto__", "home"),
 ])
 def test_tab_values_and_old_aliases_open_their_section(tab, section):
     qs = "" if tab is None else f"tab={tab}"
@@ -213,7 +213,7 @@ def test_a_connect_return_opens_the_place_of_its_connector_whatever_the_tab(quer
 
 @_node
 @pytest.mark.parametrize(("name", "opened", "loads"), [
-    ("home", "home", []),
+    ("home", "home", ["loadHome"]),
     ("memory", "memory", ["enterMemory"]),
     ("drives", "drives", ["loadDriveStatus"]),
     ("integrations", "drives", ["loadDriveStatus"]),
