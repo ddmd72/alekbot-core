@@ -8,6 +8,7 @@ covers:
   src/web/static/cabinet-strings.js
   src/web/static/cabinet-shell.js
   src/web/static/cabinet-sections.js
+  src/web/static/cabinet-memory.js
 -->
 # User Cabinet
 
@@ -17,7 +18,8 @@ The Cabinet is the owner's web page for what chat is a poor place for: seeing an
 connecting and disconnecting integrations (Gmail, drives, Microsoft To Do), and setting personal preferences (language,
 timezone, schedules, reminders, team invites). It is one page served at `/cabinet`: a shell
 (`src/web/static/cabinet.html`: header, menu, section markup) and its assets (`cabinet.css`, `cabinet-strings.js`,
-`cabinet-shell.js`, `cabinet-sections.js`: one stylesheet and plain scripts sharing one global scope, no build), with
+`cabinet-shell.js`, `cabinet-sections.js`, `cabinet-memory.js`: one stylesheet and plain scripts sharing one global
+scope, no build), with
 five sections: Home, Memory, Drives, Reminders, Settings ([CABINET_REDESIGN_RFC](../../10_rfcs/CABINET_REDESIGN_RFC.md)).
 Behind it is one Quart blueprint of JSON routes behind the JWT session that the OAuth sign-in set.
 
@@ -63,12 +65,27 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
    cursor. `state` is `current` (default) or `stale`, parsed by `src/domain/fact_review_overview.py::listable_state`;
    `domain` is one key of `src/domain/fact_domains.py` (any other value is `400`); `limit` is capped by the route.
    Query: `FirestoreFactRepository.get_paginated_facts` in `src/adapters/firestore_repo.py`.
-2. `GET /api/user/fact-domains` gives the filter chips and badge labels in the page's UI language. A fact that has no
+2. `GET /api/user/fact-domains` gives the area labels in the page's UI language. A fact that has no
    profile yet has `primary_domain: null` and is in no domain filter.
-3. `POST /api/user/facts/search` embeds the query (`EmbeddingService`, inside `billed_scope`, so the cost is billed to the
+3. `GET /api/user/facts/domain-counts?state=current|stale` (`fact_domain_counts`) gives `{total, counts}`: the number of
+   facts of that state in all and per registry key, areas with none left out; `state` is parsed as browse parses it
+   (`400` otherwise). `FactRepository.count_facts_by_domain` runs one count aggregation for the total and one per key,
+   concurrently, over `get_paginated_facts`' own query (ordering kept), so each number is the length of the list the
+   same filter browses and the listing's indexes serve it. A fact in two areas counts in both; area counts need not add
+   up to the total.
+4. `POST /api/user/facts/search` embeds the query (`EmbeddingService`, inside `billed_scope`, so the cost is billed to the
    account) and runs `FactRepository.search_facts` with a fixed result limit, for the JWT's account (`account_id` is the filter).
-4. `GET /api/user/facts/recently-closed` lists facts archived or invalidated within `SET_ASIDE_WINDOW`
+5. `GET /api/user/facts/recently-closed` lists facts archived or invalidated within `SET_ASIDE_WINDOW`
    (`fact_review_overview.py`), each with the actor of its last lifecycle entry.
+
+The Memory section (`cabinet-memory.js`, CABINET_REDESIGN_RFC §5.2) draws these as: the review questions collapsed into
+one row at the top (its count; it opens to the question UI of "Memory-review questions"), the search field with a dark
+Search button, the state as a segmented control (current / stale / closed), and the life area as one select with counts
+("All areas · total"): its list holds only the areas with facts in that state, the fullest first, with a filter field, a
+line saying area counts overlap and a footer with the number of empty areas hidden; it is hidden for "closed" and over
+search results. Facts are rows (text, area tag, date) on every list; a row opens to Edit (the correction message below)
+and Delete; closed facts are read-only rows. Under the list: "Showing n of total" and "Show more" while browse has a
+next page.
 
 ### Delete a fact
 
@@ -83,7 +100,7 @@ The Cabinet owns no collection. Each route reads or writes data that another blo
 ### Correct a fact (no write API)
 
 The page builds an English message ("current text / correct text / please update it") and copies it to the clipboard
-(`copyCorrectMessage` in `cabinet.html`); the user pastes it into chat. The correction then goes through the normal
+(`copyCorrectMessage` in `cabinet-memory.js`); the user pastes it into chat. The correction then goes through the normal
 consolidation path, which owns re-embedding and lineage. There is deliberately no Cabinet route that rewrites a fact.
 
 ### Memory-review questions
@@ -143,8 +160,8 @@ Labels and platform hints are User-Agent words, escaped in the page.
 ### The facts PIN
 
 Opt-in per user (CABINET_DEVICE_SESSIONS_RFC §7.7; the rules are `FactsPinService`). A user without a PIN sees the Memory
-tab as always. With one, the eight facts routes (`/api/user/facts`, `/fact-domains`, `/facts/browse`,
-`/facts/recently-closed`, `/facts/review-queue`, `/facts/review-answers`, `/facts/search`, `/facts/<id>/invalidate`)
+tab as always. With one, the nine facts routes (`/api/user/facts`, `/fact-domains`, `/facts/browse`,
+`/facts/domain-counts`, `/facts/recently-closed`, `/facts/review-queue`, `/facts/review-answers`, `/facts/search`, `/facts/<id>/invalidate`)
 carry `facts_unlock_required` and answer 403 `facts_locked` until this session is unlocked: the tab asks for the PIN
 (`POST /api/user/facts-pin/unlock`), which opens it for 15 minutes on that session only. Leaving the tab or closing the
 page relocks it (`sendBeacon` to `/facts-pin/relock`; the 15 minutes are the guarantee). The routes live in
@@ -192,8 +209,10 @@ facts route without the decorator fails `test_facts_pin_app.py`.
   `DOCS_OWNER_USER_ID` is unset.
 - **A delete never removes text the owner did not see** (the `409` above, `cabinet_invalidation`). The Cabinet never
   writes a fact's text.
-- **Composite indexes before deploy.** Browse needs the `account_id, state, created_at` index and the variant with
-  `domain_keys` in `config/firestore.indexes.json`; a missing one fails at query time.
+- **Composite indexes before deploy.** Browse and the domain counts need the `account_id, state, created_at` index and
+  the variant with `domain_keys` in `config/firestore.indexes.json`; a missing one fails at query time. The counts keep
+  the browse query's ordering on purpose: dropping it would count undated documents browse never lists and ask for
+  other indexes.
 - **Cancelling a Gmail job writes its status directly** (`gmail_cancel_job`); the worker stops chaining on the next task,
   so a running page can finish one more step.
 - **Fact and drive text is untrusted:** the page puts it through `escapeHtml` before rendering.
@@ -215,4 +234,5 @@ facts route without the decorator fails `test_facts_pin_app.py`.
 - `src/services/cabinet_fact_service.py::CabinetFactService.invalidate`
 - `src/adapters/firestore_repo.py::FirestoreFactRepository.get_paginated_facts`
 - `src/services/language_preference_service.py::LanguagePreferenceService.set_preference`
-- `src/web/static/cabinet.html` (`invalidateFactDirect`, `copyCorrectMessage`, the `section-*` blocks)
+- `src/web/static/cabinet.html` (the `section-*` blocks); `src/web/static/cabinet-memory.js` (`invalidateFactDirect`,
+  `copyCorrectMessage`, `renderAreaSelect`)

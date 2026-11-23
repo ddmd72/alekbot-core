@@ -102,119 +102,79 @@
           </div>
         </section>
 
-        <!-- Memory Section -->
+        <!-- Memory (CABINET_REDESIGN_RFC §5.2). Its children stay direct children of the section: while it is locked,
+             #section-memory.pin-locked in cabinet.css hides every one but the header (hero-header) and the PIN gate. -->
         <section id="section-memory" class="section">
-          <div class="hero-header reveal">
-            <h1 id="memory-title">Your Memory</h1>
-            <p id="memory-subtitle">
-              Search, manage, and refine the knowledge base Alek uses to assist
-              you.
-            </p>
-          </div>
+          <header class="hero-header c-mem-head">
+            <h1 class="c-title" id="memory-title">Your Memory</h1>
+            <p class="c-lead" id="memory-subtitle">Search, manage, and refine the knowledge base Alek uses to assist you.</p>
+          </header>
 
-          <!-- Facts PIN gate (CABINET_DEVICE_SESSIONS_RFC §7.7): shown instead of the tab's content while it is locked -->
-          <div id="facts-pin-gate" class="card" style="max-width: 420px">
-            <div class="card-body">
-              <h3 id="facts-pin-title" style="font-size:18px;font-weight:600;margin-bottom:6px"></h3>
-              <p id="facts-pin-desc" style="font-size:14px;color:var(--text-muted);margin-bottom:12px"></p>
-              <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-                <input id="facts-pin-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="inp" style="width:120px"
+          <!-- Facts PIN gate (CABINET_DEVICE_SESSIONS_RFC §7.7): shown instead of the section's content while it is locked -->
+          <div id="facts-pin-gate" class="c-group c-mem-gate">
+            <div class="c-row-body c-mem-gate-body">
+              <h2 class="c-step" id="facts-pin-title"></h2>
+              <p class="c-hint" id="facts-pin-desc"></p>
+              <div class="c-btns">
+                <input id="facts-pin-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" class="c-input c-mem-pin"
                   onkeydown="if (event.key === 'Enter') unlockFacts();" aria-labelledby="facts-pin-title">
-                <button id="facts-pin-unlock" class="btn btn-black" onclick="unlockFacts()"></button>
+                <button type="button" id="facts-pin-unlock" class="c-btn c-pri" onclick="unlockFacts()"></button>
               </div>
-              <p id="facts-pin-error" role="alert" style="font-size:14px;color:var(--danger-text);margin-top:12px"></p>
-              <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
-                <button id="facts-pin-forgot" class="btn btn-secondary" onclick="forgotPin()"></button>
-                <button id="facts-pin-reset-cancel" class="btn btn-secondary hidden" onclick="cancelPinReset()"></button>
+              <p id="facts-pin-error" role="alert" class="c-mem-error"></p>
+              <div class="c-btns">
+                <button type="button" id="facts-pin-forgot" class="c-lnk" onclick="forgotPin()"></button>
+                <button type="button" id="facts-pin-reset-cancel" class="c-lnk hidden" onclick="cancelPinReset()"></button>
               </div>
-              <p id="facts-pin-reset-note" class="hidden" style="font-size:14px;color:var(--text-muted);margin-top:12px"></p>
+              <p id="facts-pin-reset-note" class="c-hint hidden"></p>
             </div>
           </div>
 
-          <div class="search-container reveal">
-            <div class="search-bar">
-              <input
-                id="facts-search"
-                type="text"
-                placeholder="Ask your memory..."
-                class="inp"
-                onkeydown="if (event.key === 'Enter') runSearch();"
-              />
-              <button id="memory-search-btn" onclick="runSearch()" class="btn btn-black">
-                Search
+          <!-- The review questions, collapsed into one row that opens to them -->
+          <div id="memory-review" class="c-group c-mem-q hidden">
+            <button type="button" class="c-row" id="memory-review-row" aria-expanded="false" onclick="toggleMemoryReview()">
+              <span class="c-mem-qbadge" id="memory-review-count"></span>
+              <span class="c-row-title" id="memory-review-title"></span>
+              <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            </button>
+            <div id="review-questions" class="c-mem-q-body hidden"></div>
+          </div>
+
+          <div class="c-mem-search">
+            <input id="facts-search" type="text" placeholder="Ask your memory..." class="c-input" onkeydown="if (event.key === 'Enter') runSearch();" />
+            <button type="button" id="memory-search-btn" onclick="runSearch()" class="c-btn c-blk">Search</button>
+            <button type="button" id="back-to-browse-btn" onclick="backToBrowse()" class="c-lnk hidden">Clear Search</button>
+          </div>
+
+          <!-- State (segmented control) and life area (select with counts; hidden for "closed" and over search results) -->
+          <div class="c-mem-bar">
+            <div id="state-chips" class="c-seg" role="group"></div>
+            <div id="area-select" class="c-pick hidden">
+              <button type="button" class="c-pick-btn" id="area-select-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="area-pop" onclick="toggleAreaList()">
+                <span id="area-select-label"></span><span class="c-pick-count" id="area-select-count"></span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-            </div>
-            <div style="text-align: center; margin-top: 16px">
-              <button
-                id="back-to-browse-btn"
-                onclick="backToBrowse()"
-                class="btn btn-secondary btn-sm hidden"
-              >
-                Clear Search
-              </button>
-            </div>
-          </div>
-
-          <div id="review-questions" class="hidden"></div>
-
-          <div id="state-chips" class="filter-chips reveal" style="margin-bottom: 24px"></div>
-
-          <div id="domain-chips" class="filter-chips reveal"></div>
-
-          <div id="facts-container" class="bento-grid">
-            <!-- Skeletons -->
-            <div id="memory-content-placeholder" style="grid-column: 1 / -1">
-              <div class="bento-grid">
-                <div class="card fact-card">
-                  <div class="card-body">
-                    <div
-                      class="skeleton"
-                      style="height: 24px; width: 80%; margin-bottom: 12px"
-                    ></div>
-                    <div
-                      class="skeleton"
-                      style="height: 24px; width: 60%; margin-bottom: 40px"
-                    ></div>
-                    <div
-                      class="skeleton"
-                      style="height: 30px; width: 100px; border-radius: 100px"
-                    ></div>
-                  </div>
-                </div>
-                <div class="card fact-card">
-                  <div class="card-body">
-                    <div
-                      class="skeleton"
-                      style="height: 24px; width: 90%; margin-bottom: 12px"
-                    ></div>
-                    <div
-                      class="skeleton"
-                      style="height: 24px; width: 40%; margin-bottom: 40px"
-                    ></div>
-                    <div
-                      class="skeleton"
-                      style="height: 30px; width: 100px; border-radius: 100px"
-                    ></div>
-                  </div>
-                </div>
+              <div class="c-pick-pop hidden" id="area-pop">
+                <div class="c-pick-search"><input id="area-filter" type="text" class="c-input" autocomplete="off" oninput="filterAreas()" /></div>
+                <div class="c-pick-list" id="area-list" role="listbox"></div>
+                <p class="c-pick-note" id="area-note"></p>
+                <p class="c-pick-foot hidden" id="area-foot"></p>
               </div>
             </div>
+            <button type="button" id="area-reset" class="c-lnk hidden" onclick="setDomainFilter('all')"></button>
           </div>
 
-          <div
-            id="facts-footer"
-            style="text-align: center; margin-top: 64px"
-            class="reveal"
-          >
-            <div
-              id="facts-count"
-              style="
-                color: var(--text-muted);
-                font-size: 15px;
-                margin-bottom: 24px;
-              "
-            ></div>
-            <div id="facts-pagination"></div>
+          <div id="facts-container" class="c-group c-mem-list">
+            <!-- Skeleton rows, shown while a list loads -->
+            <div id="memory-content-placeholder" class="c-mem-skel">
+              <div class="c-mem-skel-row"><span class="c-mem-skel-line"></span><span class="c-mem-skel-line c-mem-skel-short"></span></div>
+              <div class="c-mem-skel-row"><span class="c-mem-skel-line"></span><span class="c-mem-skel-line c-mem-skel-short"></span></div>
+              <div class="c-mem-skel-row"><span class="c-mem-skel-line"></span><span class="c-mem-skel-line c-mem-skel-short"></span></div>
+            </div>
+          </div>
+
+          <div id="facts-footer" class="c-mem-foot">
+            <span id="facts-count"></span>
+            <span id="facts-pagination"></span>
           </div>
         </section>
 
@@ -660,6 +620,7 @@
     <script src="/cabinet/assets/cabinet-strings.js"></script>
     <script src="/cabinet/assets/cabinet-shell.js"></script>
     <script src="/cabinet/assets/cabinet-sections.js"></script>
+    <script src="/cabinet/assets/cabinet-memory.js"></script>
     <div id="drive-picker-root"></div>
   </body>
 </html>

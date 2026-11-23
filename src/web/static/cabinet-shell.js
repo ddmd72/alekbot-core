@@ -146,7 +146,7 @@
         if (changed && active && active.id === "section-drives") loadDriveStatus();
         if (active && active.id === "section-memory" && factDomainsLang !== _currentLang) {
           loadFactDomains().then(() => {
-            if (factsMode === "browse" && factsState !== "closed") renderDomainChips();
+            if (factsMode !== "idle") renderMemoryControls();
             if (factsMode !== "idle" && factsState !== "closed") renderFacts(allFacts, true, true);
           });
         }

@@ -851,10 +851,13 @@ Read routes (`src/web/user_cabinet_app.py`): all current facts; a paginated brow
 filter and a state filter (`current` by default or `stale`); a single-vector search over `vector`. **Domains come from the
 profile** (`FACT_PROFILE_RFC.md` §6): the filter is one registry key and lists the facts whose `domain_keys` hold it (a fact
 not yet profiled is in no domain; any other value is a 400); each fact's badge is the registry label of its
-`primary_domain`; the page takes chips and labels from `GET /api/user/fact-domains`. The page has four views:
+`primary_domain`; the page takes the area labels from `GET /api/user/fact-domains`. The area select shows each area's
+number of facts from `GET /api/user/facts/domain-counts` (`FactRepository.count_facts_by_domain`: count aggregations over
+the browser's own query, so each number is what the filter lists; a fact in two areas counts in both, an unprofiled
+one only in the total). The page has four views:
 - **Current** (the browser).
-- **Waiting for review**: the stale facts, each with its `stale_since`, read-only.
-- **Set aside lately**: `GET /api/user/facts/recently-closed`, everything archived or invalidated in the last 30 days,
+- **Stale**: the stale facts, each with its `stale_since`.
+- **Closed**: `GET /api/user/facts/recently-closed`, everything archived or invalidated in the last 30 days,
   newest closure first, each with its state and the actor of its last trail entry. Read-only: the Cabinet cannot bring a
   closed fact back; the owner tells the bot in chat that it is still true.
 - **Questions**: the open memory-review questions with answer buttons (§5.6), including the group "Invoices with no
