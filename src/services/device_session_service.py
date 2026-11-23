@@ -2,8 +2,9 @@
 
 A sign-in `start`s a session: a stored record (`DeviceSessionRepository`), an access JWT carrying its `sid`
 (`SessionService.create_device_access_token`, `DeviceSessionPolicy.ACCESS_TTL`), and a random refresh secret whose
-SHA-256 alone is stored; the owner is told through `UserNotificationService.notify_ui_notice` (the platform hint is
-untrusted, sent literally), in words that say how the session was signed in (Google or a passkey, §7.5). A passkey
+SHA-256 alone is stored; a Google sign-in tells the owner through `UserNotificationService.notify_ui_notice` (the platform hint is
+untrusted, sent literally). A passkey sign-in sends no notice: the passkey was announced when it was enrolled and
+signing in with it needs that device's biometrics (§7.5). A passkey
 sign-in also counts as the session's first passkey assertion (`passkey_at`, read by a call start, §7.3). A `refresh` presents the secret: the repository decides and writes in one transaction
 (rotate, grace, replay → revoked, dead). The gate asks `is_live(sid)`, answered from a per-instance cache for at most
 `GATE_CACHE_TTL` (the revocation latency bound), else from the record.
@@ -82,7 +83,7 @@ class DeviceSessionService:
 
     async def start(self, user: UserProfile, account: BillingAccount, *, label: str, platform_hint: str,
                     auth_kind: SessionAuthKind) -> Tuple[DeviceSession, str, str]:
-        """Create the session of a new sign-in and announce it. Returns the record, the access token and the refresh
+        """Create the session of a new sign-in and announce it when it is a Google sign-in. Returns the record, the access token and the refresh
         secret (the caller sets the cookies; the secret is never stored)."""
         now = self._clock()
         secret = self._new_secret()
@@ -98,7 +99,8 @@ class DeviceSessionService:
             raise RuntimeError("device session id is taken")
         await self._remember(session.sid, session, now, version)
         access_token = self._sessions.create_device_access_token(user, account, session.sid, now)
-        await self._announce(session, now)
+        if auth_kind is not SessionAuthKind.PASSKEY:
+            await self._announce(session, now)
         return session, access_token, secret
 
     async def refresh(self, sid: str, refresh_secret: str, user: UserProfile, account: BillingAccount) -> RefreshResult:
@@ -217,10 +219,8 @@ class DeviceSessionService:
             self._cache.pop(sid, None)
 
     async def _announce(self, session: DeviceSession, now: datetime) -> None:
-        """The new sign-in notice, worded by how the session was signed in; a failure is logged and never fails the
-        sign-in."""
-        message = (UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE if session.auth_kind is SessionAuthKind.PASSKEY
-                   else UIMessage.DEVICE_SIGN_IN_NOTICE)
+        """The new sign-in notice of a Google sign-in; a failure is logged and never fails the sign-in."""
+        message = UIMessage.DEVICE_SIGN_IN_NOTICE
         try:
             sent = await self._notifications.notify_ui_notice(
                 session.user_id, session.account_id, message,
