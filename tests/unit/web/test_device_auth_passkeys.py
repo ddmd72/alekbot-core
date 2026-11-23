@@ -271,6 +271,7 @@ class TestPasskeySignIn:
     async def test_a_removed_passkey_is_refused_and_starts_no_session(self, world):
         await world.google_sign_in()
         row = (await (await world.enrol()).get_json())["passkey"]
+        assert (await world.step_up()).status_code == 200
         assert (await world.post(f"/api/user/passkeys/{row['id']}/remove")).status_code == 200
         world.browser()
         before = set(world.kit.repo.sessions)
@@ -376,6 +377,7 @@ class TestEnrolment:
     async def test_remove_revokes_one_and_another_users_or_unknown_is_404(self, world):
         await world.google_sign_in()
         row = (await (await world.enrol()).get_json())["passkey"]
+        assert (await world.step_up()).status_code == 200
         assert (await world.post("/api/user/passkeys/unknown-key/remove")).status_code == 404
         resp = await world.post(f"/api/user/passkeys/{row['id']}/remove")
         assert resp.status_code == 200 and await resp.get_json() == {"removed": 1}

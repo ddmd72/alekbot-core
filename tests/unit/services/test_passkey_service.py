@@ -93,6 +93,14 @@ class World:
         return await self.service.finish_registration(
             start.nonce, self.authenticator.register(start.options, **register), user, session)
 
+    async def prove(self, sid: str, user_id: str = "user-alex") -> None:
+        """A fresh passkey assertion on stored session `sid` (§7.3), made by a second service over the same stores so
+        the main service's nonce and challenge counters stay as the test reads them."""
+        aside = PasskeyService(self.repo, self.verifier, self.challenges, self.notifier, clock=self.clock,
+                               new_nonce=counter("aside"), new_challenge=challenges())
+        start = await aside.begin_step_up(user_id, sid)
+        await aside.finish_step_up(start.nonce, self.authenticator.sign_in(start.options), user_id, sid)
+
     async def sign_in(self, **assertion) -> str:
         start = await self.service.begin_sign_in()
         return await self.service.finish_sign_in(start.nonce, self.authenticator.sign_in(start.options, **assertion))
@@ -122,9 +130,13 @@ class TestEnrolment:
         assert (await world.enrol()).backup_eligible is True
 
     async def test_the_options_name_the_user_and_exclude_only_live_passkeys(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(MAC_SESSION)
         first = await world.enrol()
+        await world.prove("sid-mac")
         second = await world.enrol(MAC_SESSION)
-        await world.service.remove("user-alex", first.cred_hash)
+        await world.prove("sid-phone")
+        await world.service.remove("user-alex", first.cred_hash, PHONE_SESSION)
         start = await world.service.begin_registration(ALEX, PHONE_SESSION)
         assert start.options["user"] == {"id": b64u(b"user-alex"), "name": "alex@example.com", "displayName": "Alex"}
         assert start.options["excludeCredentials"] == [{"id": b64u(second.credential_id), "type": "public-key"}]
@@ -150,8 +162,11 @@ class TestEnrolment:
         assert world.db.collection(CHALLENGES).docs == {}
 
     async def test_a_credential_registered_twice_is_refused(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(MAC_SESSION)
         await world.enrol()
         [cred] = world.authenticator.credentials
+        await world.prove("sid-mac")
         with pytest.raises(PasskeyRejected, match="already registered"):
             await world.enrol(MAC_SESSION, reuse=cred)
         assert [k.label for k in world.repo.passkeys.values()] == [PHONE]
@@ -263,8 +278,10 @@ class TestSignIn:
             await world.sign_in()                        # registered at the authenticator, never finished here
 
     async def test_a_removed_passkey_no_longer_signs_in(self, world):
+        await world.repo.create(PHONE_SESSION)
         stored = await world.enrol()
-        assert await world.service.remove("user-alex", stored.cred_hash) is True
+        await world.prove("sid-phone")
+        assert await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION) is True
         with pytest.raises(PasskeyRejected, match="is not a live passkey"):
             await world.sign_in()
 
@@ -322,24 +339,32 @@ class TestSignIn:
 
 class TestRemove:
     async def test_remove_revokes_and_tells_the_owner(self, world):
+        await world.repo.create(PHONE_SESSION)
         stored = await world.enrol()
         world.clock.now = T0 + timedelta(hours=3)
-        assert await world.service.remove("user-alex", stored.cred_hash) is True
+        await world.prove("sid-phone")
+        assert await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION) is True
         assert world.repo.passkeys[stored.cred_hash].revoked_at == T0 + timedelta(hours=3)
         added, removed = [text for _, _, text in world.channels.sent_literal]
         assert PHONE in removed and "12:00 UTC" in removed and removed != added
 
     async def test_a_passkey_of_another_user_is_untouched(self, world):
+        await world.repo.create(PHONE_SESSION)
+        await world.repo.create(OTHER_SESSION)
         stored = await world.enrol()
-        assert await world.service.remove("user-other", stored.cred_hash) is False
+        await world.prove("sid-phone")
+        stored = await world.repo.get_passkey(stored.cred_hash)              # the step-up recorded its use on it
+        assert await world.service.remove("user-other", stored.cred_hash, OTHER_SESSION) is False
         assert world.repo.passkeys[stored.cred_hash] == stored
-        assert await world.service.remove("user-alex", "key-unknown") is False
+        assert await world.service.remove("user-alex", "key-unknown", PHONE_SESSION) is False
         assert len(world.channels.sent) == 1
 
     async def test_removing_twice_tells_the_owner_once(self, world):
+        await world.repo.create(PHONE_SESSION)
         stored = await world.enrol()
-        assert await world.service.remove("user-alex", stored.cred_hash) is True
-        assert await world.service.remove("user-alex", stored.cred_hash) is False
+        await world.prove("sid-phone")
+        assert await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION) is True
+        assert await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION) is False
         assert len(world.channels.sent) == 2
 
 
@@ -358,8 +383,10 @@ class TestCallStartStepUp:
 
     async def test_a_user_without_a_live_passkey_starts_a_call_as_before(self, world):
         assert await world.service.call_start_allowed("user-alex", "sid-unknown") is True
+        await world.repo.create(PHONE_SESSION)
         stored = await world.enrol()
-        await world.service.remove("user-alex", stored.cred_hash)
+        await self.step_up(world)
+        await world.service.remove("user-alex", stored.cred_hash, PHONE_SESSION)
         assert await world.service.live_passkeys("user-alex") == []
         assert await world.service.call_start_allowed("user-alex", "sid-unknown") is True
 
@@ -439,9 +466,11 @@ class TestCallStartStepUp:
 
     async def test_a_revoked_passkey_cannot_step_up(self, world):
         await world.repo.create(PHONE_SESSION)
+        await world.repo.create(MAC_SESSION)
         stored = await world.enrol()
+        await self.step_up(world, sid="sid-mac")                             # a change needs proof; the phone stays unproved
         await world.enrol(session=MAC_SESSION)                               # a second, live one keeps the gate on
-        await world.service.remove("user-alex", stored.cred_hash)
+        await world.service.remove("user-alex", stored.cred_hash, MAC_SESSION)
         with pytest.raises(PasskeyRejected, match="is not a live passkey"):
             await self.step_up(world, cred=world.authenticator.credentials[0])
         assert world.repo.sessions["sid-phone"].passkey_at is None
