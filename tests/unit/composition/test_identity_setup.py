@@ -61,7 +61,9 @@ def test_the_repositories_are_shared_and_the_sign_in_runs_over_the_auth_config(e
     # device sessions are signed by this very service.
     assert session.secret_key == SECRET
     notices = object()
-    device_sessions = identity_setup.build_device_sessions(db, env, session_service=session, notification_service=notices)  # type: ignore[arg-type]
+    device_auth = identity_setup.build_device_auth(db, env, session_service=session, notification_service=notices,  # type: ignore[arg-type]
+                                                   oauth_redirect_uri="https://cabinet.example.com/auth/callback")
+    device_sessions = device_auth.sessions
     assert device_sessions._sessions is session and device_sessions._notifications is notices
 
 
