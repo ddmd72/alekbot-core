@@ -1,4 +1,5 @@
 <!-- living-doc
+audited: 2026-11-23
 covers:
   src/adapters/firestore_credential_store.py
   src/ports/oauth_credentials_port.py
@@ -94,14 +95,16 @@ may hold several credentials of the kind (`multiple`: the two drives), and for d
 The code is exchanged and the ID token verified through the auth provider, then the whitelist gate
 (`_require_allowed_email`) runs before any user read or write; no email, an unverified email or a non-listed one
 raises `AccessDeniedError`. The user is then found by `external_user_id`; else by email, and the Google identity is
-linked to that existing user; else `register_new_user` creates a free-tier `BillingAccount` and the user, and writes
+linked to that existing user (a locked, i.e. inactive, user found either way raises `AccountLockedError` before anything
+is written: `_refuse_locked`); else `register_new_user` creates a free-tier `BillingAccount` and the user, and writes
 the user as `owner` in `iam_policy`. A pending team-invite cookie is consumed after the callback, best effort
-(`web/oauth_app.py`). Session renewal re-runs the whitelist check on the stored email
-(`AuthenticationService.resume_session`), so an email taken off the list stops renewing.
+(`web/oauth_app.py`). Session renewal re-runs the whitelist check on the stored email and refuses an inactive user
+(`AuthenticationService.resume_session`), so an email taken off the list, or a locked account, stops renewing.
 
 **Chat authorization** (`services/iam_service.py::IAMService.authorize`). Called by the Slack and Telegram adapters on
-every message, no cache. A platform user that exists and whose email is still whitelisted is allowed; an unknown one is
-rejected with a "register in the Cabinet first" message, a de-listed one with a "revoked" message. Chat can never
+every message, no cache. A platform user that exists, is active and whose email is still whitelisted is allowed; an unknown one is
+rejected with a "register in the Cabinet first" message, a locked (inactive) one with the fixed `ACCOUNT_LOCKED_REPLY`
+(checked before the whitelist), a de-listed one with a "revoked" message. Chat can never
 create an account.
 
 **Linking a Google identity.** A user record without a Google identity can link one from the Cabinet (`web/oauth_app.py`: `/auth/link-oauth`, `AuthenticationService.link_oauth_identity`): the same whitelist gate, and an identity already linked to another user is refused.
@@ -161,7 +164,8 @@ records a deliberate disconnect. The drive's notice runs in the drive fan-out in
   (`AuthenticationService`), chat messages and button choices (`IAMService.authorize`), team-invite accept
   (`consume_team_invite`), the remote MCP server's grants at each refresh rotation
   (`services/mcp_authorization_service.py`), the voice MCP token mint (`services/voice_mcp_token_service.py`).
-  `IAMService` does not gate the web. A new entry path needs its own check. Why: `decisions/cabinet_oauth_whitelist_gate.md`.
+  `IAMService` does not gate the web. The account lock (`UserProfile.is_active`) is likewise checked per entry point, and
+  a new entry point adds it (`tests/unit/test_locked_user_entry_points.py`; `CABINET_DEVICE_SESSIONS_RFC` §7.8). A new entry path needs its own check. Why: `decisions/cabinet_oauth_whitelist_gate.md`.
 - **Chat cannot register.** Accounts are created only by `register_new_user`, reached only from the web sign-in.
 - **One user's credential is never served to another.** The store checks the stored `user_id` on `get`
   (`FirestoreCredentialStore.get`); only `list_by_account` and `list_user_ids` read across users.
@@ -185,6 +189,9 @@ records a deliberate disconnect. The drive's notice runs in the drive fan-out in
   `decisions/oauth_credential_writes_unconditional.md` predates the store and describes the old repository.
 - **Role values are stored lowercase** in `iam_policy` (`ports/iam_port.py::Role`); a team invite keeps its role uppercase and
   converts before writing. Writing a member is a field-path update, never a whole-map write, so concurrent adds are kept.
+- **Profile writes after a read are field-level.** OAuth link and team join write only the changed fields
+  (`update_user_fields`), and `unlink_platform_identity` a single dotted path, so a concurrent lock or language change
+  is not undone by a whole-document `update_user`/`create_user` rewrite (`ports/user_repository.py::UserRepository`).
 - **Joining a team overwrites the user's `account_id`.** Data the user owned in their previous account is not migrated
   (`consume_team_invite` comment).
 - **A deliberate disconnect must not read as a loss.** Gmail records it (`mark_disconnected`); To Do's disconnect resets
