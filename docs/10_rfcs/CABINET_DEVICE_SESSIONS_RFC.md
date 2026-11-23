@@ -26,7 +26,8 @@ Today the second is impossible. Tokens are stateless JWTs, and nothing can revok
   instead of Google. Google stays as the fallback and the enrolment path.
 - **A devices list** in the Cabinet, for every user: log out one device or all of them. `$devices off` does the same
   from chat.
-- **A chat notice on every new sign-in**, for every user.
+- **A chat notice on every new Google sign-in**, for every user. A passkey sign-in sends none: the passkey's
+  enrolment was already announced, and signing in with it needs the enrolled device's biometrics.
 - **An opt-in 4-digit PIN guards the facts tab only.** A user who sets no PIN sees the facts tab as today, and
   nothing can lock that user through the PIN. The device lock protects the rest of the Cabinet and Lelik.
 - **A duress code, set together with the PIN, and five wrong PIN entries in a row, lock the whole account.** Every
@@ -129,7 +130,7 @@ literally. Every proactive delivery resolves its target through `resolve_channel
 1. A revocable server-side session per browser, with silent refresh and lifetimes documented as ASVS V7.1.1 requires.
 2. Passkey sign-in as the fast path.
 3. A devices list and a kill switch, for every user.
-4. A new-sign-in notice, for every user.
+4. A new-sign-in notice on a Google sign-in, for every user.
 5. An opt-in facts PIN.
 6. A full account lock that every entry point honours, triggered by the duress code or by five wrong PIN entries, so
    only for a user who set a PIN.
@@ -297,9 +298,12 @@ For `alex@example.com`, signed in on a phone and a laptop, the list shows two ro
 `$devices` in chat lists the same sessions, and `$devices off` is the kill switch (§7.6). This meets ASVS 5.0 V7.5.2
 (4.0.3 V3.3.4) apart from the re-authentication deviation in §7.2.
 
-**Notice on every new session.** It goes through `notify_ui_notice`: "New sign-in: {platform_hint}, {time}, by
-{Google|passkey}. Not you? `$devices off`." It is sent literally, because the hint is untrusted text. It is
-code-written UI text and never claims the system's voice. Adding or removing a passkey sends a notice of its own.
+**Notice on every new Google sign-in.** It goes through `notify_ui_notice`: "New sign-in: {platform_hint}, {time}.
+Not you? `$devices off`." It is sent literally, because the hint is untrusted text. It is code-written UI text and
+never claims the system's voice. A passkey sign-in sends no notice: a passkey lives only on a device the owner
+enrolled, whose enrolment was already announced, and signing in with it needs that device's biometrics. The
+threat the notice catches is someone signing in with the Google account. Adding or removing a passkey sends a
+notice of its own.
 
 ### 7.6 Kill switch: `$devices off` and recovery
 
