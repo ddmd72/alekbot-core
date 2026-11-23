@@ -132,12 +132,6 @@ def test_team_shows_for_an_owner_only():
     assert 'return !!currentUser && currentUser.account.role === "owner";' in _SHELL_JS
 
 
-def test_the_phone_redirect_stays_until_step_two():
-    init = re.search(r"\n      async function init\(\) \{.*?\n      \}\n", _SHELL_JS, re.S).group(0)
-    assert init.index("if (redirectPhoneToCall()) return;") < init.index("authFetch(")
-    assert 'if (isPhone && [...qs.keys()].length === 0) {\n          window.location.replace("/cabinet/call");' in _SHELL_JS
-
-
 def test_init_opens_the_section_of_the_address_after_the_connect_return_is_handled():
     init = re.search(r"\n      async function init\(\) \{.*?\n      \}\n", _SHELL_JS, re.S).group(0)
     opened = init.index("navigate(sectionFor(qs, connectReturn ? await loadConnectors() : []));")

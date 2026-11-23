@@ -85,18 +85,22 @@
               <button type="button" class="c-tile" id="home-tile-memory" onclick="navigate('memory')">
                 <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg></span>
                 <span class="c-tile-title">Memory</span>
+                <span class="c-tile-status" id="home-status-memory" aria-live="polite"></span>
               </button>
               <button type="button" class="c-tile" id="home-tile-drives" onclick="navigate('drives')">
                 <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
                 <span class="c-tile-title">Drives</span>
+                <span class="c-tile-status" id="home-status-drives" aria-live="polite"></span>
               </button>
               <button type="button" class="c-tile" id="home-tile-reminders" onclick="navigate('reminders')">
                 <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
                 <span class="c-tile-title">Reminders</span>
+                <span class="c-tile-status" id="home-status-reminders" aria-live="polite"></span>
               </button>
               <button type="button" class="c-tile" id="home-tile-settings" onclick="navigate('settings')">
                 <span class="c-tile-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg></span>
                 <span class="c-tile-title">Settings</span>
+                <span class="c-tile-status" id="home-status-settings" aria-live="polite"></span>
               </button>
             </div>
           </div>
@@ -660,6 +664,7 @@
     <script src="/cabinet/assets/cabinet-strings.js"></script>
     <script src="/cabinet/assets/cabinet-shell.js"></script>
     <script src="/cabinet/assets/cabinet-sections.js"></script>
+    <script src="/cabinet/assets/cabinet-home.js"></script>
     <div id="drive-picker-root"></div>
   </body>
 </html>
