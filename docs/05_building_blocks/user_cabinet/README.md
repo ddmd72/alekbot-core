@@ -137,6 +137,9 @@ connections, deep-research-copy and connectors reads run in parallel) and, when 
 Retry button. Once the card is drawn, a re-open or the 2-minute poll keeps it as it is, whatever the read does. The
 call pages (`call.html`, `call_modes.html`) link back to `/cabinet` (Home), not to a section.
 
+In a Settings row the title keeps at least 40% of the row and wraps only between words; the value takes at most 60%, on
+one line with an ellipsis (the opened row shows it whole), so a long value never squeezes the title on a phone.
+
 1. `GET /api/connectors` tells the page which connect buttons to draw; the connect link is `/auth/connect/<kind>`
    (OAuth block). The Cabinet holds no list of kinds.
 2. Gmail: `/api/gmail/status` reports the connection, the index frontiers and the running job. `/api/gmail/index`

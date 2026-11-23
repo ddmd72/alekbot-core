@@ -454,17 +454,25 @@
         background: var(--c-hover);
         color: var(--c-text);
       }
+      /* The title keeps a readable share of the row and wraps between words; a long value is cut with an ellipsis
+         (the full text is in the opened row), so on a phone it can never squeeze the title to a letter a line. */
       .c-row-title {
-        flex: 1;
-        min-width: 0;
+        flex: 1 1 auto;
+        min-width: 40%;
         font-size: 16px;
         font-weight: 500;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
       }
       .c-row-value {
+        flex: 0 1 auto;
+        min-width: 0;
+        max-width: 60%;
         font-size: 15px;
         color: var(--c-text-2);
         text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .c-chev {
         flex: none;
