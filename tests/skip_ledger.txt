@@ -284,3 +284,4 @@ tests/unit/web/test_sandbox_supervisor.py :: marker :: slow  # ci-slow: skipped 
 tests/unit/web/test_session_js.py :: skipif :: shutil.which('node') is None :: x19  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_sign_in_page.py :: skipif :: shutil.which('node') is None :: x5  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_google_proof_ui.py :: skipif :: _NODE :: x3  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_cabinet_passkey_add_flow.py :: skipif :: _NO_NODE :: x1  # ci: node is on the ubuntu-latest runner image
