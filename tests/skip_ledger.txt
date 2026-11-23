@@ -271,6 +271,8 @@ tests/unit/web/test_cabinet_drive_scope_saves_at_once.py :: skipif :: shutil.whi
 tests/unit/web/test_cabinet_drive_unreadable_list.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_escape_html.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_facts_pin_ui.py :: skipif :: shutil.which('node') is None :: x22  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_cabinet_google_proof_ui.py :: skipif :: _NODE :: x3  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_cabinet_home.py :: skipif :: shutil.which('node') is None :: x14  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_shell.py :: skipif :: shutil.which('node') is None :: x5  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_xss_sinks.py :: skipif :: shutil.which('node') is None :: x1  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_call_page_ask_lelik.py :: skipif :: shutil.which('node') is None :: x9  # ci: node is on the ubuntu-latest runner image
@@ -284,4 +286,3 @@ tests/unit/web/test_sandbox_app_parse.py :: skipif :: os.geteuid() == 0 or sys.p
 tests/unit/web/test_sandbox_supervisor.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/web/test_session_js.py :: skipif :: shutil.which('node') is None :: x19  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_sign_in_page.py :: skipif :: shutil.which('node') is None :: x5  # ci: node is on the ubuntu-latest runner image
-tests/unit/web/test_cabinet_google_proof_ui.py :: skipif :: _NODE :: x3  # ci: node is on the ubuntu-latest runner image
