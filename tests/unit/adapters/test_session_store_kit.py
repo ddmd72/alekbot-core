@@ -11,6 +11,7 @@ retry never ran) in `tests/unit/handlers/test_conversation_handler_store_pins.py
 """
 import asyncio
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -576,3 +577,21 @@ async def test_a_batch_with_an_empty_reply_from_the_appending_call_keeps_its_bou
     batches = list(dict.fromkeys(tuple(text or None for text in batch) for _, _, batch in handoffs.calls))
     assert batches == [tuple(SERVICE_TEXTS[:5]) + (None,)]
     assert texts(store) == SERVICE_TEXTS[6:8]
+
+
+async def test_remove_head_refreshes_updated_at_of_the_session_document():
+    """Mutation kill: the cut refreshes the session document's `updated_at`."""
+    db = EvalDb()
+    sid = "usr-1:C1"
+    store = FirestoreSessionStore(db, SESS, max_history_length=10, batch_size=2)
+    for text in ("first", "second", "third"):
+        await store.append_messages_batch(sid, [Message(role="user", parts=[MessagePart(text=text)])], owner_id="usr-1")
+    before = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    db.collection(SESS).docs[sid]["updated_at"] = before   # an old stamp: the cut must replace it, no clock race
+    head = (await store.load_session(sid)).history[:2]
+
+    assert await store.remove_head(sid, head) is True
+
+    doc = db.collection(SESS).docs[sid]
+    assert [m["parts"][0].get("text") for m in doc["history"]] == ["third"]
+    assert doc["updated_at"] > before
