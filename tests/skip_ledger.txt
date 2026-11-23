@@ -279,5 +279,5 @@ tests/unit/web/test_sandbox_app_abnormal_recycle.py :: skip :: 'no /proc' :: x1 
 tests/unit/web/test_sandbox_app_parse.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/web/test_sandbox_app_parse.py :: skipif :: os.geteuid() == 0 or sys.platform not in ('linux', 'darwin') :: x9  # ci: CI runs non-root on Linux; the skip is the root cloud session's
 tests/unit/web/test_sandbox_supervisor.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
-tests/unit/web/test_session_js.py :: skipif :: shutil.which('node') is None :: x17  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_session_js.py :: skipif :: shutil.which('node') is None :: x19  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_sign_in_page.py :: skipif :: shutil.which('node') is None :: x5  # ci: node is on the ubuntu-latest runner image
