@@ -88,7 +88,7 @@ RULES: Tuple[Rule, ...] = (
     _r("mark.skip", r"^tests/unit/support/test_firestore_parity\.py$", r"reason='the emulator does not refuse.*", "manual",
        "a scenario the Firestore emulator cannot answer, inside the emulator-only test"),
     # --- platform and tool prerequisites that CI provides --------------------------------------------------------
-    _r("skipif", r"", r"shutil\.which\('node'\) is None|_NODE is None", "ci", "node is on the ubuntu-latest runner image"),
+    _r("skipif", r"", r"shutil\.which\('node'\) is None|_NODE is None|_NODE", "ci", "node is on the ubuntu-latest runner image"),
     _r("skipif", r"", r"not HAVE_FFMPEG", "ci", "ci.yml installs a pinned ffmpeg and puts it on PATH"),
     _r("skipif", r"", r"os\.geteuid\(\) == 0 or sys\.platform not in \('linux', 'darwin'\)", "ci",
        "CI runs non-root on Linux; the skip is the root cloud session's"),
