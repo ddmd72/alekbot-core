@@ -269,4 +269,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_CHECKLIST.value: "Si un téléphone est perdu :\n1. Envoyez `$devices off` (fait).\n2. Retirez le téléphone de votre compte Apple ou Google.\n3. Terminez les sessions Telegram et Slack du téléphone dans ces applications.",
     UIMessage.PASSKEY_ADDED_NOTICE.value: "Clé d'accès ajoutée : {label}, {time}. Elle permet désormais de se connecter à votre Cabinet. Ce n'est pas vous ? Envoyez `$devices off`.",
     UIMessage.PASSKEY_REMOVED_NOTICE.value: "Clé d'accès supprimée : {label}, {time}. Elle ne permet plus de se connecter à votre Cabinet.",
+    UIMessage.FACTS_PIN_REMOVED_NOTICE.value: "PIN des faits supprimé, {time}. L'onglet des faits s'ouvre désormais sans PIN. Ce n'est pas vous ? Envoyez `$devices off`.",
+    UIMessage.FACTS_PIN_RESET_REQUESTED_NOTICE.value: "Réinitialisation du PIN des faits demandée depuis {platform_hint}. Elle prendra effet le {time}. Ce n'est pas vous ? Envoyez `$pin cancel`.",
+    UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "Votre PIN des faits a été réinitialisé, {time}. L'onglet des faits s'ouvre sans PIN jusqu'à ce que vous en définissiez un nouveau.",
+    UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Votre compte est verrouillé (code de contrainte). Seul l'administrateur peut le déverrouiller.",
+    UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Votre compte est verrouillé (cinq PIN des faits erronés). Seul l'administrateur peut le déverrouiller.",
 }

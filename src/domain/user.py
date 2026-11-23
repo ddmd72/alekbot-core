@@ -431,6 +431,14 @@ class UsageStats(BaseModel):
     daily_requests: int = 0
     daily_reset_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+class InactiveReason(str, Enum):
+    """Why `UserProfile.is_active` is false, for the operator reading Firestore (CABINET_DEVICE_SESSIONS_RFC §7.8): the
+    account lock fired by the duress code, or by the fifth wrong facts PIN in a row. Written with the flag in the facts
+    PIN transaction; cleared by the operator who unlocks by hand."""
+    DURESS = "duress"
+    PIN_ATTEMPTS = "pin_attempts"
+
+
 class UserProfile(BaseModel):
     """Core user identity entity."""
     # Internal Identity
@@ -468,7 +476,10 @@ class UserProfile(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
-    
+    # Set with is_active=false by the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8); None for an active user and for
+    # a user deactivated by hand.
+    inactive_reason: Optional[InactiveReason] = None
+
 
 # ============================================================================
 # Pydantic v2: Resolve forward references

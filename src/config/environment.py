@@ -538,6 +538,15 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}auth_passkey_challenges"
 
     @property
+    def facts_pin_collection(self) -> str:
+        """
+        Opt-in facts PIN records, doc id = user_id (CABINET_DEVICE_SESSIONS_RFC §7.7): the keyed digests of the PIN and
+        the duress code (never a code), the wrong-attempt counter and a pending reset; no TTL.
+        Dev: development_facts_pin_v1
+        """
+        return f"{self.firestore_collection_prefix}facts_pin_v1"
+
+    @property
     def geo_mark_links_collection(self) -> str:
         """
         Pending `$geo` links under `geo_link:<keyed digest of the link id>`, single use, ten minutes (GEO_MARKS_RFC

@@ -358,3 +358,45 @@ class TestRevocation:
         assert await world.service.is_live("sid-1") is False                # the cache was cleared
         assert await world.service.is_live("sid-3") is True                 # another user's session lives
         assert world.repo.sessions["sid-2"].revoke_reason is KILL
+
+
+# ---------------------------------------------------------------------------------------------- the connector grants (§7.6)
+
+class Grants:
+    """The MCP refresh-token store's user-wide revocation as `revoke_all` sees it: the user's live tokens by name."""
+
+    def __init__(self) -> None:
+        self.live = {"user-alex": {"rt-claude", "rt-desktop"}, "user-other": {"rt-other"}}
+        self.revoked_at = {}
+
+    async def revoke(self, user_id, now):
+        tokens = self.live.pop(user_id, set())
+        for token in tokens:
+            self.revoked_at[token] = now
+        return len(tokens)
+
+
+class TestConnectorGrants:
+    async def test_the_kill_switch_also_ends_every_connector_grant_of_the_user(self, world):
+        grants = Grants()
+        service = DeviceSessionService(world.repo, world.tokens, world.notifier, clock=world.clock,
+                                       new_sid=counter("sid"), new_secret=counter("secret"),
+                                       revoke_connector_grants=grants.revoke)
+        await service.start(ALEX, ALEX_ACCOUNT, label=PHONE, platform_hint=PHONE, auth_kind=SessionAuthKind.GOOGLE)
+        world.clock.advance(minutes=3)
+        assert await service.revoke_all("user-alex", KILL) == 1
+        assert grants.revoked_at == {"rt-claude": T0 + timedelta(minutes=3), "rt-desktop": T0 + timedelta(minutes=3)}
+        assert grants.live == {"user-other": {"rt-other"}}
+        assert world.repo.sessions["sid-1"].revoked_at == T0 + timedelta(minutes=3)
+
+    async def test_the_grants_are_revoked_even_when_the_sessions_could_not_be(self, world):
+        class Down(GatedRepo):
+            async def revoke_all(self, user_id, reason, now):
+                raise RuntimeError("store down")
+
+        grants = Grants()
+        service = DeviceSessionService(Down(), world.tokens, world.notifier, clock=world.clock,
+                                       revoke_connector_grants=grants.revoke)
+        with pytest.raises(RuntimeError, match="store down"):
+            await service.revoke_all("user-alex", KILL)
+        assert set(grants.revoked_at) == {"rt-claude", "rt-desktop"}

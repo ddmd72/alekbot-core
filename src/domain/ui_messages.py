@@ -219,3 +219,11 @@ class UIMessage(Enum):
     # untrusted text.
     PASSKEY_ADDED_NOTICE = "passkey_added_notice"
     PASSKEY_REMOVED_NOTICE = "passkey_removed_notice"
+    # The facts PIN (CABINET_DEVICE_SESSIONS_RFC §7.7): removed; a reset asked for ({platform_hint} is untrusted text,
+    # {time} is when it takes effect) and applied.
+    FACTS_PIN_REMOVED_NOTICE = "facts_pin_removed_notice"
+    FACTS_PIN_RESET_REQUESTED_NOTICE = "facts_pin_reset_requested_notice"
+    FACTS_PIN_RESET_DONE_NOTICE = "facts_pin_reset_done_notice"
+    # The account lock (§7.8), posted to every stored channel: by the duress code, or by five wrong PINs in a row.
+    ACCOUNT_LOCKED_DURESS_NOTICE = "account_locked_duress_notice"
+    ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE = "account_locked_pin_attempts_notice"

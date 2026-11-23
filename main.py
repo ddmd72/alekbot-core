@@ -18,6 +18,7 @@ from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.web.cabinet_auth import CabinetSessionVerifier
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.device_auth_app import create_device_auth_blueprint
+from src.web.facts_pin_app import create_facts_pin_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
@@ -140,6 +141,7 @@ async def main():
             drive_connections=app.container.drive_connection_service,
             drive_notes=app.container.drive_note_service,
             drive_disconnect=app.drive_disconnect_service,
+            facts_pin=app.facts_pin,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
@@ -183,6 +185,8 @@ async def main():
                 main_app.register_blueprint(cabinet_bp)
                 main_app.register_blueprint(create_device_auth_blueprint(
                     cabinet_sessions, app.device_sessions, passkeys=app.passkeys, auth_service=app.auth_service))
+                main_app.register_blueprint(create_facts_pin_blueprint(
+                    cabinet_sessions, app.facts_pin, app.device_sessions))
                 main_app.register_blueprint(ms_tasks_webhook_bp)
 
                 # /f/<token> capability route for private file access

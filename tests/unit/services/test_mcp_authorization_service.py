@@ -77,6 +77,9 @@ class InMemoryMCPRepo(MCPClientRepository):
     async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
         raise NotImplementedError
 
+    async def revoke_user_refresh_tokens(self, user_id: str, now: datetime) -> int:
+        raise NotImplementedError
+
 
 @pytest.fixture
 def repo():

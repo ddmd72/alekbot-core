@@ -141,6 +141,8 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_drive_link_store.FirestoreDriveLinkStore": (_A + "test_drive_link_store_kit.py",),
     # Cabinet device sessions RFC §7.1
     _STORE + "firestore_device_session_repo.FirestoreDeviceSessionRepository": (_A + "test_device_session_store_kit.py",),
+    # Cabinet device sessions RFC §7.7: the facts PIN and its account-lock transaction
+    _STORE + "firestore_facts_pin_repo.FirestoreFactsPinRepository": (_A + "test_facts_pin_store_kit.py",),
     # Email index v2 slice 6: the card fields on the v1 facts document
     _STORE + "firestore_email_card_store.FirestoreEmailCardStore": (
         _A + "test_email_card_store_kit.py", _A + "test_firestore_email_card_store.py"),

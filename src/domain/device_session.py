@@ -22,12 +22,13 @@ class SessionAuthKind(str, Enum):
 
 
 class SessionRevokeReason(str, Enum):
-    """Why a session was revoked: the owner's logout, a row of the devices list, the kill switch (`$devices off`), or
-    a refresh secret presented after it had been rotated away (a replay)."""
+    """Why a session was revoked: the owner's logout, a row of the devices list, the kill switch (`$devices off`), a
+    refresh secret presented after it had been rotated away (a replay), or the account lock (§7.8)."""
     LOGOUT = "logout"
     DEVICE_LIST = "device_list"
     KILL_SWITCH = "kill_switch"
     REPLAY = "replay"
+    ACCOUNT_LOCK = "account_lock"
 
 
 class DeviceSession(BaseModel):
@@ -37,7 +38,9 @@ class DeviceSession(BaseModel):
     Firestore TTL field (`last_seen_at` + `DeviceSessionPolicy.PURGE_AFTER`). `prev_refresh_hash` and `rotated_at` are
     None until the first rotation; `revoked_at` and `revoke_reason` are None while the session is not revoked.
     `passkey_at` is when a passkey assertion last proved this session (its passkey sign-in, or the step-up a call start
-    asks for, §7.3); None until one did. A call start reads it (`DeviceSessionPolicy.passkey_fresh`)."""
+    asks for, §7.3); None until one did. A call start reads it (`DeviceSessionPolicy.passkey_fresh`).
+    `facts_unlocked_until` is when the facts PIN's unlock of this session ends (§7.7); None while it was never unlocked
+    or after a relock."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -58,3 +61,4 @@ class DeviceSession(BaseModel):
     revoke_reason: Optional[SessionRevokeReason] = None
     purge_after: datetime
     passkey_at: Optional[datetime] = None
+    facts_unlocked_until: Optional[datetime] = None

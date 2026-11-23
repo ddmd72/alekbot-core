@@ -269,4 +269,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_CHECKLIST.value: "Si se pierde un teléfono:\n1. Envía `$devices off` (hecho).\n2. Quita el teléfono de tu cuenta de Apple o Google.\n3. Cierra las sesiones de Telegram y Slack del teléfono en esas aplicaciones.",
     UIMessage.PASSKEY_ADDED_NOTICE.value: "Llave de acceso añadida: {label}, {time}. Ahora inicia sesión en tu Cabinet. ¿No fuiste tú? Envía `$devices off`.",
     UIMessage.PASSKEY_REMOVED_NOTICE.value: "Llave de acceso eliminada: {label}, {time}. Ya no inicia sesión en tu Cabinet.",
+    UIMessage.FACTS_PIN_REMOVED_NOTICE.value: "PIN de los hechos eliminado, {time}. La pestaña de hechos ahora se abre sin PIN. ¿No fuiste tú? Envía `$devices off`.",
+    UIMessage.FACTS_PIN_RESET_REQUESTED_NOTICE.value: "Se solicitó restablecer el PIN de los hechos desde {platform_hint}. Se aplicará el {time}. ¿No fuiste tú? Envía `$pin cancel`.",
+    UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "Tu PIN de los hechos se restableció, {time}. La pestaña de hechos se abre sin PIN hasta que definas uno nuevo.",
+    UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Tu cuenta está bloqueada (código de coacción). Solo el administrador puede desbloquearla.",
+    UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Tu cuenta está bloqueada (cinco PIN de los hechos incorrectos). Solo el administrador puede desbloquearla.",
 }

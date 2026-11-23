@@ -292,4 +292,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_CHECKLIST.value: "If a phone is lost:\n1. Send `$devices off` (done).\n2. Remove the phone from your Apple or Google account.\n3. End the phone's Telegram and Slack sessions in those apps.",
     UIMessage.PASSKEY_ADDED_NOTICE.value: "Passkey added: {label}, {time}. It now signs in to your Cabinet. Not you? Send `$devices off`.",
     UIMessage.PASSKEY_REMOVED_NOTICE.value: "Passkey removed: {label}, {time}. It no longer signs in to your Cabinet.",
+    UIMessage.FACTS_PIN_REMOVED_NOTICE.value: "Facts PIN removed, {time}. The facts tab now opens without a PIN. Not you? Send `$devices off`.",
+    UIMessage.FACTS_PIN_RESET_REQUESTED_NOTICE.value: "Facts PIN reset requested on {platform_hint}. It takes effect at {time}. Not you? Send `$pin cancel`.",
+    UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "Your facts PIN was reset, {time}. The facts tab opens without a PIN until you set a new one.",
+    UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Your account is locked (duress code). Only the administrator can unlock it.",
+    UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Your account is locked (five wrong facts PIN entries). Only the administrator can unlock it.",
 }

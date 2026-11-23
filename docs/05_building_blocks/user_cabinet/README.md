@@ -2,6 +2,7 @@
 covers:
   src/web/user_cabinet_app.py
   src/web/cabinet_auth.py
+  src/web/facts_pin_app.py
   src/web/static/cabinet.html
 -->
 # User Cabinet
@@ -126,6 +127,21 @@ The Devices tab (`src/web/device_auth_app.py`, CABINET_DEVICE_SESSIONS_RFC §7.3
 sign-in (`offer` in the list answer) the page shows a banner offering the same, once: a dismissal or an attempt is
 remembered in this browser's `localStorage` (`alek.passkeyOffer`), and blocked storage only means the banner comes back.
 Labels and platform hints are User-Agent words, escaped in the page.
+
+### The facts PIN
+
+Opt-in per user (CABINET_DEVICE_SESSIONS_RFC §7.7; the rules are `FactsPinService`). A user without a PIN sees the Memory
+tab as always. With one, the eight facts routes (`/api/user/facts`, `/fact-domains`, `/facts/browse`,
+`/facts/recently-closed`, `/facts/review-queue`, `/facts/review-answers`, `/facts/search`, `/facts/<id>/invalidate`)
+carry `facts_unlock_required` and answer 403 `facts_locked` until this session is unlocked: the tab asks for the PIN
+(`POST /api/user/facts-pin/unlock`), which opens it for 15 minutes on that session only. Leaving the tab or closing the
+page relocks it (`sendBeacon` to `/facts-pin/relock`; the 15 minutes are the guarantee). The routes live in
+`src/web/facts_pin_app.py` behind the Cabinet gate: status, `set` (PIN and duress code, each typed twice), `change` and
+`remove` (both need the current PIN), `reset` and `reset/cancel` (a forgotten PIN: 24 hours, a Google sign-in under five
+minutes old). A wrong code is 400 `wrong_code` with `attempts_left`; the duress code and the fifth wrong code in a row
+are both 423 `account_locked`. Never a 401 (`authFetch` would re-send), never a code in an answer or a log. The settings
+card sets, changes and removes the PIN and offers "Log out all other devices" after a change or a reset request. A new
+facts route without the decorator fails `test_facts_pin_app.py`.
 
 ### Platforms, invites, team
 

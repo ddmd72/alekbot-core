@@ -245,6 +245,43 @@ class UserNotificationService:
         text = self._localization.get_ui_string(lang, message).format(**fields)
         return await self.notify_raw(user_id, account_id, text, literal=True)
 
+    async def notify_ui_notice_all_channels(self, user_id: str, message: UIMessage, **fields: str) -> int:
+        """Post one fixed UI string, in the owner's UI language and literally, to EVERY stored channel of the user: the
+        primary and the last active one (once when they are the same channel). Only the account lock sends this
+        (CABINET_DEVICE_SESSIONS_RFC §7.8): it reads the stored channels itself, never through `resolve_channel`, so
+        the inactive-user refusal that resolution carries does not stop it. Returns how many channels got it; a channel
+        that fails is logged and the others still get it. Not written to history."""
+        if self._localization is None:
+            logger.error(f"[Notification] No localization wired: {message.value} not posted for {user_id[:8]}")
+            return 0
+        text = self._localization.get_ui_string(await self._ui_language(user_id), message).format(**fields)
+        channels = []
+        for name, read in (("primary", self._state_repo.get_primary), ("last active", self._state_repo.get)):
+            try:
+                found = await read(user_id)
+            except Exception as exc:
+                logger.error(f"[Notification] {name} channel read failed for {user_id[:8]}: {exc}", exc_info=True)
+                continue
+            if found is not None and all((c.platform, c.channel_id) != (found.platform, found.channel_id)
+                                         for c in channels):
+                channels.append(found)
+        sent = 0
+        for channel in channels:
+            response_channel = self._channel_factory.create(platform=channel.platform, channel_id=channel.channel_id)
+            if not response_channel:
+                logger.warning(f"[Notification] Cannot create channel: platform={channel.platform}")
+                continue
+            try:
+                await response_channel.send_literal(text)
+            except Exception as exc:
+                logger.error(f"[Notification] {message.value} failed on {channel.platform} for {user_id[:8]}: {exc}",
+                             exc_info=True)
+                continue
+            sent += 1
+        logger.info(f"📬 [Notification] {message.value} posted to {sent} of {len(channels)} channel(s) "
+                    f"for {user_id[:8]}")
+        return sent
+
     async def notify_call_summary(
         self,
         user_id: str,

@@ -23,6 +23,7 @@ GET /api/user/deep-research
 GET /api/user/devices
 GET /api/user/fact-domains
 GET /api/user/facts
+GET /api/user/facts-pin
 GET /api/user/facts/browse
 GET /api/user/facts/recently-closed
 GET /api/user/facts/review-queue
@@ -78,6 +79,13 @@ POST /api/tasks/microsoft/reindex
 POST /api/user/devices/<sid>/logout
 POST /api/user/devices/logout-all
 POST /api/user/devices/logout-others
+POST /api/user/facts-pin/change
+POST /api/user/facts-pin/relock
+POST /api/user/facts-pin/remove
+POST /api/user/facts-pin/reset
+POST /api/user/facts-pin/reset/cancel
+POST /api/user/facts-pin/set
+POST /api/user/facts-pin/unlock
 POST /api/user/facts/<fact_id>/invalidate
 POST /api/user/facts/review-answers
 POST /api/user/facts/search

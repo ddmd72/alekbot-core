@@ -4,25 +4,30 @@
 A fake with semantics, not a mock: it applies the port's rules (create and add never overwrite, the refresh decision is
 `DeviceSessionPolicy.decide_refresh` on the stored record and its write lands atomically under a lock, a passkey's
 counter must advance (`sign_count_advances`), the first revocation is kept, `revoke_all` covers sessions and passkeys,
-the order the port promises). The store kit (`tests/unit/adapters/test_device_session_store_kit.py`) runs the port's
+the order the port promises; with `facts_pins` linked, `revoke_all` also cancels that user's pending facts PIN reset;
+`set_facts_unlock` writes only on a live session). The store kit (`tests/unit/adapters/test_device_session_store_kit.py`) runs the port's
 rules on both this and the Firestore adapter so the two cannot drift. `sessions` is the stored records by sid and
 `passkeys` by cred_hash, for assertions.
 """
 import asyncio
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from src.domain.device_session import DeviceSession, SessionRevokeReason
 from src.domain.device_session_policy import DeviceSessionPolicy, RefreshOutcome
 from src.domain.passkey import Passkey, sign_count_advances
 from src.ports.device_session_repository import DeviceSessionRepository
 
+if TYPE_CHECKING:
+    from tests.support.facts_pin_repo import FakeFactsPinRepository
+
 
 class FakeDeviceSessionRepository(DeviceSessionRepository):
 
-    def __init__(self) -> None:
+    def __init__(self, facts_pins: Optional["FakeFactsPinRepository"] = None) -> None:
         self.sessions: Dict[str, DeviceSession] = {}
         self.passkeys: Dict[str, Passkey] = {}
+        self.facts_pins = facts_pins
         self._lock = asyncio.Lock()
 
     async def create(self, session: DeviceSession) -> bool:
@@ -79,7 +84,17 @@ class FakeDeviceSessionRepository(DeviceSessionRepository):
                 self.sessions[session.sid] = session.model_copy(update={"revoked_at": now, "revoke_reason": reason})
             for key in [p for p in self.passkeys.values() if p.user_id == user_id and p.revoked_at is None]:
                 self.passkeys[key.cred_hash] = key.model_copy(update={"revoked_at": now})
+            if self.facts_pins is not None:
+                self.facts_pins.cancel_pending_reset(user_id, now)
             return len(live)
+
+    async def set_facts_unlock(self, sid: str, until: Optional[datetime], now: datetime) -> bool:
+        async with self._lock:
+            session = self.sessions.get(sid)
+            if session is None or not DeviceSessionPolicy.is_live(session, now):
+                return False
+            self.sessions[sid] = session.model_copy(update={"facts_unlocked_until": until})
+            return True
 
     async def add_passkey(self, passkey: Passkey) -> bool:
         async with self._lock:

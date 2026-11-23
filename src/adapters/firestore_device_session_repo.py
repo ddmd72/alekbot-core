@@ -3,8 +3,9 @@
 
 Collection `{prefix}auth_device_sessions_v1` (`EnvironmentConfig.device_sessions_collection`), doc id = the random
 `sid`. Stored fields: `sid, user_id, account_id, label, platform_hint, auth_kind, auth_at, created_at, last_seen_at,
-expires_at, refresh_hash, prev_refresh_hash, rotated_at, revoked_at, revoke_reason, purge_after, passkey_at` (enums as their
-values, timestamps tz-aware UTC). The refresh secret itself is never stored, only its SHA-256. `purge_after` is the
+expires_at, refresh_hash, prev_refresh_hash, rotated_at, revoked_at, revoke_reason, purge_after, passkey_at`, and
+`facts_unlocked_until` once a facts PIN unlock or relock wrote it (absent reads as None) (enums as their values,
+timestamps tz-aware UTC). The refresh secret itself is never stored, only its SHA-256. `purge_after` is the
 Firestore TTL field (a TTL policy on it is a rollout step, not code).
 
 Passkeys: collection `{prefix}auth_passkeys_v1` (`EnvironmentConfig.passkeys_collection`), doc id = `cred_hash` (the
@@ -17,6 +18,10 @@ as bytes). No TTL: a revoked passkey stays as a record.
   sid cannot both rotate (the loser's transaction re-runs on the rotated record), and two assertions with one counter
   cannot both advance it. `revoke_all` reads the user's sessions and passkeys first, then writes both.
 - A document whose stored `sid` (or `cred_hash`) contradicts its id is treated as absent and logged at ERROR.
+- `revoke_all` also cancels the user's pending facts PIN reset in the same transaction when the store was built with
+  the facts PIN collection (`facts_pin_collection`; its document, id = user_id, is `FirestoreFactsPinRepository`'s): it
+  clears `reset_requested_at` and `reset_due_at` and stamps `updated_at`, and touches nothing else there.
+- `set_facts_unlock` writes `facts_unlocked_until` in one transaction on a live session only.
 - No composite index: `list_for_user`, `list_passkeys` and `revoke_all` filter on `user_id` alone; the order is applied
   in memory (a handful of records per user).
 """
@@ -34,7 +39,7 @@ from ..ports.device_session_repository import DeviceSessionRepository
 from ..utils.logger import logger
 
 _TIME_FIELDS = ("auth_at", "created_at", "last_seen_at", "expires_at", "rotated_at", "revoked_at", "purge_after",
-                "passkey_at")
+                "passkey_at", "facts_unlocked_until")
 _PASSKEY_TIME_FIELDS = ("created_at", "last_used_at", "revoked_at")
 
 
@@ -53,7 +58,11 @@ def _encode(fields: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _to_doc(session: DeviceSession) -> Dict[str, Any]:
-    return _encode(dict(session))    # every field, in declaration order
+    """Every field in declaration order; `facts_unlocked_until` only once set (a new session is never unlocked)."""
+    fields = dict(session)
+    if fields["facts_unlocked_until"] is None:
+        del fields["facts_unlocked_until"]
+    return _encode(fields)
 
 
 def _from_doc(data: Dict[str, Any]) -> DeviceSession:
@@ -95,11 +104,15 @@ def _changes(outcome: RefreshOutcome, session: DeviceSession, new_hash: str, now
 
 class FirestoreDeviceSessionRepository(DeviceSessionRepository):
 
-    def __init__(self, db_client: Any, collection_name: str, passkeys_collection: str) -> None:
+    def __init__(self, db_client: Any, collection_name: str, passkeys_collection: str, *,
+                 facts_pin_collection: Optional[str] = None) -> None:
+        """`facts_pin_collection` None: `revoke_all` cancels no facts PIN reset (a store without the PIN)."""
         self._db = db_client
         self._col = db_client.collection(collection_name)
         self._passkeys = db_client.collection(passkeys_collection)
-        logger.info(f"🔑 Device session store initialized. Collections: {collection_name}, {passkeys_collection}")
+        self._facts_pins = None if facts_pin_collection is None else db_client.collection(facts_pin_collection)
+        logger.info(f"🔑 Device session store initialized. Collections: {collection_name}, {passkeys_collection}, "
+                    f"{facts_pin_collection}")
 
     @staticmethod
     def _owned(snap: Any, id_field: str = "sid") -> Optional[Dict[str, Any]]:
@@ -207,20 +220,44 @@ class FirestoreDeviceSessionRepository(DeviceSessionRepository):
                     found.append(snap.reference)
             return found
 
+        pin_ref = None if self._facts_pins is None else self._facts_pins.document(user_id)
+
         @firestore.async_transactional
-        async def _revoke_all(transaction: Any) -> Tuple[int, int]:
+        async def _revoke_all(transaction: Any) -> Tuple[int, int, bool]:
             live_sessions = _live(await sessions.get(transaction=transaction), "sid")      # every read before a write
             live_passkeys = _live(await passkeys.get(transaction=transaction), "cred_hash")
+            pending_reset = False
+            if pin_ref is not None:
+                pin = await pin_ref.get(transaction=transaction)
+                pending_reset = pin.exists and (pin.to_dict() or {}).get("reset_requested_at") is not None
             for ref in live_sessions:
                 transaction.update(ref, {"revoked_at": now, "revoke_reason": reason.value})
             for ref in live_passkeys:
                 transaction.update(ref, {"revoked_at": now})
-            return len(live_sessions), len(live_passkeys)
+            if pending_reset:
+                transaction.update(pin_ref, {"reset_requested_at": None, "reset_due_at": None, "updated_at": now})
+            return len(live_sessions), len(live_passkeys), pending_reset
 
-        revoked, keys = await _revoke_all(self._db.transaction())
+        revoked, keys, reset_cancelled = await _revoke_all(self._db.transaction())
         logger.info(f"🔒 Device sessions revoked: user={user_id[:8]} count={revoked} passkeys={keys} "
-                    f"reason={reason.value}")
+                    f"pin_reset_cancelled={reset_cancelled} reason={reason.value}")
         return revoked
+
+    async def set_facts_unlock(self, sid: str, until: Optional[datetime], now: datetime) -> bool:
+        ref = self._col.document(sid)
+
+        @firestore.async_transactional
+        async def _set(transaction: Any) -> bool:
+            data = self._owned(await ref.get(transaction=transaction))
+            if data is None or not DeviceSessionPolicy.is_live(_from_doc(data), now):
+                return False
+            transaction.update(ref, {"facts_unlocked_until": until})
+            return True
+
+        written: bool = await _set(self._db.transaction())
+        if not written:
+            logger.warning(f"⛔ Facts unlock not written, the session is absent or not live: sid={sid[:8]}")
+        return written
 
     # ------------------------------------------------------------------ passkeys
 

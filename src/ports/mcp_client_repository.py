@@ -91,6 +91,17 @@ class MCPClientRepository(ABC):
         """
 
     @abstractmethod
+    async def revoke_user_refresh_tokens(self, user_id: str, now: datetime) -> int:
+        """Set revoked_at to `now` on every refresh token of `user_id` that is not revoked yet, in one transaction, and
+        return how many it revoked: every MCP connector grant of the user ends at its next refresh
+        (CABINET_DEVICE_SESSIONS_RFC §7.6 kill switch, §7.8 account lock). Tokens of other users are untouched; a token
+        already revoked keeps its revoked_at. An access token already issued lives to its expiry.
+
+        Race: a rotation that revoked its old token before this call and saves its new one after it leaves the new one
+        active; the account lock's `is_active` check at rotation closes that path.
+        """
+
+    @abstractmethod
     async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
         """True when some refresh token of `user_id` with that `grant_id` and `revoked_at` null has `expires_at` > now.
 

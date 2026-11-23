@@ -297,4 +297,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEVICES_CHECKLIST.value: "Якщо загублено телефон:\n1. Надішли `$devices off` (виконано).\n2. Видали телефон з облікового запису Apple або Google.\n3. Заверш сесії телефона в Telegram і Slack у цих застосунках.",
     UIMessage.PASSKEY_ADDED_NOTICE.value: "Додано ключ доступу: {label}, {time}. Тепер ним можна увійти в Кабінет. Не ти? Надішли `$devices off`.",
     UIMessage.PASSKEY_REMOVED_NOTICE.value: "Ключ доступу видалено: {label}, {time}. Ним більше не можна увійти в Кабінет.",
+    UIMessage.FACTS_PIN_REMOVED_NOTICE.value: "PIN фактів видалено, {time}. Вкладка фактів тепер відкривається без PIN. Не ти? Надішли `$devices off`.",
+    UIMessage.FACTS_PIN_RESET_REQUESTED_NOTICE.value: "Запит на скидання PIN фактів з {platform_hint}. Скидання набуде чинності {time}. Не ти? Надішли `$pin cancel`.",
+    UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "PIN фактів скинуто, {time}. Вкладка фактів відкривається без PIN, доки ти не встановиш новий.",
+    UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Твій обліковий запис заблоковано (код примусу). Розблокувати його може лише адміністратор.",
+    UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Твій обліковий запис заблоковано (п'ять неправильних PIN фактів). Розблокувати його може лише адміністратор.",
 }

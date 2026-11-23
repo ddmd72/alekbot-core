@@ -7,7 +7,9 @@ Three collections, env-prefixed via EnvironmentConfig:
 - {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex (unkeyed: 384 random bits gain nothing from a key);
                                `grant_id` (the grant's stable id, not a secret) is a field, queried by
                                has_active_grant with three equality filters (user_id, grant_id, revoked_at null),
-                               served by the automatic single-field indexes
+                               served by the automatic single-field indexes; revoke_user_refresh_tokens
+                               filters on (user_id, revoked_at null) the same way, so a token stored without a
+                               revoked_at field (none since slice 4, all long expired) is not matched
 
 Reads go by the presented value only (port contract): a code is found by digesting the code the caller presents, so a
 document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt or cipher failure propagates (I4).
@@ -237,6 +239,25 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             return was_active
 
         revoked: bool = await _revoke(self.db.transaction())
+        return revoked
+
+    async def revoke_user_refresh_tokens(self, user_id: str, now: datetime) -> int:
+        # Two equality filters (user_id, revoked_at null): the automatic single-field indexes serve them. One
+        # transaction reads them all, then writes: a concurrent revoke of one of them makes this re-run.
+        query = (
+            self._refresh.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("revoked_at", "==", None))
+        )
+
+        @firestore.async_transactional
+        async def _revoke_all(transaction) -> int:
+            snaps = [s for s in await query.get(transaction=transaction) if s.to_dict().get("user_id") == user_id]
+            for snap in snaps:
+                transaction.update(snap.reference, {"revoked_at": now})
+            return len(snaps)
+
+        revoked: int = await _revoke_all(self.db.transaction())
+        logger.info(f"🔒 MCP refresh tokens revoked: user={user_id[:8]} count={revoked}")
         return revoked
 
     async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:

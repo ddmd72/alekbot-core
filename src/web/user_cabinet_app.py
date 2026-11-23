@@ -16,6 +16,7 @@ from ..services.drive_search_service import DriveSearchService
 from ..services.user_drive_service import UserDriveService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
+from ..services.facts_pin_service import FactsPinService
 from ..services.localization_service import LocalizationService
 from ..services.language_preference_service import LanguagePreferenceService
 from ..services.integration_reconnect_service import IntegrationReconnectService
@@ -56,6 +57,7 @@ from ..ports.quota_service import QuotaService
 from ..utils.billed_scope import billed_scope
 from ..utils.logger import exc_brief, logger
 from .cabinet_auth import CabinetSessionVerifier, make_auth_required
+from .facts_pin_app import make_facts_unlock_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
 DOCS_OWNER_USER_ID = os.getenv('DOCS_OWNER_USER_ID')
@@ -125,6 +127,7 @@ def create_user_cabinet_blueprint(
     drive_notes: Optional[DriveNoteService] = None,
     quota_service: Optional[QuotaService] = None,
     drive_disconnect: Optional[DriveDisconnectService] = None,
+    facts_pin: Optional[FactsPinService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -134,7 +137,8 @@ def create_user_cabinet_blueprint(
     and `GET /api/connectors`. `drive_connections` owns the drive connections (§4.4) and `user_drive_service` reads the
     folders the pickers show and the chains `set_scope` / `set_write_folder` need; `drive_notes` gives each drive's note;
     `drive_disconnect` runs a disconnect (the Cabinet is its only caller, REQ-ARCH-34). `language_service` reads the
-    language settings and `language_preferences` writes them.
+    language settings and `language_preferences` writes them. `facts_pin` is the opt-in facts PIN: the eight facts routes
+    carry `facts_unlock_required` (a user with a PIN and a session not unlocked gets 403 `facts_locked`).
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -172,6 +176,7 @@ def create_user_cabinet_blueprint(
 
     # Authentication Middleware
     auth_required = make_auth_required(cabinet_sessions)
+    facts_unlock_required = make_facts_unlock_required(facts_pin)
 
     # Owner-only Middleware (for internal features like docs)
     def owner_only(func):
@@ -865,6 +870,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts", methods=["GET"])
     @auth_required
+    @facts_unlock_required
     async def get_facts():
         """Return active facts for the user's account (read-only)."""
         try:
@@ -886,6 +892,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/fact-domains", methods=["GET"])
     @auth_required
+    @facts_unlock_required
     async def fact_domain_list():
         """The life areas of the fact registry for the Cabinet's filter and badges: `{key, label, order}` in Cabinet
         order, labelled in `?lang=` (the page's UI language; English when absent or not translated)."""
@@ -899,6 +906,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts/browse", methods=["GET"])
     @auth_required
+    @facts_unlock_required
     async def browse_facts():
         """Paginated facts for the Cabinet browser: state filter (current | stale), cursor, and `domain` = one registry key
         (facts whose profile `domain_keys` hold it; any other value is a 400)."""
@@ -938,6 +946,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts/recently-closed", methods=["GET"])
     @auth_required
+    @facts_unlock_required
     async def recently_closed_facts():
         """Everything closed (archived or invalidated) in the last 30 days, newest closure first, each with the actor of
         its last trail entry. Read-only."""
@@ -963,6 +972,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts/review-queue", methods=["GET"])
     @auth_required
+    @facts_unlock_required
     async def review_queue():
         """The user's open memory-review questions: the one out now, those sent and unanswered, then the queue."""
         if fact_answer_service is None:
@@ -993,6 +1003,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts/review-answers", methods=["POST"])
     @auth_required
+    @facts_unlock_required
     async def review_answers():
         """Answer 1-50 open memory-review questions at once: {"answers": [{"question_id", "answer"}]}."""
         if fact_answer_service is None or fact_review_store is None:
@@ -1033,6 +1044,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts/search", methods=["POST"])
     @auth_required
+    @facts_unlock_required
     async def search_facts():
         """Semantic vector search over the user's facts."""
         try:
@@ -1068,6 +1080,7 @@ def create_user_cabinet_blueprint(
 
     @bp.route("/api/user/facts/<fact_id>/invalidate", methods=["POST"])
     @auth_required
+    @facts_unlock_required
     async def invalidate_fact(fact_id: str):
         """Mark a specific fact as invalidated. User Cabinet write path."""
         if cabinet_facts is None:
