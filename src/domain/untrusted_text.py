@@ -14,6 +14,7 @@ Public interface:
     wrap_untrusted(text, *, nonce, store, ref, label) -> str
     escape_text(text) -> str;  escape_attribute(text) -> str
     neutralize_system_tag(text) -> (str, int)     the system tag word only; live untrusted wrappers stay intact
+    has_untrusted_wrapper(text) -> bool           a drive/external wrapper look-alike or an attached-file reminder
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED   the drive tag's reminders
     EXTERNAL_REMINDER, EXTERNAL_REMINDER_ATTACHED     the neutral tag's reminders
     attached_reminder(store) -> str                   the reminder a natively attached file travels with (§4.6)
@@ -33,12 +34,17 @@ EXTERNAL_TAG = "external_content"
 # look-alike pattern below can cover it without an import cycle; `system_fingerprint` re-exports it.
 SYSTEM_TAG = "system_note"
 
+# A reminder written by an execution that had read outside content (`AgentNote.untrusted`): not a file store, but it
+# travels in the same neutral wrapper.
+AGENT_NOTE_STORE = "agent_note"
+
 _TAGS: Mapping[str, str] = {
     FileRefKind.DRIVE.value: DRIVE_TAG,
     FileRefKind.CHAT.value: EXTERNAL_TAG,
     FileRefKind.EMAIL.value: EXTERNAL_TAG,
     FileRefKind.WORKSPACE.value: EXTERNAL_TAG,
     FileRefKind.DELIVERED.value: EXTERNAL_TAG,
+    AGENT_NOTE_STORE: EXTERNAL_TAG,
 }
 # The attribute the label goes in: a drive label is a path; a chat or email label is a file name (open item U1-4).
 _LABEL_ATTRIBUTES: Mapping[str, str] = {DRIVE_TAG: "path", EXTERNAL_TAG: "name"}
@@ -92,6 +98,18 @@ _WRAPPER_TAG = re.compile(
     _TAG_PREFIX + f"(?:{_tag_word(DRIVE_TAG)}|{_tag_word(EXTERNAL_TAG)}|{_tag_word(SYSTEM_TAG)})")
 # The system tag word alone: for text that may legitimately hold live untrusted wrappers (tool results, history).
 _SYSTEM_TAG_LOOKALIKE = re.compile(_TAG_PREFIX + _tag_word(SYSTEM_TAG))
+# The two untrusted tag words alone (never the system tag: keyed notes are in every history). The first letters differ
+# (`d`, `e`), as the pattern above needs.
+_UNTRUSTED_WRAPPER_TAG = re.compile(_TAG_PREFIX + f"(?:{_tag_word(DRIVE_TAG)}|{_tag_word(EXTERNAL_TAG)})")
+
+
+def has_untrusted_wrapper(text: str) -> bool:
+    """True when `text` holds a drive or external wrapper tag in any look-alike form `escape_text` would neutralise, or
+    one of the two attached-file reminders (a native file travelled with it). The question "did outside content enter
+    this text" for the external task queue's taint rule (EXTERNAL_TASK_QUEUE_RFC §5.3); fails safe, so a pasted tag
+    counts. The system tag word does not count: keyed system notes sit in every history."""
+    return (_UNTRUSTED_WRAPPER_TAG.search(text) is not None
+            or REFERENCE_REMINDER_ATTACHED in text or EXTERNAL_REMINDER_ATTACHED in text)
 
 
 def _neutralize(match: "re.Match[str]") -> str:

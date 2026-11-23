@@ -16,6 +16,7 @@ from ..services.drive_search_service import DriveSearchService
 from ..services.user_drive_service import UserDriveService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
+from ..services.external_task_service import ExternalTaskService
 from ..services.facts_pin_service import FactsPinService
 from ..services.localization_service import LocalizationService
 from ..services.language_preference_service import LanguagePreferenceService
@@ -57,6 +58,7 @@ from ..ports.quota_service import QuotaService
 from ..utils.billed_scope import billed_scope
 from ..utils.logger import exc_brief, logger
 from .cabinet_auth import CabinetSessionVerifier, make_auth_required
+from .cabinet_external_workers import register_external_worker_routes
 from .facts_pin_app import make_facts_unlock_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -141,6 +143,7 @@ def create_user_cabinet_blueprint(
     quota_service: Optional[QuotaService] = None,
     drive_disconnect: Optional[DriveDisconnectService] = None,
     facts_pin: Optional[FactsPinService] = None,
+    external_tasks: Optional[ExternalTaskService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -152,6 +155,8 @@ def create_user_cabinet_blueprint(
     `drive_disconnect` runs a disconnect (the Cabinet is its only caller, REQ-ARCH-34). `language_service` reads the
     language settings and `language_preferences` writes them. `facts_pin` is the opt-in facts PIN: the eight facts routes
     carry `facts_unlock_required` (a user with a PIN and a session not unlocked gets 403 `facts_locked`).
+    `external_tasks` serves the External workers routes (`cabinet_external_workers.py`); without it they answer as a user
+    without the flag.
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -2201,4 +2206,5 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error deleting Gmail data: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    register_external_worker_routes(bp, auth_required, external_tasks)
     return bp

@@ -142,6 +142,7 @@ async def main():
             drive_notes=app.container.drive_note_service,
             drive_disconnect=app.drive_disconnect_service,
             facts_pin=app.facts_pin,
+            external_tasks=app.external_tasks,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
@@ -214,6 +215,19 @@ async def main():
                     from src.web.geo_mark_app import create_geo_mark_blueprint
                     main_app.register_blueprint(create_geo_mark_blueprint(app.geo_marks))
                     logger.info("✅ Geo mark blueprint registered at /geo/<link_id>")
+
+                # /external-tasks/v1/*: the worker REST endpoint of the external task queue (EXTERNAL_TASK_QUEUE_RFC §5.5).
+                # None = a local run without a task queue (nothing to serve).
+                if app.external_tasks:
+                    from src.composition.external_task_api_setup import build_external_task_api_limiter
+                    from src.web.external_task_api import create_external_task_api_blueprint
+                    main_app.register_blueprint(create_external_task_api_blueprint(
+                        app.external_tasks,
+                        limiter=build_external_task_api_limiter(db_client, env_config),
+                        user_repo=app.user_repo,
+                        whitelist_repo=app.whitelist_repo,
+                    ))
+                    logger.info("✅ External task API blueprint registered at /external-tasks/v1")
 
                 # /voice/session-config, /voice/submit-transcript — main-service
                 # control-plane endpoints consumed by the relay's

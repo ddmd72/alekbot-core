@@ -43,6 +43,10 @@ class AgentNote:
     # survives NotesAgent's LLM rewriting the text (AGENT_WORKSPACE_RFC §8.3, D15); rendered wherever a reminder is
     # shown, in the alert as one line.
     workspace_file: Optional[str] = None
+    # Written (or last changed) by an execution that had read outside content (a web page, a worker's result): the
+    # text and instruction may repeat that content, so every place that shows them to a model wraps them as outside
+    # content. Never cleared by an update; a record without the field reads as unflagged.
+    untrusted: bool = False
 
 
 @dataclass
@@ -55,6 +59,7 @@ class NoteCreate:
     recurrence: Optional[str] = None        # RRULE, see AgentNote.recurrence
     complexity: Optional[TaskComplexity] = None
     workspace_file: Optional[str] = None    # see AgentNote.workspace_file
+    untrusted: bool = False                 # see AgentNote.untrusted
 
 
 @dataclass
@@ -74,3 +79,4 @@ class NoteUpdate:
     workspace_file: Optional[str] = None    # None = leave unchanged
     # "remove" in the delegation context (AGENT_WORKSPACE_RFC §8.3) — the clear_recurrence pattern.
     clear_workspace_file: bool = False
+    untrusted: bool = False                 # True flags the note (AgentNote.untrusted); False leaves the flag as it is

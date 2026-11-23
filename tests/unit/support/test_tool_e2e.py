@@ -135,6 +135,7 @@ PASSTHROUGH = [
     ("prompt_builder", "prompt_builder"), ("resolver", "resolver"), ("user_config", "user_config"),
     ("skill_service", "skill_service"), ("memory_fact_service", "memory_fact_service"),
     ("workspace_service", "workspace_service"), ("turn_key_source", "_turn_key_source"),
+    ("external_tasks", "external_tasks"),
 ]
 
 

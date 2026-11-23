@@ -162,6 +162,11 @@
         "#settings-connections-label": "settings.connections",
         "#settings-platforms-title": "settings.platforms_title",
         "#settings-drives-title": "nav.drives",
+        "#settings-workers-title": "workers.title",
+        "#workers-desc": "workers.desc",
+        "#workers-label-label": "workers.label",
+        "#workers-description-label": "workers.description",
+        "#workers-add": "workers.add",
         "#settings-security-label": "settings.security",
         "#pin-title": "pin.title",
         "#pin-desc": "pin.desc",
@@ -240,11 +245,12 @@
         "#team-subtitle": "team.subtitle",
         "#team-generate-btn": "team.generate_invite",
       });
-      Object.assign(I18N_PLACEHOLDERS, { "#location-input": "settings.city.placeholder" });
+      Object.assign(I18N_PLACEHOLDERS, { "#location-input": "settings.city.placeholder",
+        "#workers-label-input": "workers.label_placeholder", "#workers-description-input": "workers.description_placeholder" });
 
       // Every row that opens a body: the button is #srow-<id>, the body #srow-<id>-body.
-      const SETTINGS_ROWS = ["account", "tz", "city", "uilang", "reply", "voice", "platforms", "mail", "todo", "pin",
-        "devices", "passkeys", "lost", "team"];
+      const SETTINGS_ROWS = ["account", "tz", "city", "uilang", "reply", "voice", "platforms", "mail", "todo", "workers",
+        "pin", "devices", "passkeys", "lost", "team"];
       let _openSettingsRow = "";
 
       // A click on the open row closes it; opening one closes the other. Leaving the PIN row drops a half-done flow
@@ -255,8 +261,10 @@
 
       function openSettingsRow(id) {
         const leftPin = _openSettingsRow === "pin" && id !== "pin";
+        const leftWorkers = _openSettingsRow === "workers" && id !== "workers";
         _openSettingsRow = id;
         if (leftPin) pinCancel();
+        if (leftWorkers) clearMintedWorkerKey();
         for (const row of SETTINGS_ROWS) {
           const open = row === id;
           const button = document.getElementById(`srow-${row}`);
@@ -1041,6 +1049,138 @@
           loadTasksStatus();
         } catch (e) {
           showToast("Error disconnecting", "error");
+        }
+      }
+
+      /* ── Settings → Connections: External workers (EXTERNAL_TASK_QUEUE_RFC §5.6) ─── */
+      // The row exists only for a user with the flag. A minted key is shown once, in #workers-key-box, and is dropped
+      // from the page when the row closes; the list is redrawn from the server and never holds a key.
+      async function loadExternalWorkers() {
+        try {
+          const res = await authFetch(`${API}/api/external-workers`, { credentials: "include" });
+          if (!res.ok) throw new Error();
+          renderExternalWorkers(await res.json());
+        } catch { /* the row stays as it was */ }
+      }
+
+      function renderExternalWorkers(data) {
+        const item = document.getElementById("settings-workers-item");
+        const workers = data && data.enabled ? (data.workers || []) : [];
+        item.classList.toggle("hidden", !(data && data.enabled));
+        if (!(data && data.enabled)) {
+          clearMintedWorkerKey();
+          if (_openSettingsRow === "workers") openSettingsRow("");
+          return;
+        }
+        setSettingsChip("settings-workers-chip", workers.length ? "ok" : "off", plural("workers.count", workers.length));
+        const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+        const list = document.getElementById("workers-list");
+        if (!workers.length) {
+          list.innerHTML = `<p class="c-hint">${escapeHtml(t("workers.empty"))}</p>`;
+          return;
+        }
+        list.innerHTML = workers.map((w) => {
+          const keys = w.keys.length ? w.keys.map((k) => `<div class="c-mini-s">
+              <span class="c-mono">${escapeHtml(k.hint)}</span> · ${escapeHtml(t("workers.key_created"))}: ${escapeHtml(when(k.created_at))} ·
+              ${escapeHtml(t("workers.key_last_used"))}: ${escapeHtml(k.last_used_at ? when(k.last_used_at) : t("workers.never_used"))}
+              <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" data-key="${escapeHtml(k.key_id)}" onclick="revokeWorkerKey(this.dataset.worker, this.dataset.key)">${escapeHtml(t("workers.revoke_key"))}</button>
+            </div>`).join("") : `<div class="c-mini-s">${escapeHtml(t("workers.no_keys"))}</div>`;
+          return `<div class="c-mini">
+            <div class="c-mini-main">
+              <div class="c-mini-t">${escapeHtml(w.label)}</div>
+              ${w.description ? `<div class="c-mini-s">${escapeHtml(w.description)}</div>` : ""}
+              ${keys}
+            </div>
+            <button type="button" class="c-lnk" data-worker="${escapeHtml(w.worker_id)}" data-label="${escapeHtml(w.label)}" onclick="mintWorkerKey(this.dataset.worker, this.dataset.label)">${escapeHtml(t("workers.mint"))}</button>
+            <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" onclick="removeExternalWorker(this.dataset.worker)">${escapeHtml(t("workers.remove"))}</button>
+          </div>`;
+        }).join("");
+      }
+
+      // A refusal code of the routes is a string of its own; anything else is the generic failure.
+      async function workersFailure(res) {
+        let code = "";
+        try { code = (await res.json()).error || ""; } catch { /* no body */ }
+        const key = `workers.err_${code}`;
+        showToast(t(key) === key ? t("workers.err_failed") : t(key), "error");
+      }
+
+      async function addExternalWorker() {
+        const label = document.getElementById("workers-label-input");
+        const description = document.getElementById("workers-description-input");
+        try {
+          const res = await authFetch(`${API}/api/external-workers`, {
+            method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ label: label.value.trim(), description: description.value.trim() || null }),
+          });
+          if (!res.ok) { await workersFailure(res); return; }
+          label.value = "";
+          description.value = "";
+          showToast(t("workers.added"), "success");
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
+        }
+      }
+
+      async function removeExternalWorker(workerId) {
+        if (!confirm(t("workers.remove_confirm"))) return;
+        try {
+          const res = await authFetch(`${API}/api/external-workers/${encodeURIComponent(workerId)}`, {
+            method: "DELETE", credentials: "include",
+          });
+          if (!res.ok) { await workersFailure(res); return; }
+          showToast(t("workers.removed"), "success");
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
+        }
+      }
+
+      async function mintWorkerKey(workerId, label) {
+        try {
+          const res = await authFetch(`${API}/api/external-workers/${encodeURIComponent(workerId)}/keys`, {
+            method: "POST", credentials: "include",
+          });
+          if (!res.ok) { await workersFailure(res); return; }
+          const minted = await res.json();
+          document.getElementById("workers-key-box").innerHTML = `<div class="c-box">
+            <div class="c-box-title">${escapeHtml(label)}</div>
+            <p class="c-hint">${escapeHtml(t("workers.key_once"))}</p>
+            <div class="c-mono" id="workers-key-value">${escapeHtml(minted.key)}</div>
+            <div class="c-btns">
+              <button type="button" class="c-btn c-pri" onclick="copyWorkerKey()">${escapeHtml(t("workers.copy"))}</button>
+              <button type="button" class="c-btn c-sec" onclick="clearMintedWorkerKey()">${escapeHtml(t("workers.key_done"))}</button>
+            </div>
+          </div>`;
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
+        }
+      }
+
+      function copyWorkerKey() {
+        const value = document.getElementById("workers-key-value");
+        if (!value) return;
+        navigator.clipboard.writeText(value.textContent);
+        showToast(t("workers.copied"), "success");
+      }
+
+      function clearMintedWorkerKey() {
+        document.getElementById("workers-key-box").innerHTML = "";
+      }
+
+      async function revokeWorkerKey(workerId, keyId) {
+        if (!confirm(t("workers.revoke_key_confirm"))) return;
+        try {
+          const res = await authFetch(
+            `${API}/api/external-workers/${encodeURIComponent(workerId)}/keys/${encodeURIComponent(keyId)}`,
+            { method: "DELETE", credentials: "include" });
+          if (!res.ok) { await workersFailure(res); return; }
+          showToast(t("workers.key_revoked"), "success");
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
         }
       }
 

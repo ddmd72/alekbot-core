@@ -12,6 +12,7 @@ from ..services.channel_binding_service import ChannelBindingService
 from ..services.consolidation_service import ConsolidationService
 from ..services.device_session_service import DeviceSessionService
 from ..services.document_delivery_service import DocumentDeliveryService
+from ..services.external_task_service import ExternalTaskService
 from ..services.facts_pin_service import FactsPinService
 from ..services.geo_mark_service import GeoMarkService
 from ..services.localization_service import LocalizationService
@@ -43,6 +44,7 @@ class ChatServices:
     geo_mark_service: Optional[GeoMarkService] = None   # `$geo` and the Telegram pin (GEO_MARKS_RFC §4.5, §4.6)
     device_sessions: Optional[DeviceSessionService] = None   # `$devices` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
     facts_pin: Optional[FactsPinService] = None   # `$<digits>` and `$pin cancel` (CABINET_DEVICE_SESSIONS_RFC §7.9)
+    external_tasks: Optional[ExternalTaskService] = None   # `$task send` (EXTERNAL_TASK_QUEUE_RFC §5.3)
 
 
 def build_conversation_handler(chat: ChatServices, rich_content: RichContentService, *,
@@ -70,5 +72,6 @@ def build_conversation_handler(chat: ChatServices, rich_content: RichContentServ
         doc_delivery_service=chat.doc_delivery_service,
         commands=CommandServices(skills=chat.skill_service, memory_facts=chat.memory_fact_service,
                                  drive_notes=chat.drive_note_service, geo_marks=chat.geo_mark_service,
-                                 device_sessions=chat.device_sessions, facts_pin=chat.facts_pin),
+                                 device_sessions=chat.device_sessions, facts_pin=chat.facts_pin,
+                                 external_tasks=chat.external_tasks),
     )

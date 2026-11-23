@@ -345,6 +345,34 @@ class EnvironmentConfig:
         return f"{prefix}orchestrator_notes"
 
     @property
+    def external_tasks_collection(self) -> str:
+        """
+        External task queue: one document per task (EXTERNAL_TASK_QUEUE_RFC §5.1). Dev: development_external_tasks
+        """
+        return f"{self.firestore_collection_prefix}external_tasks"
+
+    @property
+    def external_task_results_collection(self) -> str:
+        """
+        External task results, create-only, apart from the task (§5.1). Dev: development_external_task_results
+        """
+        return f"{self.firestore_collection_prefix}external_task_results"
+
+    @property
+    def external_workers_collection(self) -> str:
+        """
+        Registered external workers, doc id `{user_id}:{worker_id}` (§5.1). Dev: development_external_workers
+        """
+        return f"{self.firestore_collection_prefix}external_workers"
+
+    @property
+    def external_worker_keys_collection(self) -> str:
+        """
+        External worker keys, doc id = the key's keyed digest (§5.1, §5.6). Dev: development_external_worker_keys
+        """
+        return f"{self.firestore_collection_prefix}external_worker_keys"
+
+    @property
     def skills_collection(self) -> str:
         """
         Custom agent skills. Dev: development_skills

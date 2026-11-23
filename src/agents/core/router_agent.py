@@ -472,7 +472,7 @@ class RouterAgent(BaseAgent):
         """One active reminder as the orchestrator sees it. The orchestrator edits reminders by delegation, so it
         needs every field a delegation can change — a schedule it cannot see is a schedule it can only overwrite
         blindly. workspace_file: AGENT_WORKSPACE_RFC §8.3."""
-        return {
+        context = {
             "note_id": n.note_id,
             "text": n.text,
             "due": n.due.isoformat() if n.due else None,
@@ -481,6 +481,9 @@ class RouterAgent(BaseAgent):
             "last_fired": n.last_fired.isoformat() if n.last_fired else None,
             "workspace_file": n.workspace_file,
         }
+        if n.untrusted:         # only when set: a note written after outside content was read (AgentNote.untrusted)
+            context["untrusted"] = True
+        return context
 
     async def _classify_request_with_fallback(self, text: str, message: AgentMessage, history: List[Message] = None) -> dict:
         """Run LLM triage when available; fallback to rule-based logic."""

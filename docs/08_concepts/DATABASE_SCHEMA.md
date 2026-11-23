@@ -120,6 +120,16 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is in `../05
 | `{p}user_primary_channel` | `user_id` | `src/adapters/firestore_notification_state_adapter.py` |
 | `{p}audio_transcripts` (expires on `purge_after`) | `{account_id}:{key}` | `FirestoreTranscriptCache`, `src/adapters/firestore_transcript_cache.py` |
 | `{p}short_links` | the code | `src/adapters/firestore_short_link_repository.py` |
+| `{p}external_workers` | `worker_id` | `ExternalWorker`, `src/domain/external_worker.py`; `FirestoreExternalWorkerStore`; life cycle: `../05_building_blocks/external_task_queue/README.md` |
+| `{p}external_worker_keys` (a key is stored as a keyed digest, never the raw key) | key digest | `ExternalWorkerKey`, `src/domain/external_worker_key.py`; same adapter |
+| `{p}external_tasks` (expires on `purge_after`, set only once final) | `task_id` | `ExternalTask`, `src/domain/external_task.py`; `FirestoreExternalTaskStore` |
+| `{p}external_task_results` (expires on `purge_after`) | `task_id` | the submitted result text; same adapter |
+
+**Optional flags on stored records.** A saved model message in `{p}sessions` carries `execution_tainted: true` when
+outside content entered the execution that wrote it (`Message.execution_tainted`, `src/domain/llm.py`); it is written
+only when true and a record without it reads as false. An `{p}orchestrator_notes` document carries `untrusted: true`
+the same way (`AgentNote.untrusted`, `src/domain/agent_note.py`). A workspace object carries the `untrusted` metadata
+value `external_task:<task_id>` (see `../05_building_blocks/agent_skills_workspace/README.md`).
 
 **Sessions per channel.** `session_id = f"{user_id}:{channel_id}"` (`src/domain/messaging.py::session_id_for`) is
 deterministic: each channel (a Slack channel or DM, a Telegram chat) has its own session, history and consolidation

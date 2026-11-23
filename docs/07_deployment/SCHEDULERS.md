@@ -14,6 +14,8 @@ covers:
   src/services/billing_daily_summary_task.py
   src/services/deep_research_failed_task.py
   src/services/geo_mark_turn_task.py
+  src/services/external_task_timer_task.py
+  src/services/external_task_delivery_task.py
   scripts/infrastructure/cloudbuild_scheduler_jobs.sh
   scripts/infrastructure/setup-daily-email-review-scheduler.sh
   src/services/background_empty_answer_reporter.py
@@ -80,6 +82,8 @@ All Scheduler jobs POST to the main service, with OIDC (`/health` keep-alive exc
 | `fact_review`, `interactive_choice` | Cloud Task | `WorkerHandler._handle_fact_review`, `_handle_interactive_choice` | See § Fact Lifecycle Sweep |
 | `billing_daily_summary` | Scheduler | `BillingDailySummaryTask` | Daily per-account usage report; 501 without the alert sink or account repo |
 | `deep_research_failed`, `geo_mark_turn` | Cloud Task | `DeepResearchFailedTask`, `GeoMarkTurnTask` | See below |
+| `external_task_timer` | Cloud Task | `ExternalTaskTimerTask` → `ExternalTaskService.on_timer` | Lease, deadline and hold timers of the external task queue; no Scheduler job; 501 without a task queue |
+| `external_task_deliver` | Cloud Task | `ExternalTaskDeliveryTask` | A final external task's workspace copy and notice; 501 without a task queue |
 | `agent_execution`, `video_generation_polling`, `telegram_update`, queued Slack event | Cloud Task | agent worker, `VideoGenerationPollingTask`, platform workers | Platform entries answer 503 when the platform is not wired |
 
 ## Deadlines: two numbers, do not confuse them
@@ -308,6 +312,16 @@ takes no memory-write lease.
   `src/services/deep_research_delivery.py`) carries dedup key `deep_research_report:<job_id>`, so a retried create is
   idempotent: the create is retried twice more by that name, `AlreadyExists` counts as handed off, and only then is the
   failure reported (the job then enqueues `deep_research_failed` with `delivery_failed`). There is no polling task type.
+- **`external_task_timer` and `external_task_deliver`** are enqueued by `ExternalTaskService`
+  (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.8, §5.9; bodies in `src/domain/external_task_jobs.py`). A timer's
+  dedup key is `lease:<task_id>:<generation>:<renewals>`, `deadline:<task_id>:<epoch s>` or `hold:<task_id>`; the
+  delivery's is `deliver:<task_id>`. The timer answers 200 `{"changed": bool}` (a stale timer is a no-op) and 400 on a
+  malformed body. The delivery answers 400 on a malformed body, 200 `gone` (no such final task), `already` (delivered
+  before), `no_notice` (a cancelled task) or `delivered`. It writes a done task's result as a flagged workspace file
+  under `references/external_tasks/`, posts one literal notice to the task's origin channel and appends a code-written
+  history pair; no model runs. A refused copy (caps) or no workspace posts the "no copy" notice; no channel records the
+  delivery and logs at error level; a store failure or a failed post answers 5xx and Cloud Tasks retries (the copy of
+  an earlier attempt, found by its mark, is reused).
 - **`geo_mark_turn`** is enqueued by `GeoMarkService.redeem_link` (`POST /geo/<link_id>`) when the owner wrote text after
   `$geo`; a failed enqueue appends the question and the mark to the session instead. `GeoMarkTurnTask` hands the payload
   to the Slack adapter's turn runner, which re-authorizes the user and runs the turn: 400 on a missing key or another

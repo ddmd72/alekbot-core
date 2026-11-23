@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from ..services.device_session_service import DeviceSessionService
     from ..services.drive_note_service import DriveNoteService
+    from ..services.external_task_service import ExternalTaskService
     from ..services.facts_pin_service import FactsPinService
     from ..services.geo_mark_service import GeoMarkService
     from ..services.memory_fact_service import MemoryFactService
@@ -26,3 +27,4 @@ class CommandServices:
     geo_marks: Optional["GeoMarkService"] = None         # `$geo` and the Telegram pin (GEO_MARKS_RFC §4.5, §4.6)
     device_sessions: Optional["DeviceSessionService"] = None   # `$devices`, `$devices off` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
     facts_pin: Optional["FactsPinService"] = None   # `$<digits>` (the duress code / PIN), `$pin cancel` (§7.9, §7.7)
+    external_tasks: Optional["ExternalTaskService"] = None   # `$task send` (EXTERNAL_TASK_QUEUE_RFC §5.3)

@@ -30,6 +30,7 @@ from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
 from ..services.email_card_search_service import EmailCardSearchService
 from ..services.email_search_service import EmailSearchService
+from ..services.external_task_service import ExternalTaskService
 from ..services.file_conversion_service import FileConversionService
 from ..services.memory_fact_service import MemoryFactService
 from ..services.prompt_v3.prompt_assembly_service import PromptAssemblyService
@@ -71,3 +72,4 @@ class AgentServices:
     workspace_service: Optional[WorkspaceService]
     drive_note_service: Optional[DriveNoteService]
     drive_notes_enabled: bool
+    external_tasks: Optional[ExternalTaskService] = None   # Smart's task tools (EXTERNAL_TASK_QUEUE_RFC §5.3); set by the graph

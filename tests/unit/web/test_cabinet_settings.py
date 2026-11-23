@@ -139,13 +139,17 @@ _OPERATIONS = {
     "lost": [("markup", 'id="devices-lost-1"'), ("markup", 'id="devices-lost-2"'), ("markup", 'id="devices-lost-3"')],
     "team": [("markup", 'onclick="generateTeamInvite()"'), ("generateTeamInvite", 'onclick="copyDeepLink()"'),
              ("loadCodes", 'getElementById("codes-list-container")')],
+    "workers": [("markup", 'onclick="addExternalWorker()"'),
+                ("renderExternalWorkers", 'onclick="mintWorkerKey(this.dataset.worker, this.dataset.label)"'),
+                ("renderExternalWorkers", 'onclick="removeExternalWorker(this.dataset.worker)"'),
+                ("renderExternalWorkers", 'onclick="revokeWorkerKey(this.dataset.worker, this.dataset.key)"')],
 }
 # The renderer's target, which must sit in the row's body.
 _TARGETS = {"platformItem": None, "renderPlatforms": "platforms-container", "renderGmailStatus": "gmail-container",
             "triggerGmailIndex": None, "renderServiceStatus": "tasks-container", "renderDevices": "devices-list",
             "renderPasskeys": "passkeys-list", "addPasskeyHere": None, "removePasskey": None, "googleProofUrl": None,
             "resumePasskeyFlow": "passkeys-resume-hint", "generateTeamInvite": "generated-code-container",
-            "loadCodes": "codes-list-container"}
+            "loadCodes": "codes-list-container", "renderExternalWorkers": "workers-list"}
 
 
 @pytest.mark.parametrize("row", sorted(_OPERATIONS))

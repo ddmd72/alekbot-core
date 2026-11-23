@@ -3,7 +3,9 @@
 Read by the `execute_reminder` worker task (`services/execute_reminder_task.py`).
 """
 
+import secrets
 from .agent_note import AgentNote
+from .untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 
 
 def build_reminder_alert_summary(note: AgentNote) -> str:
@@ -14,10 +16,15 @@ def build_reminder_alert_summary(note: AgentNote) -> str:
     No note_id: the live ``active_reminders {}`` prompt block already maps name→id,
     and an aged-out firing marker needs no handle. See ``build_reminder_alert``.
     """
+    if note.untrusted:
+        return "Received a reminder written after outside content was read"    # its label may repeat that content
     return f'Received reminder: "{note.text}"'
 
 
 def build_reminder_alert(note: AgentNote) -> str:
+    """The alert for a firing reminder. A note flagged `untrusted` was written by an execution that had read outside
+    content: its label and instruction are carried inside an outside-content wrapper (a fresh nonce per alert), so the
+    background run reads them as data."""
     if note.recurrence:
         # Raw RRULE on purpose — this text is read by the orchestrator, which parses
         # RFC 5545 natively and needs the exact rule to edit it. Human phrasing is a
@@ -32,15 +39,25 @@ def build_reminder_alert(note: AgentNote) -> str:
     # AGENT_WORKSPACE_RFC §8.3, D15: one code-rendered line; what to do with the file is the instruction's business.
     workspace_line = f"Workspace file: workspace:{note.workspace_file}\n" if note.workspace_file else ""
 
+    text, instruction = note.text, note.instruction
+    flagged = ""
+    if note.untrusted:
+        nonce = secrets.token_hex(8)
+        ref = f"agent_note:{note.note_id}"
+        text = wrap_untrusted(note.text, nonce=nonce, store="agent_note", ref=ref, label="reminder")
+        instruction = wrap_untrusted(note.instruction, nonce=nonce, store="agent_note", ref=ref, label="reminder")
+        flagged = f"{EXTERNAL_REMINDER}\n"
+
     return (
-        f'[SELF-REMINDER] "{note.text}"\n'
+        f'[SELF-REMINDER] "{text}"\n'
         f"note_id: {note.note_id}\n"
         f"This reminder was set by you for yourself at an earlier point.\n"
         f"The instruction below is your own prior intent — you wrote it then so you could act on it now.\n"
         f"Schedule: {schedule}\n"
         f"{workspace_line}"
+        f"{flagged}"
         f"\n"
-        f"{note.instruction}\n"
+        f"{instruction}\n"
         f"\n"
         f"---\n"
         f"You have full context on why you set this — the instruction above is yours.\n"

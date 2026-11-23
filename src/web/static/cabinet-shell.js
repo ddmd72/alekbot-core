@@ -82,6 +82,7 @@
           loadPlatforms();
           loadGmailStatus();
           loadTasksStatus();
+          loadExternalWorkers();
         }
         if (changed && active && active.id === "section-drives") loadDriveStatus();
         if (changed && active && active.id === "section-home") loadHome();
@@ -202,6 +203,7 @@
           loadPlatforms();
           loadGmailStatus();
           loadTasksStatus();
+          loadExternalWorkers();
           loadDevices();
           loadPasskeys();
           if (isOwner()) loadCodes();

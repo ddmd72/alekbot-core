@@ -348,6 +348,27 @@
                   <div class="c-stack" id="tasks-container"></div>
                 </div>
               </div>
+              <div class="c-item hidden" id="settings-workers-item">
+                <button type="button" class="c-row" id="srow-workers" aria-expanded="false" aria-controls="srow-workers-body" onclick="toggleSettingsRow('workers')">
+                  <span class="c-row-title" id="settings-workers-title">External workers</span>
+                  <span class="c-chip c-chip-off hidden" id="settings-workers-chip"><span class="c-dot"></span><span id="settings-workers-chip-text"></span></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-workers-body">
+                  <p class="c-hint" id="workers-desc">Programs of yours that pick up tasks the bot hands them. Each gets keys; a key is shown once.</p>
+                  <div class="c-stack" id="workers-key-box"></div>
+                  <div class="c-stack" id="workers-list"></div>
+                  <div class="c-field">
+                    <label for="workers-label-input" id="workers-label-label">Label</label>
+                    <input id="workers-label-input" type="text" class="c-input" autocomplete="off" maxlength="32" placeholder="e.g. research" />
+                  </div>
+                  <div class="c-field">
+                    <label for="workers-description-input" id="workers-description-label">Description</label>
+                    <input id="workers-description-input" type="text" class="c-input" autocomplete="off" placeholder="e.g. web research for home projects" onkeydown="if (event.key === 'Enter') addExternalWorker();" />
+                  </div>
+                  <div class="c-btns"><button type="button" class="c-btn c-pri" id="workers-add" onclick="addExternalWorker()">Add worker</button></div>
+                </div>
+              </div>
               <button type="button" class="c-row" id="srow-drives" onclick="navigate('drives')">
                 <span class="c-row-title" id="settings-drives-title">Drives</span>
                 <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>

@@ -45,6 +45,9 @@ from ..domain.device_session import SessionRevokeReason
 from ..domain.facts_pin_chat import is_code_command, reply_for
 from ..domain.facts_pin_policy import PinSurface
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
+from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, render as render_external_task_receipt
+from ..domain.execution_taint import EXECUTION_TAINTED_KEY
+from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
     MemoryFactDraft,
@@ -197,6 +200,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._skill_service = commands.skills
         self._long_turns = long_turn_service
         self._memory_facts = commands.memory_facts
+        self._external_tasks = commands.external_tasks   # `$task send` (EXTERNAL_TASK_QUEUE_RFC §5.3)
         self._fact_answers = fact_answers
         # owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` erase commands; None with the
         # notes kill switch off (the command then answers that notes are unavailable)
@@ -322,6 +326,8 @@ class ConversationHandler(ConversationHandlerPort):
             await self._deliver_memory_preview(item, response_channel, thread_id)
         elif item.type in (DRIVE_NOTE_RECEIPT_DELIVERY, DRIVE_NOTE_ERASE_DELIVERY):
             await self._deliver_drive_note_receipt(item, response_channel, thread_id)
+        elif item.type == EXTERNAL_TASK_RECEIPT_DELIVERY:
+            await self._deliver_external_task_receipt(item, response_channel, thread_id)
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 
@@ -463,6 +469,29 @@ class ConversationHandler(ConversationHandlerPort):
                 await response_channel.send_message(command, thread_id)
             else:
                 await response_channel.send_literal(render_drive_note_receipt(item.data, strings), thread_id)
+        except Exception as e:
+            logger.error("⚠️ [ConversationHandler] %s delivery failed: %s", item.type, e, exc_info=True)
+
+    async def _deliver_external_task_receipt(
+        self,
+        item: DeliveryItem,
+        response_channel: ResponseChannel,
+        thread_id: Optional[str],
+    ) -> None:
+        """Deliver an external task's receipt (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible"): the worker, the
+        title, the FULL task text and the id, posted literally (the text is the model's, never reformatted). A held task
+        then gets its `$task send` command alone as a second message. When the receipt fails the command is not sent:
+        the owner never confirms text they were not shown. A failed post never fails the turn: the task is stored."""
+        language = getattr(response_channel, "language", None)
+
+        def strings(message: UIMessage) -> str:
+            return self._ui_string_for_language(language, message)
+
+        try:
+            post, command = render_external_task_receipt(item.data, strings)
+            await response_channel.send_literal(post, thread_id)
+            if command:
+                await response_channel.send_message(command, thread_id)
         except Exception as e:
             logger.error("⚠️ [ConversationHandler] %s delivery failed: %s", item.type, e, exc_info=True)
 
@@ -1071,6 +1100,7 @@ class ConversationHandler(ConversationHandlerPort):
                         history_text=history_text,
                         response_text=response_text,
                         owner_id=context.user_id,
+                        execution_tainted=bool((response.metadata or {}).get(EXECUTION_TAINTED_KEY)),
                     )
                 except Exception as e:
                     # The answer is already delivered: a lost history pair is logged, never an error reply.
@@ -1454,11 +1484,14 @@ class ConversationHandler(ConversationHandlerPort):
         response_text: str,
         owner_id: str,
         max_attempts: int = 3,
+        execution_tainted: bool = False,
     ) -> None:
-        """Append conversation turn to history with retry for transient gRPC errors."""
+        """Append conversation turn to history with retry for transient gRPC errors. `execution_tainted` marks the
+        model message: the turn read outside content, and so is every later turn that loads it (taint rule)."""
         messages = [
             Message(role="user", parts=user_parts),
-            Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
+            Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)],
+                    execution_tainted=execution_tainted),
         ]
         await retry_store_write(
             lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id, raise_on_error=True),
@@ -1634,6 +1667,9 @@ class ConversationHandler(ConversationHandlerPort):
 
             elif command == "primary":
                 await self._handle_primary_command(context, response_channel)
+
+            elif command.split()[:1] == ["task"]:
+                await self._handle_task_command(command, context, response_channel)
 
             elif command.split()[:1] == ["geo"]:
                 await self._handle_geo_command(context, response_channel)
@@ -2072,6 +2108,54 @@ class ConversationHandler(ConversationHandlerPort):
 
         await response_channel.send_message(
             self._ui_string(context, UIMessage.MEMORY_SAVED, count=count), thread_id=context.thread_id,
+        )
+
+    # ------------------------------------------------------------------
+    # External task commands (EXTERNAL_TASK_QUEUE_RFC §5.3)
+    # ------------------------------------------------------------------
+
+    async def _handle_task_command(
+        self, command: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """Handle `$task send CODE`: the owner's confirmation of a held task, the only way a task shaped by outside
+        content leaves the system. The service checks the flag and the lock again, so a stale cached profile gains
+        nothing here. A wrong, expired or already used code gets one neutral line; anything else prints usage."""
+        if not self._external_tasks:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.EXTERNAL_TASK_UNAVAILABLE), thread_id=context.thread_id,
+            )
+            return
+
+        parts = command.split()
+        if len(parts) != 3 or parts[1] != "send":
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.EXTERNAL_TASK_USAGE), thread_id=context.thread_id,
+            )
+            return
+
+        try:
+            sent = await self._external_tasks.confirm(context.user_id, parts[2])
+        except ExternalTaskRefused as e:
+            logger.info("ℹ️ [ConversationHandler] Task send refused for user %s: %s", context.user_id[:8],
+                        e.reason.value)
+            unavailable = e.reason in (TaskRefusal.NOT_ENABLED, TaskRefusal.ACCOUNT_LOCKED)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.EXTERNAL_TASK_UNAVAILABLE if unavailable
+                                else UIMessage.EXTERNAL_TASK_NOT_FOUND),
+                thread_id=context.thread_id,
+            )
+            return
+        except Exception as e:
+            logger.error("❌ [ConversationHandler] Task send failed for user %s: %s", context.user_id[:8], e,
+                         exc_info=True)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.EXTERNAL_TASK_UNAVAILABLE), thread_id=context.thread_id,
+            )
+            return
+
+        await response_channel.send_literal(
+            self._ui_string(context, UIMessage.EXTERNAL_TASK_SENT, title=sent.title, worker=sent.label),
+            context.thread_id,
         )
 
     # ------------------------------------------------------------------

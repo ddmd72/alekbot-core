@@ -2,7 +2,7 @@
 long-running turns both chat platforms and the factory share (LONG_RUNNING_TURNS_RFC), and the language preference
 writer, which refreshes a user's agents after a change. The coordinator gets the factory afterwards
 (`set_agent_factory`, the one real router-factory cycle)."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from anthropic import AsyncAnthropic
@@ -10,6 +10,7 @@ from anthropic import AsyncAnthropic
 from ..adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from ..config.environment import EnvironmentConfig
 from ..infrastructure.agent_coordinator import AgentCoordinator
+from ..services.external_task_service import ExternalTaskService
 from ..services.language_preference_service import LanguagePreferenceService
 from ..services.long_turn_service import LongTurnService
 from ..services.provider_registry import ProviderRegistry
@@ -30,11 +31,17 @@ class Agents:
     language_preferences: LanguagePreferenceService
 
 
+def _with_external_tasks(services: Any, external_tasks: Optional[ExternalTaskService]) -> Any:
+    """The container's services plus the external task service, which only the graph holds (it needs the task queue, the
+    digest key and the account-lock check). Without one (no task queue) the container's own bundle goes through as is."""
+    return services if external_tasks is None else replace(services, external_tasks=external_tasks)
+
+
 def build_agents(config: dict, db_client: Any, env_config: EnvironmentConfig, *, container: Any,
                  coordinator: AgentCoordinator, boot: BootChecks, identity: Identity, ops: Operations,
                  job_registry: ProviderRegistry, image_registry: ProviderRegistry, video_registry: ProviderRegistry,
                  companions: Companions, notification_service: Any, languages: Languages,
-                 memory_search: MemorySearch) -> Agents:
+                 memory_search: MemorySearch, external_tasks: Optional[ExternalTaskService] = None) -> Agents:
     """One long-turn registry for the factory (Smart's running-jobs note, `cancel_long_turn`) and the service the chat
     adapters read; one Anthropic client for every deep-research runner agent (the agent does not build the SDK)."""
     long_turn_registry = FirestoreLongTurnRegistry(db_client, env_config.long_turns_collection)
@@ -51,7 +58,7 @@ def build_agents(config: dict, db_client: Any, env_config: EnvironmentConfig, *,
         coordinator=coordinator,
         user_repo=identity.user_repo,
         account_repo=identity.account_repo,
-        services=container.agent_services(),
+        services=_with_external_tasks(container.agent_services(), external_tasks),
         job_registry=job_registry,
         image_registry=image_registry,
         video_registry=video_registry,

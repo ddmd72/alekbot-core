@@ -14,7 +14,7 @@ SHARED = (
     "coordinator", "agent_factory", "consolidation_queue", "global_config", "audio_service", "_notification_service",
     "_localization", "_file_conversion_service", "_fallback_service", "_short_link_service", "_skill_service",
     "_memory_facts", "_fact_answers", "_drive_notes", "_long_turns", "_doc_delivery_service",
-    "_geo_marks", "_device_sessions", "_facts_pin",
+    "_geo_marks", "_device_sessions", "_facts_pin", "_external_tasks",
 )
 
 
@@ -29,6 +29,7 @@ async def test_both_handlers_share_every_bundle_dependency(prod_graph: ProdGraph
     assert slack._overflow_callback == telegram._overflow_callback
     assert slack._notification_service is app.notification_service
     assert slack.agent_factory is app.agent_factory and slack.coordinator is app.coordinator
+    assert app.external_tasks is not None and slack._external_tasks is app.external_tasks
 
 
 async def test_the_platform_inputs_differ_as_declared(prod_graph: ProdGraph):

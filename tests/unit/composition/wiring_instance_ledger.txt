@@ -34,6 +34,8 @@ src.adapters.firestore_email_card_store.FirestoreEmailCardStore 1  # by-design t
 src.adapters.firestore_email_reader_budget.FirestoreEmailReaderBudget 1  # by-design the one scan-reader page budget, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py)
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
+src.adapters.firestore_external_task_store.FirestoreExternalTaskStore 1  # by-design the one external task and result store, held by ExternalTaskService (EXTERNAL_TASK_QUEUE_RFC §5.1)
+src.adapters.firestore_external_worker_store.FirestoreExternalWorkerStore 1  # by-design the one external worker and key store, held by ExternalTaskService (EXTERNAL_TASK_QUEUE_RFC §5.6)
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (memory_setup.py FactLifecycleSweepService)
 src.adapters.firestore_fact_review_store.FirestoreFactReviewStore 1  # by-design single instance, held by the ServiceContainer as fact_review_store and shared by FactReviewService, FactAnswerService and FactQuestionTexts (Facts S4 T10a)
 src.adapters.firestore_facts_pin_repo.FirestoreFactsPinRepository 1  # by-design the one facts PIN store, held by FactsPinService; its check writes the account lock flag (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.7)
@@ -163,6 +165,9 @@ src.services.email_indexing_service.EmailIndexingService 1  # by-design single i
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
 src.services.execute_reminder_task.ExecuteReminderTask 1  # by-design the one execute_reminder runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.external_task_delivery_task.ExternalTaskDeliveryTask 1  # by-design the one external_task_deliver runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.external_task_service.ExternalTaskService 1  # by-design the one external task service, hoisted in build_application_graph and held by the two runners (EXTERNAL_TASK_QUEUE_RFC §5.2)
+src.services.external_task_timer_task.ExternalTaskTimerTask 1  # by-design the one external_task_timer runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (memory_setup.py, Facts S4 T8e, T10a, T8g)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: memory_setup.py build_memory builds it once and the graph hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as profile_step in memory_setup.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (memory_setup.py:65,78,177, FACT_PROFILE_RFC 4.4)

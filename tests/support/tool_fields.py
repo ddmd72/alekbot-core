@@ -5,6 +5,9 @@ A surface is a list of tool declarations, built by the production builder each t
 - `consolidation`, `consolidation_review`: `ConsolidationAgent._get_tool_declarations` for the two pass kinds;
 - `notes`, `tasks`: the agents' `_TOOL_DECLARATIONS`;
 - `smart_local`: Smart's three local writing tools (`propose_memory_facts`, `draft_skill`, `workspace`);
+- `smart_tasks`: Smart's five external task tools (EXTERNAL_TASK_QUEUE_RFC §5.3), built for one registered worker; the
+  writing ones are `create_external_task` and `cancel_external_task`, the three readers are in `READ_ONLY`
+  (`list_external_workers` declares no field, so it appears in no key and no `READ_ONLY` line);
 - `drive`: the drive specialist's fourteen tools and its terminal tool (`drive_tool_declarations`, DRIVE_SPECIALIST_RFC
   §8.1; the two passages tools of USER_DRIVE_INDEXING_RFC §28.3 A3);
 - `drive_notes`: the drive specialist's eleven note tools on an owner turn, `get_note` and the ten writers
@@ -24,15 +27,24 @@ store test. A test file of the package ends with `unused(surface, tool, calls) =
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Set
 
 from src.agents import notes_agent, tasks_agent
 from src.agents.base_agent import BaseAgent
 from src.agents.consolidation_agent import ConsolidationAgent
+from src.domain.external_worker import ExternalWorker
 from src.domain.drive_note_tool_texts import drive_note_tool_declarations
 from src.domain.drive_tool_texts import drive_tool_declarations
 from src.infrastructure.agent_manifest import DRIVE_SPECIALIST, NOTES, TASKS, AgentDescriptor, Intent
 from src.infrastructure.memory_fact_tools import build_propose_memory_facts_tool_declaration
+from src.infrastructure.external_task_tools import (
+    build_cancel_external_task_declaration,
+    build_create_external_task_declaration,
+    build_get_external_task_declaration,
+    build_list_external_tasks_declaration,
+    build_list_external_workers_declaration,
+)
 from src.infrastructure.skill_tools import build_draft_skill_tool_declaration
 from src.infrastructure.workspace_tools import build_workspace_tool_declaration
 
@@ -42,6 +54,15 @@ DELEGATE_INTENTS: Dict[str, AgentDescriptor] = {
     Intent.MANAGE_SELF_REMINDERS: NOTES,
     Intent.MANAGE_USER_TASKS: TASKS,
 }
+
+
+def _smart_tasks() -> List[Dict[str, Any]]:
+    moment = datetime(2026, 11, 23, tzinfo=timezone.utc)
+    worker = ExternalWorker(worker_id="wrk-1", user_id="usr-1", account_id="acc-1", label="research",
+                            created_at=moment, updated_at=moment)
+    return [build_create_external_task_declaration([worker]), build_list_external_tasks_declaration(),
+            build_get_external_task_declaration(), build_cancel_external_task_declaration(),
+            build_list_external_workers_declaration()]
 
 
 def _delegate() -> List[Dict[str, Any]]:
@@ -60,6 +81,7 @@ SURFACES: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "tasks": lambda: copy.deepcopy(tasks_agent._TOOL_DECLARATIONS),
     "smart_local": lambda: [build_propose_memory_facts_tool_declaration(), build_draft_skill_tool_declaration(),
                             build_workspace_tool_declaration()],
+    "smart_tasks": _smart_tasks,
     "drive": drive_tool_declarations,
     "drive_notes": lambda: drive_note_tool_declarations(writes=True),
     "delegate": _delegate,
@@ -73,6 +95,7 @@ READ_ONLY: FrozenSet[str] = frozenset({
     "tasks:list_tasks", "tasks:search_tasks",
     "drive:search_drive", "drive:search_deleted_recordings_and_notes", "drive:list_folder", "drive:open_drive_file",
     "drive:get_recording_link", "drive:find_passages", "drive:read_passages", "drive_notes:get_note",
+    "smart_tasks:list_external_tasks", "smart_tasks:get_external_task",
 })
 READ_ONLY_FIELDS: FrozenSet[str] = frozenset({
     "smart_local:workspace.offset", "smart_local:workspace.limit",

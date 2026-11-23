@@ -20,7 +20,8 @@ from src.services.video_generation_polling_task import VideoGenerationPollingTas
 
 # Every task type is registered whatever is configured: an absent dependency gives a refusal, never an unknown type.
 _TASK_TYPES = {"execute_reminder", "video_generation_polling", "deep_research_failed",
-               "start_daily_email_review", "daily_email_review", "billing_daily_summary", "geo_mark_turn"}
+               "start_daily_email_review", "daily_email_review", "billing_daily_summary", "geo_mark_turn",
+               "external_task_timer", "external_task_deliver"}
 
 
 class _Factory:

@@ -33,6 +33,7 @@ from src.agents.infrastructure.billing_agent import BillingAgent
 from src.composition.agents_setup import Agents, build_agents
 from src.composition.background_jobs_setup import BackgroundJobs, build_background_jobs
 from src.composition.boot_setup import BootChecks, build_boot_checks
+from src.composition.external_task_setup import build_external_task_service
 from src.composition.companion_setup import Companions, build_companions
 from src.composition.file_delivery_setup import FileDelivery, build_file_delivery
 from src.composition.identity_setup import Identity, build_device_auth, build_identity
@@ -70,6 +71,7 @@ from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.account_lock_service import AccountLockService
 from src.services.device_session_service import DeviceSessionService
+from src.services.external_task_service import ExternalTaskService
 from src.services.facts_pin_service import FactsPinService
 from src.services.inactive_user_check import InactiveUserCheck
 from src.services.passkey_service import PasskeyService
@@ -141,6 +143,7 @@ class ApplicationGraph:
     companion_extractor_runner: CompanionExtractorRunner
     call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
     geo_marks: Optional[GeoMarkService]     # the `$geo` page's routes (GEO_MARKS_RFC §4.5); None without a task queue
+    external_tasks: Optional[ExternalTaskService]    # the external task queue (EXTERNAL_TASK_QUEUE_RFC); None without a task queue
     language_service: LanguageResolver
     language_preferences: LanguagePreferenceService
     localization: _LocalizationService
@@ -223,10 +226,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                                   quota_service=ops.quota_service, extraction_queue=routing.companion_extraction_queue,
                                   notification_service=notifications.service, languages=languages,
                                   fact_search=memory_search.fact_search)
+    external_tasks = build_external_task_service(
+        db_client, env_config, task_queue=ops.task_queue, user_repo=identity.user_repo,
+        inactive_users=identity.inactive_users, digest_key=boot.digest_key)
     agents = build_agents(config, db_client, env_config, container=container, coordinator=coordinator, boot=boot,
                           identity=identity, ops=ops, job_registry=job_registry, image_registry=image_registry,
                           video_registry=video_registry, companions=companions,
-                          notification_service=notifications.service, languages=languages, memory_search=memory_search)
+                          notification_service=notifications.service, languages=languages, memory_search=memory_search,
+                          external_tasks=external_tasks)
     coordinator.set_agent_factory(agents.factory)  # Enable lazy agent instantiation
     integrations = build_integrations(db_client, env_config, container=container, boot=boot, ops=ops,
                                       user_repo=identity.user_repo, notification_service=notifications.service,
@@ -239,11 +246,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                                        identity=identity, ops=ops, routing=routing, documents=documents,
                                        delivery=delivery, languages=languages, notifications=notifications,
                                        agents=agents, memory=memory, device_sessions=device_sessions,
-                                       facts_pin=device_auth.facts_pin)
+                                       facts_pin=device_auth.facts_pin, external_tasks=external_tasks)
     worker_handler = _build_worker_handler(
         db_client, env_config, container=container, identity=identity, ops=ops, delivery=delivery,
         notifications=notifications, jobs=jobs, companions=companions, agents=agents, integrations=integrations,
-        memory=memory, video_registry=video_registry, slack_adapter=slack_adapter)
+        memory=memory, video_registry=video_registry, slack_adapter=slack_adapter, external_tasks=external_tasks)
     telegram_adapter = _build_telegram(db_client, env_config, chat=chat, container=container, identity=identity,
                                        ops=ops, languages=languages, notifications=notifications,
                                        worker_handler=worker_handler)
@@ -265,6 +272,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         media_storage=delivery.media_storage, short_link_service=delivery.short_link_service,
         companion_extractor_runner=companions.extractor_runner, call_text_files=companions.call_text_files,
         geo_marks=chat.geo_mark_service,
+        external_tasks=external_tasks,
         language_service=languages.resolver, language_preferences=agents.language_preferences,
         localization=languages.localization, cipher=boot.cipher, digest_key=boot.digest_key,
         agent_task_queue=ops.task_queue, billing_agent=ops.billing_agent,
@@ -330,7 +338,8 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
                  documents: DocumentBackends, delivery: FileDelivery, languages: Languages,
                  notifications: Notifications, agents: Agents, memory: Memory,
                  device_sessions: DeviceSessionService,
-                 facts_pin: FactsPinService) -> Tuple[ChatServices, HTTPModeAdapter]:
+                 facts_pin: FactsPinService,
+                 external_tasks: Optional[ExternalTaskService] = None) -> Tuple[ChatServices, HTTPModeAdapter]:
     """The ConversationHandler dependencies both platforms share, held once, and the Slack adapter over them and the
     notifications' Slack app. The fallback service (Smart failed or timed out → Quick → a synthetic apology) is built
     here for the chat handlers only."""
@@ -362,6 +371,7 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
         geo_mark_service=geo_marks,
         device_sessions=device_sessions,
         facts_pin=facts_pin,
+        external_tasks=external_tasks,
     )
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=notifications.slack_app,
@@ -384,7 +394,8 @@ def _build_worker_handler(db_client: Any, env_config: EnvironmentConfig, *, cont
                           identity: Identity, ops: Operations, delivery: FileDelivery, notifications: Notifications,
                           jobs: BackgroundJobs, companions: Companions, agents: Agents, integrations: Integrations,
                           memory: Memory, video_registry: ProviderRegistry,
-                          slack_adapter: HTTPModeAdapter) -> WorkerHandler:
+                          slack_adapter: HTTPModeAdapter,
+                          external_tasks: Optional[ExternalTaskService]) -> WorkerHandler:
     """`/worker`: Cloud Tasks is at-least-once, so claims keyed by task name stop a redelivered task from running twice
     (a claim whose attempt died is taken over by the retry; the 1 h TTL is garbage collection and the done-window, not
     the liveness rule). Built after the Slack adapter, whose queued-event entry it takes."""
@@ -425,7 +436,8 @@ def _build_worker_handler(db_client: Any, env_config: EnvironmentConfig, *, cont
                 ttl_seconds=172800,
             ),
             gmail_reconnect_flag=integrations.gmail_reconnect_flag, account_repo=identity.account_repo,
-            geo_mark_turn=slack_adapter.handle_geo_mark_turn),
+            geo_mark_turn=slack_adapter.handle_geo_mark_turn,
+            external_tasks=external_tasks, workspace=container.workspace_service),
     )
 
 

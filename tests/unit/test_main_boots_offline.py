@@ -109,6 +109,9 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "geo_mark_turn": {"platform": "slack", "user_id": "u1", "account_id": "a1", "channel_id": "C1", "session_id": "u1:C1",
                       "platform_user_id": "U1", "text": "Is the Iron Temple gym open?", "mark_text": "[Shared location]",
                       "language": "en", "link_fp": "18e09df9"},
+    "external_task_timer": {"user_id": "u1", "account_id": "a1", "task_id": "t1", "kind": "lease", "generation": 1,
+                           "renewals": 0},
+    "external_task_deliver": {"user_id": "u1", "account_id": "a1", "task_id": "t1", "notice": "done"},
 }
 
 # The pinned answer of every task type, from the boot with the deploy's environment, an empty database and the rows' seed
@@ -168,6 +171,9 @@ MATRIX: Dict[str, Expect] = {
     # No platform user is seeded: the queued $geo question is dropped at the identity check, no turn runs (never a 501).
     "geo_mark_turn": Expect(200, {"ok": True, "dropped": "unauthorized"},
                             log="geo_mark_turn: Slack user not authorized, no turn"),
+    # The external task queue's runners on an empty database: no task to move and none to deliver.
+    "external_task_timer": Expect(200, {"changed": False}),
+    "external_task_deliver": Expect(200, {"status": "gone"}),
 }
 
 
