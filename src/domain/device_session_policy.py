@@ -12,6 +12,10 @@ an access token only, no new secret, so both end with the newer cookie); the pre
 → `REPLAY` (an old secret came back: the session is revoked); a revoked, idle-ended or absolute-ended session →
 `DEAD`, whatever was presented.
 
+A voice call start asks for a passkey assertion not older than `CALL_PASSKEY_GRACE` when the user has a passkey (RFC
+§7.3, §13 decision 1): about a second of Face ID guards an unlocked phone in another person's hands, and the grace lets
+a redial after a dropped call through without asking again. `passkey_fresh` is that rule on the session's `passkey_at`.
+
 This module holds `RefreshOutcome` and the secret hash next to the policy on purpose: they are the policy's vocabulary.
 """
 import hashlib
@@ -47,6 +51,7 @@ class DeviceSessionPolicy:
     ROTATION_GRACE: ClassVar[timedelta] = timedelta(seconds=60)   # two tabs refreshing at once
     GATE_CACHE_TTL: ClassVar[timedelta] = timedelta(seconds=30)   # the revocation latency bound of the gate
     PURGE_AFTER: ClassVar[timedelta] = timedelta(days=30)         # the record's TTL after its last use
+    CALL_PASSKEY_GRACE: ClassVar[timedelta] = timedelta(minutes=5)  # a call start's passkey assertion stays fresh
 
     @classmethod
     def access_expiry(cls, now: datetime) -> datetime:
@@ -69,6 +74,11 @@ class DeviceSessionPolicy:
         return (session.revoked_at is None
                 and now < session.last_seen_at + cls.IDLE_TTL
                 and now < session.expires_at)
+
+    @classmethod
+    def passkey_fresh(cls, session: DeviceSession, now: datetime) -> bool:
+        """Whether a passkey assertion proved `session` less than `CALL_PASSKEY_GRACE` before `now`."""
+        return session.passkey_at is not None and now < session.passkey_at + cls.CALL_PASSKEY_GRACE
 
     @classmethod
     def decide_refresh(cls, session: DeviceSession, presented_hash: str, now: datetime) -> RefreshOutcome:

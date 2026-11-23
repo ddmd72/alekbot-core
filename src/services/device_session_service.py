@@ -3,7 +3,8 @@
 A sign-in `start`s a session: a stored record (`DeviceSessionRepository`), an access JWT carrying its `sid`
 (`SessionService.create_device_access_token`, `DeviceSessionPolicy.ACCESS_TTL`), and a random refresh secret whose
 SHA-256 alone is stored; the owner is told through `UserNotificationService.notify_ui_notice` (the platform hint is
-untrusted, sent literally). A `refresh` presents the secret: the repository decides and writes in one transaction
+untrusted, sent literally), in words that say how the session was signed in (Google or a passkey, §7.5). A passkey
+sign-in also counts as the session's first passkey assertion (`passkey_at`, read by a call start, §7.3). A `refresh` presents the secret: the repository decides and writes in one transaction
 (rotate, grace, replay → revoked, dead). The gate asks `is_live(sid)`, answered from a per-instance cache for at most
 `GATE_CACHE_TTL` (the revocation latency bound), else from the record.
 
@@ -81,7 +82,8 @@ class DeviceSessionService:
             sid=self._new_sid(), user_id=user.user_id, account_id=account.account_id, label=label,
             platform_hint=platform_hint, auth_kind=auth_kind, auth_at=now, created_at=now, last_seen_at=now,
             expires_at=DeviceSessionPolicy.absolute_end(now), refresh_hash=refresh_secret_hash(secret),
-            purge_after=DeviceSessionPolicy.purge_after(now))
+            purge_after=DeviceSessionPolicy.purge_after(now),
+            passkey_at=now if auth_kind is SessionAuthKind.PASSKEY else None)
         version = await self._read_version(session.sid)
         if not await self._repo.create(session):
             logger.error(f"💥 Device session id collision: sid={session.sid[:8]} user={user.user_id[:8]}")
@@ -158,6 +160,14 @@ class DeviceSessionService:
             self._cache.clear()
         return count
 
+    async def current(self, user_id: str, sid: str) -> Optional[DeviceSession]:
+        """The record of `sid` when it is a live session of `user_id` (read now, not from the gate's cache); None
+        otherwise. For a route behind the gate that needs the session itself (its label, how it was signed in)."""
+        session = await self._repo.get(sid)
+        if session is None or session.user_id != user_id or not DeviceSessionPolicy.is_live(session, self._clock()):
+            return None
+        return session
+
     async def list_for_user(self, user_id: str) -> List[DeviceSession]:
         """The user's live sessions, oldest first."""
         now = self._clock()
@@ -190,10 +200,13 @@ class DeviceSessionService:
             self._cache.pop(sid, None)
 
     async def _announce(self, session: DeviceSession, now: datetime) -> None:
-        """The new sign-in notice; a failure is logged and never fails the sign-in."""
+        """The new sign-in notice, worded by how the session was signed in; a failure is logged and never fails the
+        sign-in."""
+        message = (UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE if session.auth_kind is SessionAuthKind.PASSKEY
+                   else UIMessage.DEVICE_SIGN_IN_NOTICE)
         try:
             sent = await self._notifications.notify_ui_notice(
-                session.user_id, session.account_id, UIMessage.DEVICE_SIGN_IN_NOTICE,
+                session.user_id, session.account_id, message,
                 platform_hint=session.platform_hint, time=_notice_time(now))
         except Exception as exc:
             logger.error(f"💥 New sign-in notice failed: user={session.user_id[:8]} sid={session.sid[:8]}: {exc}",

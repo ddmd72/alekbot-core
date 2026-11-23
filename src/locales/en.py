@@ -282,6 +282,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_PAGE_GONE.value: "This link is no longer valid. Send $geo again.",
     UIMessage.GEO_PAGE_NOT_SAVED.value: "The position was not saved. Send $geo again.",
     UIMessage.DEVICE_SIGN_IN_NOTICE.value: "New sign-in: {platform_hint}, {time}, via Google. Not you? Send `$devices off`.",
+    UIMessage.DEVICE_PASSKEY_SIGN_IN_NOTICE.value: "New sign-in: {platform_hint}, {time}, with a passkey (Face ID). Not you? Send `$devices off`.",
     UIMessage.DEVICES_UNAVAILABLE.value: "The device list is not available right now.",
     UIMessage.DEVICES_USAGE.value: "`$devices` lists the devices signed in to your Cabinet; `$devices off` signs all of them out.",
     UIMessage.DEVICES_LIST_HEADER.value: "Devices signed in to your Cabinet ({count}):",

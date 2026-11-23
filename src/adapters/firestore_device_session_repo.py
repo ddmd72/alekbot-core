@@ -3,7 +3,7 @@
 
 Collection `{prefix}auth_device_sessions_v1` (`EnvironmentConfig.device_sessions_collection`), doc id = the random
 `sid`. Stored fields: `sid, user_id, account_id, label, platform_hint, auth_kind, auth_at, created_at, last_seen_at,
-expires_at, refresh_hash, prev_refresh_hash, rotated_at, revoked_at, revoke_reason, purge_after` (enums as their
+expires_at, refresh_hash, prev_refresh_hash, rotated_at, revoked_at, revoke_reason, purge_after, passkey_at` (enums as their
 values, timestamps tz-aware UTC). The refresh secret itself is never stored, only its SHA-256. `purge_after` is the
 Firestore TTL field (a TTL policy on it is a rollout step, not code).
 
@@ -12,8 +12,8 @@ SHA-256 hex of the credential id). Stored fields: `cred_hash, credential_id, use
 algorithm, sign_count, label, platform_hint, backup_eligible, created_at, last_used_at, revoked_at` (the id and the key
 as bytes). No TTL: a revoked passkey stays as a record.
 
-- `create` and `add_passkey` never overwrite; `refresh`, `revoke`, `touch_passkey`, `revoke_passkey` and `revoke_all`
-  are one transaction each, so the refresh decision is taken on the record its write replaces, two refreshes of one
+- `create` and `add_passkey` never overwrite; `refresh`, `revoke`, `record_passkey_assertion`, `touch_passkey`,
+  `revoke_passkey` and `revoke_all` are one transaction each, so the refresh decision is taken on the record its write replaces, two refreshes of one
   sid cannot both rotate (the loser's transaction re-runs on the rotated record), and two assertions with one counter
   cannot both advance it. `revoke_all` reads the user's sessions and passkeys first, then writes both.
 - A document whose stored `sid` (or `cred_hash`) contradicts its id is treated as absent and logged at ERROR.
@@ -33,7 +33,8 @@ from ..domain.passkey import Passkey, PasskeyKind, sign_count_advances
 from ..ports.device_session_repository import DeviceSessionRepository
 from ..utils.logger import logger
 
-_TIME_FIELDS = ("auth_at", "created_at", "last_seen_at", "expires_at", "rotated_at", "revoked_at", "purge_after")
+_TIME_FIELDS = ("auth_at", "created_at", "last_seen_at", "expires_at", "rotated_at", "revoked_at", "purge_after",
+                "passkey_at")
 _PASSKEY_TIME_FIELDS = ("created_at", "last_used_at", "revoked_at")
 
 
@@ -176,6 +177,23 @@ class FirestoreDeviceSessionRepository(DeviceSessionRepository):
         if revoked:
             logger.info(f"🔒 Device session revoked: sid={sid[:8]} reason={reason.value}")
         return revoked
+
+    async def record_passkey_assertion(self, sid: str, user_id: str, at: datetime) -> bool:
+        ref = self._col.document(sid)
+
+        @firestore.async_transactional
+        async def _record(transaction: Any) -> bool:
+            data = self._owned(await ref.get(transaction=transaction))
+            if data is None or data.get("user_id") != user_id or not DeviceSessionPolicy.is_live(_from_doc(data), at):
+                return False
+            transaction.update(ref, {"passkey_at": at})
+            return True
+
+        recorded: bool = await _record(self._db.transaction())
+        if not recorded:
+            logger.warning(f"⛔ Passkey assertion not recorded (session absent, not the user's, or ended): "
+                           f"sid={sid[:8]}")
+        return recorded
 
     async def revoke_all(self, user_id: str, reason: SessionRevokeReason, now: datetime) -> int:
         sessions = self._col.where(filter=FieldFilter("user_id", "==", user_id))

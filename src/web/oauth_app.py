@@ -7,7 +7,9 @@ Provides web UI authentication via Google OAuth / Firebase.
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 
 Endpoints:
-- GET  /auth/login - Redirect to OAuth provider
+- GET  /auth/login - The sign-in page: passkey first, Google second (CABINET_DEVICE_SESSIONS_RFC §7.3); without passkey
+  sign-in configured, or with `?provider=`, the Google redirect itself
+- GET  /auth/login/google - Redirect to the OAuth provider (the page's "Sign in with Google" and its fallback)
 - GET  /auth/callback - OAuth callback handler
 - POST /auth/refresh - Refresh the device session (CABINET_DEVICE_SESSIONS_RFC §7.1)
 - POST /auth/logout - Logout (revoke the device session, clear cookies)
@@ -69,6 +71,7 @@ def create_oauth_blueprint(
     invite_service: Optional['InviteCodeService'] = None,
     connect_service: Optional['OAuthConnectService'] = None,
     connectors: Optional['ConnectorRegistry'] = None,
+    passkey_sign_in: bool = False,
 ) -> Blueprint:
     """
     Create Quart Blueprint with OAuth endpoints.
@@ -83,6 +86,8 @@ def create_oauth_blueprint(
         connect_service: the integration connect flow (`/auth/connect/<kind>`, `/auth/connect/callback`); without it
             both answer 501 (the start also without `connectors`)
         connectors: the connector registry: which kinds exist and which realms have an edge
+        passkey_sign_in: whether the passkey sign-in routes are served (`device_auth_app.py`); then `/auth/login` is
+            the sign-in page with the passkey path first, otherwise it is the Google redirect, as before passkeys
 
     Returns:
         Configured Blueprint
@@ -100,11 +105,35 @@ def create_oauth_blueprint(
         clear_session_cookies(response)
         return response
 
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
     # ========================================================================
-    # GET /auth/login - Redirect to OAuth provider
+    # GET /auth/login - The sign-in page (CABINET_DEVICE_SESSIONS_RFC §7.3)
     # ========================================================================
     @bp.route("/auth/login", methods=["GET"])
     async def oauth_login():
+        """
+        The sign-in page: "Sign in with Face ID / passkey" first, "Sign in with Google" second. The page is static; it
+        reads `next` (and an invite `code`) from its own URL and hands them to `/auth/passkey/verify` or
+        `/auth/login/google`, which check them. A browser without WebAuthn, a cancelled sheet, no passkey or a refused
+        one fall through to Google. Without passkey sign-in configured, or with `?provider=` (a provider chosen
+        explicitly), this is the Google redirect itself.
+        """
+        if not passkey_sign_in or request.args.get("provider"):
+            return await _google_login()
+        response = await send_file(os.path.join(static_dir, "sign_in.html"), mimetype="text/html")
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    # ========================================================================
+    # GET /auth/login/google - Redirect to OAuth provider
+    # ========================================================================
+    @bp.route("/auth/login/google", methods=["GET"])
+    async def oauth_login_google():
+        """The Google redirect of the sign-in page."""
+        return await _google_login()
+
+    async def _google_login():
         """
         Initiate OAuth flow by redirecting to OAuth provider.
 
@@ -522,7 +551,6 @@ def create_oauth_blueprint(
     async def session_script():
         """Anonymous by design: the script holds no secret, and a page must load it before it has a session.
         The main app has no static folder, so this is an explicit route (CABINET_DEVICE_SESSIONS_RFC §7.4)."""
-        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
         response = await send_file(os.path.join(static_dir, "session.js"), mimetype="application/javascript")
         # Revalidate on every load: a deploy must not leave a page running an old refresh protocol.
         response.headers["Cache-Control"] = "no-cache"

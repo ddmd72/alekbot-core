@@ -76,7 +76,7 @@ def create_voice_web_call_blueprint(cabinet_sessions, call_setup, media_room, ep
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
                                     digest_key: bytes, replace_wait_s: float = _REPLACE_WAIT_S,
                                     replace_poll_s: float = _REPLACE_POLL_S, call_text_files=None,
-                                    language_service=None) -> Blueprint:
+                                    language_service=None, passkeys=None) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
     auth_required = make_auth_required(cabinet_sessions)
     web_calls = WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
@@ -210,6 +210,15 @@ def create_voice_web_call_blueprint(cabinet_sessions, call_setup, media_room, ep
     @bp.route("/api/voice/web-call", methods=["POST"])
     @auth_required
     async def start():
+        if passkeys is not None:
+            try:
+                allowed = await passkeys.call_start_allowed(g.user_id, g.session_id)
+            except Exception:
+                logger.error(f"web call: the passkey check failed for {g.user_id}, start refused", exc_info=True)
+                return jsonify({"error": "could not check the passkey"}), 503
+            if not allowed:
+                logger.info(f"web call: start of {g.user_id} needs a fresh passkey")
+                return jsonify({"error": "passkey_required"}), 403
         body = await request.get_json()
         # Validated BEFORE claim: a malformed body must never hold the one-call marker (or a
         # ticket) for its TTL just to be rejected. "mid present" mirrors what str(body["mid"])

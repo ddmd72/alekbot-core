@@ -3,7 +3,8 @@
 
 A session is addressed by its random `sid`, a passkey by its `cred_hash`; the only query is a single equality on
 `user_id`. Every write that depends on what is stored is one transaction: the refresh decision and its write (so two
-refreshes of one sid cannot both rotate), a revoke, a passkey's counter advance (so two assertions with one counter
+refreshes of one sid cannot both rotate), a revoke, the record of a passkey assertion on a session, a passkey's counter
+advance (so two assertions with one counter
 cannot both pass), and `revoke_all` over every session and passkey of a user (so a sign-in or refresh racing the kill
 switch either sees it or retries after it). Sessions and passkeys share one port because `revoke_all` must cover both
 in one transaction.
@@ -44,6 +45,12 @@ class DeviceSessionRepository(ABC):
     async def revoke(self, sid: str, reason: SessionRevokeReason, now: datetime) -> bool:
         """Revoke the session at `now` with `reason`, in one transaction. False when absent or already revoked (the
         first revocation's time and reason are kept)."""
+
+    @abstractmethod
+    async def record_passkey_assertion(self, sid: str, user_id: str, at: datetime) -> bool:
+        """Set the session's `passkey_at` to `at` (a passkey assertion just proved it), in one transaction. False, and
+        nothing written, when the session is absent, of another user than `user_id`, or not live at `at`
+        (`DeviceSessionPolicy.is_live`)."""
 
     @abstractmethod
     async def revoke_all(self, user_id: str, reason: SessionRevokeReason, now: datetime) -> int:

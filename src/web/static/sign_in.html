@@ -1,0 +1,114 @@
+<!doctype html>
+<!-- The sign-in page (CABINET_DEVICE_SESSIONS_RFC §7.3): the passkey path first, Google second. Static and anonymous:
+     it reads `next` (and an invite `code`) from its own URL and hands them on; the server checks both. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <title>Sign in · Alek</title>
+    <style>
+      :root { --bg: #f6f5f2; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --accent: #1d1d1f; --line: #e3e1dc; }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #111112; --card: #1c1c1e; --text: #f5f5f7; --muted: #a1a1a6; --accent: #f5f5f7; --line: #2c2c2e; }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+             background: var(--bg); color: var(--text); padding: 16px;
+             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+      main { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--line);
+             border-radius: 16px; padding: 28px 24px; text-align: center; }
+      img { width: 56px; height: 56px; border-radius: 50%; }
+      h1 { font-size: 22px; margin: 14px 0 6px; }
+      p { color: var(--muted); font-size: 14px; margin: 0 0 22px; line-height: 1.45; }
+      button, a.btn { display: block; width: 100%; padding: 13px 16px; border-radius: 12px; font-size: 16px;
+                      font-weight: 600; cursor: pointer; text-decoration: none; margin-top: 10px; font-family: inherit; }
+      #passkey { background: var(--accent); color: var(--bg); border: none; }
+      #passkey[disabled] { opacity: 0.6; cursor: default; }
+      #google { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/alek.jpg" alt="" />
+      <h1 id="title">Sign in</h1>
+      <p id="lead">Use Face ID or your device's passkey. No passkey yet? Sign in with Google.</p>
+      <button id="passkey" type="button">Sign in with Face ID / passkey</button>
+      <a id="google" class="btn" href="/auth/login/google">Sign in with Google</a>
+    </main>
+    <script>
+      (function () {
+        "use strict";
+        var TEXTS = {
+          en: { title: "Sign in", lead: "Use Face ID or your device's passkey. No passkey yet? Sign in with Google.",
+                passkey: "Sign in with Face ID / passkey", google: "Sign in with Google" },
+          uk: { title: "Вхід", lead: "Увійди з Face ID або ключем доступу пристрою. Ще немає ключа? Увійди через Google.",
+                passkey: "Увійти з Face ID / ключем доступу", google: "Увійти через Google" },
+          fr: { title: "Connexion", lead: "Utilisez Face ID ou la clé d'accès de l'appareil. Pas encore de clé ? Connectez-vous avec Google.",
+                passkey: "Se connecter avec Face ID / clé d'accès", google: "Se connecter avec Google" },
+          es: { title: "Iniciar sesión", lead: "Usa Face ID o la llave de acceso del dispositivo. ¿Aún no tienes llave? Entra con Google.",
+                passkey: "Entrar con Face ID / llave de acceso", google: "Entrar con Google" },
+        };
+        var lang = String((navigator.languages && navigator.languages[0]) || navigator.language || "en").slice(0, 2);
+        var text = TEXTS[lang] || TEXTS.en;
+        document.documentElement.lang = TEXTS[lang] ? lang : "en";
+        document.title = text.title + " · Alek";
+        ["title", "lead", "passkey", "google"].forEach(function (id) {
+          document.getElementById(id).textContent = text[id];
+        });
+
+        var query = new URLSearchParams(location.search);
+        var googleUrl = "/auth/login/google" + location.search;
+        document.getElementById("google").setAttribute("href", googleUrl);
+        function toGoogle() { location.replace(googleUrl); }
+
+        // An invite is for a person without an account yet, and a browser without WebAuthn has no passkey path.
+        var webauthn = typeof window.PublicKeyCredential !== "undefined" && !!(navigator.credentials && navigator.credentials.get);
+        if (query.get("code") || !webauthn) { toGoogle(); return; }
+
+        function fromB64u(s) {
+          var b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+          while (b64.length % 4) b64 += "=";
+          var raw = atob(b64), bytes = new Uint8Array(raw.length);
+          for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+          return bytes.buffer;
+        }
+        function toB64u(buf) {
+          var bytes = new Uint8Array(buf), raw = "";
+          for (var i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+          return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        }
+        function post(url, body) {
+          return fetch(url, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify(body || {}) });
+        }
+
+        var button = document.getElementById("passkey");
+        button.addEventListener("click", function () {
+          button.disabled = true;
+          post("/auth/passkey/options")
+            .then(function (resp) { if (resp.status !== 200) throw new Error("options"); return resp.json(); })
+            .then(function (body) {
+              var o = body.options;
+              return navigator.credentials.get({ publicKey: Object.assign({}, o, {
+                challenge: fromB64u(o.challenge),
+                allowCredentials: (o.allowCredentials || []).map(function (c) { return Object.assign({}, c, { id: fromB64u(c.id) }); }),
+              }) });
+            })
+            .then(function (cred) {
+              var r = cred.response, response = { clientDataJSON: toB64u(r.clientDataJSON),
+                authenticatorData: toB64u(r.authenticatorData), signature: toB64u(r.signature) };
+              if (r.userHandle) response.userHandle = toB64u(r.userHandle);
+              return post("/auth/passkey/verify", { next: query.get("next") || "/cabinet", credential: {
+                id: cred.id, rawId: toB64u(cred.rawId), type: cred.type, response: response, clientExtensionResults: {},
+                authenticatorAttachment: cred.authenticatorAttachment || null } });
+            })
+            .then(function (resp) { if (resp.status !== 200) throw new Error("verify"); return resp.json(); })
+            .then(function (body) { location.replace(body.next); })
+            // No passkey on this device, a cancelled sheet, or a refusal: Google is the way in.
+            .catch(toGoogle);
+        });
+      })();
+    </script>
+  </body>
+</html>

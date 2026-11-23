@@ -106,6 +106,7 @@ async def main():
             invite_service=app.invite_service,
             connect_service=app.connect_service,
             connectors=app.container.connectors,
+            passkey_sign_in=True,
         )
 
         cabinet_bp = create_user_cabinet_blueprint(
@@ -181,7 +182,8 @@ async def main():
                 # Register OAuth + Cabinet blueprints
                 main_app.register_blueprint(oauth_bp)
                 main_app.register_blueprint(cabinet_bp)
-                main_app.register_blueprint(create_device_auth_blueprint(cabinet_sessions, app.device_sessions))
+                main_app.register_blueprint(create_device_auth_blueprint(
+                    cabinet_sessions, app.device_sessions, passkeys=app.passkeys, auth_service=app.auth_service))
                 main_app.register_blueprint(ms_tasks_webhook_bp)
 
                 # /f/<token> capability route for private file access
@@ -423,6 +425,7 @@ async def main():
                         digest_key=app.digest_key,
                         call_text_files=app.call_text_files,
                         language_service=app.language_service,
+                        passkeys=app.passkeys,
                     ))
                     logger.info(
                         "✅ Voice web-call blueprint registered at /cabinet/call, /api/voice/web-call"

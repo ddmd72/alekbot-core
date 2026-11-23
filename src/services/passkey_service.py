@@ -15,6 +15,11 @@ unknown, expired or already used nonce is refused, and a challenge serves exactl
   counter advance is written in one transaction (`touch_passkey`), so a replayed or cloned assertion racing the real
   one loses. It returns the user_id only: the caller runs `resume_session` and starts the device session.
 - **Removal** revokes one passkey of the user and tells the owner.
+- **The call-start step-up** (§7.3, §13 decision 1): a voice call start of a user with a live passkey needs a passkey
+  assertion on the session less than `DeviceSessionPolicy.CALL_PASSKEY_GRACE` old (`call_start_allowed`); a user
+  without one starts as before. The step-up is a sign-in ceremony bound to the user and the session that began it: the
+  assertion must come from a passkey of that user, and it is recorded on that session (`passkey_at`). A passkey
+  sign-in counts too (`DeviceSessionService.start` sets `passkey_at`).
 
 Every refusal raises `PasskeyRejected` and is logged without the nonce, the challenge or the response.
 """
@@ -22,9 +27,10 @@ import base64
 import hashlib
 import secrets
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, NoReturn
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, NoReturn, Tuple
 
 from ..domain.device_session import DeviceSession
+from ..domain.device_session_policy import DeviceSessionPolicy
 from ..domain.passkey import Passkey, PasskeyKind, credential_hash
 from ..domain.passkey_ceremony import CeremonyStart, PasskeyRejected
 from ..domain.ui_messages import UIMessage
@@ -37,7 +43,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .user_notification_service import UserNotificationService
 
-_REGISTER, _SIGN_IN = "register", "sign_in"
+_REGISTER, _SIGN_IN, _STEP_UP = "register", "sign_in", "step_up"
 
 
 def _utcnow() -> datetime:
@@ -137,19 +143,49 @@ class PasskeyService:
         """Verify the browser's assertion for the challenge `nonce` names and record the passkey's use. Returns the
         passkey's user_id; the caller still runs `resume_session` (active user, whitelist, account) before a session."""
         record = await self._take(nonce, _SIGN_IN)
-        cred_hash = credential_hash(await self._verifier.credential_id_of(response))
-        passkey = await self._repo.get_passkey(cred_hash)
-        if passkey is None or passkey.revoked_at is not None:
-            _refuse(f"credential {cred_hash[:8]} is not a live passkey")
-        verified = await self._verifier.verify_authentication(
-            response, challenge=self._challenge_of(record), public_key=passkey.public_key,
-            sign_count=passkey.sign_count)
-        if verified.user_handle != passkey.user_id.encode("utf-8"):
-            _refuse(f"credential {cred_hash[:8]} answered with another user handle than its passkey's")
-        if not await self._repo.touch_passkey(cred_hash, verified.sign_count, self._clock()):
-            _refuse(f"credential {cred_hash[:8]} use not recorded (revoked, or its counter did not advance)")
-        logger.info(f"🔑 Passkey sign-in: user={passkey.user_id[:8]} key={cred_hash[:8]}")
+        passkey, sign_count = await self._verified(record, response)
+        await self._touch(passkey, sign_count)
+        logger.info(f"🔑 Passkey sign-in: user={passkey.user_id[:8]} key={passkey.cred_hash[:8]}")
         return passkey.user_id
+
+    # ------------------------------------------------------------------ the call-start step-up
+
+    async def live_passkeys(self, user_id: str) -> List[Passkey]:
+        """The user's passkeys that are not revoked, oldest first."""
+        return [p for p in await self._repo.list_passkeys(user_id) if p.revoked_at is None]
+
+    async def call_start_allowed(self, user_id: str, sid: str) -> bool:
+        """Whether session `sid` of `user_id` may start a voice call now: always for a user without a live passkey,
+        otherwise only when a passkey assertion proved that session less than `CALL_PASSKEY_GRACE` ago. Read from
+        the store, never from a cache: a store error propagates (the caller refuses)."""
+        if not await self.live_passkeys(user_id):
+            return True
+        session = await self._repo.get(sid)
+        if session is None or session.user_id != user_id:
+            return False
+        return DeviceSessionPolicy.passkey_fresh(session, self._clock())
+
+    async def begin_step_up(self, user_id: str, sid: str) -> CeremonyStart:
+        """Start the step-up of session `sid` (live, the caller's gate checked it) of `user_id`."""
+        challenge, nonce = self._new_challenge(), self._new_nonce()
+        options = await self._verifier.authentication_options(challenge=challenge)
+        await self._challenges.set(_key(nonce), {"purpose": _STEP_UP, "challenge": _b64(challenge),
+                                                 "user_id": user_id, "sid": sid}, self.CHALLENGE_TTL_S)
+        return CeremonyStart(nonce=nonce, options=options)
+
+    async def finish_step_up(self, nonce: str, response: Dict[str, Any], user_id: str, sid: str) -> None:
+        """Verify the assertion for the step-up challenge `nonce` names, begun by `user_id` in session `sid`, from a
+        passkey of that user; record the passkey's use and the assertion on the session."""
+        record = await self._take(nonce, _STEP_UP)
+        if record.get("user_id") != user_id or record.get("sid") != sid:
+            _refuse(f"step-up challenge not begun by {user_id[:8]} in session {sid[:8]}")
+        passkey, sign_count = await self._verified(record, response)
+        if passkey.user_id != user_id:
+            _refuse(f"credential {passkey.cred_hash[:8]} is not a passkey of {user_id[:8]}")
+        await self._touch(passkey, sign_count)
+        if not await self._repo.record_passkey_assertion(sid, user_id, self._clock()):
+            _refuse(f"session {sid[:8]} could not record the assertion (absent, not the user's, or ended)")
+        logger.info(f"🔑 Passkey step-up: user={user_id[:8]} sid={sid[:8]} key={passkey.cred_hash[:8]}")
 
     # ------------------------------------------------------------------ removal
 
@@ -176,6 +212,25 @@ class PasskeyService:
         if record.get("purpose") != purpose:
             _refuse(f"{purpose} challenge is of another ceremony")
         return record
+
+    async def _verified(self, record: Dict[str, Any], response: Dict[str, Any]) -> Tuple[Passkey, int]:
+        """The live passkey an assertion names and the counter it reported, once the assertion verified against the
+        record's challenge and the passkey's key, and its user handle is that passkey's user. Nothing is written."""
+        cred_hash = credential_hash(await self._verifier.credential_id_of(response))
+        passkey = await self._repo.get_passkey(cred_hash)
+        if passkey is None or passkey.revoked_at is not None:
+            _refuse(f"credential {cred_hash[:8]} is not a live passkey")
+        verified = await self._verifier.verify_authentication(
+            response, challenge=self._challenge_of(record), public_key=passkey.public_key,
+            sign_count=passkey.sign_count)
+        if verified.user_handle != passkey.user_id.encode("utf-8"):
+            _refuse(f"credential {cred_hash[:8]} answered with another user handle than its passkey's")
+        return passkey, verified.sign_count
+
+    async def _touch(self, passkey: Passkey, sign_count: int) -> None:
+        """Record the passkey's use; refused when it was revoked meanwhile or its counter did not advance."""
+        if not await self._repo.touch_passkey(passkey.cred_hash, sign_count, self._clock()):
+            _refuse(f"credential {passkey.cred_hash[:8]} use not recorded (revoked, or its counter did not advance)")
 
     @staticmethod
     def _challenge_of(record: Dict[str, Any]) -> bytes:
