@@ -6,6 +6,14 @@ The decisions are in §2. Every example below is invented: the user is Alex Doe,
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
 changed in the Example School term calendar".
 
+**Implementation notes (step 1).** The build differs from the body below in two ways; the body is kept as specified.
+Smart has five tools, not four: `list_external_workers` (the owner's registered labels and descriptions) was added and
+is on the taint allowlist. The taint rule has more sources and markers than §5.3 lists: the final flag is saved on the
+model message (`execution_tainted`), so later turns that load it are tainted; a forwarded Telegram message taints; a
+listing that shows a task created tainted (`created_tainted`) taints; reminders written in a tainted execution are
+flagged and wrapped wherever they reach a model; and every workspace write in a tainted execution carries the
+`tainted_execution` mark. The built rule as a whole: `docs/05_building_blocks/untrusted_content_taint/README.md`.
+
 ## 1. Purpose
 
 Some work is better done by an agent or a service the user already runs elsewhere: a long piece of research, or a job

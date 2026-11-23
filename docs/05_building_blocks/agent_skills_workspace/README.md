@@ -158,15 +158,21 @@ name wins, and its content always comes from Firestore; otherwise the system bun
 
 ### Workspace: the untrusted flag
 
-A file can carry a file-level provenance mark, `untrusted` (object metadata, `WorkspaceEntry.untrusted`; today only
-`external_task:<task_id>`, written by the external task delivery through `WorkspaceService.write_marked`, which creates
-and never overwrites). The mark follows the content, not the folder: `create` over the file, `str_replace`, `insert`,
+A file can carry a file-level provenance mark, `untrusted` (object metadata, `WorkspaceEntry.untrusted`). Two marks
+exist: `external_task:<task_id>`, written by the external task delivery through `WorkspaceService.write_marked`, which
+creates and never overwrites; and `TAINTED_EXECUTION_MARK`, which every write of the workspace tool carries when its
+execution had read outside content (`WorkspaceCall.write_mark`, set from Smart's taint tracker by
+`make_workspace_handler`; `docs/05_building_blocks/untrusted_content_taint/README.md`). A file that is already flagged
+keeps its own mark. The mark follows the content, not the folder: `create` over the file, `str_replace`, `insert`,
 `rename`, `copy` (from or onto a flagged path) and `restore` (when the live or the restored version is flagged) all
 write the next version with the same mark. Every model-facing read of a flagged file is wrapped as outside content
 (`EXTERNAL_REMINDER` + `wrap_untrusted(store=workspace)` with a fresh nonce): `view`, `view` of a version, the hit lines
-of `grep`. (`open_file` and prefetch of a `workspace:` ref are wrapped for every workspace file by the document
-presenter, flagged or not.) An unflagged file reads exactly as before through the workspace tool. Text a model retypes into a
-new file carries no mark (a residual risk of `EXTERNAL_TASK_QUEUE_RFC` §6.1).
+of `grep`, and the changed lines a `str_replace` or `insert` echoes back; such a read sets `ToolResult.untrusted`, so it
+taints the reading execution. (`open_file` and prefetch of a `workspace:` ref are wrapped for every workspace file by
+the document presenter, flagged or not.) An unflagged file reads exactly as before through the workspace tool. Text a
+model retypes into a new file in a tainted execution is flagged by that write mark; only text that reaches an untainted
+execution some other way (memory, for one) is written unflagged, which narrows the residual risk of
+`EXTERNAL_TASK_QUEUE_RFC` §6.1.
 
 ### Workspace: reminders
 
