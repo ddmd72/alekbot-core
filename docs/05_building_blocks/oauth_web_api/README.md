@@ -100,7 +100,7 @@ a passkey for the next voice call start (`DeviceSession.passkey_at`). The relyin
    written, and no session.
 4. A pending `invite_code` cookie is consumed with `InviteCodeService.consume_team_invite`; a failure is logged and does
    not stop the sign-in.
-5. The route starts a device session (`DeviceSessionService.start`, which also sends the new-sign-in notice), sets the
+5. The route starts a device session (`DeviceSessionService.start`, which sends the new-sign-in notice on a Google sign-in), sets the
    two cookies, deletes `oauth_state` and **redirects** to `auth_next` (validated again with `safe_return_path`). The
    response is a redirect, not JSON.
 6. A rejected identity (`AccessDeniedError`) returns a fixed 403 HTML page and sets no session cookie. Any other failure
