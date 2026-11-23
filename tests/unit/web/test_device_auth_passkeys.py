@@ -486,6 +486,7 @@ class TestChangingPasskeysNeedsAFreshAssertion:
     async def test_removing_is_400_passkey_required_without_a_fresh_assertion_and_removes_nothing(self, world):
         await world.google_sign_in()
         row = (await (await world.enrol()).get_json())["passkey"]
+        world.kit.clock.advance(minutes=5)                                  # the Google sign-in no longer proves anything
         resp = await world.post(f"/api/user/passkeys/{row['id']}/remove")
         assert resp.status_code == 400 and await resp.get_json() == self.PASSKEY_REQUIRED
         assert len((await (await world.client.get("/api/user/passkeys")).get_json())["passkeys"]) == 1
@@ -493,6 +494,7 @@ class TestChangingPasskeysNeedsAFreshAssertion:
     async def test_the_bypass_remove_all_then_start_a_call_is_stopped_at_the_remove_step(self, world):
         await world.google_sign_in()
         row = (await (await world.enrol()).get_json())["passkey"]
+        world.kit.clock.advance(minutes=5)                                  # the Google sign-in no longer proves anything
         assert (await world.post(f"/api/user/passkeys/{row['id']}/remove")).status_code == 400
         resp = await world.start_call()
         assert resp.status_code == 403 and await resp.get_json() == {"error": "passkey_required"}
@@ -507,6 +509,7 @@ class TestChangingPasskeysNeedsAFreshAssertion:
     async def test_adding_a_second_is_400_passkey_required_at_options_and_at_verify(self, world):
         await world.google_sign_in()
         await world.enrol()
+        world.kit.clock.advance(minutes=5)                                  # the Google sign-in no longer proves anything
         refused = await world.post("/api/user/passkeys/register/options")
         assert refused.status_code == 400 and await refused.get_json() == self.PASSKEY_REQUIRED
         assert (await world.step_up()).status_code == 200
