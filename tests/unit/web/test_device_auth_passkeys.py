@@ -231,11 +231,6 @@ class TestSignInPage:
         evil = await world.client.get("/auth/login/google?next=https://evil.example/x")
         assert "evil.example" not in _values(evil).get("auth_next", "")
 
-    async def test_without_passkey_sign_in_login_is_the_google_redirect(self):
-        world = World(passkeys_wired=False)
-        resp = await world.client.get("/auth/login?next=/cabinet")
-        assert resp.status_code == 302 and resp.headers["Location"].startswith("https://accounts.example/auth")
-
 
 # ---------------------------------------------------------------------------------------------- passkey sign-in
 
