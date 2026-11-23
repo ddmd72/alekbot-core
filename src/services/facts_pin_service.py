@@ -78,6 +78,9 @@ class FactsPinService:
         reason = outcome.lock_reason
         if reason is not None:
             await self._lock.lock(user_id, reason)
+        elif outcome.verdict is PinVerdict.LOCKED:
+            # Already locked (any surface): the lock's revocation may have failed; it is idempotent, the notice is not.
+            await self._lock.revoke(user_id)
         return outcome
 
     # ------------------------------------------------------------------ setting, changing, removing

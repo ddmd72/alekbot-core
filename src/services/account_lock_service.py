@@ -36,15 +36,21 @@ class AccountLockService:
         self._device_sessions = device_sessions
         self._notifications = notifications
 
-    async def lock(self, user_id: str, reason: InactiveReason) -> None:
-        """Steps 2–4 for a user whose flag the PIN transaction has just written."""
-        logger.warning(f"🔒 Account lock: user={user_id[:8]} reason={reason.value}")
+    async def revoke(self, user_id: str) -> None:
+        """Steps 2–3 alone: the idempotent revocation of sessions, passkeys, a pending reset and MCP grants. `lock` runs
+        it first; `FactsPinService.check` re-runs it (never the notice) on an attempt against an already locked account,
+        so a revocation that failed at the lock is completed by the next attempt. A failure is logged, never raised."""
         try:
             revoked = await self._device_sessions.revoke_all(user_id, SessionRevokeReason.ACCOUNT_LOCK)
             logger.info(f"🔒 Account lock: user={user_id[:8]} sessions revoked={revoked}")
         except Exception as exc:
             logger.error(f"💥 Account lock: revoking the sessions or connector grants failed for {user_id[:8]}: {exc}",
                          exc_info=True)
+
+    async def lock(self, user_id: str, reason: InactiveReason) -> None:
+        """Steps 2–4 for a user whose flag the PIN transaction has just written."""
+        logger.warning(f"🔒 Account lock: user={user_id[:8]} reason={reason.value}")
+        await self.revoke(user_id)
         try:
             sent = await self._notifications.notify_ui_notice_all_channels(user_id, _NOTICE[reason])
         except Exception as exc:

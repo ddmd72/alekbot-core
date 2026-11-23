@@ -1653,8 +1653,10 @@ class ConversationHandler(ConversationHandlerPort):
                 )
 
             else:
+                # A command that is mostly digits may be a mistyped PIN (`$1234.`, `$12 34`): never echoed.
+                shown = command if sum(c.isdigit() for c in command) * 2 <= len(command) else "…"
                 await response_channel.send_message(
-                    self._ui_string(context, UIMessage.UNKNOWN_COMMAND, command=command),
+                    self._ui_string(context, UIMessage.UNKNOWN_COMMAND, command=shown),
                     thread_id=context.thread_id
                 )
 
