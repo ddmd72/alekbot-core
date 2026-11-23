@@ -6,6 +6,8 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -45,11 +47,19 @@ const document = { getElementById: (id) => (id.startsWith("home-") ? lineOf(id) 
 """
 
 
+def _node_out(script: str) -> str:
+    """Run a script under node from a temp file: the strings file alone is over Linux's per-argument limit for `-e`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "script.js"
+        path.write_text(script, encoding="utf-8")
+        out = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return out.stdout
+
+
 def _run(body: str) -> object:
     script = _STRINGS_JS + _PRELUDE + _HOME_JS + "\n(async () => {\n" + body + "\n})();\n"
-    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
-    assert out.returncode == 0, out.stderr
-    return json.loads(out.stdout)
+    return json.loads(_node_out(script))
 
 
 def _status(call: str) -> list:
@@ -273,9 +283,7 @@ def test_the_phone_redirect_is_gone():
 @pytest.mark.parametrize("qs", ["", "tab=", "tab=nonsense", "tab=constructor", "tab=__proto__", "joined=true", "tab=home"])
 def test_home_is_the_default_section_on_every_width(qs):
     script = _SHELL_JS_HEAD + f"process.stdout.write(JSON.stringify(sectionFor(new URLSearchParams({json.dumps(qs)}), [])));"
-    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
-    assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout) == "home"
+    assert json.loads(_node_out(script)) == "home"
 
 
 @_node
@@ -286,9 +294,7 @@ def test_home_is_the_default_section_on_every_width(qs):
 def test_aliases_and_connect_returns_are_unchanged(qs, section):
     connectors = [{"kind": "gmail", "integration": "mail"}, {"kind": "onedrive", "integration": "drive"}]
     script = _SHELL_JS_HEAD + f"process.stdout.write(JSON.stringify(sectionFor(new URLSearchParams({json.dumps(qs)}), {json.dumps(connectors)})));"
-    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
-    assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout) == section
+    assert json.loads(_node_out(script)) == section
 
 
 # The shell's pure address functions need only these globals.
