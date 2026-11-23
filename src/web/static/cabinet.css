@@ -413,15 +413,6 @@
         color: var(--c-text-2);
         margin: 0 0 var(--c-s2);
       }
-      .c-hint.c-glabel-hint {
-        margin: calc(-1 * var(--c-s1)) var(--c-s4) var(--c-s3);
-      }
-      /* A group among the old cards of a section: as wide as the widest of them and spaced like them (step 3
-         moves Settings onto the one column). */
-      .c-narrow {
-        max-width: 640px;
-        margin-bottom: 20px;
-      }
       .c-glabel {
         font-size: 13px;
         font-weight: 600;
@@ -1088,142 +1079,15 @@
         }
       }
 
-      /* ─── Integrations Section: compact tiles in a grid, the drive card full width below ─── */
-      .integration-bento {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 16px;
-        margin-bottom: 24px;
-        align-items: start; /* a tile never stretches to its neighbour's height */
-      }
-      @media (min-width: 768px) {
-        .integration-bento {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-      }
-      .integration-contents {
-        display: contents; /* the platform tiles are grid items of .integration-bento */
-      }
+      /* ─── The drive card's container in Drives ─── */
       #drive-container {
         margin-bottom: 48px;
-      }
-
-      .integration-card {
-        padding: 20px;
-        text-align: left;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        position: relative;
-        overflow: hidden;
-      }
-
-      .integration-icon {
-        width: 48px;
-        height: 48px;
-        border-radius: 14px;
-        background-color: var(--bg-panel-solid);
-        box-shadow: var(--shadow-sm);
-        border: 1px solid var(--border-light);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 24px;
-        margin-bottom: 14px;
-        transition: transform var(--transition-smooth);
-      }
-      .integration-icon svg {
-        width: 26px;
-        height: 26px;
-      }
-      .integration-card:hover .integration-icon {
-        transform: scale(1.05);
-      }
-
-      .integration-title {
-        font-size: 19px;
-        margin-bottom: 6px;
-      }
-      .integration-description {
-        font-size: 14px;
-        margin-bottom: 16px;
       }
 
       /* Long privacy text: collapsed by default, readable on demand. */
       .disclosure { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
       .disclosure summary { cursor: pointer; user-select: none; }
       .disclosure p { margin: 8px 0 0; }
-
-      .integration-status {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--text-main);
-        padding: 6px 12px;
-        background: var(--bg-active);
-        border-radius: 100px;
-        margin-bottom: 16px;
-        font-size: 13px;
-      }
-      .status-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-      }
-      .status-dot.connected {
-        background-color: var(--accent-success);
-        box-shadow: 0 0 8px rgba(52, 199, 89, 0.4);
-      }
-      .status-dot.disconnected {
-        background-color: var(--text-subtle);
-      }
-
-      .status-dot.needs-reconnect {
-        background-color: var(--accent-danger);
-      }
-
-      .integration-actions {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        margin-top: auto;
-      }
-
-      /* Specific card styling to make it feel premium */
-      .integration-card.gmail-card {
-        background: linear-gradient(
-          145deg,
-          var(--bg-panel-solid),
-          var(--bg-panel)
-        );
-      }
-      .integration-card.tasks-card {
-        background: linear-gradient(
-          145deg,
-          var(--bg-panel-solid),
-          var(--bg-panel)
-        );
-      }
-
-      @media (prefers-color-scheme: light) {
-        .integration-card.gmail-card {
-          background: linear-gradient(
-            145deg,
-            rgba(255, 255, 255, 0.9),
-            rgba(240, 244, 255, 0.5)
-          );
-        }
-        .integration-card.tasks-card {
-          background: linear-gradient(
-            145deg,
-            rgba(255, 255, 255, 0.9),
-            rgba(240, 250, 255, 0.5)
-          );
-        }
-      }
 
       /* ─── Drive card (dv-*): summary, tabs, picker dialog ─────────────── */
       .dv-head { margin: 0 4px 16px; }
@@ -1449,84 +1313,6 @@
       }
 
       /* ─── Team Section ──────────────────────────────────── */
-      .invite-container {
-        max-width: 600px;
-        margin: 0 auto;
-        text-align: center;
-      }
-
-      .invite-code-box {
-        background-color: var(--bg-panel-solid);
-        padding: 48px;
-        border-radius: var(--radius-xl);
-        box-shadow: var(--shadow-md);
-        margin: 40px 0;
-      }
-
-      .code-display {
-        font-family:
-          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 40px;
-        font-weight: 700;
-        color: var(--text-main);
-        letter-spacing: 0.1em;
-        margin-bottom: 16px;
-      }
-
-      .invite-link-wrapper {
-        display: flex;
-        align-items: center;
-        background: var(--bg-active);
-        border-radius: 100px;
-        padding: 4px;
-        max-width: 400px;
-        margin: 0 auto;
-      }
-
-      .table-card {
-        border-radius: var(--radius-xl);
-        overflow: hidden;
-      }
-
-      .codes-table {
-        width: 100%;
-        border-collapse: collapse;
-        text-align: left;
-        background: var(--bg-panel-solid);
-      }
-      .codes-table th,
-      .codes-table td {
-        padding: 20px 24px;
-        border-bottom: 1px solid var(--border-light);
-        font-size: 16px;
-      }
-      .codes-table th {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--text-muted);
-        background: var(--bg-hover);
-      }
-      .codes-table tr:last-child td {
-        border-bottom: none;
-      }
-
-      .status-badge {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 14px;
-        border-radius: 100px;
-        font-size: 13px;
-        font-weight: 600;
-      }
-      .status-badge.active {
-        color: var(--bg-app);
-        background-color: var(--accent-success);
-      }
-      .status-badge.used {
-        color: var(--text-muted);
-        background-color: var(--bg-hover);
-      }
-
       /* ─── Modals & Toasts ───────────────────────────────── */
       .modal-overlay {
         position: fixed;
@@ -1648,29 +1434,266 @@
         }
       }
 
-      /* Language segment control */
-      .lang-segment-control {
-        display: inline-flex;
-        background: rgba(0, 0, 0, 0.04);
-        border-radius: 100px;
-        padding: 4px;
+      /* ─── Settings (CABINET_REDESIGN_RFC §5.1, §5.3): what its rows add to the brand sheet's components ──────────
+         The one column; an item inside a row body (a device, a passkey, a connection); pills; the PIN flow's stepper,
+         fields and messages; a schedule whose hour shows only while its switch is on. */
+      :root {
+        --c-inset: rgba(118, 118, 128, 0.08);
+        --c-dot-off: rgba(118, 118, 128, 0.22);
       }
-      .lang-seg-btn {
-        padding: 8px 18px;
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--text-muted);
-        border: none;
-        background: transparent;
-        border-radius: 100px;
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --c-inset: rgba(118, 118, 128, 0.18);
+          --c-dot-off: rgba(118, 118, 128, 0.42);
+        }
+      }
+      .c-col {
+        width: 100%;
+        max-width: var(--c-column);
+        margin: 0 auto;
+      }
+      .c-col > .c-glabel:first-of-type {
+        margin-top: 0;
+      }
+      /* A row placed straight in a group keeps the separator its own `border: 0` would drop */
+      .c-group > * + .c-row {
+        border-top: 1px solid var(--c-sep);
+      }
+      .c-glabel,
+      .c-row {
+        scroll-margin-top: 80px;
+      }
+      .c-row-sub {
+        display: block;
+        font-size: 13px;
+        font-weight: 400;
+        line-height: 1.4;
+        color: var(--c-text-2);
+        margin-top: 2px;
+      }
+      label.c-row-title {
         cursor: pointer;
-        transition: var(--transition-fast);
       }
-      .lang-seg-btn.active {
-        color: var(--text-main);
-        background: var(--bg-panel-solid);
-        box-shadow: var(--shadow-sm);
+      .c-ext {
+        flex: none;
+        color: var(--c-chev);
+      }
+      .c-stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--c-s2);
+      }
+      .c-stack:empty {
+        display: none;
+      }
+      .c-mini {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--c-s2) var(--c-s3);
+        padding: var(--c-s3) 14px;
+        border-radius: var(--c-r2);
+        background: var(--c-inset);
+      }
+      .c-mini-main {
+        flex: 1 1 200px;
+        min-width: 0;
+      }
+      .c-mini-t {
+        display: block;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--c-text);
+        overflow-wrap: anywhere;
+      }
+      .c-mini-t .c-chip {
+        margin-left: 6px;
+        vertical-align: 1px;
+      }
+      .c-mini-s {
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--c-text-2);
+        margin-top: 2px;
+        overflow-wrap: anywhere;
+      }
+      .c-mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      .c-lnk-danger,
+      .c-lnk-danger:hover {
+        color: var(--c-danger-text);
+      }
+      .c-inline {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--c-s2);
+      }
+      .c-inline .c-input {
+        flex: 1 1 180px;
+      }
+      .c-input-sm {
+        width: auto;
+        font-size: 14px;
+        padding: 6px 10px;
+      }
+      .c-pill {
+        font: inherit;
+        font-size: 14px;
         font-weight: 600;
+        min-height: 40px;
+        padding: var(--c-s2) 14px;
+        border-radius: var(--c-round);
+        border: 1px solid var(--c-field-edge);
+        background: var(--c-group);
+        color: var(--c-text);
+        cursor: pointer;
+      }
+      .c-pill[aria-pressed="true"] {
+        background: var(--c-accent);
+        border-color: var(--c-accent);
+        color: var(--c-on-accent);
+      }
+      .c-seg button[aria-pressed] {
+        min-height: 36px;
+      }
+      .c-ol {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--c-text-2);
+      }
+      .c-box-title {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 2px;
+      }
+      .c-box-danger {
+        background: var(--c-danger-tint);
+      }
+      .c-box .c-hint {
+        margin-bottom: var(--c-s2);
+      }
+      .c-sched-hour {
+        flex-basis: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--c-s2);
+        font-size: 13px;
+        color: var(--c-text-2);
+      }
+      .c-sched .c-switch:not(:checked) ~ .c-sched-hour {
+        display: none;
+      }
+
+      /* The PIN flow: one step at a time, a stepper header, the code fields, the message line */
+      .c-flow {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .c-stepper {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--c-text-2);
+      }
+      .c-stepper-dots {
+        display: flex;
+        gap: var(--c-s1);
+      }
+      .c-stepper-dot {
+        width: 18px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--c-dot-off);
+      }
+      .c-stepper-dot.on {
+        background: var(--c-accent);
+      }
+      .c-fields {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--c-s3);
+      }
+      .c-fields .c-field {
+        width: 150px;
+      }
+      .c-pin {
+        font-size: 22px;
+        letter-spacing: 0.4em;
+        text-align: center;
+      }
+      .c-msg {
+        margin: 0;
+        padding: var(--c-s3) 14px;
+        border-radius: var(--c-r2);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .c-msg-ok {
+        background: var(--c-ok-tint);
+        color: var(--c-text);
+      }
+      .c-msg-err {
+        background: var(--c-danger-tint);
+        color: var(--c-danger-text);
+      }
+
+      /* Team: the code shown once after an invite is made */
+      .c-invite {
+        display: flex;
+        flex-direction: column;
+        gap: var(--c-s2);
+        padding: var(--c-s4);
+        border-radius: var(--c-r2);
+        background: var(--c-inset);
+      }
+      .c-code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: var(--c-text);
+        overflow-wrap: anywhere;
+      }
+
+      /* The Gmail index dialog's fields (the dialog is the shared .modal-*) */
+      .c-field-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--c-text-2);
+      }
+      .modal-body .c-field label {
+        font-size: 13px;
+        margin-bottom: 0;
+        color: var(--c-text-2);
+      }
+      .c-radios {
+        display: flex;
+        flex-direction: column;
+        gap: var(--c-s3);
+        padding: var(--c-s4);
+        border-radius: var(--c-r2);
+        background: var(--c-inset);
+      }
+      .modal-body .c-radio {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--c-text);
+        cursor: pointer;
       }
 
       /* ── Reminders (CABINET_REDESIGN_RFC §5.5) — rows, and the one form placed in a row or above the list ── */
