@@ -40,6 +40,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..domain.notification import NotificationChannel
+    from .inactive_user_check import InactiveUserCheck
     from .localization_service import LocalizationService
     from .rich_content_service import RichContentService
 
@@ -79,6 +80,7 @@ class UserNotificationService:
         localization: Optional["LocalizationService"] = None,
         language: Optional[LanguageServicePort] = None,
         platform_rich_content: Optional[Mapping[str, "RichContentService"]] = None,
+        inactive_users: Optional["InactiveUserCheck"] = None,
     ):
         self._state_repo = state_repo
         self._channel_factory = channel_factory
@@ -95,6 +97,9 @@ class UserNotificationService:
         # language; without localization it is not posted (logged).
         self._localization = localization
         self._language = language
+        # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): with it, an inactive user has no channel, so no background
+        # path posts to them; the lock notice alone bypasses it (`notify_ui_notice_all_channels`). None: no check.
+        self._inactive_users = inactive_users
 
     def register_platform(self, platform: str, *, media: PlatformMediaPort, rich_content: "RichContentService") -> None:
         """Add a platform built after this service (its media port for `notify_file_bytes`, its rich-content delivery for
@@ -152,8 +157,20 @@ class UserNotificationService:
         1. Explicit override (origin_channel_id from async task)
         2. Primary channel ($primary command)
         3. Last active channel (legacy fallback)
+
+        None, whatever is stored or overridden, for an inactive user (the account lock, CABINET_DEVICE_SESSIONS_RFC
+        §7.8), read fresh at each call; a failed read of the user also answers None (nothing is posted, logged).
         """
         from ..domain.notification import NotificationChannel as NC
+        if self._inactive_users is not None:
+            try:
+                inactive = await self._inactive_users.is_inactive(user_id)
+            except Exception as exc:
+                logger.error(f"[Notification] User read failed for {user_id[:8]}, nothing posted: {exc}", exc_info=True)
+                return None
+            if inactive:
+                logger.warning(f"🔒 [Notification] User {user_id[:8]} is inactive (account lock): nothing posted")
+                return None
         if channel_id_override and platform_override:
             return NC(
                 user_id=user_id,

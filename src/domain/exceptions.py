@@ -314,6 +314,12 @@ class AccessDeniedError(Exception):
     """
 
 
+class AccountLockedError(AccessDeniedError):
+    """The identity's stored user is inactive: the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8), or a user deactivated
+    by hand. A kind of AccessDeniedError, so every handler that refuses a denied identity refuses it too; the Google
+    sign-in callback catches it first to show the "account locked" page instead of "not authorized"."""
+
+
 class WorkspaceRefused(Exception):
     """A workspace command broke a rule (path, folder, kind, caps, a missing source). The message is the fix the
     model reads after `Tool note: `; `reason` is the short code in the `[Workspace]` log line."""

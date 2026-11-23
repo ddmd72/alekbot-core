@@ -95,7 +95,9 @@ a passkey for the next voice call start (`DeviceSession.passkey_at`). The relyin
    (`FirebaseAuthAdapter.verify_token`: the Firebase Admin check first, then Google's OIDC keys with the OAuth client as
    audience), and runs the whitelist gate `_require_allowed_email` before any user is read or written. It then finds the
    user by `external_user_id`, else by email (the existing user gets the Google identity attached), else registers a new
-   user and account (`register_new_user`).
+   user and account (`register_new_user`). A stored user who is inactive (the account lock,
+   `CABINET_DEVICE_SESSIONS_RFC.md` §7.8) gets the "account locked" page (403) before anything of the sign-in is
+   written, and no session.
 4. A pending `invite_code` cookie is consumed with `InviteCodeService.consume_team_invite`; a failure is logged and does
    not stop the sign-in.
 5. The route starts a device session (`DeviceSessionService.start`, which also sends the new-sign-in notice), sets the

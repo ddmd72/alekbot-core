@@ -10,3 +10,6 @@
   `consolidation_batch_size` only sizes the `$consolidate` cut.
 - **`UserBotConfig.voice_languages` is ISO-639-1, not `LanguageCode`** (that enum has no `ru`). A voice message is transcribed
   before the file pipeline, so its transcript is the user's turn (`decisions/voice_message_transcription.md`).
+- **A `$` command made of digits only is a facts PIN attempt** (`$<digits>`, CABINET_DEVICE_SESSIONS_RFC §7.9), handled
+  first in `handle_command`: it counts toward the five-strikes lock and the duress code locks the account. Never log or echo
+  a command's text before that branch (the unknown-command reply echoes it), and no new command may be all digits.

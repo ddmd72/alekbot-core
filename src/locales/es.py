@@ -274,4 +274,12 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "Tu PIN de los hechos se restableció, {time}. La pestaña de hechos se abre sin PIN hasta que definas uno nuevo.",
     UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Tu cuenta está bloqueada (código de coacción). Solo el administrador puede desbloquearla.",
     UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Tu cuenta está bloqueada (cinco PIN de los hechos incorrectos). Solo el administrador puede desbloquearla.",
+    UIMessage.FACTS_PIN_CHAT_NO_PIN.value: "Tu cuenta no tiene un PIN de los hechos, así que este código no se comprobó. Puedes definir un PIN en los ajustes del Cabinet.",
+    UIMessage.FACTS_PIN_CHAT_REAL_PIN.value: "Ese es tu PIN de los hechos. En el chat no hace nada, y ahora está en el historial de este chat: cámbialo en los ajustes del Cabinet.",
+    UIMessage.FACTS_PIN_CHAT_WRONG.value: "Código incorrecto (quedan {left}).",
+    UIMessage.FACTS_PIN_CHAT_LOCKED.value: "Tu cuenta está bloqueada. Solo el administrador puede desbloquearla.",
+    UIMessage.FACTS_PIN_CHAT_UNAVAILABLE.value: "No se pudo comprobar el código ahora. Inténtalo más tarde.",
+    UIMessage.FACTS_PIN_RESET_CANCELLED.value: "Se canceló el restablecimiento del PIN de los hechos. Tu PIN sigue igual.",
+    UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "No hay ningún restablecimiento del PIN de los hechos pendiente.",
+    UIMessage.FACTS_PIN_USAGE.value: "Envía `$pin cancel` para cancelar un restablecimiento pendiente del PIN de los hechos.",
 }

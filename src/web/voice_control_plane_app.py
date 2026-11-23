@@ -43,6 +43,11 @@ Three Quart routes consumed by the relay side (`CallControlPlanePort` /
   abandoned side is checked, and the post is claimed only by an atomic
   `get_and_delete` on the result key.
 
+The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): `/voice/session-config` refuses a ticket whose user's stored
+profile is inactive with 403 before any token is minted or resume handle taken (web and phone calls both pass here),
+and `/voice/delegate` refuses the delegation of an inactive user with 403 (the call itself runs to its end). The user
+is read fresh per request (`inactive_users`; a read error answers 500).
+
 All four routes are OIDC-protected the same way `/worker` is (see
 `src/web/worker_oidc_verifier.py`): the verifier is injected as an async
 callable rather than imported directly, so the route is testable without
@@ -100,6 +105,7 @@ def _forget_delegation(task: asyncio.Task) -> None:
 
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
     from src.agents.lelik_agent import LelikAgent
+    from src.services.inactive_user_check import InactiveUserCheck
     from src.services.voice_mcp_token_service import VoiceMcpTokenService
     from src.services.voice_resume_service import VoiceResumeService
 
@@ -120,6 +126,7 @@ def create_voice_control_plane_blueprint(
     voice_mcp_tokens: Optional["VoiceMcpTokenService"] = None,
     voice_mcp_minting: bool = False,
     resume_service: Optional["VoiceResumeService"] = None,
+    inactive_users: Optional["InactiveUserCheck"] = None,
 ) -> Blueprint:
     """`late_answer_sink(user_id=, account_id=, request=, output=, failed=)` posts an answer the
     relay stopped waiting for to the user's chat; `failed` means the delegation failed and `output`
@@ -132,7 +139,10 @@ def create_voice_control_plane_blueprint(
 
     `resume_service` (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2): without it no call resumes. `/voice/submit-transcript` keeps
     the handle a finished call reports (never after a button hangup); `/voice/session-config` hands a matching handle
-    to the next call of the same user, mode and provider and consumes it."""
+    to the next call of the same user, mode and provider and consumes it.
+
+    `inactive_users`: the account-lock check of `/voice/session-config` and `/voice/delegate`; None does not check
+    (`main()` always passes it; the entry-point test pins that)."""
     bp = Blueprint("voice_control_plane", __name__)
 
     async def _voice_mcp_tokens_for(ticket: str, config: dict) -> Optional[dict]:
@@ -202,6 +212,9 @@ def create_voice_control_plane_blueprint(
         )
         logger.info(f"voice call {fingerprint(ticket)}: late answer to {call_id} posted to chat")
 
+    async def _inactive(user_id: object) -> bool:
+        return inactive_users is not None and isinstance(user_id, str) and await inactive_users.is_inactive(user_id)
+
     async def _verify_or_401() -> Response | None:
         auth_header = request.headers.get("Authorization", "")
         if not await oidc_verifier(auth_header):
@@ -229,6 +242,10 @@ def create_voice_control_plane_blueprint(
         config = await ephemeral_store.get_and_delete(ticket_key(digest_key, ticket))
         if config is None:
             return jsonify({"error": "unknown or expired ticket"}), 404
+        if await _inactive(config.get("user_id")):
+            logger.warning(f"🔒 voice session-config: ticket {fingerprint(ticket)} refused, the user is inactive "
+                           f"(account lock)")
+            return jsonify({"error": "account locked"}), 403
         # The one-call marker, read once: checked here, extended last (below). A marker naming another call means this
         # call was replaced before the relay redeemed it (a phone dial took the marker over from this web call,
         # VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4): refused, with no tokens minted, no resume handle taken and the other
@@ -514,6 +531,9 @@ def create_voice_control_plane_blueprint(
         body = await request.get_json()
         user_id, account_id = body["user_id"], body["account_id"]
         set_request_context(user_id=user_id)
+        if await _inactive(user_id):
+            logger.warning(f"🔒 voice delegate: refused, user {str(user_id)[:8]} is inactive (account lock)")
+            return jsonify({"error": "account locked"}), 403
         # Shielded: Quart cancels a handler when its client disconnects, and the relay does
         # disconnect when it stops waiting (its 300 s timeout, or the call ended). The delegation
         # must still finish, so its answer can be kept and posted to chat.

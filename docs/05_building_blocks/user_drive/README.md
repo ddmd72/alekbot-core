@@ -255,7 +255,8 @@ The drive credential is its own grant, never folded into a Gmail grant. The adap
 ```
 Cabinet toggle / Step 1 mutation (nudge) / Scheduler fan-out (main /worker start_drive_sync)
    → one drive_sync task {user_id, connection_id} per ACTIVE connection with indexing on     (Cloud Tasks queue drive-sync-*)
-   → indexer service /worker (indexer_main.py, internal ingress + OIDC) → DriveIndexingService.tick(scope, nudge)
+   → indexer service /worker (indexer_main.py, internal ingress + OIDC; a locked user's tick: 200 skipped)
+   → DriveIndexingService.tick(scope, nudge)
         gate → lease → observe (nudged items, then delta pages) → transcript cheap steps → content classes 0-2 → enrichment
         → transcript extraction → classes 3-4 → upgrade pass → mirror → continue
         UserDrivePort by DriveHandle (DriveProviderRouter) · ContentExtractorPort (sandbox parser, then reader model)

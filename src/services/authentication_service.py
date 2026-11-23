@@ -16,7 +16,7 @@ from ..ports.auth_port import TokenClaims, OAuthTokens, OAuthUserInfo
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..ports.whitelist_repository import WhitelistRepository
-from ..domain.exceptions import AccessDeniedError
+from ..domain.exceptions import AccessDeniedError, AccountLockedError
 from ..domain.user import UserProfile, UserBotConfig
 from ..domain.billing import BillingAccount, AccountTier
 from ..utils.logger import logger
@@ -94,6 +94,18 @@ class AuthenticationService:
             raise AccessDeniedError(f"Email not in whitelist: {email}")
         return email
 
+    @staticmethod
+    def _refuse_locked(user: UserProfile) -> None:
+        """The account lock at Google sign-in (CABINET_DEVICE_SESSIONS_RFC §7.8): an inactive stored user gets no session
+        and nothing of the sign-in is written (no metadata update, no link).
+
+        Raises:
+            AccountLockedError: the user is inactive.
+        """
+        if not user.is_active:
+            logger.warning(f"🔒 Google sign-in refused: user {user.user_id} is locked")
+            raise AccountLockedError(f"User {user.user_id} is inactive")
+
     async def _whitelisted(self, email: str) -> bool:
         """The one access-list check, for sign-in (`_require_allowed_email`) and session renewal (`resume_session`).
         `email` comes normalised (lowercase, stripped)."""
@@ -127,6 +139,7 @@ class AuthenticationService:
         Raises:
             ValueError: Invalid code, token verification failed, or network error
             AccessDeniedError: Identity fails the whitelist gate
+            AccountLockedError: The identity's stored user is inactive (the account lock); nothing is written
         """
         # Get OAuth provider
         auth_provider = self.auth_registry.get_provider(provider_name)
@@ -173,6 +186,7 @@ class AuthenticationService:
 
         if existing_user:
             logger.info(f"👤 Existing user found by external_id: {existing_user.user_id}")
+            self._refuse_locked(existing_user)
             user = existing_user
 
             # Update auth metadata with latest provider data
@@ -203,6 +217,7 @@ class AuthenticationService:
                     f"{existing_user_by_email.user_id}"
                 )
                 
+                self._refuse_locked(existing_user_by_email)
                 # Link OAuth identity to existing user
                 user = existing_user_by_email
                 user.external_user_id = external_user_id

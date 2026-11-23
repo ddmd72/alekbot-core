@@ -23,6 +23,7 @@ from ..infrastructure.notification_sla import NOTIFICATION_SLA
 from ..ports.html_renderer_port import HtmlRendererPort
 from ..services.file_link_service import FileLinkService
 from ..services.rich_content_service import RichContentService
+from ..services.inactive_user_check import InactiveUserCheck
 from ..services.user_notification_service import UserNotificationService
 from ..utils.logger import logger
 from .language_setup import Languages
@@ -44,10 +45,12 @@ class Notifications:
 
 def build_notifications(config: dict, db_client: Any, env_config: EnvironmentConfig, *, coordinator: AgentCoordinator,
                         session_store: Any, media_storage: Optional[GcsMediaAdapter],
-                        link_service: Optional[FileLinkService], languages: Languages) -> Notifications:
+                        link_service: Optional[FileLinkService], languages: Languages,
+                        inactive_users: Optional[InactiveUserCheck] = None) -> Notifications:
     """One media adapter and one RichContentService for Slack: the chat handler and the notification service deliver
     files through the same ones; an html page goes to the media bucket and out as a `/f/<token>` link (`link_service`,
-    None without the bucket). The renderer lazy-starts Chromium on the first widget request."""
+    None without the bucket). The renderer lazy-starts Chromium on the first widget request. `inactive_users`: no channel
+    resolves for a locked account (CABINET_DEVICE_SESSIONS_RFC §7.8)."""
     state_repo = FirestoreNotificationStateAdapter(db_client=db_client, env_config=env_config)
     bot_token = config["SLACK_BOT_TOKEN"]
     logger.debug(f"Bot token starts with: {bot_token[:10]}...")
@@ -81,6 +84,7 @@ def build_notifications(config: dict, db_client: Any, env_config: EnvironmentCon
         # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
         localization=languages.localization,
         language=languages.resolver,
+        inactive_users=inactive_users,
     )
     return Notifications(slack_app=app, html_renderer=html_renderer, slack_kit=slack_kit,
                          channel_factory=channel_factory, state_repo=state_repo, service=service)

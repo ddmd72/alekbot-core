@@ -353,6 +353,7 @@ async def main():
                         voice_mcp_tokens=voice_mcp_tokens,
                         voice_mcp_minting=voice_mcp_tools_enabled(),
                         resume_service=build_voice_resume_service(store=voice_ephemeral_store),
+                        inactive_users=app.inactive_users,   # the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
                     )
                 )
                 logger.info(
@@ -485,6 +486,7 @@ async def main():
                 main_app.register_blueprint(create_main_service_blueprint(
                     worker_handler, _worker_oidc_gate,
                     static_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static"),
+                    inactive_users=app.inactive_users,   # the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
                 ))
 
                 # ====================================================================
@@ -535,7 +537,8 @@ async def main():
                         logger.warning("🤖 Bot will continue without the drive connector")
                     else:
                         drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
-                                                            tools=drive_tools, voice_tokens=voice_mcp_tokens)
+                                                            tools=drive_tools, voice_tokens=voice_mcp_tokens,
+                                                            inactive_users=mcp_components.inactive_users)
                         if drive_mcp is not None:
                             main_app.register_blueprint(create_drive_link_blueprint(drive_links))
                 except Exception as mcp_err:

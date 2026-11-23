@@ -22,6 +22,10 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
+# The tool error of every connector tool call (facts and drive) for a user whose account is locked
+# (CABINET_DEVICE_SESSIONS_RFC §7.8): the access token still verifies until it expires, the tool answers nothing.
+ACCOUNT_LOCKED_TOOL_ERROR = "Account locked: this account answers no tool call until the administrator unlocks it."
+
 
 # Maximum topical tags fed to the keyword retrieval vector. Excess tags
 # are dropped silently rather than rejected — see normalize_keywords.

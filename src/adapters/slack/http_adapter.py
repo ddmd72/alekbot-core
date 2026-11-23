@@ -576,9 +576,11 @@ class HTTPModeAdapter(SlackAdapter):
             slack_user_id = event.get("user", "unknown")
 
             if files:
+                # A `$` command's text is never logged: it may be a facts PIN or the duress code (CABINET §7.9).
+                preview = "<command>" if unwrapped(text).startswith("$") else repr(text[:100])
                 logger.info(
                     f"📎 Message contains {len(files)} file(s), subtype={subtype}, "
-                    f"text_len={len(text)}, text_preview={text[:100]!r}"
+                    f"text_len={len(text)}, text_preview={preview}"
                 )
 
             if (not text or not text.strip()) and not files:

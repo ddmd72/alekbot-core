@@ -427,3 +427,71 @@ class TestAccessTokenVerification:
             algorithm="HS256",
         )
         assert service.verify_access_token(bad) is None
+
+
+# ---------------------------------------------------------------------------
+# The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8)
+# ---------------------------------------------------------------------------
+
+
+class _GrantRepo(InMemoryMCPRepo):
+    """The in-memory store with a grant check: a grant is active while one of its refresh tokens is unrevoked."""
+
+    async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
+        return any(t.user_id == user_id and t.grant_id == grant_id and t.revoked_at is None
+                   for t in self.refresh_tokens.values())
+
+
+class TestAccountLock:
+    """A locked user's code is never exchanged, a refresh is refused (and its token revoked), a drive-link grant is
+    refused; each reads the stored user fresh."""
+
+    def _world(self):
+        repo, users = _GrantRepo(), FakeUserRepo({"user-1": ALLOWED_EMAIL})
+        service = MCPAuthorizationService(
+            repo=repo, jwt_secret=_TEST_SECRET, mcp_resource_uri=_TEST_RESOURCE_URI,
+            consent_base_url="https://dev.alekbot.app/mcp/consent", allowed_redirect_hosts=_TEST_ALLOWED_HOSTS,
+            drive_resource_uri="https://mcp.example.test/drive-mcp", scope_of=SCOPE_OF, user_repo=users,
+            whitelist_repo=FakeWhitelistRepo(), access_token_ttl=3600, refresh_token_ttl=2592000, auth_code_ttl=600,
+            consent_request_ttl=600)
+        return repo, users, service
+
+    @staticmethod
+    def _lock(users) -> None:
+        users.users["user-1"] = users.users["user-1"].model_copy(update={"is_active": False})
+
+    async def _code(self, service, claude_client) -> str:
+        await service.save_client(claude_client)
+        url = await service.build_consent_redirect(claude_client, AuthorizationParams(
+            redirect_uri="https://claude.ai/api/mcp/auth_callback", code_challenge="c" * 32,
+            scopes=["user_context"]))
+        code, _ = await service.issue_auth_code_for_consent(url.split("req=")[1], "user-1", "acc-1")
+        return code
+
+    async def test_a_code_issued_before_the_lock_is_consumed_and_never_exchanged(self, claude_client):
+        repo, users, service = self._world()
+        code = await self._code(service, claude_client)
+        self._lock(users)
+
+        with pytest.raises(MCPInvalidGrant):
+            await service.finalize_auth_code(code)
+        assert repo.codes == {} and repo.refresh_tokens == {}
+
+    async def test_a_refresh_of_a_locked_user_is_refused_and_revokes_the_token(self, claude_client):
+        repo, users, service = self._world()
+        issued = await service.finalize_auth_code(await self._code(service, claude_client))
+        self._lock(users)
+
+        with pytest.raises(MCPInvalidGrant):
+            await service.rotate_refresh_token(issued.refresh_token)
+        assert [t.revoked_at is not None for t in repo.refresh_tokens.values()] == [True]
+
+    async def test_a_drive_link_grant_of_a_locked_user_is_refused(self, claude_client):
+        repo, users, service = self._world()
+        await service.finalize_auth_code(await self._code(service, claude_client))
+        [token] = repo.refresh_tokens.values()
+        assert await service.grant_allowed("user-1", token.grant_id) is True
+
+        self._lock(users)
+
+        assert await service.grant_allowed("user-1", token.grant_id) is False

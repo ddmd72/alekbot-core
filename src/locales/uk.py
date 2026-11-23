@@ -302,4 +302,12 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "PIN фактів скинуто, {time}. Вкладка фактів відкривається без PIN, доки ти не встановиш новий.",
     UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Твій обліковий запис заблоковано (код примусу). Розблокувати його може лише адміністратор.",
     UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Твій обліковий запис заблоковано (п'ять неправильних PIN фактів). Розблокувати його може лише адміністратор.",
+    UIMessage.FACTS_PIN_CHAT_NO_PIN.value: "PIN фактів для твого облікового запису не встановлено, тож цей код не перевірявся. Встановити PIN можна в налаштуваннях Кабінету.",
+    UIMessage.FACTS_PIN_CHAT_REAL_PIN.value: "Це твій PIN фактів. У чаті він нічого не робить, а тепер він є в історії цього чату: зміни його в налаштуваннях Кабінету.",
+    UIMessage.FACTS_PIN_CHAT_WRONG.value: "Неправильний код (залишилось {left}).",
+    UIMessage.FACTS_PIN_CHAT_LOCKED.value: "Твій обліковий запис заблоковано. Розблокувати його може лише адміністратор.",
+    UIMessage.FACTS_PIN_CHAT_UNAVAILABLE.value: "Зараз не вдалося перевірити код. Спробуй пізніше.",
+    UIMessage.FACTS_PIN_RESET_CANCELLED.value: "Скидання PIN фактів скасовано. Твій PIN лишається таким, як був.",
+    UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "Немає запиту на скидання PIN фактів.",
+    UIMessage.FACTS_PIN_USAGE.value: "Надішли `$pin cancel`, щоб скасувати запит на скидання PIN фактів.",
 }

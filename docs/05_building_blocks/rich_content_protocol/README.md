@@ -76,7 +76,8 @@ A body with one child is screenshotted as that child, otherwise the body is, wit
 
 1. A caller (worker task, agent worker) calls `src/services/user_notification_service.py::UserNotificationService.notify`
    with a `NotificationKind`. `resolve_channel` picks the destination: explicit override, then the primary channel,
-   then the last active one; none means `NotifyResult(error="no_channel")`.
+   then the last active one; none means `NotifyResult(error="no_channel")`. A user whose account is locked has no
+   channel (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8); only the lock notice, `notify_ui_notice_all_channels`, bypasses it.
 2. The timeout comes from `src/infrastructure/notification_sla.py::NOTIFICATION_SLA[kind]`, a tier override winning
    when the caller passes a tier.
 3. The alert goes to the agent as the current message (`AgentCoordinator.route_message`, with `origin_channel_id` and

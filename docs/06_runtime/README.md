@@ -29,12 +29,14 @@ HTTP endpoints: [API_REFERENCE.md](./API_REFERENCE.md).
    session waits `BUSY_WAIT_S`, then is re-queued under a new task name (`BUSY_MAX_REQUEUES` times), then the user is
    told the message was not processed. The lock is released at the long-turn mark, so a later message can run beside a
    long turn.
-4. **Authorization.** The adapter authorizes the sender against the whitelist (`src/services/iam_service.py::IAMService.authorize`),
+4. **Authorization.** The adapter authorizes the sender against the whitelist (`src/services/iam_service.py::IAMService.authorize`);
+   a user whose account is locked (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8) gets one fixed reply and no turn,
    builds a `MessageContext` and calls the handler through `src/ports/conversation_handler_port.py::ConversationHandlerPort`.
 5. **Commands.** The adapter sends a Telegram message or a Slack `message` event that starts with `$` (not an `app_mention`) to `ConversationHandler.handle_command`
    (`src/handlers/conversation_handler.py::ConversationHandler.handle_command`), which answers without an LLM turn.
    The services behind these commands arrive as one optional bundle,
    `src/handlers/command_services.py::CommandServices`; a command whose service is absent answers "unavailable".
+   A command of digits only is a facts PIN attempt, handled first and never logged or echoed (§7.9 of the RFC above).
 6. **Message preparation** (`ConversationHandler.handle_message`). Voice notes are transcribed and enter the turn as the
    user's own text. Other attachments become reference parts through
    `src/services/file_conversion_service.py::FileConversionService.process_attachment`; a download that fails leaves a

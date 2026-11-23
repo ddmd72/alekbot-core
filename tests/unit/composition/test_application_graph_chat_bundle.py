@@ -44,3 +44,12 @@ async def test_the_platform_inputs_differ_as_declared(prod_graph: ProdGraph):
     assert slack._rich_content_service is not telegram._rich_content_service
     assert notifier._platform_media["slack"] is slack._rich_content_service._media_port
     assert notifier._platform_media["telegram"] is telegram._rich_content_service._media_port
+
+
+async def test_both_handlers_answer_the_pin_commands_through_the_graphs_facts_pin(prod_graph: ProdGraph):
+    """`$<digits>` and `$pin cancel` (CABINET_DEVICE_SESSIONS_RFC §7.9) reach the one facts PIN service of the graph,
+    whose lock is the graph's account lock."""
+    app = prod_graph.app
+    for adapter in (app.slack_adapter, app.telegram_adapter):
+        assert adapter.conversation_handler._facts_pin is app.facts_pin
+    assert app.facts_pin._lock is app.account_lock

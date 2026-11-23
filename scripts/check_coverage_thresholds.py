@@ -117,6 +117,11 @@ THRESHOLDS: Dict[str, float] = {
     "src/adapters/firestore_facts_pin_repo.py":     100.0,
     "src/services/facts_pin_service.py":            100.0,
     "src/services/account_lock_service.py":         100.0,
+    # The account lock at every entry point (P7, CABINET_DEVICE_SESSIONS_RFC §7.8, §7.9): the check, the chat code
+    # replies and the /worker route that skips a locked user's task.
+    "src/services/inactive_user_check.py":          100.0,
+    "src/domain/facts_pin_chat.py":                 100.0,
+    "src/web/main_service_routes.py":               100.0,
 }
 
 

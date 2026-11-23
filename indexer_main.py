@@ -97,6 +97,7 @@ from src.utils.logger import logger, quiet_third_party_loggers
 
 quiet_third_party_loggers()
 from src.web.worker_oidc_verifier import parse_sa_emails  # noqa: E402  # quiet_third_party_loggers() must run first
+from src.services.inactive_user_check import InactiveUserCheck  # noqa: E402  # quiet_third_party_loggers() must run first
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate  # noqa: E402  # quiet_third_party_loggers() must run first
 
 # Cloud Run allows ~10 s between SIGTERM and SIGKILL (a revision rollout on every deploy).
@@ -225,7 +226,8 @@ def build_app() -> Quart:
         quota=models.quota,
     )
 
-    app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))
+    # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a tick for a locked user is skipped, the user read fresh.
+    app.register_blueprint(create_indexer_worker_blueprint(indexing, gate, inactive_users=InactiveUserCheck(users)))
     logger.info(f"[Indexer] ready (OIDC gate {'on' if sa_email else 'off'})")
     return app
 

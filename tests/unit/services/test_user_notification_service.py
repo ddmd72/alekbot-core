@@ -957,3 +957,50 @@ class TestNotifyEmptyAnswerResult:
         assert result.error == "provider exploded"
         assert is_empty_answer(result) is False
         response_channel.send_message.assert_not_awaited()
+
+
+# ============================================================================
+# The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): no channel resolves for an inactive user
+# ============================================================================
+class TestAccountLockChannelResolution:
+
+    async def _world(self):
+        from datetime import datetime, timezone
+        from src.adapters.file_localization_adapter import FileLocalizationAdapter
+        from src.services.inactive_user_check import InactiveUserCheck
+        from src.services.localization_service import LocalizationService
+        from tests.support.fact_review_world import FakeNotificationState, RecordingChannelFactory
+        from tests.support.locked_user import AlexStore
+        store = await AlexStore().seed()
+        state = FakeNotificationState(datetime(2026, 11, 1, tzinfo=timezone.utc))
+        await state.save_primary("user-alex", "slack", "C-alex")
+        await state.save("user-alex", "telegram", "chat-alex")
+        channels = RecordingChannelFactory()
+        service = UserNotificationService(
+            state_repo=state, channel_factory=channels, coordinator=MagicMock(), notification_sla={},
+            localization=LocalizationService(FileLocalizationAdapter()),
+            inactive_users=InactiveUserCheck(store.users))
+        return store, channels, service
+
+    async def test_a_locked_user_has_no_channel_and_gets_nothing_but_the_lock_notice(self):
+        from src.domain.ui_messages import UIMessage
+        store, channels, service = await self._world()
+        assert (await service.resolve_channel("user-alex")).channel_id == "C-alex"
+
+        await store.lock()
+
+        assert await service.resolve_channel("user-alex") is None
+        assert await service.resolve_channel("user-alex", "C-origin", "slack") is None
+        assert await service.notify_raw("user-alex", "acct-alex", "Reminder: water the plants") is False
+        assert await service.notify_ui_notice("user-alex", "acct-alex", UIMessage.FACTS_PIN_RESET_DONE_NOTICE,
+                                              time="now") is False
+        assert channels.sent == []
+        assert await service.notify_ui_notice_all_channels("user-alex", UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE) == 2
+
+    async def test_a_failed_user_read_resolves_no_channel(self):
+        store, channels, service = await self._world()
+        store.users.get_user = AsyncMock(side_effect=RuntimeError("store down"))
+
+        assert await service.resolve_channel("user-alex", "C-origin", "slack") is None
+        assert await service.notify_raw("user-alex", "acct-alex", "Reminder") is False
+        assert channels.sent == []

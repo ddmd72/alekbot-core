@@ -30,7 +30,7 @@ from ..config.auth import AuthConfig
 from ..domain.device_label import describe_device
 from ..domain.device_session import SessionAuthKind, SessionRevokeReason
 from ..domain.device_session_policy import RefreshOutcome
-from ..domain.exceptions import AccessDeniedError
+from ..domain.exceptions import AccessDeniedError, AccountLockedError
 from ..domain.safe_redirect import safe_return_path
 from ..utils.logger import logger
 from .cabinet_auth import (
@@ -50,6 +50,17 @@ _ACCESS_DENIED_PAGE = (
     "<body style=\"font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem\">"
     "<h1>Access not authorized</h1>"
     "<p>This Google account is not allowed to sign in.</p>"
+    "</body></html>"
+)
+
+# The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a locked user's Google sign-in gets this page and no session.
+_ACCOUNT_LOCKED_PAGE = (
+    "<!doctype html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "<title>Account locked</title></head>"
+    "<body style=\"font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem\">"
+    "<h1>Account locked</h1>"
+    "<p>This account is locked. Only the administrator can unlock it.</p>"
     "</body></html>"
 )
 
@@ -100,6 +111,13 @@ def create_oauth_blueprint(
         """A refusal that also deletes both session cookies: the session behind them can no longer refresh."""
         response = await make_response(jsonify(body), status)
         clear_session_cookies(response)
+        return response
+
+    async def _html_refusal(page: str):
+        """A refused sign-in: `page` with 403, and the CSRF state cookie deleted."""
+        response = await make_response(page, 403)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        response.delete_cookie("oauth_state")
         return response
 
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -261,13 +279,13 @@ def create_oauth_blueprint(
 
             return response
 
+        except AccountLockedError:
+            # The account lock: nothing written, no session cookies issued.
+            return await _html_refusal(_ACCOUNT_LOCKED_PAGE)
         except AccessDeniedError:
             # Whitelist gate: no user created, no session cookies issued.
             # The reason is logged by AuthenticationService, never shown to the caller.
-            response = await make_response(_ACCESS_DENIED_PAGE, 403)
-            response.headers["Content-Type"] = "text/html; charset=utf-8"
-            response.delete_cookie("oauth_state")
-            return response
+            return await _html_refusal(_ACCESS_DENIED_PAGE)
         except Exception as e:
             logger.error(f"❌ OAuth callback failed: {e}")
             return jsonify({"error": "OAuth callback failed"}), 500

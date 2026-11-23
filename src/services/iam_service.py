@@ -12,6 +12,9 @@ from ..ports.whitelist_repository import WhitelistRepository
 from ..ports.platform_auth_port import IAMDecision, PlatformAuthPort
 from ..utils.logger import logger
 
+# The chat reply to every message of a user whose account is locked (CABINET_DEVICE_SESSIONS_RFC §7.8).
+ACCOUNT_LOCKED_REPLY = "🔒 Your account is locked. Only the administrator can unlock it."
+
 
 class IAMService(PlatformAuthPort):
     """
@@ -26,7 +29,7 @@ class IAMService(PlatformAuthPort):
     - Called by the chat adapters (Slack, Telegram) on every message
     
     Decision Logic:
-    1. Platform user EXISTS and email WHITELISTED? → ALLOW
+    1. Platform user EXISTS, is ACTIVE (not locked) and email WHITELISTED? → ALLOW
     2. DEFAULT → REJECT
     
     Key Principle:
@@ -125,6 +128,10 @@ class IAMService(PlatformAuthPort):
                 "Please contact the administrator."
             )
         
+        elif reason == "locked":
+            # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8); English, like every IAM reply.
+            return ACCOUNT_LOCKED_REPLY
+
         else:
             # Fallback
             return "Authorization failed. Please contact support."
@@ -182,6 +189,15 @@ class IAMService(PlatformAuthPort):
                         f"Fix: Add email to user record in Firestore."
                     )
                 
+                # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): an inactive user gets one fixed reply and no
+                # turn. The user was just read from the store, never from the agent factory's cached profile.
+                if not user.is_active:
+                    logger.warning(f"🔒 [IAM] Account locked for user {user.user_id}: chat refused")
+                    return IAMDecision(
+                        action="reject",
+                        message=self.get_rejection_message(platform=platform, reason="locked"),
+                    )
+
                 # NEW (2026-02-05): Whitelist enforcement for ALL users
                 # Can revoke access by removing email from whitelist
                 whitelist = await self.whitelist_repo.get_whitelist()

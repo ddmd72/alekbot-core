@@ -209,3 +209,34 @@ class TestResult:
     async def test_an_empty_result_says_no_records_matched(self):
         tool, _, _, _ = _setup([])
         assert await tool.run({"queries": ["car"]}, context=_ctx()) == "No records matched."
+
+
+class TestAccountLock:
+    """An access token issued before the account lock (CABINET_DEVICE_SESSIONS_RFC §7.8) still verifies; the stored user,
+    read fresh at the call, refuses it with the tool error, and nothing is searched."""
+
+    async def _tool(self):
+        from tests.support.locked_user import AlexStore
+        from tests.support.mcp_gate_fakes import FakeWhitelistRepo
+        store = await AlexStore().seed()
+        agent = FakeMemoryAgent([_fact("Alex owns a 2015 Skoda Fabia")], account_id="acct-alex")
+        resolver = Resolver(agent)
+        components = build_mcp_components(
+            db_client=MagicMock(), env_config=MagicMock(), auth_config=_auth_config(), memory_search=resolver,
+            cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=store.users,
+            whitelist_repo=FakeWhitelistRepo())
+        return components.fastmcp._tool_manager.get_tool(FACTS_TOOL), agent, store
+
+    async def test_a_locked_users_call_is_the_lock_tool_error_and_searches_nothing(self):
+        from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR
+        tool, agent, store = await self._tool()
+        ctx = _ctx(user="user-alex", account="acct-alex")
+        await tool.run({"queries": ["car"]}, context=ctx)
+        assert len(agent.calls) == 1
+
+        await store.lock()
+
+        with pytest.raises(ToolError) as err:
+            await tool.run({"queries": ["car"]}, context=ctx)
+        assert ACCOUNT_LOCKED_TOOL_ERROR in str(err.value)
+        assert len(agent.calls) == 1

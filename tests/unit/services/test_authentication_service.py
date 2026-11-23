@@ -453,3 +453,42 @@ async def test_link_oauth_identity_user_not_found_raises(
     svc = _make_auth_svc(mock_auth_registry, mock_user_repo, mock_account_repo)
     with pytest.raises(ValueError, match="not found"):
         await svc.link_oauth_identity("u-ghost", "code", "http://cb")
+
+
+# ============================================================================
+# The account lock at Google sign-in (CABINET_DEVICE_SESSIONS_RFC §7.8)
+# ============================================================================
+def _alex_provider(sub: str):
+    from tests.support.locked_user import ALEX_EMAIL
+    provider = Mock()
+    provider.get_provider_name.return_value = "firebase"
+    provider.exchange_code_for_tokens = AsyncMock(return_value=OAuthTokens(access_token="at", id_token="it",
+                                                                           expires_in=3600))
+    provider.verify_token = AsyncMock(return_value=TokenClaims(
+        sub=sub, iss="https://accounts.google.com", aud="client", exp=datetime.now(), iat=datetime.now(),
+        email=ALEX_EMAIL, email_verified=True))
+    provider.get_user_info = AsyncMock(return_value=OAuthUserInfo(sub=sub, email=ALEX_EMAIL, email_verified=True,
+                                                                  name="Alex"))
+    return provider
+
+
+@pytest.mark.parametrize("sub", ["alex", "a-second-google-account-of-alex"],
+                         ids=["found_by_external_id", "found_by_email"])
+async def test_a_locked_user_gets_no_sign_in_and_nothing_is_written(sub):
+    from src.domain.exceptions import AccountLockedError
+    from tests.support.locked_user import ALEX_EMAIL, USERS, AlexStore
+    from tests.support.mcp_gate_fakes import FakeWhitelistRepo
+    store = await AlexStore().seed()
+    await store.lock()
+    before = dict(store.db.collection(USERS).docs["user-alex"])
+    registry = Mock(spec=AuthProviderRegistry)
+    registry.get_provider.return_value = _alex_provider(sub)
+    accounts = Mock()
+    accounts.get_account = AsyncMock(side_effect=AssertionError("a locked sign-in never loads the account"))
+    service = AuthenticationService(auth_registry=registry, user_repo=store.users, account_repo=accounts,
+                                    whitelist_repo=FakeWhitelistRepo(emails=(ALEX_EMAIL,)))
+
+    with pytest.raises(AccountLockedError):
+        await service.handle_oauth_callback(code="c", redirect_uri="https://example.test/auth/callback")
+
+    assert store.db.collection(USERS).docs["user-alex"] == before

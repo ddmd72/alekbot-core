@@ -227,3 +227,14 @@ class UIMessage(Enum):
     # The account lock (§7.8), posted to every stored channel: by the duress code, or by five wrong PINs in a row.
     ACCOUNT_LOCKED_DURESS_NOTICE = "account_locked_duress_notice"
     ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE = "account_locked_pin_attempts_notice"
+    # A `$<digits>` code in chat (§7.9): never echoing the code. No PIN set; the real PIN; a wrong code ({left}: the
+    # attempts left); an account already locked; the check unavailable.
+    FACTS_PIN_CHAT_NO_PIN = "facts_pin_chat_no_pin"
+    FACTS_PIN_CHAT_REAL_PIN = "facts_pin_chat_real_pin"
+    FACTS_PIN_CHAT_WRONG = "facts_pin_chat_wrong"
+    FACTS_PIN_CHAT_LOCKED = "facts_pin_chat_locked"
+    FACTS_PIN_CHAT_UNAVAILABLE = "facts_pin_chat_unavailable"
+    # `$pin cancel` (§7.7): a pending reset cancelled; none pending; any other `$pin`.
+    FACTS_PIN_RESET_CANCELLED = "facts_pin_reset_cancelled"
+    FACTS_PIN_NO_RESET_PENDING = "facts_pin_no_reset_pending"
+    FACTS_PIN_USAGE = "facts_pin_usage"

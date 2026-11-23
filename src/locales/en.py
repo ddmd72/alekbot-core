@@ -297,4 +297,12 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "Your facts PIN was reset, {time}. The facts tab opens without a PIN until you set a new one.",
     UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Your account is locked (duress code). Only the administrator can unlock it.",
     UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Your account is locked (five wrong facts PIN entries). Only the administrator can unlock it.",
+    UIMessage.FACTS_PIN_CHAT_NO_PIN.value: "No facts PIN is set on your account, so this code was not checked. You can set a PIN in the Cabinet settings.",
+    UIMessage.FACTS_PIN_CHAT_REAL_PIN.value: "That is your facts PIN. It does nothing in chat, and it is now in this chat's history: change it in the Cabinet settings.",
+    UIMessage.FACTS_PIN_CHAT_WRONG.value: "Wrong code ({left} left).",
+    UIMessage.FACTS_PIN_CHAT_LOCKED.value: "Your account is locked. Only the administrator can unlock it.",
+    UIMessage.FACTS_PIN_CHAT_UNAVAILABLE.value: "The code could not be checked right now. Try again later.",
+    UIMessage.FACTS_PIN_RESET_CANCELLED.value: "The facts PIN reset is cancelled. Your PIN stays as it was.",
+    UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "No facts PIN reset is pending.",
+    UIMessage.FACTS_PIN_USAGE.value: "Send `$pin cancel` to cancel a pending facts PIN reset.",
 }

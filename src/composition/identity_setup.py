@@ -26,6 +26,7 @@ from ..services.authentication_service import AuthenticationService
 from ..services.device_session_service import DeviceSessionService
 from ..services.facts_pin_service import FactsPinService
 from ..services.iam_service import IAMService
+from ..services.inactive_user_check import InactiveUserCheck
 from ..services.invite_code_service import InviteCodeService
 from ..services.passkey_service import PasskeyService
 from ..services.session_service import SessionService
@@ -47,6 +48,9 @@ class Identity:
     auth_service: AuthenticationService
     session_service: SessionService
     twilio_verify_client: Any
+    # The account-lock check of the entry points that do not read the user themselves (CABINET_DEVICE_SESSIONS_RFC
+    # §7.8): channel resolution, both /worker routes, the voice control plane.
+    inactive_users: InactiveUserCheck
 
 
 def build_identity(config: dict, db_client: Any, env_config: EnvironmentConfig, *, auth_config: AuthConfig,
@@ -75,7 +79,7 @@ def build_identity(config: dict, db_client: Any, env_config: EnvironmentConfig, 
     return Identity(account_repo=account_repo, user_repo=user_repo, whitelist_repo=whitelist_repo,
                     iam_service=iam_service, invite_service=invite_service, auth_registry=auth_registry,
                     auth_service=auth_service, session_service=session_service,
-                    twilio_verify_client=_twilio_verify_client(config))
+                    twilio_verify_client=_twilio_verify_client(config), inactive_users=InactiveUserCheck(user_repo))
 
 
 # The relying party's name, shown by the browser's passkey sheet next to the account name.

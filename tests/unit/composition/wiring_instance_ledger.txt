@@ -179,6 +179,7 @@ src.services.geo_mark_turn_task.GeoMarkTurnTask 1  # by-design the one geo_mark_
 src.services.gmail_reconnect_flag.GmailReconnectFlag 1  # by-design the one Gmail reconnect flag, held by WorkerHandler (email indexing) and by the daily_email_review runner
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
+src.services.inactive_user_check.InactiveUserCheck 1  # by-design the one account-lock check of the graph, held by UserNotificationService and handed by main() to /worker and the voice routes (identity_setup.py, CABINET_DEVICE_SESSIONS_RFC 7.8)
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (memory_setup.py, Facts S4 T8g)
 src.services.integration_reconnect_service.IntegrationReconnectService 1  # by-design single instance
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance

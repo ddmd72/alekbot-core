@@ -274,4 +274,12 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_DONE_NOTICE.value: "Votre PIN des faits a été réinitialisé, {time}. L'onglet des faits s'ouvre sans PIN jusqu'à ce que vous en définissiez un nouveau.",
     UIMessage.ACCOUNT_LOCKED_DURESS_NOTICE.value: "Votre compte est verrouillé (code de contrainte). Seul l'administrateur peut le déverrouiller.",
     UIMessage.ACCOUNT_LOCKED_PIN_ATTEMPTS_NOTICE.value: "Votre compte est verrouillé (cinq PIN des faits erronés). Seul l'administrateur peut le déverrouiller.",
+    UIMessage.FACTS_PIN_CHAT_NO_PIN.value: "Aucun PIN des faits n'est défini sur votre compte, ce code n'a donc pas été vérifié. Vous pouvez définir un PIN dans les paramètres du Cabinet.",
+    UIMessage.FACTS_PIN_CHAT_REAL_PIN.value: "C'est votre PIN des faits. Il ne fait rien dans le chat, et il figure maintenant dans l'historique de ce chat : changez-le dans les paramètres du Cabinet.",
+    UIMessage.FACTS_PIN_CHAT_WRONG.value: "Code erroné (il reste {left} essai(s)).",
+    UIMessage.FACTS_PIN_CHAT_LOCKED.value: "Votre compte est verrouillé. Seul l'administrateur peut le déverrouiller.",
+    UIMessage.FACTS_PIN_CHAT_UNAVAILABLE.value: "Le code n'a pas pu être vérifié pour le moment. Réessayez plus tard.",
+    UIMessage.FACTS_PIN_RESET_CANCELLED.value: "La réinitialisation du PIN des faits est annulée. Votre PIN reste inchangé.",
+    UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "Aucune réinitialisation du PIN des faits n'est en attente.",
+    UIMessage.FACTS_PIN_USAGE.value: "Envoyez `$pin cancel` pour annuler une réinitialisation du PIN des faits en attente.",
 }

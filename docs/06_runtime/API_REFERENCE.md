@@ -77,6 +77,9 @@ stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).
 - **`/worker` is not reachable unauthenticated.** A plain `curl` against a live service returns 401; manual triggers are
   in `CLAUDE.md` (Manual Triggers). Locally, with no OIDC identity and `K_SERVICE` unset, the gate is open; on Cloud
   Run an empty identity set refuses every call.
+- **A task for a locked user is acknowledged, never run.** Both `/worker` routes answer 200 `{"skipped": "user_inactive"}`
+  for a payload naming (`user_id`, or `context.user_id`) a user whose stored profile is inactive
+  (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8); so do `/voice/session-config` and `/voice/delegate` with 403.
 - **The main Quart app has no static folder.** `/static/*` returns 404; an asset gets an explicit route (the call pages
   and the landing do this).
 - **`/health` is registered twice** (the Cabinet's and `main_service_routes`); the Cabinet's shadows the other
