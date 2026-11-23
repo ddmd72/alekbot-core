@@ -12,10 +12,16 @@ import pytest
 from quart import Quart
 
 from src.web.oauth_app import create_oauth_blueprint
+from tests.unit.web.cabinet_source import cabinet_source
 
 STATIC = Path(__file__).resolve().parents[3] / "src" / "web" / "static"
 SESSION_JS = (STATIC / "session.js").read_text(encoding="utf-8")
 PAGES = ["cabinet.html", "call.html", "call_modes.html"]
+
+
+def _page(page):
+    """A page's text; the Cabinet's is the shell with its assets in place."""
+    return cabinet_source() if page == "cabinet.html" else (STATIC / page).read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------- route
@@ -36,7 +42,7 @@ async def test_route_serves_the_script_as_javascript_without_a_session():
 
 @pytest.mark.parametrize("page", PAGES)
 def test_page_includes_the_script_and_uses_its_functions(page):
-    html = (STATIC / page).read_text(encoding="utf-8")
+    html = _page(page)
     assert '<script src="/auth/session.js"></script>' in html
     assert "window.alekSession" in html
     assert html.index("/auth/session.js") < html.index("window.alekSession")
@@ -44,7 +50,7 @@ def test_page_includes_the_script_and_uses_its_functions(page):
 
 @pytest.mark.parametrize("page", PAGES)
 def test_page_has_no_direct_401_to_login_jump(page):
-    html = (STATIC / page).read_text(encoding="utf-8")
+    html = _page(page)
     assert "goToLogin" not in html
     for line in html.splitlines():
         if "/auth/login" in line:
@@ -55,13 +61,13 @@ def test_page_has_no_direct_401_to_login_jump(page):
 
 @pytest.mark.parametrize("page", ["call.html", "call_modes.html"])
 def test_call_pages_check_the_session_on_load(page):
-    html = (STATIC / page).read_text(encoding="utf-8")
+    html = _page(page)
     assert re.search(r"^\s*ensureSession\(\);", html, re.M)
 
 
 @pytest.mark.parametrize("page", PAGES)
 def test_authenticated_calls_go_through_authfetch(page):
-    html = (STATIC / page).read_text(encoding="utf-8")
+    html = _page(page)
     plain = re.findall(r"(?<![\w.])fetch\(([^)\n]*)", html)
     # The Cabinet's own logout is the one request that must not trigger a refresh.
     assert [p for p in plain if "/auth/logout" not in p] == []
@@ -390,7 +396,7 @@ def test_needs_passkey_reads_only_a_400_passkey_required(status, body, expected)
 
 
 def test_the_cabinet_steps_up_and_retries_once_when_adding_or_removing_needs_a_passkey():
-    html = (STATIC / "cabinet.html").read_text(encoding="utf-8")
+    html = cabinet_source()
     add = re.search(r"async function addPasskeyHere\(\) \{.*?\n      }\n", html, re.S).group(0)
     remove = re.search(r"async function removePasskey\(id\) \{.*?\n      }\n", html, re.S).group(0)
     assert 'outcome === "passkey_required"' in add and "ensurePasskey()" in add and add.count("addPasskey()") == 2

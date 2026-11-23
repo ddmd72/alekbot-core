@@ -1,16 +1,16 @@
 """The Cabinet drive card keeps its long privacy paragraphs collapsed behind a <details>; live status stays visible."""
 import re
-from pathlib import Path
 
 import pytest
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
+from tests.unit.web.cabinet_source import cabinet_source
+
 LANGS = ("en", "uk", "fr", "es")
 DETAILS = re.compile(r'<details class="disclosure">(.*?)</details>', re.S)
 
 
 def _html():
-    return _HTML.read_text(encoding="utf-8")
+    return cabinet_source()
 
 
 def _dicts():

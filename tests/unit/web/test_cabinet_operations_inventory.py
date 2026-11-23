@@ -15,11 +15,12 @@ names no method.
 PAGE_TARGETS: the pages the Cabinet sends the browser to (the call pages, a connect flow, the sign-in).
 """
 import re
-from pathlib import Path
 
 import pytest
 
-_HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html").read_text(encoding="utf-8")
+from tests.unit.web.cabinet_source import cabinet_source
+
+_HTML = cabinet_source()
 
 HANDLERS = [
     "acceptPasskeyOffer", "addDrive", "addPasskeyHere", "askDisconnectDrive", "backToBrowse", "browseNextPage",

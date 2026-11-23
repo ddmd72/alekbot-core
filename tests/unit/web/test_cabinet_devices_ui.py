@@ -4,11 +4,12 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
-_HTML = (Path(__file__).resolve().parents[3] / "src/web/static/cabinet.html").read_text(encoding="utf-8")
+from tests.unit.web.cabinet_source import cabinet_source
+
+_HTML = cabinet_source()
 _KEYS = ["nav.devices", "devices.title", "devices.subtitle", "devices.current", "devices.created", "devices.last_used",
          "devices.kind_google", "devices.logout", "devices.logout_others", "devices.logout_all", "devices.confirm_all",
          "devices.confirm_others", "devices.empty", "devices.failed", "devices.done", "devices.lost_title",

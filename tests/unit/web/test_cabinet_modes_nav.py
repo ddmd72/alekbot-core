@@ -1,8 +1,9 @@
 """Cabinet nav carries a Modes item next to Call, desktop and mobile."""
 import re
-from pathlib import Path
 
-_HTML = (Path(__file__).resolve().parents[3] / "src/web/static/cabinet.html").read_text(encoding="utf-8")
+from tests.unit.web.cabinet_source import cabinet_source
+
+_HTML = cabinet_source()
 
 
 def _href(item_id: str) -> str:

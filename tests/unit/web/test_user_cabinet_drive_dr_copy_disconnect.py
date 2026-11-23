@@ -2,7 +2,6 @@
 linked (owner, 2026-10-14). Before, a switch left on stayed visible after a disconnect so it could be turned off;
 now the disconnect itself resets it, so a hidden switch is never left on."""
 import re
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,9 +12,9 @@ from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.cabinet_drive import CabinetDrive, cabinet_drive
+from tests.unit.web.cabinet_source import cabinet_source
 
 _AUTH = {"Authorization": "Bearer token"}
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 
 
 def _app(user_repo, drive: CabinetDrive):
@@ -49,7 +48,7 @@ async def _disconnected(drive: CabinetDrive) -> bool:
 
 
 def test_the_switch_is_offered_only_while_a_drive_is_linked():
-    html = _HTML.read_text(encoding="utf-8")
+    html = cabinet_source()
     line = re.search(r"const drCopyHtml = (.*?)\n", html).group(1)
     assert line.startswith("linked && ")
     assert "dr_copy === true ||" not in line

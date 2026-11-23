@@ -2,7 +2,6 @@
 in the static page (the kind picker reads GET /api/connectors), and every /api/drive/ URL the page fetches is a route
 the blueprint serves."""
 import re
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from quart import Quart
@@ -11,8 +10,9 @@ from src.composition.connector_registry import ConnectorRegistry
 from src.domain.integration import Integration
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.cabinet_session_kit import CabinetSessionKit
+from tests.unit.web.cabinet_source import cabinet_source
 
-_HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html").read_text(encoding="utf-8")
+_HTML = cabinet_source()
 
 
 def _routes() -> list:

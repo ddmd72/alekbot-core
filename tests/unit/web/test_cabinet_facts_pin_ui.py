@@ -5,11 +5,12 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
-_HTML = (Path(__file__).resolve().parents[3] / "src/web/static/cabinet.html").read_text(encoding="utf-8")
+from tests.unit.web.cabinet_source import cabinet_source
+
+_HTML = cabinet_source()
 _EN: dict = {}
 for _m in re.finditer(r'"(pin\.[a-z_0-9]+)": "([^"]+)"', _HTML):
     _EN.setdefault(_m.group(1), _m.group(2))     # the English block comes first

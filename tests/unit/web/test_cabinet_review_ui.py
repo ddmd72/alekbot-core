@@ -1,17 +1,17 @@
 """Facts S4 · T11a: the Cabinet page's memory views (a static check of the page source): every string they use exists in
 en/uk/fr/es, and what the server sends reaches the DOM escaped, never inside an inline handler."""
 import re
-from pathlib import Path
 
 import pytest
 
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
+from tests.unit.web.cabinet_source import cabinet_source
+
 LANGS = ("en", "uk", "fr", "es")
 PREFIXES = ("memory.state_", "memory.closed_", "questions.")
 
 
 def _page() -> str:
-    return _HTML.read_text(encoding="utf-8")
+    return cabinet_source()
 
 
 def _dicts():

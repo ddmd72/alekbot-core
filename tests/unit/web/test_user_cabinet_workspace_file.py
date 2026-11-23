@@ -1,7 +1,6 @@
 """The Cabinet shows a reminder's workspace file on one read-only line; it is edited through chat
 (AGENT_WORKSPACE_RFC §8.3, §21 item 5)."""
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,9 +10,9 @@ from src.domain.agent_note import AgentNote
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.cabinet_session_kit import cabinet_session_for
 from src.composition.connector_registry import ConnectorRegistry
+from tests.unit.web.cabinet_source import cabinet_source
 
 _AUTH = {"Authorization": "Bearer token"}
-_HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 DUE = datetime(2030, 1, 1, 6, tzinfo=timezone.utc)
 
 
@@ -48,7 +47,7 @@ async def test_get_returns_the_field():
 
 
 def test_the_list_shows_it_escaped_on_one_read_only_line():
-    page = _HTML.read_text(encoding="utf-8")
+    page = cabinet_source()
     assert "workspace file: workspace:${esc(r.workspace_file)}" in page
     assert "${fileLine}" in page
     assert "rem-workspace-file" not in page  # no form field: chat edits it
