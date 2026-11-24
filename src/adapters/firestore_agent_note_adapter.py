@@ -86,8 +86,6 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             doc["complexity"] = data.complexity.value
         if data.workspace_file:
             doc["workspace_file"] = data.workspace_file
-        if data.untrusted:      # written only when set: other records stay byte-identical
-            doc["untrusted"] = True
 
         await self._col.document(note_id).set(doc)
         return AgentNote(
@@ -99,7 +97,6 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             due=data.due,
             recurrence=data.recurrence,
             workspace_file=data.workspace_file,
-            untrusted=data.untrusted,
         )
 
     async def delete_note(self, note_id: str, user_id: str) -> bool:
@@ -155,8 +152,6 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             updates["workspace_file"] = None
         elif data.workspace_file is not None:
             updates["workspace_file"] = data.workspace_file
-        if data.untrusted:
-            updates["untrusted"] = True
 
         if updates:
             await doc_ref.update(updates)
@@ -398,5 +393,4 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             complexity=complexity,
             last_delivered_due=cls._ensure_utc(data.get("last_delivered_due")),
             workspace_file=data.get("workspace_file") or None,
-            untrusted=bool(data.get("untrusted", False)),
         )
