@@ -3,9 +3,11 @@
 Each check reads the attribute that holds the value in the object production uses, on the graph built over the deploy's
 sealed environment: the route queues on the main task queue with the app's signing secret, and the worker's choice
 service resolves users with the same identity service the chat adapter uses, hands `fact_question` choices to the one
-answer service the memory review closes questions through, and re-renders through the one interactive-message router."""
+answer service the memory review closes questions through, and re-renders through the one interactive-message router.
+Its second kind, `external_task_send` (the Send button), is pinned in test_application_graph_task_send_button.py."""
 import pytest
 
+from src.domain.external_task_receipt import EXTERNAL_TASK_SEND_KIND
 from src.domain.fact_review_question import FACT_QUESTION_KIND
 from src.services.fact_answer_service import FactAnswerService
 from src.services.interactive_choice_service import InteractiveChoiceService
@@ -20,7 +22,7 @@ async def test_the_worker_has_the_choice_service_with_the_graphs_identity_router
 
     assert isinstance(service, InteractiveChoiceService)
     assert service._iam is app.slack_adapter.iam_service
-    assert list(service._handlers) == [FACT_QUESTION_KIND]
+    assert list(service._handlers) == [FACT_QUESTION_KIND, EXTERNAL_TASK_SEND_KIND]
     assert isinstance(service._handlers[FACT_QUESTION_KIND], FactAnswerService)
     assert service._handlers[FACT_QUESTION_KIND] is review._answer_service
     assert service._interactive is review._interactive

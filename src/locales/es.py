@@ -135,6 +135,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Enviada: *{title}* para *{worker}*.',
     UIMessage.EXTERNAL_TASK_NOT_FOUND.value: '❌ Ninguna tarea espera ese código: es incorrecto, caducó o ya se usó. No se envió nada.',
     UIMessage.EXTERNAL_TASK_UNAVAILABLE.value: 'Las tareas externas no están disponibles en este momento.',
+    UIMessage.EXTERNAL_TASK_SEND_BUTTON.value: 'Enviar',
     UIMessage.DRIVE_NOTES_USAGE.value: 'Notas de archivos: `$drive-notes erase-all` — borrar para siempre todas tus notas de archivos y su historial (te envío un código para confirmar); pega `$drive-notes erase CÓDIGO` o `$drive-notes erase-all CÓDIGO` para confirmar',
     UIMessage.DRIVE_NOTES_UNAVAILABLE.value: 'Las notas de archivos no están disponibles en este momento.',
     UIMessage.DRIVE_NOTES_NONE.value: 'No tienes notas de archivos.',

@@ -1130,7 +1130,9 @@ one path (`FactAnswerService.apply`, source `digit`, `button` or `cabinet`), whi
 - **A button (Slack).** One button per option. `POST /slack/interactivity` (`src/adapters/slack/interactivity_route.py`)
   verifies the Slack signature on the raw bytes before it parses anything, answers 200 at once and queues an
   `interactive_choice` task; the worker applies it through the same path (`InteractiveChoiceService`). The click must come
-  from the question's own user, on the question's own message.
+  from the question's own user, on the question's own message. The same click path, wired in `memory_setup.py`, also
+  answers the «Send» button of a held external task (binding `external_task_send`,
+  `external_task_queue/README.md`).
 - **A reply in words.** Recorded on the question (capped by `MAX_REPLY_CHARS`) and acknowledged. When it answers the
   *current* question, the same transaction gives up the slot and the next question is released at once; the question stays
   `asked`. The review is shown the words once on its next run, which applies them and closes the question. It never

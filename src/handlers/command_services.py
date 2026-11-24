@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from ..ports.interactive_message_port import InteractiveMessagePort
     from ..services.device_session_service import DeviceSessionService
     from ..services.drive_note_service import DriveNoteService
     from ..services.external_task_service import ExternalTaskService
@@ -28,3 +29,5 @@ class CommandServices:
     device_sessions: Optional["DeviceSessionService"] = None   # `$devices`, `$devices off` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
     facts_pin: Optional["FactsPinService"] = None   # `$<digits>` (the duress code / PIN), `$pin cancel` (§7.9, §7.7)
     external_tasks: Optional["ExternalTaskService"] = None   # `$task send` (EXTERNAL_TASK_QUEUE_RFC §5.3)
+    # The Slack «Send» button on a held task's command message, the button form of `$task send`; None: the command alone.
+    task_send_buttons: Optional["InteractiveMessagePort"] = None

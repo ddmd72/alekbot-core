@@ -61,13 +61,15 @@ class UIMessage(Enum):
     MEMORY_SAVED = "memory_saved"
     MEMORY_DRAFT_NOT_FOUND = "memory_draft_not_found"
     MEMORY_UNAVAILABLE = "memory_unavailable"
-    # External tasks (EXTERNAL_TASK_QUEUE_RFC §5.3): the literal receipt, `$task send` and its replies.
+    # External tasks (EXTERNAL_TASK_QUEUE_RFC §5.3): the literal receipt, `$task send` and its replies; the Slack Send
+    # button on the command message, whose press gets the same replies.
     EXTERNAL_TASK_HELD = "external_task_held"
     EXTERNAL_TASK_ID_LINE = "external_task_id_line"
     EXTERNAL_TASK_USAGE = "external_task_usage"
     EXTERNAL_TASK_SENT = "external_task_sent"
     EXTERNAL_TASK_NOT_FOUND = "external_task_not_found"
     EXTERNAL_TASK_UNAVAILABLE = "external_task_unavailable"
+    EXTERNAL_TASK_SEND_BUTTON = "external_task_send_button"
     # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` command's own replies (part C). The
     # request, erased and partial replies are part A's DRIVE_NOTE_ERASE_* strings, rendered by drive_note_receipt.
     DRIVE_NOTES_USAGE = "drive_notes_usage"

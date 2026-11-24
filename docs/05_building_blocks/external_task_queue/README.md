@@ -28,6 +28,7 @@ covers:
   src/adapters/firestore_external_worker_store.py
   src/adapters/firestore_window_counter.py
   src/services/external_task_service.py
+  src/services/external_task_send_choice.py
   src/services/external_task_rate_limiter.py
   src/services/external_worker_user_gate.py
   src/infrastructure/external_task_tools.py
@@ -63,7 +64,8 @@ label `research` and the task "compare three community-garden irrigation kits fo
 
 Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; the task specialist
 (`ExternalTaskAgent`, intent `work_with_external_tasks`) with the five queue tools (create, list, get, cancel, list
-workers), where every task created in a chat turn is held until the owner confirms it with `$task send`; the REST
+workers), where every task created in a chat turn is held until the owner confirms it with `$task send` (on Slack
+also with the «Send» button under the command); the REST
 worker endpoint `/external-tasks/v1/*`
 with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
 keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
@@ -154,6 +156,19 @@ with `$task send CODE` (`ConversationHandler`, the `task` command); the service 
 that is not confirmed expires through its hold timer. A wrong, used or expired code gets one neutral line. A held task
 is invisible to every worker surface.
 
+**The Send button (Slack).** On Slack the command message carries one «Send» button: it is an interactive message of
+the memory review's mechanism (`external_task_receipt.send_button`; the same command text as its prompt), posted in the
+receipt's thread when the receipt has one. The binding names the task (`external_task_send:<task_id>`), the button's
+option id is the code, so the code is carried only on the message that already shows it. A press goes the shared click
+path (`POST /slack/interactivity` → `interactive_choice` task → `InteractiveChoiceService`, IAM read fresh, so an
+unknown or locked user stops there) to `ExternalTaskSendChoice`: the task must be the clicker's
+(`ExternalTaskService.is_owner`; another user's press in a shared channel does and shows nothing), then the command's
+own `confirm(user_id, code)`, and the command's own answer replaces the button (`send_refusal_reply` is shared): sent;
+not found for a second press, a task the command already sent or a lapsed hold (the button goes); unavailable when the
+flag is off or the account was locked after the press was authorised (the button stays). `confirm` is one store
+transaction on the hold, so no number of presses sends a task twice. If the button cannot be posted, the command goes
+alone. Telegram keeps the command only, and the command keeps working on Slack.
+
 **Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:518`) applies the
 kind's precondition, so a stale timer changes nothing. A timer further than Cloud Tasks can schedule re-enqueues itself.
 
@@ -224,7 +239,8 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
 - **`401` limits live in memory.** Per address (rightmost `X-Forwarded-For` entry) and global, held by the rate limiter
   over `WindowCounter`; the per-worker limits count calls, claims and submits. Logs name a worker by
   `fingerprint(worker_id)`, never a key, text, result or header.
-- **Inactive user.** Refused at the Cabinet routes, the REST endpoint and `$task send`.
+- **Inactive user.** Refused at the Cabinet routes, the REST endpoint, `$task send` and the Send button (IAM at the
+  click, then the service's own check in `confirm`).
 - **A worker's description never reaches a model.** It is free text typed in the Cabinet; a tool or parameter
   description is read with the schema's authority, so the specialist's tools carry labels only (the `worker` enum and
   its lead line, the `list_external_workers` result, the `queue_state` block). The description is shown to the owner in the Cabinet and nowhere else.

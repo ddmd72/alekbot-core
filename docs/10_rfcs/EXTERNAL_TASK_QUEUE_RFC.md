@@ -430,7 +430,8 @@ Operations:
   - Tainted (§5.3): writes the task as `held` with a fresh confirmation code (stored as its keyed digest) and
     `hold_until = now + HOLD_S`. No timer except the hold's, and no wake-up.
   - Returns the task id, and for a held task the code.
-- `confirm(user, code)`: reached only from the owner's `$task send <code>` command (§5.3). A `held` task of that user
+- `confirm(user, code)`: reached only from the owner's `$task send <code>` command (§5.3), or its Slack «Send» button
+  (decision record `external_task_confirmation_and_alerts.md`, item 2). A `held` task of that user
   whose code matches and whose hold has not run out becomes `queued`. Then the deadline timer and the wake-up run as
   for an untainted create. A wrong or expired code changes nothing and gets one neutral line.
 - `list(user, filters)` returns the user's own tasks: id, worker, title, status and times. It never returns a result or
@@ -526,7 +527,8 @@ The defence is per-execution taint:
 - It does not queue. The service stores the task as `held`, and no wake-up leaves.
 - The handler returns a delivery item that the turn's handler posts literally after the answer. It quotes the worker,
   the title, the **full task text** and the command `$task send <code>`.
-- Only the owner's `$task send <code>` queues the task and sends the wake-up. It follows the `$skill save` /
+- Only the owner's `$task send <code>` (or, on Slack, the owner's press of the «Send» button under it, which ends in the
+  same `confirm`) queues the task and sends the wake-up. It follows the `$skill save` /
   `$memory save` pattern (§3), and `$` commands never reach a model or history.
 - An unconfirmed hold runs out at `hold_until` and becomes `expired` silently.
 

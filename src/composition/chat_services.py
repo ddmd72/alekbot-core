@@ -8,6 +8,7 @@ from ..domain.settings import ConsolidationSettings
 from ..handlers.command_services import CommandServices
 from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
+from ..ports.interactive_message_port import InteractiveMessagePort
 from ..services.channel_binding_service import ChannelBindingService
 from ..services.consolidation_service import ConsolidationService
 from ..services.device_session_service import DeviceSessionService
@@ -45,6 +46,7 @@ class ChatServices:
     device_sessions: Optional[DeviceSessionService] = None   # `$devices` (CABINET_DEVICE_SESSIONS_RFC §7.5, §7.6)
     facts_pin: Optional[FactsPinService] = None   # `$<digits>` and `$pin cancel` (CABINET_DEVICE_SESSIONS_RFC §7.9)
     external_tasks: Optional[ExternalTaskService] = None   # `$task send` (EXTERNAL_TASK_QUEUE_RFC §5.3)
+    task_send_buttons: Optional[InteractiveMessagePort] = None   # the Slack Send button of a held task (Memory's)
 
 
 def build_conversation_handler(chat: ChatServices, rich_content: RichContentService, *,
@@ -73,5 +75,5 @@ def build_conversation_handler(chat: ChatServices, rich_content: RichContentServ
         commands=CommandServices(skills=chat.skill_service, memory_facts=chat.memory_fact_service,
                                  drive_notes=chat.drive_note_service, geo_marks=chat.geo_mark_service,
                                  device_sessions=chat.device_sessions, facts_pin=chat.facts_pin,
-                                 external_tasks=chat.external_tasks),
+                                 external_tasks=chat.external_tasks, task_send_buttons=chat.task_send_buttons),
     )

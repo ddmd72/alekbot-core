@@ -20,7 +20,9 @@ class InteractiveMessage(BaseModel):
     How the options, the quote and the hint are laid out is each platform adapter's business.
 
     A message offers `MIN_OPTIONS` to `MAX_OPTIONS` options. `min_options` is 1 only for the profile question about a
-    date (fact profile RFC §4.7), whose one option is "don't remember"; every other message keeps the default."""
+    date (fact profile RFC §4.7), whose one option is "don't remember", and for a held external task's command message,
+    whose one option is its Send button (`external_task_receipt.send_button_message`); every other message keeps the
+    default."""
 
     model_config = ConfigDict(frozen=True)
 

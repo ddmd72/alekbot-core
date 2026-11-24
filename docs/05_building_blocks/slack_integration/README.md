@@ -77,7 +77,9 @@ one codec for poster and route). A press arrives at `/slack/interactivity`
 (`interactivity_route.py::SlackInteractivityRoute.handle`): signature on the raw body, then parse, then enqueue an
 `interactive_choice` worker task on the **main** queue (not the Slack intake queue) with a dedup key from the press, and
 answer 200. `WorkerHandler._handle_interactive_choice` applies it and `show_choice` re-renders the message with
-`chat.update`. The Slack app needs Interactivity enabled with this route as Request URL. Its only poster is the memory review, profile questions included (`memory/README.md` §5.6).
+`chat.update`. The Slack app needs Interactivity enabled with this route as Request URL. Two posters use it: the memory
+review, profile questions included (`memory/README.md` §5.6), and the «Send» button on a held external task's command
+message (`external_task_queue/README.md`, "The Send button"), which `post_reply` puts in the receipt's thread.
 
 ### Slash command
 
