@@ -46,7 +46,7 @@ def test_declared_contains_the_fields_of_every_surface():
         "tasks:update_task.recurrence.days_of_week",
         "smart_local:draft_skill.files[].from_file",
         "smart_local:propose_memory_facts.facts[].source",
-        "smart_tasks:create_external_task.text",
+        "external_tasks:create_external_task.text",
         "delegate:work_with_drive_files.file_contents[].text",
         "delegate:manage_self_reminders.workspace_file",
         "drive:save_text_file.text_item",
@@ -56,7 +56,7 @@ def test_declared_contains_the_fields_of_every_surface():
     ):
         assert key in keys, key
     assert "smart_local:draft_skill.files[]" not in keys            # an array of objects has no path of its own
-    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "smart_tasks", "drive",
+    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "external_tasks", "drive",
                         "drive_notes", "delegate")
 
 
