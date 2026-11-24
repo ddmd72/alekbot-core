@@ -7,6 +7,7 @@ Public interface:
     Owner side (Smart tools, `$task send`), user id closed over by the caller:
         .create(user_id, worker_label, title, text, origin, *, entry) -> CreatedTask
         .confirm(user_id, code) -> TaskSummary
+        .is_owner(user_id, task_id) -> bool                              (the Slack Send button's owner check)
         .list_tasks(user_id, status=None, worker_label=None) -> List[TaskSummary]
         .get_task(user_id, task_id) -> TaskView
         .cancel(user_id, task_id) -> TaskSummary
@@ -36,7 +37,8 @@ Public interface:
 Every refusal raises `ExternalTaskRefused(reason)` and writes nothing. Checks, all fresh on every call: the account lock
 (`InactiveUserCheck`) then the flag (`UserBotConfig.external_tasks_enabled`, §5.10) for every owner, worker and registry
 operation; for a worker operation first the worker record (active, the principal's). Timers and delivery check neither:
-`/worker` refuses a locked user, and a task outlives a switched-off flag until its deadline (§5.10).
+`/worker` refuses a locked user, and a task outlives a switched-off flag until its deadline (§5.10). Nor does
+`is_owner`, a read of ownership only (its docstring says why).
 
 Every state change is one store transaction applying a rule of `src/domain/external_task_rules.py` (§5.2). Timers and
 notices are Cloud Tasks through `TaskQueue.enqueue_worker_task` (payloads: `src/domain/external_task_jobs.py`):
@@ -385,6 +387,14 @@ class ExternalTaskService:
                 await self._wake_if_due(outcome.task, oldest_only=True)
                 return TaskSummary.of(outcome.task)
         raise ExternalTaskRefused(TaskRefusal.HOLD_NOT_FOUND)
+
+    async def is_owner(self, user_id: str, task_id: str) -> bool:
+        """Whether `task_id` names a task of `user_id`, in any status. The one owner-side read without the lock and flag
+        checks: it says nothing about the task but that it is this user's, and serves the Slack Send button, whose click
+        must be known to be the owner's before anything is shown on the owner's message (a click of another user in a
+        shared channel changes nothing). The click was authorised by IAM first (the lock), and the release itself is
+        `confirm`, with both checks."""
+        return await self._tasks.get(user_id, task_id) is not None
 
     async def list_tasks(self, user_id: str, status: Optional[ExternalTaskStatus] = None,
                          worker_label: Optional[str] = None) -> List[TaskSummary]:
