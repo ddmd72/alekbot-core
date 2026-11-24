@@ -71,8 +71,11 @@ wake-up POST behind the outbound-request guard; the operator flag script.
 
 Step 3 is in too: the worker MCP resource `/tasks-mcp` on worker keys (below).
 
-Not built (RFC steps 4-5): OAuth grants for the MCP resource, the primary drive's Inbox as a destination. Code that
-mentions them (`WorkerDestination.DRIVE`, `SubmitVia.OAUTH`) is placeholder for those steps.
+Step 4 is in progress: the authorization server binds the tasks scope to one worker, and the Cabinet lists each
+worker's OAuth grants (client name, granted time, last refresh) with Revoke; removing a worker revokes its grants. Not
+built yet: the consent page's worker picker, the registrable scope and the tasks verifier's OAuth route; and step 5,
+the primary drive's Inbox as a destination. Code that mentions them (`WorkerDestination.DRIVE`, `SubmitVia.OAUTH`) is
+placeholder for those steps.
 
 ## Owned data
 
@@ -94,11 +97,12 @@ Two of these carry `purge_after` (tasks, results) and are deleted by a TTL polic
 
 ## Flows
 
-**Hand-off** (`decisions/external_task_specialist.md`). Smart has no queue tool. On the owner's own chat turn of a
-flagged user (interactive, not reached by delegation) it is offered one internal intent, `work_with_external_tasks`,
+**Hand-off** (`decisions/external_task_specialist.md`). Smart has no queue tool. On the owner's own chat turn or while one
+of the owner's reminders runs (`task_entry`, `src/domain/external_task_entry.py`), for a flagged user, not reached by
+delegation, it is offered one internal intent, `work_with_external_tasks`,
 and writes the task specialist a natural-language instruction: the worker's name and the whole brief, or which task to
 read or cancel. `ExternalTaskAgent` (`src/agents/external_task_agent.py`) repeats that gate in code before any model
-call (an interactive turn, a call chain of itself alone, a service, a user, then the service's fresh flag and lock
+call (a run with a task entry, a call chain of itself alone, a service, a user, then the service's fresh flag and lock
 check) and answers a refusal with one code-written line. It runs its own engine loop over the five tools, delegating
 nothing; its system prompt ends, after the cache boundary, with a `queue_state` block of worker labels. Its answer is
 composed by code from a pass-through record of every tool call: each result word for word, then the model's short note,
@@ -113,7 +117,8 @@ the worker label only. The brief's language follows the owner's skill or words, 
 
 **Create to deliver.** The specialist's `create_external_task` handler (`src/infrastructure/external_task_tools.py`)
 calls `ExternalTaskService.create` (`src/services/external_task_service.py:328`): the `entry` decides: a chat create is
-`held` (below), a reminder create is `queued` with a deadline timer (the specialist always passes `TaskEntry.CHAT`); a
+`held` (below), a reminder create is `queued` with a deadline timer (the specialist computes the entry once per run from the context
+with `task_entry`, never from the model: `CHAT` on the owner's chat turn, `REMINDER` while a reminder runs); a
 worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
 final state enqueues an `external_task_deliver` Cloud Task (dispatch deadline `DELIVER_DEADLINE_S`, the
 `EXTERNAL_TASK` notification budget plus headroom).
@@ -195,12 +200,15 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
 - **A chat create always waits.** Every task a chat turn creates is held for the owner's `$task send`, whatever the
   turn read; a reminder run's create is queued. There is no per-execution taint tracking (decision record
   `external_task_confirmation_and_alerts.md`).
-- **Only the owner's own chat turn reaches the queue.** Smart offers the specialist's intent only on an
-  interactive-delivery turn that was not reached by delegation and whose user has the flag; Quick never sees it (the
+- **Only the owner's own chat turn and the owner's reminders reach the queue.** Smart offers the specialist's intent only
+  on an interactive-delivery turn or a reminder's run (`run_origin` `background:execute_reminder`) that was not reached
+  by delegation and whose user has the flag; Quick never sees it (the
   intent is internal). The specialist repeats the gate in code: the coordinator checks no allowlist, so a nested Smart
   or Lelik's `/voice/delegate` naming the intent gets a code-written refusal, no model call. The service re-checks flag
   and lock, so a stale cached profile gains nothing.
-  The delivery's alert turn is a background run (`background:external_task_deliver`, no `interactive_delivery`), so a
+  A reminder's create goes straight to the queue with a tool note and no receipt (the owner approved that reminder when
+  it was set), and its task's origin is the reminder's channel, so the completion alert lands where the reminder spoke.
+  The daily review, a voice errand and the delivery's alert turn have no entry. The delivery's alert turn is a background run (`background:external_task_deliver`, no `interactive_delivery`), so a
   worker's result never starts new work.
 - **A worker's text is wrapped where a model reads it through the queue.** `get_external_task` returns a result or a
   failure reason inside an outside-content wrapper after the reminder; a delivered result or reason is an ordinary

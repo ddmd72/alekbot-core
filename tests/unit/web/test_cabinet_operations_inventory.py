@@ -23,22 +23,24 @@ from tests.unit.web.cabinet_source import cabinet_source
 _HTML = cabinet_source()
 
 HANDLERS = [
-    "acceptPasskeyOffer", "addDrive", "addPasskeyHere", "askDisconnectDrive", "backToBrowse", "browseNextPage",
-    "cancelDisconnectDrive", "cancelDrivePickerPreview", "cancelGmailIndex", "cancelPinReset", "closeDrivePicker",
-    "closeModal", "copyCorrectMessage", "copyDeepLink", "deleteGmailData", "deleteReminder", "disconnectDrive",
+    "acceptPasskeyOffer", "addDrive", "addExternalWorker", "addPasskeyHere", "askDisconnectDrive", "backToBrowse",
+    "browseNextPage", "cancelDisconnectDrive", "cancelDrivePickerPreview", "cancelGmailIndex", "cancelPinReset",
+    "clearMintedWorkerKey", "clearWorkerWake", "clearWorkerWakeForm", "closeDrivePicker", "closeModal",
+    "copyCorrectMessage", "copyDeepLink", "copyWorkerKey", "deleteGmailData", "deleteReminder", "disconnectDrive",
     "disconnectGmail", "disconnectService", "dismissPasskeyOffer", "driveCrumb", "driveTabKey", "editReminder",
     "forgotPin", "generateTeamInvite", "handleEsc", "hideReminderForm", "init", "invalidateFactDirect", "linkPlatform",
-    "logout", "logoutAllDevices", "logoutDevice", "logoutOtherDevices", "makeDrivePrimary", "navigate",
+    "logout", "logoutAllDevices", "logoutDevice", "logoutOtherDevices", "makeDrivePrimary", "mintWorkerKey", "navigate",
     "onRecurrenceChange", "onReviewChange", "onReviewClick", "openCorrectModal", "openDrivePicker",
-    "openDrivePickerFolder", "openInvalidModal", "relockFacts", "removeDrivePickerChip", "removeDriveScopeFolder",
-    "removePasskey", "renameDrive", "requestCloseDrivePicker", "resumeDrivePicker", "runSearch", "saveDailyReview",
-    "saveDeepResearch", "saveDeepResearchCopy", "saveDriveConnectorAccess", "saveDriveIndexing", "saveDrivePicker",
-    "saveDriveSearchedByDefault", "saveGmailAutoIndex", "saveLanguage", "saveLocation", "saveReminder",
-    "saveTimezone", "saveVoiceLanguages", "selectDriveTab", "setDomainFilter", "setDrivePickerFilter",
-    "setDrivePickerSource", "setDrivePickerWrite", "setFactsState", "setLangMirror", "setLangUI",
-    "showReminderForm", "submitIndexModal", "submitPinChange", "submitPinRemove", "submitPinSet", "toggleDriveCard",
-    "toggleDrivePickerFolder", "toggleDrivePickerWhole", "toggleDriveScopeWhole", "triggerGmailIndex",
-    "unlinkPlatform", "unlockFacts", "updateIndexModal",
+    "openDrivePickerFolder", "openInvalidModal", "openWorkerWake", "relockFacts", "removeDrivePickerChip",
+    "removeDriveScopeFolder", "removeExternalWorker", "removePasskey", "renameDrive", "requestCloseDrivePicker",
+    "resumeDrivePicker", "revokeWorkerGrant", "revokeWorkerKey", "runSearch", "saveDailyReview", "saveDeepResearch",
+    "saveDeepResearchCopy", "saveDriveConnectorAccess", "saveDriveIndexing", "saveDrivePicker",
+    "saveDriveSearchedByDefault", "saveGmailAutoIndex", "saveLanguage", "saveLocation", "saveReminder", "saveTimezone",
+    "saveVoiceLanguages", "saveWorkerWake", "selectDriveTab", "setDomainFilter", "setDrivePickerFilter",
+    "setDrivePickerSource", "setDrivePickerWrite", "setFactsState", "setLangMirror", "setLangUI", "showReminderForm",
+    "submitIndexModal", "submitPinChange", "submitPinRemove", "submitPinSet", "toggleDriveCard",
+    "toggleDrivePickerFolder", "toggleDrivePickerWhole", "toggleDriveScopeWhole", "triggerGmailIndex", "unlinkPlatform",
+    "unlockFacts", "updateIndexModal",
 ]
 
 SERVER_CALLS = [
@@ -110,6 +112,16 @@ SERVER_CALLS = [
     ("PUT", "/api/drive/connections/{}/indexing"),
     ("GET", "/api/drive/deep-research-copy"),
     ("PUT", "/api/drive/deep-research-copy"),
+    # added by review: the External workers row (EXTERNAL_TASK_QUEUE_RFC §5.6), its registry, key and wake-up
+    # operations and step 4.2's grant revoke
+    ("GET", "/api/external-workers"),
+    ("POST", "/api/external-workers"),
+    ("DELETE", "/api/external-workers/{}"),
+    ("POST", "/api/external-workers/{}/keys"),
+    ("DELETE", "/api/external-workers/{}/keys/{}"),
+    ("PUT", "/api/external-workers/{}/wake"),
+    ("DELETE", "/api/external-workers/{}/wake"),
+    ("DELETE", "/api/external-workers/{}/grants/{}"),
 ]
 
 PAGE_TARGETS = ["/cabinet/call", "/cabinet/call/modes", "/auth/connect/{}", "/auth/login", "/auth/login/google"]

@@ -17,6 +17,7 @@ from ..services.user_drive_service import UserDriveService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.external_task_service import ExternalTaskService
+from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..services.facts_pin_service import FactsPinService
 from ..services.localization_service import LocalizationService
 from ..services.language_preference_service import LanguagePreferenceService
@@ -144,6 +145,7 @@ def create_user_cabinet_blueprint(
     drive_disconnect: Optional[DriveDisconnectService] = None,
     facts_pin: Optional[FactsPinService] = None,
     external_tasks: Optional[ExternalTaskService] = None,
+    mcp_authorization: Optional[MCPAuthorizationService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -156,7 +158,7 @@ def create_user_cabinet_blueprint(
     language settings and `language_preferences` writes them. `facts_pin` is the opt-in facts PIN: the eight facts routes
     carry `facts_unlock_required` (a user with a PIN and a session not unlocked gets 403 `facts_locked`).
     `external_tasks` serves the External workers routes (`cabinet_external_workers.py`); without it they answer as a user
-    without the flag.
+    without the flag. `mcp_authorization` lists and revokes the workers' OAuth grants there; without it they have none.
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -2206,5 +2208,5 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error deleting Gmail data: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
-    register_external_worker_routes(bp, auth_required, external_tasks)
+    register_external_worker_routes(bp, auth_required, external_tasks, mcp_authorization)
     return bp

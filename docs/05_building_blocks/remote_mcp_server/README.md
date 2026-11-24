@@ -174,6 +174,17 @@ only (`_allow_reason(user_id, resource)`): it is checked at consent (no code), a
 and refused) and at every refresh rotation (the presented token is revoked). The service does not check that the
 worker is the user's: the consent page does, and every tool call does through the queue.
 
+**The Cabinet's grant list** (`src/web/cabinet_external_workers.py`, EXTERNAL_TASK_QUEUE_RFC §5.6). The External workers
+card lists each worker's live grants through `MCPAuthorizationService.worker_grants` (one entry per `grant_id`: the
+registered client's name, `granted_at`, and the live token's `issued_at` as "last refresh"), read by
+`list_worker_grants` (three equality filters: `user_id`, `worker_id`, `revoked_at` null; expiry checked in code).
+Revoke (`DELETE /api/external-workers/<worker_id>/grants/<grant_id>`, resolved among that worker's own live grants)
+calls `revoke_grant`, which revokes every unrevoked token of the grant in one transaction: the grant's next refresh
+fails, and its live access tokens are refused on their next tasks call by `grant_allowed`. Removing a worker calls the
+queue's `revoke_worker` and then `revoke_worker_grants`: the route calls both services (REQ-ARCH-22). `main.py` builds the
+MCP components before the Cabinet blueprint so the Cabinet gets this service; a failed build leaves the bot up without
+MCP and the card lists no grants.
+
 ### Facts tool call
 
 `src/composition/mcp_setup.py::build_mcp_components` registers one tool, `FACTS_TOOL`. The handler takes the verified
