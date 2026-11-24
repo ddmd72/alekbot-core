@@ -1,8 +1,5 @@
 """The literal notice as a file (`src/domain/literal_notice.py`) and its three producers' domain renderers: the exact text
-goes byte for byte into the file; the message holds the header and the short lines, one line each.
-
-A new file, not rows of `test_literal_notice.py` / `test_external_task_receipt.py`: those pin the earlier `│` form and
-stay as they are until the reviewer rules on them (root CLAUDE.md, reviewer rule)."""
+goes byte for byte into the file; the message holds the header and the short lines, one line each."""
 import pytest
 
 from src.domain.external_task import HOLD_S, ExternalTaskStatus
@@ -38,6 +35,15 @@ def test_the_message_is_the_header_then_each_line_and_line_breaks_in_them_become
                                    title="Morning\nbriefing", lines=["", "10 Mar 2030 10:00 CET\u2028· workspace file"])
     assert notice.message == "Reminder set: \"Morning briefing\"\n10 Mar 2030 10:00 CET · workspace file"
     assert notice.title == "Morning briefing" and notice.filename == "reminder.txt"
+
+
+def test_no_lines_leave_the_header_alone_and_an_empty_text_is_an_empty_file():
+    header = "📌 Reminder set: \"Morning briefing\""
+    notice = render_literal_notice(header, "", filename="reminder.txt", title="Morning briefing")
+    assert notice.message == header and notice.content == b""
+    with_lines = render_literal_notice(header, "", filename="reminder.txt", title="Morning briefing",
+                                       lines=["", "Task id: `tsk-1`"])
+    assert with_lines.message == f"{header}\nTask id: `tsk-1`"
 
 
 def _held(task_id="tsk-1", text=TEXT):
