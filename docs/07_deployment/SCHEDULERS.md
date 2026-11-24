@@ -324,7 +324,7 @@ takes no memory-write lease.
   history pair; no model runs. A refused copy (caps) or no workspace posts the "no copy" notice; no channel records the
   delivery and logs at error level; a store failure or a failed post answers 5xx and Cloud Tasks retries (the copy of
   an earlier attempt, found by its origin, is reused).
-- **`external_task_wake`** is enqueued by `ExternalTaskService` when a task becomes queued (an untainted create, a
+- **`external_task_wake`** is enqueued by `ExternalTaskService` when a task becomes queued (a reminder-run create, a
   `$task send`) and is its worker's oldest queued task, or when a lease timer re-queues a task, and only for a worker
   that has a wake-up target and holds no unexpired lease (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.8). Body
   `{user_id, account_id, worker_id, generation}`, never task content; dedup key `external_task_wake:<worker_id>:

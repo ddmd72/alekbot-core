@@ -15,7 +15,6 @@ covers:
   src/domain/external_worker.py
   src/domain/external_worker_key.py
   src/domain/external_worker_principal.py
-  src/domain/execution_taint.py
   src/domain/wake_refusal.py
   src/domain/wake_target.py
   src/domain/wake_curl.py
@@ -31,7 +30,6 @@ covers:
   src/services/external_task_rate_limiter.py
   src/services/external_worker_user_gate.py
   src/infrastructure/external_task_tools.py
-  src/infrastructure/taint_tracker.py
   src/composition/external_task_setup.py
   src/composition/external_task_api_setup.py
   src/web/external_task_api.py
@@ -139,23 +137,14 @@ held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_R
 
 ## Security rules enforced in code
 
-The idea behind the taint rule, every taint source, how taint persists and what it does not cover, without reading
-code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
-
-- **Taint (no longer decides the hold).** A chat create is held always; the taint tracker is still in the code for other
-  uses and is removed in later steps of the decision record. An execution is tainted when outside content entered it. `domain/execution_taint.py` is the pure rule and
-  `TaintTracker` (`src/infrastructure/taint_tracker.py:25`) applies it per execution attempt, fed by the delegation
-  engine after every tool batch. Sources: a wrapped result or attached-file reminder, any file part, any tool result
-  not on the closed allowlist (`call_is_trusted`, `src/domain/execution_taint.py:61`; web search is not wrapped, which is
-  why the list is an allowlist), a forwarded message, an earlier saved model turn that was itself tainted
-  (`Message.execution_tainted`), an untrusted agent note, and every read of a result or failure reason
-  (`get_external_task` is not on the list).
-- **The bit travels.** The final flag is stored on the saved model message, so the next turn builds on a tainted
-  answer as tainted. 
+- **A chat create always waits.** Every task a chat turn creates is held for the owner's `$task send`, whatever the
+  turn read; a reminder run's create is queued. There is no per-execution taint tracking (decision record
+  `external_task_confirmation_and_alerts.md`).
 - **Nested Smart gets no tools.** The five tools are added only to an interactive-delivery turn that was not reached by
   delegation and whose user has the flag; the service re-checks flag and lock, so a stale cached profile gains nothing.
-- **Untrusted flag on stored copies.** A delivered result is an ordinary workspace file under an outside-content
-  header (no file-level mark); agent notes written by a tainted execution carry `untrusted`.
+- **A worker's text is wrapped where a model reads it.** `get_external_task` returns a result or a failure reason
+  inside an outside-content wrapper after the reminder; a delivered result is an ordinary workspace file under an
+  outside-content header (no file-level mark).
 - **Results never in a model turn on delivery.** Notices are literal and code-written; a worker's text and a failure
   reason are never quoted in them.
 - **One refusal for the unknown.** A label that does not exist, another user's task and a missing task give the same

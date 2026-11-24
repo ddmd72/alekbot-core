@@ -75,7 +75,6 @@ from ..domain.llm import ToolCall
 from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ..utils.logger import logger
 from .delegation_engine import LocalToolHandler, ToolResult
-from .taint_tracker import TaintTracker
 
 if TYPE_CHECKING:
     from ..services.external_task_service import ExternalTaskService
@@ -210,8 +209,7 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
     return handle
 
 
-def make_list_handler(service: "ExternalTaskService", user_id: str, tracker: TaintTracker) -> LocalToolHandler:
-    """`tracker` is no longer read here; it leaves the signature with the rest of the taint tracking."""
+def make_list_handler(service: "ExternalTaskService", user_id: str) -> LocalToolHandler:
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         args = _args(tool_call)
@@ -249,16 +247,15 @@ def make_list_workers_handler(service: "ExternalTaskService", user_id: str) -> L
         if not workers:
             return ToolResult(name=tool_call.name, result_str=NOTE_WORKERS_NONE)
         # Labels only (charset-restricted): a description is free text typed in the Cabinet and stays out of every
-        # model-facing text, so this tool stays on the clean allowlist (src/domain/execution_taint.py).
+        # model-facing text.
         lines = [w.label for w in workers]
         return ToolResult(name=tool_call.name, result_str="\n".join([NOTE_WORKERS_HEADER, *lines]))
 
     return handle
 
 
-def make_get_handler(service: "ExternalTaskService", user_id: str, tracker: TaintTracker) -> LocalToolHandler:
-    """A result and a failure reason are the worker's text: wrapped as outside content after the reminder, and the
-    execution is marked tainted (the engine's observer marks it too: this tool is off the allowlist)."""
+def make_get_handler(service: "ExternalTaskService", user_id: str) -> LocalToolHandler:
+    """A result and a failure reason are the worker's text: wrapped as outside content after the reminder."""
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         task_id = _text_arg(_args(tool_call), "task_id")
@@ -273,8 +270,6 @@ def make_get_handler(service: "ExternalTaskService", user_id: str, tracker: Tain
         summary = view.summary
         lines = [NOTE_GET_HEAD.format(task_id=summary.task_id, worker=summary.label, title=summary.title,
                                       status=summary.status.value)]
-        if view.untrusted:
-            tracker.mark()
         if summary.status is ExternalTaskStatus.DONE:
             lines += _wrapped(view.result, task_id, NOTE_GET_RESULT, NOTE_GET_NO_RESULT)
         elif view.failure_code is TaskFailureCode.WORKER_FAILED:
