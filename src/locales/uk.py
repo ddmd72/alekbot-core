@@ -164,6 +164,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Надіслано: *{title}* для *{worker}*.',
     UIMessage.EXTERNAL_TASK_NOT_FOUND.value: '❌ Жодне завдання не чекає на цей код: він неправильний, прострочений або вже використаний. Нічого не надіслано.',
     UIMessage.EXTERNAL_TASK_UNAVAILABLE.value: 'Зовнішні завдання зараз недоступні.',
+    UIMessage.EXTERNAL_TASK_SEND_BUTTON.value: 'Надіслати',
     UIMessage.DRIVE_NOTES_USAGE.value: 'Нотатки до файлів: `$drive-notes erase-all` — назавжди стерти всі твої нотатки до файлів разом з історією (я надішлю код для підтвердження); встав `$drive-notes erase КОД` або `$drive-notes erase-all КОД`, щоб підтвердити',
     UIMessage.DRIVE_NOTES_UNAVAILABLE.value: 'Нотатки до файлів зараз недоступні.',
     UIMessage.DRIVE_NOTES_NONE.value: 'У тебе немає нотаток до файлів.',

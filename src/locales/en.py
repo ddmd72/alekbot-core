@@ -159,6 +159,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Sent: *{title}* for *{worker}*.',
     UIMessage.EXTERNAL_TASK_NOT_FOUND.value: '❌ No task waits for that code: it is wrong, expired or already used. Nothing was sent.',
     UIMessage.EXTERNAL_TASK_UNAVAILABLE.value: 'External tasks are not available right now.',
+    UIMessage.EXTERNAL_TASK_SEND_BUTTON.value: 'Send',
     UIMessage.DRIVE_NOTES_USAGE.value: 'Drive notes: `$drive-notes erase-all` — erase all your drive notes and their history for good (I send a code to confirm); paste `$drive-notes erase CODE` or `$drive-notes erase-all CODE` to confirm',
     UIMessage.DRIVE_NOTES_UNAVAILABLE.value: 'Drive notes are not available right now.',
     UIMessage.DRIVE_NOTES_NONE.value: 'You have no drive notes.',
