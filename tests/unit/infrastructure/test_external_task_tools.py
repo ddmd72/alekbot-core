@@ -41,7 +41,7 @@ def create_args(**over):
 
 
 async def create(world, tracker=None, **over):
-    handler = make_create_handler(world.service, USER_ID, ORIGIN, tracker or TaintTracker())
+    handler = make_create_handler(world.service, USER_ID, ORIGIN)
     return await handler(call("create_external_task", **create_args(**over)))
 
 
@@ -137,7 +137,7 @@ async def test_a_refused_create_is_a_tool_error_and_stores_nothing(world, over, 
 
 
 async def test_missing_or_non_text_arguments_are_a_tool_error(world):
-    handler = make_create_handler(world.service, USER_ID, ORIGIN, TaintTracker())
+    handler = make_create_handler(world.service, USER_ID, ORIGIN)
     for args in ({"worker": "research", "title": TITLE}, {"worker": "research", "title": TITLE, "text": 5},
                  {"_parse_error": "truncated_json"}):
         result = await handler(call("create_external_task", **args))

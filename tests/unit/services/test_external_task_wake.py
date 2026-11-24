@@ -12,6 +12,7 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 import pytest
 
+from src.domain.external_task_entry import TaskEntry
 from src.domain.external_task import LEASE_S, TIMER_MARGIN_S, ExternalTaskStatus
 from src.domain.external_task_jobs import (
     EXTERNAL_TASK_TIMER,
@@ -190,7 +191,7 @@ async def test_a_worker_without_a_target_and_a_held_task_never_ping(world):
     await world.create()
     assert world.wakes() == [] and world.worker().wake_generation == 0
     await world.target()
-    await world.create(tainted=True, label="research")
+    await world.create(entry=TaskEntry.CHAT, label="research")
     assert world.wakes() == [] and world.worker().wake_generation == 0
 
 
@@ -205,7 +206,7 @@ async def test_no_ping_while_the_worker_holds_a_live_lease(world):
 
 async def test_a_confirmed_held_task_pings(world):
     await world.target()
-    held = await world.create(tainted=True)
+    held = await world.create(entry=TaskEntry.CHAT)
     assert world.wakes() == []
     await world.service.confirm("usr-1", held.code)
     assert [b["generation"] for b in world.wakes()] == [1]
@@ -308,7 +309,7 @@ async def test_without_the_guard_wired_a_due_wake_sends_nothing(world):
 
 async def test_a_title_is_never_sent(world):
     await world.target()
-    await world.service.create("usr-1", "research", TITLE, TEXT, ORIGIN, tainted=False)
+    await world.service.create("usr-1", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER)
     await world.service.on_wake(world.payload(1))
     assert TITLE not in repr(world.webhook.sent) and TEXT not in repr(world.webhook.sent)
 

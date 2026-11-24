@@ -6,6 +6,7 @@ A real `SmartResponseAgent` (`smart_rig`) over a scripted model; the real `Exter
 """
 import pytest
 
+from src.domain.external_task_entry import TaskEntry
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.external_task import ExternalTaskStatus
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY
@@ -131,7 +132,7 @@ async def test_a_chat_upload_in_the_request_holds_the_create(world):
 
 
 async def test_reading_a_task_holds_a_create_later_in_the_same_execution(world):
-    first = await world.service.create("usr-1", "research", "earlier", "an earlier brief", ORIGIN, tainted=False)
+    first = await world.service.create("usr-1", "research", "earlier", "an earlier brief", ORIGIN, entry=TaskEntry.REMINDER)
     script = [tools(("get_external_task", {"task_id": first.task_id})), tools(CREATE), text("ok")]
     await run(world, script)
     created = [t for t in world.tasks.tasks.values() if t.task_id != first.task_id]
@@ -224,7 +225,7 @@ async def test_a_forwarded_message_holds_the_create(world):
 
 
 async def test_a_list_that_includes_a_task_created_tainted_holds_a_later_create(world):
-    await world.service.create("usr-1", "research", "from a web page", "brief", ORIGIN, tainted=True)
+    await world.service.create("usr-1", "research", "from a web page", "brief", ORIGIN, entry=TaskEntry.CHAT)
     await run(world, [tools(("list_external_tasks", {})), tools(CREATE), text("ok")])
     created = [t for t in world.tasks.tasks.values() if t.title == TITLE]
     assert [t.status for t in created] == [S.HELD]

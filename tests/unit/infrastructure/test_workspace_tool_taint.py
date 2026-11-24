@@ -97,7 +97,7 @@ async def test_a_later_view_is_wrapped_sets_the_signal_and_holds_a_create():
 
     reader.observe_batch([view], [result])
     assert reader.tainted is True
-    create = make_create_handler(world.service, USER_ID, ORIGIN, reader)
+    create = make_create_handler(world.service, USER_ID, ORIGIN)
     await create(call_create())
     [task] = world.tasks.tasks.values()
     assert task.status is ExternalTaskStatus.HELD
@@ -113,7 +113,7 @@ async def test_viewing_an_unflagged_file_leaves_the_execution_clean_and_the_crea
     assert result.untrusted is False and "external_content" not in result.result_str
     reader.observe_batch([view], [result])
     assert reader.tainted is False
-    await make_create_handler(world.service, USER_ID, ORIGIN, reader)(call_create())
+    await make_create_handler(world.service, USER_ID, ORIGIN)(call_create())
     assert next(iter(world.tasks.tasks.values())).status is ExternalTaskStatus.QUEUED
 
 

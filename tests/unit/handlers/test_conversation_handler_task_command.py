@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.domain.external_task_entry import TaskEntry
 from src.domain.agent import DeliveryItem
 from src.domain.external_task import ExternalTaskStatus
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, receipt_data
@@ -64,14 +65,14 @@ async def world():
 
 
 async def _held(world):
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, tainted=True)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
     return created
 
 
 class TestReceiptDelivery:
 
     async def test_a_queued_receipt_is_one_literal_post_with_the_full_text(self, world):
-        created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, tainted=False)
+        created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER)
         ch = _channel()
         item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
 

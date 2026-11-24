@@ -6,6 +6,7 @@ the stored task and the tool result the model received. Every declared field of 
 `cancel_external_task` is sent by a scripted call (module constants; the last test checks them against the declarations).
 `list_external_tasks`, `get_external_task` and `list_external_workers` read only (`READ_ONLY` of `tool_fields.py`).
 """
+from src.domain.external_task_entry import TaskEntry
 from src.domain.agent import AgentStatus
 from src.domain.external_task import ExternalTaskStatus
 from src.domain.user import UserBotConfig
@@ -50,8 +51,8 @@ async def test_a_created_task_stores_worker_title_and_text():
 
 async def test_a_cancelled_task_stores_the_cancellation_of_the_task_id_it_names():
     world = await ExternalTaskWorld().seed()
-    first = await world.service.create("usr-1", "research", "keep", "stays queued", ORIGIN, tainted=False)
-    second = await world.service.create("usr-1", "research", "drop", "to be cancelled", ORIGIN, tainted=False)
+    first = await world.service.create("usr-1", "research", "keep", "stays queued", ORIGIN, entry=TaskEntry.REMINDER)
+    second = await world.service.create("usr-1", "research", "drop", "to be cancelled", ORIGIN, entry=TaskEntry.REMINDER)
 
     llm, _ = await run(world, [tools(("cancel_external_task", cancel(second.task_id))), text("Cancelled.")])
 
@@ -73,7 +74,7 @@ async def test_a_refused_create_stores_nothing_and_the_model_reads_a_tool_error(
 
 async def test_cancelling_an_unknown_task_is_a_tool_error_and_changes_nothing():
     world = await ExternalTaskWorld().seed()
-    kept = await world.service.create("usr-1", "research", "keep", "stays queued", ORIGIN, tainted=False)
+    kept = await world.service.create("usr-1", "research", "keep", "stays queued", ORIGIN, entry=TaskEntry.REMINDER)
 
     llm, _ = await run(world, [tools(("cancel_external_task", cancel("no-such-task"))), text("No such task.")])
 
