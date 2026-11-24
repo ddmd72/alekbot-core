@@ -2,9 +2,7 @@
 the exact text as a file, then the notice's message literally, then the command alone. A failed file or message sends no
 command: the owner never confirms text they were not shown.
 
-The real `ExternalTaskService` over the fakes of `tests/support/external_task_world.py`; Alex Doe is `usr-1`. A new
-file beside `test_conversation_handler_task_command.py` / `test_conversation_handler_memory_command.py`, whose delivery
-tests pin the earlier form and wait for the reviewer (root CLAUDE.md, reviewer rule)."""
+The real `ExternalTaskService` over the fakes of `tests/support/external_task_world.py`; Alex Doe is `usr-1`."""
 from __future__ import annotations
 
 from typing import List, Tuple
