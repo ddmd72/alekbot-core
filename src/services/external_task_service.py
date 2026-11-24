@@ -99,6 +99,7 @@ from ..domain.external_task import (
 )
 from ..domain.external_task_entry import TaskEntry
 from ..domain.external_task_jobs import (
+    DELIVER_DEADLINE_S,
     DeliverPayload,
     TaskNotice,
     TimerKind,
@@ -283,7 +284,7 @@ class ExternalTaskService:
             "external_task_deliver",
             {"user_id": payload.user_id, "account_id": payload.account_id, "task_id": payload.task_id,
              "notice": payload.notice.value},
-            dedup_key=deliver_key(task.task_id))
+            dedup_key=deliver_key(task.task_id), deadline_seconds=DELIVER_DEADLINE_S)
 
     async def _enqueue_notice_logged(self, task: ExternalTask, notice: TaskNotice) -> None:
         try:

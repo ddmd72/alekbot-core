@@ -105,6 +105,10 @@ NOTIFICATION_SLA: Mapping[NotificationKind, NotificationSLA] = {
     # Run Job; this notify just delivers the prepared report back to the
     # originating channel.
     NotificationKind.DEEP_RESEARCH:     NotificationSLA(timeout_ms=300_000),
+
+    # 10 min — the reminder's default: one Smart run that reads the alert, may open the result file in the workspace
+    # and delegate once, then tells the owner. No tier overrides — the alert carries no complexity.
+    NotificationKind.EXTERNAL_TASK:     NotificationSLA(timeout_ms=600_000),
 }
 
 

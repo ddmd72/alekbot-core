@@ -1055,7 +1055,9 @@ Each step is one or more PRs and is usable on its own.
      quoting the full text.
    - The worker registry with keys in the Cabinet (Settings → Connections; no wake-up yet).
    - The REST endpoint, renew included, with the shape check and the `401` limits.
-   - `external_task_deliver` to the workspace, with the literal notice and history pair.
+   - `external_task_deliver` to the workspace, with the literal notice and history pair. Delivery is a system alert
+     since 2026-11-24: the result (or a worker's failure reason) is a workspace file and `notify` runs Smart on a
+     code-made alert naming it (`docs/05_building_blocks/external_task_queue/README.md`); no literal notice, no pair.
    - The workspace untrusted flag: set on delivery, carried by every new version, `rename` and `copy`, and wrapped on
      every read.
    - `external_task_timer` (lease, deadline, hold).

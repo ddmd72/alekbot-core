@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from src.domain.external_task_entry import TaskEntry
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_window_counter import FirestoreWindowCounter
@@ -99,8 +100,8 @@ class World:
     async def flag(self, user_id: str, on: bool) -> None:
         await self.db.collection(USERS).document(user_id).update({"config.external_tasks_enabled": on})
 
-    async def create(self, user_id: str = "usr-1", label: str = "research", tainted: bool = False):
-        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, tainted=tainted)
+    async def create(self, user_id: str = "usr-1", label: str = "research", entry: TaskEntry = TaskEntry.REMINDER):
+        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry)
 
     def app(self, inactive_users: Any = None):
         """A fresh app per request: a stateless app's session manager starts once per instance."""
