@@ -408,6 +408,7 @@ _FACTORY_AGENT_TYPES = [
     "video_generation",
     "web_search_light",
     "drive",
+    "external_tasks",  # the task specialist: UserAgentFactory builds it lazily (_build_external_tasks)
     "fact_query_slots",  # memory-search slots: UserAgentFactory builds it via composition/fact_query_slots_setup.py
 ]
 
