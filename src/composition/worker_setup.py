@@ -112,7 +112,8 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
     else:
         tasks["external_task_timer"] = ExternalTaskTimerTask(external_tasks=external_tasks)
         tasks["external_task_deliver"] = ExternalTaskDeliveryTask(
-            external_tasks=external_tasks, workspace=workspace, notification_service=notification_service)
+            external_tasks=external_tasks, workspace=workspace, notification_service=notification_service,
+            ensure_agents=ensure_agents, empty_answer_reporter=empty_answer_reporter)
         tasks["external_task_wake"] = ExternalTaskWakeTask(
             external_tasks=external_tasks, notification_service=notification_service)
     return tasks

@@ -88,7 +88,7 @@ A body with one child is screenshotted as that child, otherwise the body is, wit
    Callers decide their own retry rule: reminder and daily review retry only when `is_retryable_failure` (turn never
    started); the deep-research notice retries whenever nothing was sent (see `notify`'s docstring).
 5. The other `notify_*` entry points skip the agent and post fixed or given text, files or links; the ones that also
-   append a history pair are `notify_call_summary`, `notify_drive_note_receipt` and `notify_document_link` and `notify_external_task` (a finished external task's literal notice, no agent turn).
+   append a history pair are `notify_call_summary`, `notify_drive_note_receipt` and `notify_document_link`.
    `notify_answer_copy` is the chat copy of a call answer. `notify_raw(literal=True)` is for text the bot did not write.
 
 ### Wiring
