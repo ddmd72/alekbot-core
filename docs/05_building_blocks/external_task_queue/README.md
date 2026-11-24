@@ -8,7 +8,6 @@ covers:
   src/domain/external_task_http.py
   src/domain/external_task_jobs.py
   src/domain/external_task_receipt.py
-  src/domain/literal_notice.py
   src/domain/external_task_refusal.py
   src/domain/external_task_rules.py
   src/domain/external_task_text.py
