@@ -10,14 +10,13 @@ history_context is set (§11.5).
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set
 
 from ..domain.llm import ToolCall
 from ..domain.workspace import (
     COMMANDS,
     MAX_PATH_CHARS,
     MUTATING_COMMANDS,
-    TAINTED_EXECUTION_MARK,
     WORKSPACE_TOOL,
     WorkspaceCall,
     WorkspaceReferences,
@@ -212,11 +211,8 @@ def make_workspace_handler(
     fire_key: Optional[str],
     references: WorkspaceReferences,
     session: Optional[WorkspaceSession] = None,
-    is_tainted: Optional[Callable[[], bool]] = None,
 ) -> LocalToolHandler:
-    """Build per execution attempt; `session` is injectable for tests only. `is_tainted` answers "has this execution
-    read outside content?" at the moment of a write (Smart passes its taint tracker's flag): every write of such a
-    call is marked as outside content, so the file is wrapped on every later read. No callable: never tainted."""
+    """Build per execution attempt; `session` is injectable for tests only."""
     state = session if session is not None else WorkspaceSession()
 
     async def mutate(call: WorkspaceCall, command: str, args: Mapping[str, Any]) -> WorkspaceResult:
@@ -248,7 +244,6 @@ def make_workspace_handler(
                 user_id=user_id, origin=origin, fire_key=fire_key, known=dict(state.generations),
                 line_known=dict(state.line_generations),
                 references=references,
-                write_mark=TAINTED_EXECUTION_MARK if is_tainted is not None and is_tainted() else None,
             )
             if command in MUTATING_COMMANDS:
                 task = asyncio.ensure_future(mutate(call, command, args))
@@ -259,8 +254,7 @@ def make_workspace_handler(
             else:
                 result = await service.run(call, command, args)
                 state.apply_result(result)
-            return ToolResult(name=tool_call.name, result_str=result.text, failed=result.failed,
-                              untrusted=result.untrusted)
+            return ToolResult(name=tool_call.name, result_str=result.text, failed=result.failed)
         finally:
             if not handed_over:
                 state.lock.release()

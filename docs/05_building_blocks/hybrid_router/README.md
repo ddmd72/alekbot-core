@@ -104,7 +104,11 @@ Smart agent directly (`src/services/execute_reminder_task.py`).
 1. The orchestrating LLM sees one delegation tool, `delegate_to_specialist` (`DELEGATE_TOOL_NAME`), with an intent
    argument, the terminal tool `deliver_response`, and, for Smart, local tools (skills, workspace, memory proposals;
    `SmartResponseAgent._run`). The intents offered are `AgentRegistry.get_available_intents_for(descriptor)`:
-   every non-internal intent when `allowed_intents is None` (Quick and Smart both).
+   every non-internal intent when `allowed_intents is None` (Quick and Smart both). Smart adds one internal intent
+   itself, the task specialist's `work_with_external_tasks`, only on the owner's own interactive turn or a run of one
+   of the owner's reminders (`task_entry`, `src/domain/external_task_entry.py`), never when Smart is reached by
+   delegation, and only for a user with the external task queue switched on
+   (`docs/05_building_blocks/external_task_queue/README.md`).
 2. All tool calls of one turn run in a single `asyncio.gather` (`DelegationEngine._execute_tool_calls`). There is no
    memory-first ordering; a specialist that needs another's result is called in a later turn.
 3. `DelegationEngine.dispatch` applies `intent_remap`, then `intent_fanout`, then the coordinator. Both descriptors have

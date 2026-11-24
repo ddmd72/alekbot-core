@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from src.domain.external_task_entry import TaskEntry
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.external_task import (
@@ -137,9 +138,9 @@ class World:
         stamp = self.client.create_task_requests[index]["task"].get("schedule_time")
         return stamp.ToDatetime(tzinfo=timezone.utc) if stamp is not None else None
 
-    async def create(self, tainted: bool = False, label: str = "research", **kw: Any):
+    async def create(self, entry: TaskEntry = TaskEntry.REMINDER, label: str = "research", **kw: Any):
         return await self.service.create("usr-1", label, kw.get("title", TITLE), kw.get("text", TEXT), ORIGIN,
-                                         tainted=tainted)
+                                         entry=entry)
 
     async def claimed(self, principal: Optional[WorkerPrincipal] = None):
         created = await self.create()
@@ -184,7 +185,7 @@ async def test_an_untainted_create_queues_the_task_with_its_deadline_timer(world
 
 
 async def test_a_tainted_create_is_held_with_a_code_stored_as_its_digest_only(world):
-    created = await world.create(tainted=True)
+    created = await world.create(entry=TaskEntry.CHAT)
     assert created.status is S.HELD and created.code is not None and len(created.code) == 8
     stored = world.tasks.tasks[created.task_id]
     assert stored.hold.code_digest == keyed_digest(DIGEST_KEY, HOLD_CODE_DIGEST_PURPOSE, created.code)
@@ -196,6 +197,18 @@ async def test_a_tainted_create_is_held_with_a_code_stored_as_its_digest_only(wo
     assert await world.service.list_for_worker(world.alex) == []
 
 
+async def test_a_chat_entry_waits_for_confirmation_and_a_reminder_entry_is_queued_at_once(world):
+    chat = await world.create(entry=TaskEntry.CHAT)
+    reminder = await world.create(entry=TaskEntry.REMINDER)
+    assert (chat.status, reminder.status) == (S.HELD, S.QUEUED)
+    assert chat.code is not None and reminder.code is None
+    assert [b["kind"] for b in world.jobs(EXTERNAL_TASK_TIMER)] == ["hold", "deadline"]
+    assert world.tasks.tasks[chat.task_id].hold is not None and world.tasks.tasks[reminder.task_id].hold is None
+    assert "created_tainted" not in world.tasks.tasks[reminder.task_id].model_dump()
+    claim = await world.service.claim(world.alex)
+    assert claim is not None and claim.task_id == reminder.task_id     # the held task is offered to no worker
+
+
 @pytest.mark.parametrize("label, title, text, reason", [
     ("export", TITLE, TEXT, R.UNKNOWN_WORKER),
     ("Research", TITLE, TEXT, R.UNKNOWN_WORKER),
@@ -203,7 +216,7 @@ async def test_a_tainted_create_is_held_with_a_code_stored_as_its_digest_only(wo
     ("research", TITLE, " ​ ", R.INVALID_TEXT),
 ])
 async def test_a_refused_create_stores_and_enqueues_nothing(world, label, title, text, reason):
-    assert await refused(world.service.create("usr-1", label, title, text, ORIGIN, tainted=False)) is reason
+    assert await refused(world.service.create("usr-1", label, title, text, ORIGIN, entry=TaskEntry.REMINDER)) is reason
     assert world.tasks.tasks == {} and world.jobs(EXTERNAL_TASK_TIMER) == []
 
 
@@ -212,13 +225,13 @@ async def test_a_revoked_workers_label_is_unknown_and_the_open_tasks_cap_holds(w
     assert await refused(world.create(label="calendar-watch")) is R.UNKNOWN_WORKER
     for _ in range(MAX_OPEN_TASKS_PER_USER):
         await world.create()
-    assert await refused(world.create(tainted=True)) is R.OPEN_TASKS_CAP
+    assert await refused(world.create(entry=TaskEntry.CHAT)) is R.OPEN_TASKS_CAP
     await world.service.cancel("usr-1", next(iter(world.tasks.tasks)))
     assert (await world.create()).status is S.QUEUED
 
 
 async def test_confirm_queues_the_held_task_once(world):
-    created = await world.create(tainted=True)
+    created = await world.create(entry=TaskEntry.CHAT)
     world.at(60)
     confirmed = await world.service.confirm("usr-1", f"  {created.code.upper()} ")
     assert confirmed.task_id == created.task_id and confirmed.status is S.QUEUED
@@ -229,7 +242,7 @@ async def test_confirm_queues_the_held_task_once(world):
 
 
 async def test_a_wrong_an_expired_or_a_foreign_code_changes_nothing(world):
-    created = await world.create(tainted=True)
+    created = await world.create(entry=TaskEntry.CHAT)
     before = dict(world.tasks.tasks)
     assert await refused(world.service.confirm("usr-1", "00000000")) is R.HOLD_NOT_FOUND
     assert await refused(world.service.confirm("usr-1", "")) is R.HOLD_NOT_FOUND
@@ -254,20 +267,20 @@ async def test_list_get_and_cancel_on_the_owner_side(world):
     assert [t.task_id for t in await world.service.list_tasks("usr-1", status=S.LEASED)] == [claim.task_id]
     await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
     view = await world.service.get_task("usr-1", first.task_id)
-    assert view.summary.status is S.DONE and view.result == "Kit B waters evenly." and view.untrusted
+    assert view.summary.status is S.DONE and view.result == "Kit B waters evenly." and view.failure_reason is None
     queued = await world.service.get_task("usr-1", second.task_id)
-    assert queued.result is None and queued.failure_reason is None and not queued.untrusted
+    assert queued.result is None and queued.failure_reason is None
     assert (await world.service.cancel("usr-1", second.task_id)).status is S.CANCELLED
     assert await refused(world.service.cancel("usr-1", first.task_id)) is R.ALREADY_FINAL
     assert await refused(world.service.get_task("usr-1", "absent")) is R.NOT_FOUND
 
 
-async def test_a_worker_failure_reason_comes_back_untrusted_and_a_claim_loop_has_none(world):
+async def test_a_worker_failure_reason_comes_back_stripped_with_no_result_and_a_claim_loop_has_none(world):
     claim = await world.claimed()
     await world.service.fail(world.alex, claim.task_id, claim.lease_id, "supplier \x1b[31mdown")
     view = await world.service.get_task("usr-1", claim.task_id)
     assert view.failure_code is TaskFailureCode.WORKER_FAILED and view.failure_reason == "supplier [31mdown"
-    assert view.untrusted and view.result is None
+    assert view.result is None
     assert world.jobs(EXTERNAL_TASK_DELIVER) == [{"task_type": EXTERNAL_TASK_DELIVER, "user_id": "usr-1",
                                                   "account_id": "acc-1", "task_id": claim.task_id,
                                                   "notice": "failed"}]
@@ -532,8 +545,8 @@ async def test_a_deadline_timer_after_a_lost_notice_enqueues_it_again(world):
 
 
 async def test_the_hold_timer_expires_an_unconfirmed_hold_silently(world):
-    held = await world.create(tainted=True)
-    confirmed = await world.create(tainted=True)
+    held = await world.create(entry=TaskEntry.CHAT)
+    confirmed = await world.create(entry=TaskEntry.CHAT)
     await world.service.confirm("usr-1", confirmed.code)
     world.at(HOLD_S + TIMER_MARGIN_S)
     assert await world.service.on_timer(TimerPayload("usr-1", "acc-1", held.task_id, TimerKind.HOLD)) is True
@@ -598,7 +611,7 @@ async def test_a_principal_naming_a_foreign_or_revoked_worker_is_refused(world):
 
 async def test_flag_off_refuses_every_operation_and_deletes_nothing(world):
     claim = await world.claimed()
-    held = await world.create(tainted=True)
+    held = await world.create(entry=TaskEntry.CHAT)
     await world.flag("usr-1", False)
     before = dict(world.tasks.tasks)
     for op in (world.create(), world.service.confirm("usr-1", held.code), world.service.list_tasks("usr-1"),
@@ -662,7 +675,7 @@ async def test_removing_a_worker_revokes_it_and_its_keys_and_cancels_its_open_ta
     await world.service.submit(world.alex, done.task_id, done.lease_id, "Kit B.")
     claim = await world.claimed()
     queued = await world.create()
-    held = await world.create(tainted=True)
+    held = await world.create(entry=TaskEntry.CHAT)
     other = await world.create(label="calendar-watch")
     assert await world.service.revoke_worker("usr-1", world.research.worker_id) == 3
     statuses = {tid: t.status for tid, t in world.tasks.tasks.items()}

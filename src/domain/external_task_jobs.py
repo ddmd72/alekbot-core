@@ -15,7 +15,9 @@ one task is harmless, its rule finds the task final), `hold:<task_id>`.
 `external_task_deliver` body: `{"task_type", "user_id", "account_id", "task_id", "notice"}`; `notice` is `done`,
 `failed` or `expired`. Dedup key `deliver:<task_id>` (RFC §5.9): a task reaches one final state, so it has one notice.
 The runner reads the task and its result through `ExternalTaskService.load_for_delivery` and records the outcome with
-`ExternalTaskService.record_delivery`.
+`ExternalTaskService.record_delivery`. Its delivery is a Smart run (a system alert, kind `EXTERNAL_TASK`), so it is
+enqueued with the dispatch deadline `DELIVER_DEADLINE_S`: without one Cloud Tasks cuts the run at its 600 s default,
+reads the cut as a failure and runs the turn again.
 
 `external_task_wake` body: `{"task_type", "user_id", "account_id", "worker_id", "generation"}`, never task content.
 `generation` is the worker's `wake_generation` the enqueue moved it to; dedup key `external_task_wake:<worker_id>:
@@ -34,6 +36,11 @@ from .wake_refusal import WakeRefusal
 EXTERNAL_TASK_TIMER = "external_task_timer"
 EXTERNAL_TASK_DELIVER = "external_task_deliver"
 EXTERNAL_TASK_WAKE = "external_task_wake"
+
+# `dispatch_deadline_s(NotificationKind.EXTERNAL_TASK)` (`infrastructure/notification_sla.py`): the kind's 600 s budget
+# plus the handler's 120 s. Written here because a service may not import the infrastructure layer and the service's
+# constructor is at its parameter cap; a test pins it to the SLA table, so a changed budget fails there.
+DELIVER_DEADLINE_S = 720
 
 
 class TimerKind(str, Enum):

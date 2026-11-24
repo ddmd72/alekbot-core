@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.domain.external_task_entry import TaskEntry
 from src.domain.agent import DeliveryItem
 from src.domain.external_task import ExternalTaskStatus
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, receipt_data
@@ -64,14 +65,14 @@ async def world():
 
 
 async def _held(world):
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, tainted=True)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
     return created
 
 
 class TestReceiptDelivery:
 
-    async def test_a_queued_receipt_is_one_literal_post_with_the_full_text(self, world):
-        created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, tainted=False)
+    async def test_a_held_receipt_posts_the_text_literally_then_the_command_alone(self, world):
+        created = await _held(world)
         ch = _channel()
         item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
 
@@ -79,19 +80,9 @@ class TestReceiptDelivery:
 
         [post] = _literal(ch)
         assert TEXT in post and TITLE in post and "research" in post and created.task_id in post
-        assert _sent(ch) == []
-        assert ch.send_literal.await_args.args[1] == "T1"
-
-    async def test_a_held_receipt_posts_the_text_literally_then_the_command_alone(self, world):
-        created = await _held(world)
-        ch = _channel()
-        item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
-
-        await _handler(world.service)._deliver_item(item, ch, None, USER_ID)
-
-        [post] = _literal(ch)
-        assert TEXT in post and created.code not in post
+        assert created.code not in post
         assert _sent(ch) == [f"`$task send {created.code}`"]
+        assert ch.send_literal.await_args.args[1] == "T1" and ch.send_message.await_args.args[1] == "T1"
 
     async def test_a_failed_receipt_never_sends_the_command(self, world):
         created = await _held(world)

@@ -436,43 +436,6 @@ class UserNotificationService:
         localization = self._localization
         return lambda message: localization.get_ui_string(lang, message)
 
-    async def notify_external_task(self, user_id: str, account_id: str, *, text: str, event_line: str,
-                                   kept_line: str, channel_id_override: Optional[str] = None,
-                                   platform_override: Optional[str] = None) -> bool:
-        """Post the notice of a finished external task (EXTERNAL_TASK_QUEUE_RFC §5.9): `text` literally, to the task's
-        origin channel (`resolve_channel` refuses a locked user), then append the code-written pair `event_line` (user
-        role) and `kept_line` (model role) to that channel's session. No agent turn runs, and neither line carries the
-        result, a reason or the title. Returns False when nothing was posted for want of a channel; a post that raises
-        propagates, so the task queue retries the delivery. A history failure is logged and swallowed: the owner has the
-        notice."""
-        channel_info = await self.resolve_channel(user_id, channel_id_override, platform_override)
-        if not channel_info:
-            logger.error(f"[Notification] No channel for {user_id[:8]}: external task notice not posted")
-            return False
-        response_channel = self._channel_factory.create(platform=channel_info.platform,
-                                                        channel_id=channel_info.channel_id)
-        if not response_channel:
-            logger.error(f"[Notification] Cannot create channel for an external task notice: "
-                         f"platform={channel_info.platform}")
-            return False
-        await response_channel.send_literal(text)
-        logger.info(f"📬 [Notification] external task notice delivered to {channel_info.platform} "
-                    f"channel={channel_info.channel_id} user={user_id[:8]}")
-        if not self._session_store:
-            return True
-        try:
-            await self._session_store.append_messages_batch(
-                session_id=f"{user_id}:{channel_info.channel_id}",
-                owner_id=user_id,
-                messages=[
-                    Message(role="user", parts=[MessagePart(text=event_line)]),
-                    Message(role="model", parts=[MessagePart(text=kept_line, full_text=kept_line)]),
-                ],
-            )
-        except Exception as exc:
-            logger.error(f"[Notification] external task history pair failed for {user_id[:8]}: {exc}", exc_info=True)
-        return True
-
     async def _ui_language(self, user_id: str) -> LanguageCode:
         if self._language is None:
             return LanguageCode.EN

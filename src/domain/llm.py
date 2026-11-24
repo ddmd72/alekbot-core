@@ -200,9 +200,6 @@ class Message(BaseModel):
     parts: List[MessagePart]
     raw_content: Any = None
     created_at: float = Field(default_factory=time.time)
-    # A saved model message only: the execution that wrote it had read outside content (EXTERNAL_TASK_QUEUE_RFC §5.3,
-    # execution taint). Absent in older records, which read as False; a later turn that loads it is tainted.
-    execution_tainted: bool = False
 
 
 class UsageMetadata(BaseModel):
