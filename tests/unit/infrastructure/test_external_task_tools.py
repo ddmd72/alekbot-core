@@ -24,7 +24,7 @@ from src.infrastructure.external_task_tools import (
     make_get_handler,
     make_list_handler,
 )
-from tests.support.external_task_world import DIGEST_KEY, ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld
+from tests.support.external_task_world import DIGEST_KEY, NOTE, ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld
 
 S = ExternalTaskStatus
 
@@ -39,7 +39,7 @@ async def world():
 
 
 def create_args(**over):
-    return {"worker": "research", "title": TITLE, "text": TEXT, **over}
+    return {"worker": "research", "title": TITLE, "text": TEXT, "note": NOTE, **over}
 
 
 async def create(world, **over):

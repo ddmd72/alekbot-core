@@ -28,6 +28,7 @@ from tests.support.cabinet_session_kit import CabinetSessionKit
 from tests.support.external_task_stores import FakeExternalTaskStore, FakeExternalWorkerStore
 from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.external_task_world import NOTE
 USERS = "users"
 ORIGIN = TaskOrigin(platform="slack", channel_id="C-garden", session_id="usr-1:C-garden")
 BODY = {"label": "research", "description": "web research for home projects"}
@@ -161,7 +162,7 @@ async def test_removing_a_worker_cancels_its_queued_task_and_its_keys(site):
     worker = await _add(site)
     _, minted = await site.call(site.alex, "POST", f"/api/external-workers/{worker['worker_id']}/keys")
     created = await site.service.create("usr-1", "research", "Irrigation kits", "compare three kits", ORIGIN,
-                                        entry=TaskEntry.REMINDER)
+                                        entry=TaskEntry.REMINDER, note=NOTE)
     status, data = await site.call(site.alex, "DELETE", f"/api/external-workers/{worker['worker_id']}")
     assert (status, data) == (200, {"cancelled": 1})
     assert (await site.service.get_task("usr-1", created.task_id)).summary.status.value == "cancelled"

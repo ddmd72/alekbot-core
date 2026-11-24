@@ -38,7 +38,7 @@ from src.locales import en
 from src.services.external_task_send_choice import ExternalTaskSendChoice
 from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld
+from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE
 from tests.support.fact_review_world import FakeLanguageService
 from tests.support.mcp_gate_fakes import FakeWhitelistRepo
 from tests.unit.adapters.test_slack_interactivity_route import ACTION_TS, SECRET, form, sign
@@ -84,7 +84,7 @@ class Flow:
     async def receipt(self):
         """A held task created in a chat turn, and its receipt delivered on Slack: the text file, the literal post, then
         the button."""
-        created = await self.world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+        created = await self.world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
         channel = MagicMock()
         channel.platform, channel.channel_id, channel.language = "slack", CHANNEL, "en"
         channel.send_message, channel.send_literal, channel.send_file = AsyncMock(), AsyncMock(), AsyncMock()

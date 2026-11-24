@@ -39,6 +39,7 @@ from tests.support.external_task_stores import FakeExternalTaskStore, FakeExtern
 from tests.support.firestore_eval import EvalDb
 from tests.support.mcp_gate_fakes import FakeWhitelistRepo
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.external_task_world import NOTE
 
 T0 = UTC_MIDNIGHT.utc
 DIGEST_KEY = bytes(range(32))
@@ -111,7 +112,7 @@ class World:
         return self
 
     async def create(self, user_id: str = "usr-1", label: str = "research", entry: TaskEntry = TaskEntry.REMINDER):
-        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry)
+        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry, note=NOTE)
 
     async def call(self, method: str, path: str, key: Optional[str] = None, *, headers: Optional[dict] = None,
                    **kwargs: Any):
@@ -329,7 +330,7 @@ async def test_a_blank_result_is_400_from_the_service_and_the_lease_stays(world)
 # ----------------------------------------------------------------------------------------------------- tenancy
 
 async def test_another_workers_another_users_and_a_missing_task_are_one_identical_404(world):
-    theirs = await world.service.create("usr-2", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER)
+    theirs = await world.service.create("usr-2", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER, note=NOTE)
     watch_task = await world.create(label="calendar-watch")
     mine = await world.claimed()
     answers = []

@@ -30,6 +30,7 @@ from src.services.external_task_service import ExternalTaskService
 from src.services.inactive_user_check import InactiveUserCheck
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.unit.services.test_external_task_service import DIGEST_KEY, ORIGIN, TEXT, TITLE, World as TaskWorld
+from tests.support.external_task_world import NOTE
 
 S = ExternalTaskStatus
 URL = "https://hooks.example.com/wake?token=s3cret-query"
@@ -309,7 +310,7 @@ async def test_without_the_guard_wired_a_due_wake_sends_nothing(world):
 
 async def test_a_title_is_never_sent(world):
     await world.target()
-    await world.service.create("usr-1", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER)
+    await world.service.create("usr-1", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER, note=NOTE)
     await world.service.on_wake(world.payload(1))
     assert TITLE not in repr(world.webhook.sent) and TEXT not in repr(world.webhook.sent)
 

@@ -18,6 +18,7 @@ from src.domain.external_task_views import CreatedTask
 from src.domain.interactive_binding import InteractiveBinding
 from src.domain.ui_messages import UIMessage
 from src.locales import en
+from tests.support.external_task_world import NOTE
 
 TEXT = "compare three community-garden irrigation kits for Shelbyville."
 
@@ -28,7 +29,7 @@ def strings(message: UIMessage) -> str:
 
 def _held(code="a1b2c3d4"):
     return CreatedTask(task_id="tsk-1", status=ExternalTaskStatus.HELD, label="research", title="Irrigation kits",
-                       text=TEXT, code=code)
+                       text=TEXT, note=NOTE, code=code)
 
 
 def test_the_button_message_is_the_command_with_one_send_option_bound_to_the_task():
@@ -61,7 +62,7 @@ def test_the_task_text_and_title_never_reach_the_button_message():
 
 @pytest.mark.parametrize("data", [
     receipt_data(CreatedTask(task_id="tsk-1", status=ExternalTaskStatus.QUEUED, label="research",
-                             title="Irrigation kits", text=TEXT)),            # no code: nothing to confirm
+                             title="Irrigation kits", text=TEXT, note=NOTE)),            # no code: nothing to confirm
     {**receipt_data(_held()), "task_id": None},                                 # no task to check the owner against
     {**receipt_data(_held()), "task_id": ""},
     {**receipt_data(_held()), "command": "$memory save a1b2c3d4"},             # not the task command

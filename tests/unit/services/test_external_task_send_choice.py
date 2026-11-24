@@ -28,8 +28,7 @@ from src.services.external_task_send_choice import ExternalTaskSendChoice
 from src.services.external_task_service import ExternalTaskService
 from src.services.inactive_user_check import InactiveUserCheck
 from tests.support.external_task_world import (
-    ACCOUNT_ID, DIGEST_KEY, ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld,
-)
+    ACCOUNT_ID, DIGEST_KEY, ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE)
 from tests.support.fact_review_world import FakeLanguageService
 
 S = ExternalTaskStatus
@@ -60,7 +59,7 @@ async def world():
 
 
 async def _held(world):
-    return await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+    return await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
 
 
 def test_the_handler_answers_the_send_buttons_binding_kind():

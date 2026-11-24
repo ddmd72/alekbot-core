@@ -38,14 +38,14 @@ from src.domain.user import InactiveReason
 from src.infrastructure import agent_config
 from src.agents.external_task_agent import soft_deadline
 from tests.support.external_task_agent_rig import specialist_message, specialist_rig
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld
+from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE
 from tests.support.scripted_llm import ScriptedLLM, text, tool_results, tools
 from tests.support.tool_e2e import StubPromptBuilder
 
 S = ExternalTaskStatus
 STAMP = "[Mon 23 Nov 2026, 09:00 UTC]"
 INSTRUCTION = f"{STAMP} Hand this to research, word for word:\n\n{TEXT}"
-CREATE = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT})
+CREATE = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT, "note": NOTE})
 RESULT = "Kit A is cheapest. Kit B is sturdiest."
 HOURS = HOLD_S // 3600
 
@@ -73,7 +73,7 @@ def receipts(response):
 
 async def finished_task(world, result=RESULT):
     """A task of Alex's, released by the owner, that the worker `research` took and finished with `result`."""
-    task = await world.service.create(USER_ID, "research", "earlier", "an earlier brief", ORIGIN, entry=TaskEntry.CHAT)
+    task = await world.service.create(USER_ID, "research", "earlier", "an earlier brief", ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
     await world.service.confirm(USER_ID, task.code)
     worker = next(w for w in world.workers.workers.values() if w.label == "research")
     principal = await world.service.resolve_key((await world.service.mint_key(USER_ID, worker.worker_id)).key)
@@ -206,8 +206,10 @@ async def test_reading_a_finished_task_returns_the_wrapped_result_and_the_plain_
 
 async def test_an_altered_brief_is_refused_and_the_verbatim_retry_is_created(world):
     reworded = ("create_external_task", {"worker": "research", "title": TITLE,
-                                         "text": "Compare 3 irrigation kits for the Shelbyville community garden."})
-    spaced = ("create_external_task", {"worker": "research", "title": TITLE, "text": "  " + TEXT.replace(" ", "\n ")})
+                                         "text": "Compare 3 irrigation kits for the Shelbyville community garden.",
+                                         "note": NOTE})
+    spaced = ("create_external_task", {"worker": "research", "title": TITLE, "text": "  " + TEXT.replace(" ", "\n "),
+                                       "note": NOTE})
     llm, response = await run(world, [tools(reworded), tools(spaced), text("Handed over.")])
     assert [r for _, r in tool_results(llm)][0] == ERROR_NOT_THE_BRIEF
     [task] = world.tasks.tasks.values()
@@ -356,7 +358,8 @@ async def test_a_chat_create_still_waits_and_each_entry_reads_its_own_create_des
 
 
 async def test_a_model_cannot_choose_the_entry_through_its_arguments(world):
-    forged = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT, "entry": "reminder"})
+    forged = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
+                                       "entry": "reminder"})
     _, response = await run(world, [tools(forged), text("Held.")])
     assert next(iter(world.tasks.tasks.values())).status is S.HELD and len(receipts(response)) == 1
 

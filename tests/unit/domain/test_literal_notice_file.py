@@ -9,6 +9,7 @@ from src.domain.literal_notice import render_literal_notice
 from src.domain.memory_fact import MemoryFactDraft, ProposedFact, render_preview_file, render_preview_notice
 from src.domain.ui_messages import UIMessage
 from src.locales import en
+from tests.support.external_task_world import NOTE
 
 TEXT = "compare three community-garden irrigation kits for Shelbyville.\n\nBraces {like} {this} and a $task send x stay text."
 
@@ -48,7 +49,7 @@ def test_no_lines_leave_the_header_alone_and_an_empty_text_is_an_empty_file():
 
 def _held(task_id="tsk-1", text=TEXT):
     return receipt_data(CreatedTask(task_id=task_id, status=ExternalTaskStatus.HELD, label="research",
-                                    title="Irrigation kits", text=text, code="a1b2c3d4"))
+                                    title="Irrigation kits", text=text, note=NOTE, code="a1b2c3d4"))
 
 
 def test_the_task_receipt_is_the_text_in_its_file_then_the_header_and_the_id_line():

@@ -20,7 +20,7 @@ from src.domain.ui_messages import UIMessage
 from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.locales import uk as uk_locale
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld
+from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld, NOTE
 
 S = ExternalTaskStatus
 
@@ -66,7 +66,7 @@ async def world():
 
 
 async def _held(world):
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
     return created
 
 
