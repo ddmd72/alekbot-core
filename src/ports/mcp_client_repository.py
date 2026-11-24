@@ -10,7 +10,7 @@ MCP request.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
 
@@ -21,7 +21,8 @@ class MCPClientRepository(ABC):
     tokens (keyed by the sha256 hash of the token value).
 
     Holds for every method:
-    - Tenancy: reads are by key only (client_id, code, token hash), with no client or user scope. The caller
+    - Tenancy: reads are by key only (client_id, code, token hash), with no client or user scope, except the
+      per-worker grant reads and revocations at the end, which are scoped to one user. The caller
       refuses a code or token of another client by comparing the returned client_id
       (mcp_sdk_oauth_provider.py:190,236), so every read returns client_id, user_id and account_id exactly as saved.
     - Expiry: reads return expired codes and tokens; expires_at reads back tz-aware UTC and the SDK token handler
@@ -112,3 +113,23 @@ class MCPClientRepository(ABC):
         The one-time drive link re-checks its grant with this at fetch (DRIVE_MCP_CONNECTOR_RFC §3.3.8, §8).
         A revoked or expired grant answers False; an unknown grant id answers False.
         """
+
+    # --- the task queue's grants, per worker (EXTERNAL_TASK_QUEUE_RFC §5.4 "OAuth", §5.6) ---
+
+    @abstractmethod
+    async def list_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> List[MCPRefreshToken]:
+        """Every refresh token of `user_id` with that `worker_id`, `revoked_at` null and `expires_at` > now: the live
+        tokens of the worker's OAuth grants (one per grant, as rotation revokes the old one). Tokens of other users and
+        of other workers are never returned; an unknown worker answers []. Order is unspecified."""
+
+    @abstractmethod
+    async def revoke_grant(self, user_id: str, grant_id: str, now: datetime) -> int:
+        """Set revoked_at to `now` on every refresh token of `user_id` with that `grant_id` that is not revoked yet, in
+        one transaction, and return how many it revoked; the grant then ends at its next refresh, and `has_active_grant`
+        answers False for it at once. Other grants and other users' tokens are untouched; an unknown grant revokes 0."""
+
+    @abstractmethod
+    async def revoke_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> int:
+        """`revoke_grant` for every grant of `user_id` with that `worker_id`, in one transaction: every unrevoked token
+        of the worker's grants gets revoked_at `now`. Returns how many it revoked; other workers' and other users'
+        tokens are untouched."""

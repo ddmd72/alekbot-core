@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import jwt
 
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken, normalize_client_name
+from ..domain.mcp_worker_grant import WorkerGrant
 from ..domain.mcp_resource import (
     MCPResource,
     ResourceRefused,
@@ -128,8 +129,13 @@ class MCPInvalidScope(MCPAuthError):
 
 
 _ACCESS_TOKEN_TYPE = "mcp_access"
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _CONSENT_AUD = "mcp-consent"
 _JWT_ALG = "HS256"
+
+
+def _issued(token: MCPRefreshToken) -> datetime:
+    return token.issued_at or _EPOCH
 
 
 class MCPAuthorizationService:
@@ -540,6 +546,41 @@ class MCPAuthorizationService:
             logger.warning(f"MCP link grant refused: user={user_id[:8]} reason={reason}")
             return False
         return True
+
+    # -----------------------------------------------------------------
+    # The task queue's grants, per worker (the Cabinet, EXTERNAL_TASK_QUEUE_RFC §5.6)
+    # -----------------------------------------------------------------
+
+    async def worker_grants(self, user_id: str, worker_id: str) -> List[WorkerGrant]:
+        """The worker's live OAuth grants (an unrevoked, unexpired refresh token), oldest grant first. The client name
+        is the registered one (its client id when the client is gone). Does not check that the worker is the user's:
+        the caller does."""
+        latest: Dict[str, MCPRefreshToken] = {}
+        for token in await self._repo.list_worker_grants(user_id, worker_id, datetime.now(timezone.utc)):
+            if not token.grant_id:
+                continue
+            held = latest.get(token.grant_id)
+            if held is None or _issued(token) > _issued(held):
+                latest[token.grant_id] = token
+        names: Dict[str, str] = {}
+        grants = []
+        for grant_id, token in latest.items():
+            if token.client_id not in names:
+                client = await self._repo.get_client(token.client_id)
+                names[token.client_id] = client.client_name if client is not None else token.client_id
+            grants.append(WorkerGrant(grant_id=grant_id, client_id=token.client_id,
+                                      client_name=names[token.client_id], granted_at=token.granted_at,
+                                      last_refresh=token.issued_at))
+        return sorted(grants, key=lambda g: (g.granted_at or _EPOCH, g.grant_id))
+
+    async def revoke_grant(self, user_id: str, grant_id: str) -> int:
+        """Revoke every refresh token of the user's grant; the grant's live access tokens are then refused on their
+        next tasks call (`grant_allowed`). Returns how many tokens it revoked."""
+        return await self._repo.revoke_grant(user_id, grant_id, datetime.now(timezone.utc))
+
+    async def revoke_worker_grants(self, user_id: str, worker_id: str) -> int:
+        """Revoke every grant bound to the worker (its removal, §5.6). Returns how many tokens it revoked."""
+        return await self._repo.revoke_worker_grants(user_id, worker_id, datetime.now(timezone.utc))
 
     # -----------------------------------------------------------------
     # Internals

@@ -110,6 +110,25 @@ async def main():
             connectors=app.container.connectors,
         )
 
+        # The remote MCP server's components are built before the Cabinet: the Cabinet lists and revokes the task
+        # queue's OAuth grants through their authorization service (EXTERNAL_TASK_QUEUE_RFC §5.6). A failure here
+        # leaves the bot up without the MCP connector, as before.
+        mcp_components = None
+        try:
+            mcp_components = build_mcp_components(
+                db_client=db_client,
+                env_config=env_config,
+                auth_config=app.auth_config,
+                memory_search=app.agent_factory.get_memory_search,
+                cipher=app.cipher,
+                digest_key=app.digest_key,
+                user_repo=app.user_repo,
+                whitelist_repo=app.whitelist_repo,
+            )
+        except Exception as mcp_err:
+            logger.error(f"❌ Failed to initialize MCP connector: {mcp_err}", exc_info=True)
+            logger.warning("🤖 Bot will continue without MCP connector")
+
         cabinet_bp = create_user_cabinet_blueprint(
             invite_service=app.invite_service,
             cabinet_sessions=cabinet_sessions,
@@ -144,6 +163,7 @@ async def main():
             drive_disconnect=app.drive_disconnect_service,
             facts_pin=app.facts_pin,
             external_tasks=app.external_tasks,
+            mcp_authorization=mcp_components.authorization_service if mcp_components is not None else None,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
@@ -509,62 +529,52 @@ async def main():
                 # AS+RS in-process via the `mcp` SDK's FastMCP.
                 # Mounted under /mcp in a Starlette parent alongside main_app.
                 # ====================================================================
-                mcp_components = None
                 drive_mcp = None
                 tasks_mcp = None
                 try:
-                    mcp_components = build_mcp_components(
-                        db_client=db_client,
-                        env_config=env_config,
-                        auth_config=app.auth_config,
-                        memory_search=app.agent_factory.get_memory_search,
-                        cipher=app.cipher,
-                        digest_key=app.digest_key,
-                        user_repo=app.user_repo,
-                        whitelist_repo=app.whitelist_repo,
-                    )
-                    # Consent blueprint is built in main.py (not in
-                    # composition/) because composition must not depend
-                    # on the web layer. We pass the authorization service
-                    # built by build_mcp_components into the factory.
-                    mcp_consent_bp = build_mcp_consent_blueprint(
-                        mcp_service=mcp_components.authorization_service,
-                        cabinet_sessions=cabinet_sessions,
-                    )
-                    main_app.register_blueprint(mcp_consent_bp)
-                    logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
-                    # The drive connector has its own build so a failure there (a missing or invalid connector-text
-                    # token: its first load alerts and raises) never takes the facts connector down; /drive-mcp then
-                    # answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
-                    try:
-                        drive_links = build_drive_link_service(
-                            db_client=db_client,
-                            env_config=env_config,
-                            drive_service=app.container.user_drive_service,
-                            authorization_service=mcp_components.authorization_service,
-                            digest_key=app.digest_key,
-                            auth_config=app.auth_config,
+                    if mcp_components is not None:
+                        # Consent blueprint is built in main.py (not in
+                        # composition/) because composition must not depend
+                        # on the web layer. We pass the authorization service
+                        # built by build_mcp_components into the factory.
+                        mcp_consent_bp = build_mcp_consent_blueprint(
+                            mcp_service=mcp_components.authorization_service,
+                            cabinet_sessions=cabinet_sessions,
                         )
-                        drive_tools = await build_drive_connector_tools_from_container(
-                            app.container, alert_sink=app.alert_sink, links=drive_links, quota=app.quota_service)
-                    except Exception as drive_err:
-                        drive_mcp = None
-                        logger.error(f"❌ Failed to initialize drive MCP connector tools: {drive_err}", exc_info=True)
-                        logger.warning("🤖 Bot will continue without the drive connector")
-                    else:
-                        drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
-                                                            tools=drive_tools, voice_tokens=voice_mcp_tokens,
-                                                            inactive_users=mcp_components.inactive_users)
-                        if drive_mcp is not None:
-                            main_app.register_blueprint(create_drive_link_blueprint(drive_links))
-                    # /tasks-mcp: the task queue's worker resource (EXTERNAL_TASK_QUEUE_RFC §5.4). None without a task
-                    # queue or when its build fails (its texts' first load included): only /tasks-mcp is down.
-                    assembly = app.container.assembly_service
-                    tasks_mcp = await build_tasks_mcp_or_none(
-                        external_tasks=app.external_tasks, db_client=db_client, env_config=env_config,
-                        user_repo=app.user_repo, whitelist_repo=app.whitelist_repo,
-                        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=app.alert_sink,
-                        inactive_users=mcp_components.inactive_users, auth_config=app.auth_config)
+                        main_app.register_blueprint(mcp_consent_bp)
+                        logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
+                        # The drive connector has its own build so a failure there (a missing or invalid connector-text
+                        # token: its first load alerts and raises) never takes the facts connector down; /drive-mcp then
+                        # answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
+                        try:
+                            drive_links = build_drive_link_service(
+                                db_client=db_client,
+                                env_config=env_config,
+                                drive_service=app.container.user_drive_service,
+                                authorization_service=mcp_components.authorization_service,
+                                digest_key=app.digest_key,
+                                auth_config=app.auth_config,
+                            )
+                            drive_tools = await build_drive_connector_tools_from_container(
+                                app.container, alert_sink=app.alert_sink, links=drive_links, quota=app.quota_service)
+                        except Exception as drive_err:
+                            drive_mcp = None
+                            logger.error(f"❌ Failed to initialize drive MCP connector tools: {drive_err}", exc_info=True)
+                            logger.warning("🤖 Bot will continue without the drive connector")
+                        else:
+                            drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
+                                                                tools=drive_tools, voice_tokens=voice_mcp_tokens,
+                                                                inactive_users=mcp_components.inactive_users)
+                            if drive_mcp is not None:
+                                main_app.register_blueprint(create_drive_link_blueprint(drive_links))
+                        # /tasks-mcp: the task queue's worker resource (EXTERNAL_TASK_QUEUE_RFC §5.4). None without a task
+                        # queue or when its build fails (its texts' first load included): only /tasks-mcp is down.
+                        assembly = app.container.assembly_service
+                        tasks_mcp = await build_tasks_mcp_or_none(
+                            external_tasks=app.external_tasks, db_client=db_client, env_config=env_config,
+                            user_repo=app.user_repo, whitelist_repo=app.whitelist_repo,
+                            token_repo=assembly.token_repo if assembly is not None else None, alert_sink=app.alert_sink,
+                            inactive_users=mcp_components.inactive_users, auth_config=app.auth_config)
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",

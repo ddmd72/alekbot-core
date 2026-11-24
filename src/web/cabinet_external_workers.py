@@ -1,13 +1,22 @@
 """The Cabinet's External workers routes (EXTERNAL_TASK_QUEUE_RFC §5.6, §5.10), behind the Cabinet gate (`auth_required`
-sets `g.user_id`). Register and remove a worker, mint and revoke its keys, set and clear its wake-up target. No edit of
-label or description, no grants, no drive destination.
+sets `g.user_id`). Register and remove a worker, mint and revoke its keys, set and clear its wake-up target, list and
+revoke its OAuth grants (§5.4 "OAuth"). No edit of label or description, no drive destination.
 
 - `GET    /api/external-workers` — `{enabled, workers: [{worker_id, label, description, created_at, wake_host,
-  keys: [{key_id, hint, created_at, last_used_at}]}]}`: active workers and their active keys. `wake_host` is the
+  keys: [{key_id, hint, created_at, last_used_at}], grants: [{grant_id, client_name, granted_at, last_refresh}]}]}`:
+  active workers, their active keys and their live OAuth grants (`granted_at` / `last_refresh` null on a grant made
+  before they were recorded; `grants` is [] on a server without the MCP authorization service). `wake_host` is the
   target's host, or null (the worker polls); the URL and the headers are never sent back. A user without the flag, or a
   server without the service, gets `{enabled: false}` (200): the page hides the row.
-- `POST   /api/external-workers` `{label, description}` — the new worker (same shape, no keys).
-- `DELETE /api/external-workers/<worker_id>` — `{cancelled}`: how many non-final tasks the removal cancelled.
+- `POST   /api/external-workers` `{label, description}` — the new worker (same shape, no keys, no grants).
+- `DELETE /api/external-workers/<worker_id>` — `{cancelled}`: how many non-final tasks the removal cancelled. The
+  removal also revokes the worker's OAuth grants: this route calls both services, the queue's and the MCP authorization
+  service (services never call each other, REQ-ARCH-22). The queue's removal runs first and is safe to repeat, so a
+  retry after a failed grant revocation finishes it.
+- `DELETE /api/external-workers/<worker_id>/grants/<grant_id>` — `{revoked: true}`: revokes one OAuth grant of an
+  active worker of the user; a grant that is not among that worker's live grants is the one 404 `not_found`. The
+  grant's live access tokens are refused on their next call. `grant_id` is not a secret (a stored field, never a
+  credential).
 - `POST   /api/external-workers/<worker_id>/keys` — `{key, key_id, hint}`: the raw key is in this one answer only.
 - `DELETE /api/external-workers/<worker_id>/keys/<key_id>` — revokes one key.
 - `PUT    /api/external-workers/<worker_id>/wake` `{curl, secret}` or `{url, headers}` — `{wake_host}`. `curl` is the
@@ -31,6 +40,7 @@ from quart import Blueprint, g, jsonify, request
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.external_worker import ExternalWorker
 from ..domain.external_worker_key import ExternalWorkerKey
+from ..domain.mcp_worker_grant import WorkerGrant
 from ..domain.secret_digest import fingerprint
 from ..domain.wake_refusal import WakeRefusal, WakeTargetRefused
 from ..domain.wake_curl import parse_wake_curl
@@ -38,6 +48,7 @@ from ..domain.wake_target import Headers, parse_header_lines
 
 if TYPE_CHECKING:
     from ..services.external_task_service import ExternalTaskService
+    from ..services.mcp_authorization_service import MCPAuthorizationService
 
 _BAD_REQUEST = {TaskRefusal.LABEL_INVALID, TaskRefusal.LABEL_TAKEN, TaskRefusal.WORKERS_CAP, TaskRefusal.KEYS_CAP,
                 TaskRefusal.WAKE_UNAVAILABLE}
@@ -48,10 +59,17 @@ def _key_view(key: ExternalWorkerKey) -> Dict[str, Any]:
             "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None}
 
 
-def _worker_view(worker: ExternalWorker, keys: List[ExternalWorkerKey]) -> Dict[str, Any]:
+def _grant_view(grant: WorkerGrant) -> Dict[str, Any]:
+    return {"grant_id": grant.grant_id, "client_name": grant.client_name,
+            "granted_at": grant.granted_at.isoformat() if grant.granted_at else None,
+            "last_refresh": grant.last_refresh.isoformat() if grant.last_refresh else None}
+
+
+def _worker_view(worker: ExternalWorker, keys: List[ExternalWorkerKey],
+                 grants: Optional[List[WorkerGrant]] = None) -> Dict[str, Any]:
     return {"worker_id": worker.worker_id, "label": worker.label, "description": worker.description,
             "created_at": worker.created_at.isoformat(), "wake_host": worker.wake_host if worker.has_wake else None,
-            "keys": [_key_view(k) for k in keys if not k.is_revoked]}
+            "keys": [_key_view(k) for k in keys if not k.is_revoked], "grants": [_grant_view(g) for g in grants or []]}
 
 
 def _refusal(reason: TaskRefusal):
@@ -85,8 +103,15 @@ def _wake_refusal(refusal: WakeRefusal):
 
 
 def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
-                                    external_tasks: Optional["ExternalTaskService"]) -> None:
-    """Add the routes to `bp`. Registered even without the service: they then answer as a user without the flag."""
+                                    external_tasks: Optional["ExternalTaskService"],
+                                    mcp_authorization: Optional["MCPAuthorizationService"] = None) -> None:
+    """Add the routes to `bp`. Registered even without the service: they then answer as a user without the flag.
+    `mcp_authorization` lists and revokes the workers' OAuth grants; without it there are none to list or revoke."""
+
+    async def grants_of(worker_id: str) -> List[WorkerGrant]:
+        if mcp_authorization is None:
+            return []
+        return await mcp_authorization.worker_grants(g.user_id, worker_id)
 
     @bp.route("/api/external-workers", methods=["GET"])
     @auth_required
@@ -95,7 +120,8 @@ def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
             return jsonify({"enabled": False}), 200
         try:
             workers = await external_tasks.list_workers(g.user_id)
-            views = [_worker_view(w, await external_tasks.list_keys(g.user_id, w.worker_id)) for w in workers]
+            views = [_worker_view(w, await external_tasks.list_keys(g.user_id, w.worker_id),
+                                  await grants_of(w.worker_id)) for w in workers]
         except ExternalTaskRefused as refused:
             if refused.reason is TaskRefusal.NOT_ENABLED:
                 return jsonify({"enabled": False}), 200
@@ -127,7 +153,25 @@ def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
             cancelled = await external_tasks.revoke_worker(g.user_id, worker_id)
         except ExternalTaskRefused as refused:
             return _refusal(refused.reason)
+        if mcp_authorization is not None:
+            await mcp_authorization.revoke_worker_grants(g.user_id, worker_id)
         return jsonify({"cancelled": cancelled}), 200
+
+    @bp.route("/api/external-workers/<worker_id>/grants/<grant_id>", methods=["DELETE"])
+    @auth_required
+    async def external_workers_revoke_grant(worker_id: str, grant_id: str):
+        if external_tasks is None:
+            return _refusal(TaskRefusal.NOT_ENABLED)
+        try:
+            workers = await external_tasks.list_workers(g.user_id)
+        except ExternalTaskRefused as refused:
+            return _refusal(refused.reason)
+        if mcp_authorization is None or not any(w.worker_id == worker_id for w in workers):
+            return _refusal(TaskRefusal.NOT_FOUND)
+        if not any(grant.grant_id == grant_id for grant in await grants_of(worker_id)):
+            return _refusal(TaskRefusal.NOT_FOUND)
+        await mcp_authorization.revoke_grant(g.user_id, grant_id)
+        return jsonify({"revoked": True}), 200
 
     @bp.route("/api/external-workers/<worker_id>/keys", methods=["POST"])
     @auth_required

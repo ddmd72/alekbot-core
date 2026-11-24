@@ -1,6 +1,7 @@
 # main() serves /health twice: the Cabinet's route is registered first and shadows main()'s (design D7)
 DELETE /api/drive/connections/<connection_id>
 DELETE /api/external-workers/<worker_id>
+DELETE /api/external-workers/<worker_id>/grants/<grant_id>
 DELETE /api/external-workers/<worker_id>/keys/<key_id>
 DELETE /api/external-workers/<worker_id>/wake
 DELETE /api/gmail/data

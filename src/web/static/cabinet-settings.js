@@ -1056,7 +1056,9 @@
       // The row exists only for a user with the flag. A minted key is shown once, in #workers-key-box, and is dropped
       // from the page when the row closes; the list is redrawn from the server and never holds a key. A wake-up target
       // (EXTERNAL_TASK_QUEUE_RFC §5.8) is typed into #workers-wake-box, always empty when it opens: after a save the
-      // server sends back only the host, so the URL and the header values never return to the page.
+      // server sends back only the host, so the URL and the header values never return to the page. A worker's OAuth
+      // grants (the apps connected to it through the task connector, EXTERNAL_TASK_QUEUE_RFC §5.4) are listed under
+      // its keys, each with its own Revoke.
       async function loadExternalWorkers() {
         try {
           const res = await authFetch(`${API}/api/external-workers`, { credentials: "include" });
@@ -1088,11 +1090,19 @@
               ${escapeHtml(t("workers.key_last_used"))}: ${escapeHtml(k.last_used_at ? when(k.last_used_at) : t("workers.never_used"))}
               <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" data-key="${escapeHtml(k.key_id)}" onclick="revokeWorkerKey(this.dataset.worker, this.dataset.key)">${escapeHtml(t("workers.revoke_key"))}</button>
             </div>`).join("") : `<div class="c-mini-s">${escapeHtml(t("workers.no_keys"))}</div>`;
+          const stamp = (iso) => escapeHtml(iso ? when(iso) : t("workers.grant_unknown"));
+          const grants = (w.grants || []).length ? `<div class="c-mini-s">${escapeHtml(t("workers.grants_title"))}</div>` +
+            w.grants.map((gr) => `<div class="c-mini-s">
+              ${escapeHtml(gr.client_name)} · ${escapeHtml(t("workers.grant_granted"))}: ${stamp(gr.granted_at)} ·
+              ${escapeHtml(t("workers.grant_refreshed"))}: ${stamp(gr.last_refresh)}
+              <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" data-grant="${escapeHtml(gr.grant_id)}" onclick="revokeWorkerGrant(this.dataset.worker, this.dataset.grant)">${escapeHtml(t("workers.revoke_grant"))}</button>
+            </div>`).join("") : "";
           return `<div class="c-mini">
             <div class="c-mini-main">
               <div class="c-mini-t">${escapeHtml(w.label)}</div>
               ${w.description ? `<div class="c-mini-s">${escapeHtml(w.description)}</div>` : ""}
               ${keys}
+              ${grants}
               ${w.wake_host ? `<div class="c-mini-s">${escapeHtml(t("workers.wake_on"))}: <span class="c-mono">${escapeHtml(w.wake_host)}</span>
                 <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" onclick="clearWorkerWake(this.dataset.worker)">${escapeHtml(t("workers.wake_clear"))}</button>
               </div>` : `<div class="c-mini-s">${escapeHtml(t("workers.wake_polls"))}</div>`}
@@ -1240,6 +1250,20 @@
             { method: "DELETE", credentials: "include" });
           if (!res.ok) { await workersFailure(res); return; }
           showToast(t("workers.key_revoked"), "success");
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
+        }
+      }
+
+      async function revokeWorkerGrant(workerId, grantId) {
+        if (!confirm(t("workers.revoke_grant_confirm"))) return;
+        try {
+          const res = await authFetch(
+            `${API}/api/external-workers/${encodeURIComponent(workerId)}/grants/${encodeURIComponent(grantId)}`,
+            { method: "DELETE", credentials: "include" });
+          if (!res.ok) { await workersFailure(res); return; }
+          showToast(t("workers.grant_revoked"), "success");
           loadExternalWorkers();
         } catch {
           showToast(t("workers.err_failed"), "error");

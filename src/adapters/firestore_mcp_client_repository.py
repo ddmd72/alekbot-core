@@ -9,7 +9,9 @@ Three collections, env-prefixed via EnvironmentConfig:
                                has_active_grant with three equality filters (user_id, grant_id, revoked_at null),
                                served by the automatic single-field indexes; `worker_id` (a tasks-resource grant's
                                worker), `granted_at` and `issued_at` are fields too, absent on older documents (read
-                               as None); revoke_user_refresh_tokens
+                               as None); list_worker_grants, revoke_grant and revoke_worker_grants filter on
+                               (user_id, worker_id or grant_id, revoked_at null) with equality only, as
+                               has_active_grant does; revoke_user_refresh_tokens
                                filters on (user_id, revoked_at null) the same way, so a token stored without a
                                revoked_at field (none since slice 4, all long expired) is not matched
 
@@ -18,7 +20,7 @@ document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt 
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
@@ -284,3 +286,44 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         )
         docs = await query.get()
         return any(_to_utc(doc.to_dict()["expires_at"]) > now for doc in docs)
+
+    # --- the task queue's grants, per worker ---
+
+    def _unrevoked(self, user_id: str, field: str, value: str):
+        """Unrevoked tokens of `user_id` with `field` == `value`: three equality filters, served by merging the
+        automatic single-field indexes (no composite index)."""
+        return (
+            self._refresh.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter(field, "==", value))
+            .where(filter=FieldFilter("revoked_at", "==", None))
+        )
+
+    async def list_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> List[MCPRefreshToken]:
+        tokens = [self._refresh_from_fs(doc.to_dict()) for doc in await self._unrevoked(user_id, "worker_id",
+                                                                                         worker_id).get()]
+        return [t for t in tokens if t.user_id == user_id and t.worker_id == worker_id and t.expires_at > now]
+
+    async def _revoke_matching(self, user_id: str, field: str, value: str, now: datetime) -> int:
+        query = self._unrevoked(user_id, field, value)
+
+        # One transaction reads them all, then writes: a concurrent rotation that revokes one of them makes this re-run.
+        @firestore.async_transactional
+        async def _revoke_all(transaction) -> int:
+            snaps = [s for s in await query.get(transaction=transaction)
+                     if s.to_dict().get("user_id") == user_id and s.to_dict().get(field) == value]
+            for snap in snaps:
+                transaction.update(snap.reference, {"revoked_at": now})
+            return len(snaps)
+
+        revoked: int = await _revoke_all(self.db.transaction())
+        return revoked
+
+    async def revoke_grant(self, user_id: str, grant_id: str, now: datetime) -> int:
+        revoked = await self._revoke_matching(user_id, "grant_id", grant_id, now)
+        logger.info(f"🔒 MCP grant revoked: user={user_id[:8]} count={revoked}")
+        return revoked
+
+    async def revoke_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> int:
+        revoked = await self._revoke_matching(user_id, "worker_id", worker_id, now)
+        logger.info(f"🔒 MCP worker grants revoked: user={user_id[:8]} count={revoked}")
+        return revoked
