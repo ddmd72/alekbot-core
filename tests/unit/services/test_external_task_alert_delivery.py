@@ -332,3 +332,29 @@ async def test_when_both_names_hold_other_files_the_alert_names_none(world):
     await world.deliver()
     assert world.turn() == f"[System: {render_alert(AlertKind.DONE_NO_COPY, world.stored(task_id), None)}{SUFFIX}]"
     assert world.stored(task_id).delivery.path is None
+
+
+async def test_a_task_that_is_absent_foreign_or_not_final_routes_no_turn_and_records_nothing(world):
+    claim = await world.claimed()
+    body = {"user_id": "usr-1", "account_id": "acc-1", "task_id": claim.task_id, "notice": "done"}
+    for case in (body, {**body, "task_id": "no-such"}, {**body, "user_id": "usr-2"}):   # leased, absent, another user's
+        assert await world.runner(case, {}) == ({"status": "gone"}, 200)
+    assert world.bot.messages == [] and world.ensured == [] and world.channel.posts == []
+    assert world.sessions.appended == [] and world.stored(claim.task_id).delivery is None
+    assert await world.store.list("usr-1", "") == []
+
+
+@pytest.mark.parametrize("change", [{"user_id": None}, {"account_id": None}, {"task_id": None}, {"notice": None},
+                                    {"notice": "shouted"}])
+async def test_a_body_that_is_not_a_delivery_routes_no_turn_and_records_nothing(world, change):
+    task_id = await world.done()
+    body = dict(world.jobs(EXTERNAL_TASK_DELIVER)[-1])
+    for key, value in change.items():
+        if value is None:
+            body.pop(key)
+        else:
+            body[key] = value
+    assert (await world.runner(body, {}))[1] == 400
+    assert world.bot.messages == [] and world.ensured == [] and world.channel.posts == []
+    assert world.sessions.appended == [] and world.stored(task_id).delivery is None
+    assert await world.store.list("usr-1", "") == []
