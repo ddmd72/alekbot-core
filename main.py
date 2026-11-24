@@ -25,6 +25,7 @@ from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
 from src.composition.drive_connector_tools import build_drive_connector_tools_from_container
 from src.composition.drive_mcp_setup import build_drive_mcp_or_none
+from src.composition.tasks_mcp_setup import build_tasks_mcp_or_none
 from src.composition.drive_link_setup import build_drive_link_service
 from src.composition.voice_mcp_setup import build_voice_mcp_tokens, voice_mcp_tools_enabled
 from src.composition.voice_resume_setup import build_voice_resume_service
@@ -510,6 +511,7 @@ async def main():
                 # ====================================================================
                 mcp_components = None
                 drive_mcp = None
+                tasks_mcp = None
                 try:
                     mcp_components = build_mcp_components(
                         db_client=db_client,
@@ -555,6 +557,14 @@ async def main():
                                                             inactive_users=mcp_components.inactive_users)
                         if drive_mcp is not None:
                             main_app.register_blueprint(create_drive_link_blueprint(drive_links))
+                    # /tasks-mcp: the task queue's worker resource (EXTERNAL_TASK_QUEUE_RFC §5.4). None without a task
+                    # queue or when its build fails (its texts' first load included): only /tasks-mcp is down.
+                    assembly = app.container.assembly_service
+                    tasks_mcp = await build_tasks_mcp_or_none(
+                        external_tasks=app.external_tasks, db_client=db_client, env_config=env_config,
+                        user_repo=app.user_repo, whitelist_repo=app.whitelist_repo,
+                        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=app.alert_sink,
+                        inactive_users=mcp_components.inactive_users, auth_config=app.auth_config)
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",
@@ -574,6 +584,8 @@ async def main():
                     if drive_mcp is not None:
                         logger.info("   - /drive-mcp (drive connector)")
                         logger.info("   - /d/<id> (one-time drive links)")
+                    if tasks_mcp is not None:
+                        logger.info("   - /tasks-mcp (external task queue workers)")
 
                 # Override start() to launch shared app instead of individual adapter
                 async def start_shared_app():
@@ -589,6 +601,7 @@ async def main():
                             main_app,
                             facts_mcp=mcp_components.fastmcp if mcp_components is not None else None,
                             drive_mcp=drive_mcp,
+                            tasks_mcp=tasks_mcp,
                         ),
                         hypercorn_config,
                     )
