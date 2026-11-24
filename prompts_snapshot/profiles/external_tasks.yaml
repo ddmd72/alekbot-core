@@ -1,0 +1,9 @@
+agent_id: external_tasks
+blueprint_id: external_task_agent_v1
+tokens:
+  COGNITIVE_PROCESS_EXTERNAL_TASKS:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_EXTERNAL_TASKS:
+    non_overridable: true
+    order: 30

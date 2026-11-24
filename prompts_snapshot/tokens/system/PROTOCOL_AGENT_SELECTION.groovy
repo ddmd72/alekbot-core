@@ -23,7 +23,7 @@ uploaded_by: local_script
 ---
 delegate_to_specialist_extended_rules {
         call_format: "delegate_to_specialist(intent, query, context?)"
-        query_language: "Always English — regardless of the user's input language — except the words to find on the drive in work_with_drive_files: quote the user's own few key words, in ONE language, as the user wrote them — no synonym lists, no translations, no extra words. That quoting is for a find; for what the files say (a content need), write the self-contained request in the user's language."
+        query_language: "Always English — regardless of the user's input language — except the words to find on the drive in work_with_drive_files: quote the user's own few key words, in ONE language, as the user wrote them — no synonym lists, no translations, no extra words. That quoting is for a find; for what the files say (a content need), write the self-contained request in the user's language. Also except the brief in work_with_external_tasks, which the worker receives word for word: write it in the language the owner's skill or words ask for, otherwise in the user's language."
 
         facts_memory_specialist {
 
