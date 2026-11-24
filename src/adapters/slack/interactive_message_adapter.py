@@ -104,13 +104,24 @@ class SlackInteractiveMessageAdapter(InteractiveMessagePort):
         self._client = client
 
     async def post(self, platform: str, channel_id: str, message: InteractiveMessage) -> MessageRef:
+        return await self._post(platform, channel_id, message, {})
+
+    async def post_reply(
+        self, platform: str, channel_id: str, message: InteractiveMessage, to_message_id: str,
+    ) -> MessageRef:
+        """`post` in the thread of the message `to_message_id` (its `ts` is the thread parent)."""
+        return await self._post(platform, channel_id, message, {"thread_ts": to_message_id})
+
+    async def _post(
+        self, platform: str, channel_id: str, message: InteractiveMessage, thread: Dict[str, str],
+    ) -> MessageRef:
         if platform != PLATFORM:
             raise ValueError(f"the Slack adapter cannot post to platform {platform}")
         blocks = _subject_blocks(message)
         blocks.extend(_controls(message))
         try:
             response = await self._client.chat_postMessage(
-                channel=channel_id, blocks=blocks, text=_fallback_text(message),
+                channel=channel_id, blocks=blocks, text=_fallback_text(message), **thread,
             )
             return MessageRef(platform=PLATFORM, channel_id=response["channel"], message_id=response["ts"])
         except Exception as exc:

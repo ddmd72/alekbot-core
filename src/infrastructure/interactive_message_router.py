@@ -24,5 +24,10 @@ class InteractiveMessageRouter(InteractiveMessagePort):
     async def post(self, platform: str, channel_id: str, message: InteractiveMessage) -> MessageRef:
         return await self._for(platform).post(platform, channel_id, message)
 
+    async def post_reply(
+        self, platform: str, channel_id: str, message: InteractiveMessage, to_message_id: str,
+    ) -> MessageRef:
+        return await self._for(platform).post_reply(platform, channel_id, message, to_message_id)
+
     async def show_choice(self, ref: MessageRef, outcome: ChoiceOutcome) -> None:
         await self._for(ref.platform).show_choice(ref, outcome)
