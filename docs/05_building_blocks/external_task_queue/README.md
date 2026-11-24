@@ -143,7 +143,9 @@ again. Delivery is idempotent through `delivery.state` (Cloud Tasks may run it t
 (`decisions/external_task_confirmation_and_alerts.md`). The service returns a
 confirmation code once (stored as a keyed digest). The owner's channel gets the task's full text and the command from
 the tool's own delivery item, never through a model; the result the specialist's model and Smart read holds the task id
-only. The owner confirms
+only. The receipt is a literal notice (`src/domain/literal_notice.py`, shared with the reminder notices): the header
+with the worker and the title, the task text word for word with each line behind a `│` mark (so no line of it can pose
+as the receipt's own), then the task id; the command follows as its own message. The owner confirms
 with `$task send CODE` (`ConversationHandler`, the `task` command); the service moves it to `queued`. A held task
 that is not confirmed expires through its hold timer. A wrong, used or expired code gets one neutral line. A held task
 is invisible to every worker surface.

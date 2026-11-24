@@ -1,7 +1,8 @@
 """The literal receipt of an external task create (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible").
 
 One pure renderer for the delivery item `create_external_task` returns and `ConversationHandler` posts after the
-answer. The task text is appended byte for byte as it was stored, never passed through a template, and never cut: the
+answer. The post is a literal notice (`domain.literal_notice`, shared with the reminder notices): the task text is shown
+word for word as it was stored, each line behind `TEXT_MARK`, never passed through a template, and never cut: the
 owner must see exactly what leaves the system, or what waits for their command, whatever the model said in its answer.
 `TASK_TEXT_MAX_CHARS` is bounded so the whole text fits one literal post.
 
@@ -20,6 +21,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from .external_task import HOLD_S
 from .external_task_views import CreatedTask
+from .literal_notice import render_literal_notice
 from .ui_messages import UIMessage
 
 EXTERNAL_TASK_RECEIPT_DELIVERY = "external_task_receipt"
@@ -42,6 +44,6 @@ def render(data: Mapping[str, Any], strings: Strings) -> Tuple[str, Optional[str
     header = strings(UIMessage.EXTERNAL_TASK_HELD).format(
         worker=data.get("worker") or "?", title=data.get("title") or "", hours=HOLD_S // 3600)
     footer = strings(UIMessage.EXTERNAL_TASK_ID_LINE).format(task_id=data.get("task_id") or "?")
-    post = f"{header}\n\n{data.get('text') or ''}\n\n{footer}"
+    post = render_literal_notice(header, data.get("text") or "", [footer])
     command = data.get("command")
     return post, (f"`{command}`" if command else None)
