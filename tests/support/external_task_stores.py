@@ -173,6 +173,23 @@ class FakeExternalWorkerStore(ExternalWorkerStore):
                                                                         "updated_at": now})
         return True
 
+    async def set_wake(self, user_id: str, worker_id: str, *, wake_host: Optional[str], wake_secret: Optional[str],
+                       now: datetime) -> bool:
+        worker = self.workers.get((user_id, worker_id))
+        if worker is None or not worker.is_active:
+            return False
+        self.workers[(user_id, worker_id)] = worker.model_copy(update={
+            "wake_host": wake_host, "wake_secret": wake_secret, "has_wake": wake_secret is not None, "updated_at": now})
+        return True
+
+    async def bump_wake_generation(self, user_id: str, worker_id: str) -> Optional[int]:
+        worker = self.workers.get((user_id, worker_id))
+        if worker is None or not worker.is_active or not worker.has_wake:
+            return None
+        generation = worker.wake_generation + 1
+        self.workers[(user_id, worker_id)] = worker.model_copy(update={"wake_generation": generation})
+        return generation
+
     async def create_key(self, key: ExternalWorkerKey, max_active: int) -> Optional[TaskRefusal]:
         live = [k for k in self.keys.values()
                 if k.user_id == key.user_id and k.worker_id == key.worker_id and not k.is_revoked]
