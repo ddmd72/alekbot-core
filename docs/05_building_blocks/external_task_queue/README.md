@@ -27,7 +27,6 @@ covers:
   src/adapters/firestore_window_counter.py
   src/services/external_task_service.py
   src/services/external_task_rate_limiter.py
-  src/services/external_task_wake_task.py
   src/infrastructure/external_task_tools.py
   src/infrastructure/taint_tracker.py
   src/composition/external_task_setup.py
