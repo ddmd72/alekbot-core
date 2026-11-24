@@ -454,7 +454,7 @@ class UserAgentFactory(AgentFactoryPort):
             thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
             skill_service=self.skill_service,
             memory_fact_service=self.memory_fact_service,
-            workspace_service=self.workspace_service, external_tasks=self.external_tasks,
+            workspace_service=self.workspace_service,
             long_turn_registry=self.long_turn_registry,
         )
 

@@ -12,12 +12,12 @@ import asyncio
 import json
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import SMART
-from ...infrastructure.agent_manifest import SMART_RESPONSE
+from ...infrastructure.agent_manifest import SMART_RESPONSE, Intent
 from ...infrastructure.delegation_engine import DelegationEngine, DelegationResult
 from ...domain.agent import (
     AgentMessage,
@@ -67,30 +67,8 @@ from ...infrastructure.memory_fact_tools import (
     build_propose_memory_facts_tool_declaration,
     make_propose_memory_facts_handler,
 )
-from ...infrastructure.external_task_tools import (
-    build_cancel_external_task_declaration,
-    build_create_external_task_declaration,
-    build_get_external_task_declaration,
-    build_list_external_tasks_declaration,
-    build_list_external_workers_declaration,
-    make_cancel_handler,
-    make_create_handler,
-    make_get_handler,
-    make_list_handler,
-    make_list_workers_handler,
-)
-from ...domain.external_task import TaskOrigin
-from ...domain.external_task_refusal import ExternalTaskRefused
-from ...domain.external_task_texts import (
-    CANCEL_EXTERNAL_TASK_TOOL,
-    CREATE_EXTERNAL_TASK_TOOL,
-    GET_EXTERNAL_TASK_TOOL,
-    LIST_EXTERNAL_TASKS_TOOL,
-    LIST_EXTERNAL_WORKERS_TOOL,
-)
 
 if TYPE_CHECKING:
-    from ...services.external_task_service import ExternalTaskService
     from ...services.history_summary_service import HistorySummaryService
     from ...services.memory_fact_service import MemoryFactService
     from ...services.skill_service import SkillService
@@ -98,6 +76,11 @@ if TYPE_CHECKING:
     from ...infrastructure.task_execution_resolver import TaskExecutionResolver
     from ...domain.user import UserBotConfig
     from ...infrastructure.agent_coordinator import AgentCoordinator
+
+
+# Smart's offer plus the one internal intent it adds itself, under its gate (EXTERNAL_TASK_QUEUE_RFC §5.3): an explicit
+# allowlist may name an internal intent (decisions/allowlist_names_internal_intent.md).
+_EXTERNAL_TASKS_OFFER = replace(SMART_RESPONSE, allowed_intents=frozenset({Intent.WORK_WITH_EXTERNAL_TASKS}))
 
 
 @dataclass(frozen=True)
@@ -262,7 +245,6 @@ class SmartResponseAgent(BaseAgent):
         memory_fact_service: Optional["MemoryFactService"] = None,
         workspace_service: Optional["WorkspaceService"] = None,
         turn_key_source: Optional[TurnKeySource] = None,
-        external_tasks: Optional["ExternalTaskService"] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -284,7 +266,6 @@ class SmartResponseAgent(BaseAgent):
         self.long_turn_registry = long_turn_registry
         self.memory_fact_service = memory_fact_service
         self.workspace_service = workspace_service
-        self.external_tasks = external_tasks
         # Draws the key of each attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8); `_run` draws it, as a local.
         self._turn_key_source: TurnKeySource = turn_key_source or draw_turn_key
 
@@ -537,7 +518,14 @@ class SmartResponseAgent(BaseAgent):
 
             clean_history = self._sanitize_tool_history(conversation_history)
 
-            tools = self._get_tool_declarations()
+            # The external task queue (EXTERNAL_TASK_QUEUE_RFC §5.3, E2): offered as the task specialist's intent on the
+            # owner's own chat turn of a flagged user only. Not in a Smart reached through delegation (`ask_alek`,
+            # `send_to_chat`): its call chain is in the context, and the model there is not the owner's own turn. The
+            # specialist repeats the gate in code and checks the flag fresh.
+            offer_external_tasks = bool(
+                prompt_user_id and message.context.get("interactive_delivery")
+                and not self._reached_by_delegation(message) and self.user_config.external_tasks_enabled)
+            tools = self._get_tool_declarations(offer_external_tasks)
             local_tools = None
             if skills:
                 tools.append(build_use_skill_tool_declaration())
@@ -561,16 +549,6 @@ class SmartResponseAgent(BaseAgent):
                         prompt_user_id, message.context.get("session_id"), d,
                     )
                 )
-
-            # The external task tools (EXTERNAL_TASK_QUEUE_RFC §5.3, E2): interactive turns of a flagged user only.
-            # Not in a Smart reached through delegation (`ask_alek`, `send_to_chat`): its call chain is in the context,
-            # and the model there is not the owner's own turn.
-            if (self.external_tasks and prompt_user_id and message.context.get("interactive_delivery")
-                    and not self._reached_by_delegation(message)
-                    and self.user_config.external_tasks_enabled):
-                local_tools = dict(local_tools or {})
-                await self._add_external_task_tools(
-                    self.external_tasks, tools, local_tools, prompt_user_id, message, session_id)
 
             # Every path, interactive or not (D2, D5): background writes are labelled with their origin, not
             # forbidden. Outside `if skills:` — a skills-store failure must not take the workspace away (§7.1).
@@ -726,40 +704,6 @@ class SmartResponseAgent(BaseAgent):
         from ...infrastructure.agent_coordinator import AgentCoordinator
         return bool(message.context.get(AgentCoordinator.CALL_CHAIN_KEY))
 
-    async def _add_external_task_tools(
-        self, service: "ExternalTaskService", tools: List[Dict[str, Any]], local_tools: Dict[str, Any], user_id: str,
-        message: AgentMessage,
-        session_id: Optional[str],
-    ) -> None:
-        """Declare and serve the five external task tools. The `worker` enum is this execution's registered workers; with
-        none, `create_external_task` is left out (an empty enum is not a valid schema). When the service refuses the
-        list (the flag or the account lock changed under the cached profile), or fails, no tool is offered."""
-        try:
-            workers = await service.list_workers(user_id)
-        except ExternalTaskRefused as e:
-            logger.info("[SmartResponseAgent] external task tools not offered: %s", e.reason.value)
-            return
-        except Exception as e:
-            logger.error("[SmartResponseAgent] external task tools not offered, worker list failed: %s",
-                         type(e).__name__, exc_info=True)
-            return
-        if workers:
-            origin = TaskOrigin(
-                platform=str(message.context.get("origin_platform") or ""),
-                channel_id=str(message.context.get("origin_channel_id") or ""),
-                session_id=str(session_id or ""),
-            )
-            tools.append(build_create_external_task_declaration(workers))
-            local_tools[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(service, user_id, origin)
-        tools.append(build_list_external_tasks_declaration())
-        local_tools[LIST_EXTERNAL_TASKS_TOOL] = make_list_handler(service, user_id)
-        tools.append(build_list_external_workers_declaration())
-        local_tools[LIST_EXTERNAL_WORKERS_TOOL] = make_list_workers_handler(service, user_id)
-        tools.append(build_get_external_task_declaration())
-        local_tools[GET_EXTERNAL_TASK_TOOL] = make_get_handler(service, user_id)
-        tools.append(build_cancel_external_task_declaration())
-        local_tools[CANCEL_EXTERNAL_TASK_TOOL] = make_cancel_handler(service, user_id)
-
     def _build_smart_response(
         self, result: DelegationResult,
     ) -> tuple[SmartResponse, Optional[str]]:
@@ -854,9 +798,14 @@ class SmartResponseAgent(BaseAgent):
             return None
         return await self.history_summary_service.summarize_model_response(response_text)
 
-    def _get_tool_declarations(self) -> List[Dict[str, Any]]:
-        """Build tool declarations for LLM API. Available intents injected from AgentRegistry."""
-        available_intents = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
+    def _get_tool_declarations(self, offer_external_tasks: bool = False) -> List[Dict[str, Any]]:
+        """Build tool declarations for LLM API. Available intents injected from AgentRegistry; the external task
+        specialist's internal intent is added only when `offer_external_tasks` (Smart's gate held)."""
+        if not self.coordinator:
+            return [self._build_delegate_tool_declaration([])]
+        available_intents = self.coordinator.get_available_intents_for(self._descriptor)
+        if offer_external_tasks:
+            available_intents = [*available_intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
         return [self._build_delegate_tool_declaration(available_intents)]
 
     def _summarize_history(self, history: List[Message]) -> str:
@@ -959,7 +908,6 @@ def create_smart_response_agent(
     long_turn_registry: Optional[LongTurnRegistry] = None,
     memory_fact_service: Optional["MemoryFactService"] = None,
     workspace_service: Optional["WorkspaceService"] = None,
-    external_tasks: Optional["ExternalTaskService"] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -995,6 +943,5 @@ def create_smart_response_agent(
         long_turn_registry=long_turn_registry,
         memory_fact_service=memory_fact_service,
         workspace_service=workspace_service,
-        external_tasks=external_tasks,
     )
 
