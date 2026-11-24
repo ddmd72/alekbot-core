@@ -43,8 +43,7 @@ return the owner's own data or the queue's own answers (`TRUSTED_LOCAL_TOOLS`, `
 `src/domain/execution_taint.py:53`; `call_is_trusted`, `:61`):
 - `use_skill`: a skill's text, which the owner confirmed with `$skill save`;
 - a delegation to the memory search intent: the owner's facts;
-- the `workspace` tool: Smart's own files. A file that holds outside content is flagged and its read taints anyway
-  (next section);
+- the `workspace` tool: Smart's own files (a file carries no mark; the section on workspace files below);
 - the queue's create, list and cancel results and the worker list. The worker list holds labels only (a restricted
   character set); a worker's free-text description, typed in the Cabinet, never reaches a model: not in a tool result
   and not in a tool or parameter description, where it would be read with the schema's authority.
@@ -58,8 +57,7 @@ failure reason taints, and the handler also marks it itself (`src/infrastructure
 `external_content`, in any look-alike spelling the escaper knows) or one of the two attached-file reminders
 (`has_untrusted_wrapper`, `src/domain/untrusted_text.py:106`). A pasted tag counts as well: that is a false positive,
 and the rule accepts it. A file part taints wherever it appears. A tool can also say so in a structured field:
-`ToolResult.untrusted` (`src/infrastructure/delegation_engine.py:77`), which the workspace sets for a read of a
-flagged file. A batch whose calls and results do not pair up taints (`taint_tracker.py:40`).
+`ToolResult.untrusted` (`src/infrastructure/delegation_engine.py:77`). A batch whose calls and results do not pair up taints (`taint_tracker.py:40`).
 
 **The request before the first model call.** History, the current message's parts and the static blocks get the same
 marker check (`request_taints`, `execution_taint.py:90`; called at `src/agents/core/smart_response_agent.py:537`,
@@ -69,7 +67,6 @@ marker check (`request_taints`, `execution_taint.py:90`; called at `src/agents/c
 - a forwarded Telegram message is someone else's text: the adapter tags it (`src/adapters/telegram/webhook_adapter.py:45`)
   and Smart marks the execution (`smart_response_agent.py:538`);
 - a saved model turn in history that carries `execution_tainted` (next section);
-- an active reminder flagged `untrusted` in the prompt (`smart_response_agent.py:640`);
 - messages the owner's channel got while a long turn ran (the "meanwhile" note) go through the request check before
   the model sees them (`delegation_engine.py:792`, `smart_response_agent.py:654`);
 - a listing that shows a task created in a tainted execution: its title may repeat outside content
@@ -82,8 +79,7 @@ same batch as a read was written before the model saw that read.
 
 ## How taint persists
 
-A single execution is not the whole story. Outside content read in one turn lives on in the answer, the files and the
-reminders that turn wrote.
+A single execution is not the whole story. Outside content read in one turn lives on in the answer and the files that turn wrote.
 
 **Across turns.** Smart's response carries the final flag (`smart_response_agent.py:719`). `ConversationHandler`
 stores it on the saved model message (`src/handlers/conversation_handler.py:1103`), the session store keeps it
@@ -94,20 +90,8 @@ stores it on the saved model message (`src/handlers/conversation_handler.py:1103
 that turn falls out of Smart's history window (`SmartResponseAgent.CONTEXT_WINDOW`). The next turn builds on an answer
 written from that content, so it is treated the same way.
 
-**Workspace files.** Every write the workspace tool makes in a tainted execution is marked as outside content (the
-mark `TAINTED_EXECUTION_MARK`; `src/infrastructure/workspace_tools.py:251`). An already flagged file keeps its own
-mark, and the mark follows the content through edits, `rename`, `copy` and `restore`. Every model-facing read of a
-flagged file is wrapped as outside content with a fresh nonce: `view`, a version view, `grep` hit lines, and the echo of
-changed lines after `str_replace` or `insert` (`src/services/workspace_service.py:222`, `:336`, `:361`). The read sets
-`ToolResult.untrusted`, so it taints the reading execution. The store's side of the flag:
-`docs/05_building_blocks/agent_skills_workspace/README.md`, "the untrusted flag".
-
-**Reminders.** The tainted bit is copied into the delegation context after each batch
-(`smart_response_agent.py:648`), so the notes agent flags a reminder it creates or updates in a tainted execution
-(`src/agents/notes_agent.py:470`, `:554`, `:615`). An update never clears the flag (`NoteUpdate.untrusted`,
-`src/domain/agent_note.py:82`). A flagged reminder is wrapped wherever its text reaches a model: in Smart's
-`active_reminders` block (`src/services/prompt_v3/prompt_assembly_service.py:595`), and in the alert of a fired
-reminder, which also gets a history label that does not repeat its text (`src/domain/reminder_alert.py:19`, `:44`).
+**Workspace files.** A workspace file carries no mark, and a read of one is returned as it is. Text a tainted
+execution writes into a file is not flagged; a later execution reads it as trusted (a known residual risk).
 
 ## The hold and the confirmation
 
@@ -163,10 +147,9 @@ A worker's result and failure reason are treated as hostile from the start.
   id, the worker label and the workspace path (`history_pair`, `src/domain/external_task_delivery.py:96`). The memory
   consolidator reads every user-role line as the owner's own words. A result or a title in that line would turn
   worker text, or text the title quoted, into the owner's facts.
-- **The copy is flagged.** The result lands in the workspace under a name the bot chooses, below a code-written header
-  that says it is outside content. The file carries the mark `external_task:<id>`
-  (`workspace_service.py:714`, `external_task_delivery.py:70`), so every later read is wrapped and taints. Reading it
-  through `get_external_task` is wrapped the same way (`external_task_tools.py:290`).
+- **The copy is an ordinary workspace file.** The result lands in the workspace under a name the bot chooses, below a
+  code-written header that says it is outside content; the file carries no mark. Reading it through
+  `get_external_task` is wrapped (`external_task_tools.py:290`).
 
 ## What this does not cover
 

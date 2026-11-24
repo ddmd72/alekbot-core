@@ -1,9 +1,7 @@
-"""A reminder written after outside content was read (`AgentNote.untrusted`) is outside content when Smart sees it:
-the prompt wraps its label, the execution starts tainted so a create is held, and the taint reaches the reminders
-specialist so a note written later in a tainted execution is flagged in turn (EXTERNAL_TASK_QUEUE_RFC §6.1).
+"""The reminders specialist learns the taint of the execution, and a chat message written during a long turn taints it
+(EXTERNAL_TASK_QUEUE_RFC §6.1).
 
-A real `SmartResponseAgent` over a scripted model and the external task world; the wrapping is checked on the real
-prompt assembly. Alex Doe is `usr-1`.
+A real `SmartResponseAgent` over a scripted model and the external task world. Alex Doe is `usr-1`.
 """
 import time
 
@@ -19,12 +17,10 @@ from src.infrastructure.agent_coordinator import AgentCoordinator
 from tests.support.external_task_world import TEXT, TITLE, ExternalTaskWorld
 from tests.support.scripted_llm import ScriptedLLM, text, tools
 from tests.support.tool_e2e import smart_message, smart_rig
-from tests.unit.services.test_prompt_assembly_service import TEMPLATE, _make_service
 
 S = ExternalTaskStatus
 CREATE = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT})
 LABEL = "compare irrigation kits for Shelbyville"
-FLAGGED = {"note_id": "1729401234567", "text": LABEL, "untrusted": True}
 PLAIN = {"note_id": "1729401234568", "text": LABEL, "untrusted": False}
 
 
@@ -57,24 +53,9 @@ async def world():
     return await ExternalTaskWorld().seed()
 
 
-async def test_a_flagged_note_in_the_prompt_holds_a_create(world):
-    response = await run(world, [tools(CREATE), text("ok")], [FLAGGED])
-    assert next(iter(world.tasks.tasks.values())).status is S.HELD
-    assert response.metadata[EXECUTION_TAINTED_KEY] is True
-
-
 async def test_an_unflagged_note_leaves_the_execution_clean(world):
     response = await run(world, [tools(CREATE), text("ok")], [PLAIN])
     assert response.metadata[EXECUTION_TAINTED_KEY] is False
-
-
-async def test_the_prompt_wraps_a_flagged_label_and_leaves_a_plain_one():
-    render = lambda notes: _make_service()._inject_runtime_context(     # noqa: E731
-        prompt=TEMPLATE, biographical_facts=[], conversation_history=[], user_id="usr-1", agent_notes=notes)
-    flagged, plain = await render([FLAGGED]), await render([PLAIN])
-    assert '<external_content nonce="' in flagged and 'ref="agent_note:1729401234567"' in flagged
-    assert LABEL in flagged.split("<external_content", 1)[1] and "[id: 1729401234567]" in flagged
-    assert "external_content" not in plain and f"    - {LABEL} [id: 1729401234568]" in plain
 
 
 async def test_the_reminders_specialist_learns_the_taint_of_the_execution(world):

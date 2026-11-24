@@ -596,7 +596,6 @@ class SmartResponseAgent(BaseAgent):
                         skills=tuple((s.name, s.body) for s in skills),
                         notes=tuple(n for n in agent_notes if isinstance(n, dict)),
                     ),
-                    is_tainted=lambda: taint.tainted,
                 )
 
             running = await self._load_running_jobs(prompt_user_id, message)
@@ -636,9 +635,6 @@ class SmartResponseAgent(BaseAgent):
                     fallback_ctx_override=eff.ctx,
                 )
 
-            # A flagged reminder in the prompt: its text came from an execution that read outside content.
-            if any(n.get("untrusted") for n in agent_notes if isinstance(n, dict)):
-                taint.mark()
             engine_context = {
                 **message.context,
                 NATIVE_FORMATS_KEY: to_plain(eff.ctx.provider.native_formats(eff.ctx.model_name)),

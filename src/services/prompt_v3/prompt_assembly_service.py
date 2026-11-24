@@ -14,7 +14,6 @@ PERFORMANCE OPTIMIZATION (2026-02-04):
 - See: docs/10_rfcs/PROMPT_ASSEMBLY_CACHING_RFC.md
 """
 
-import secrets
 import time
 import asyncio
 from collections import defaultdict
@@ -28,7 +27,6 @@ from src.ports.prompt_v3.blueprint_repository import BlueprintRepository
 from src.ports.prompt_v3.agent_profile_repository import AgentProfileRepository
 from src.ports.security_port import SecurityPort, TrustZone
 from src.domain.prompt_v3.token import Token, TokenId
-from src.domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from src.domain.system_fingerprint import PROVENANCE_CLASS, render_session_key
 from src.domain.prompt_v3.profile_slot import ProfileToken
 from src.domain.prompt_v3.slot import OwnerType
@@ -588,15 +586,9 @@ class PromptAssemblyService:
         # pending_notes — orchestrator-produced, TRUSTED zone, no SecurityPort validation
         if agent_notes:
             note_lines = []
-            flagged_notes = False
             for note in agent_notes:
                 note_id = note.get("note_id", "")
                 text = note.get("text", "")
-                if note.get("untrusted"):
-                    # Written by an execution that had read outside content: its label may repeat that content.
-                    text = wrap_untrusted(str(text), nonce=secrets.token_hex(8), store="agent_note",
-                                          ref=f"agent_note:{note_id}", label="reminder")
-                    flagged_notes = True
                 due = note.get("due")
                 expires_after = note.get("expires_after")
                 if due:
@@ -633,8 +625,6 @@ class PromptAssemblyService:
                 line = f"    - {text}{timing_str}{detail} [id: {note_id}]"
                 note_lines.append(line)
             header = "    // Reminders you set for yourself. Not visible to the user.\n    // STALE BY DESIGN: this is a snapshot taken when the request started and it is NOT\n    // refreshed between delegation turns. If a specialist reports that it created,\n    // updated or deleted a reminder, its result supersedes this block — trust the\n    // result and do not re-delegate the same change because the list still looks old.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // 'repeats' is an RFC 5545 RRULE anchored on the fire time; delegate the new rule verbatim to change it.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
-            if flagged_notes:
-                header += "\n    // " + EXTERNAL_REMINDER.replace("\n", " ")
             dynamic_parts.append("active_reminders {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
 
         if include_datetime:

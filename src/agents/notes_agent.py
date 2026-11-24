@@ -39,7 +39,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate
-from ..domain.execution_taint import EXECUTION_TAINTED_KEY
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.local_time import wall_time_instant
 from ..domain.task_complexity import TaskComplexity
@@ -467,7 +466,6 @@ class NotesAgent(BaseAgent):
                         guard.applied = True
                     result = await self._execute_tool(
                         tc.name, tc.args or {}, user_id, account_id, binding=bind_now,
-                        tainted=bool((context or {}).get(EXECUTION_TAINTED_KEY)),
                     )
                     crud_results.append(result)
                     tool_results.append((tc, str(result)))
@@ -510,9 +508,7 @@ class NotesAgent(BaseAgent):
         account_id: str,
         *,
         binding: Optional[ReminderField] = None,
-        tainted: bool = False,
     ) -> Any:
-        """`tainted`: the calling execution had read outside content; a note it writes carries the flag."""
         if args.get("_parse_error") == "truncated_json":
             return {"error": (
                 f"Tool arguments for {name} were truncated by the model API "
@@ -551,7 +547,6 @@ class NotesAgent(BaseAgent):
                 recurrence=rule,
                 complexity=_parse_complexity(args.get("complexity")),
                 workspace_file=binding.value if binding else None,
-                untrusted=tainted,
             ))
             result: Dict[str, Any] = {"note_id": note.note_id, "status": "created"}
             active = await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc))
@@ -612,7 +607,6 @@ class NotesAgent(BaseAgent):
                 clear_recurrence=clear_recurrence,
                 workspace_file=binding.value if binding else None,
                 clear_workspace_file=bool(binding and binding.clear),
-                untrusted=tainted,
             ))
             await self._notify(
                 user_id, account_id,
