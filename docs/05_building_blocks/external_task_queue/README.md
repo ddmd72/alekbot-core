@@ -17,6 +17,7 @@ covers:
   src/domain/execution_taint.py
   src/domain/wake_refusal.py
   src/domain/wake_target.py
+  src/domain/wake_curl.py
   src/ports/external_task_store.py
   src/ports/external_worker_store.py
   src/ports/window_counter.py
@@ -60,7 +61,7 @@ label `research` and the task "compare three community-garden irrigation kits fo
 Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; Smart's five tools (create, list, get,
 cancel, list workers) with taint tracking, held tasks and `$task send`; the REST worker endpoint `/external-tasks/v1/*`
 with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
-keys, set and clear a wake-up target); lease, deadline and hold timers; delivery of a result to the workspace; the
+keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
 wake-up POST behind the outbound-request guard; the operator flag script.
 
 Not built (RFC steps 3-5): the remote MCP resource, its OAuth grants, the primary drive's Inbox as a destination. Code
@@ -189,3 +190,15 @@ code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
 `docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`, `docs/07_deployment/SCHEDULERS.md` (timer, deliver and wake task types),
 `docs/05_building_blocks/agent_skills_workspace/README.md` (workspace flag), `docs/06_runtime/API_REFERENCE.md`
 (worker routes).
+
+## Wake-up target form (Cabinet)
+
+The worker card takes two fields: a `curl` command as a webhook provider shows it, and the secret. The server parses the
+command (`src/domain/wake_curl.py`) into the URL and the header lines, then stores them through the same path as a typed
+target (`save_wake_target`, `check_headers`). Rules: the command starts with `curl`; only `-X POST`, `-H`, the data
+options (their value is ignored: the bot writes its own body), `--url` and the quiet/fail flags are read, and any other
+option is refused (`wake_curl_option`), never skipped; a `Content-Type` header is dropped. A placeholder `$NAME` or
+`${NAME}` in the URL or a header value is replaced by the secret; all placeholders must share one name, a placeholder
+needs a non-empty secret and a secret needs a placeholder (leave it empty when the command already holds it). The old
+`{url, headers}` body of `PUT /api/external-workers/<id>/wake` is still accepted. Neither the command nor the secret is
+logged or sent back.

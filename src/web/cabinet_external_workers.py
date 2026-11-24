@@ -10,9 +10,12 @@ label or description, no grants, no drive destination.
 - `DELETE /api/external-workers/<worker_id>` — `{cancelled}`: how many non-final tasks the removal cancelled.
 - `POST   /api/external-workers/<worker_id>/keys` — `{key, key_id, hint}`: the raw key is in this one answer only.
 - `DELETE /api/external-workers/<worker_id>/keys/<key_id>` — revokes one key.
-- `PUT    /api/external-workers/<worker_id>/wake` `{url, headers}` — `{wake_host}`. `headers` is optional text, one
-  `Name: value` per line. The whole target is replaced (§5.6). A target the guard refuses is 400 with `error`
-  `wake_<code>` (the closed `WakeRefusal` code; `wake_header` also for a line that is not `Name: value`).
+- `PUT    /api/external-workers/<worker_id>/wake` `{curl, secret}` or `{url, headers}` — `{wake_host}`. `curl` is the
+  pasted command (`src/domain/wake_curl.py`), `secret` goes where it has a `$NAME` placeholder (optional, may be empty);
+  `headers` is optional text, one `Name: value` per line. A body of both shapes or of neither is 400 `invalid_body`.
+  The whole target is replaced (§5.6). A target the guard refuses is 400 with `error` `wake_<code>` (the closed
+  `WakeRefusal` code; `wake_header` also for a line that is not `Name: value`; `wake_curl_*` when the command could not
+  be read). The command and the secret are never logged or sent back.
 - `DELETE /api/external-workers/<worker_id>/wake` — `{wake_host: null}`: the worker polls from now on.
 
 `key_id` is `fingerprint(key_digest)`: the page names a key by it and the server resolves it among that worker's own
@@ -21,7 +24,7 @@ another user's worker and an unknown key are one 404 `not_found`; `label_invalid
 `keys_cap` and `wake_unavailable` are 400 with the code as `error`. A refusal is never 401: `authFetch` answers a 401 by
 refreshing and re-sending (src/web/CLAUDE.md). Nothing here logs a key, a description, a wake-up URL or a header.
 """
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 from quart import Blueprint, g, jsonify, request
 
@@ -30,7 +33,8 @@ from ..domain.external_worker import ExternalWorker
 from ..domain.external_worker_key import ExternalWorkerKey
 from ..domain.secret_digest import fingerprint
 from ..domain.wake_refusal import WakeRefusal, WakeTargetRefused
-from ..domain.wake_target import parse_header_lines
+from ..domain.wake_curl import parse_wake_curl
+from ..domain.wake_target import Headers, parse_header_lines
 
 if TYPE_CHECKING:
     from ..services.external_task_service import ExternalTaskService
@@ -56,6 +60,24 @@ def _refusal(reason: TaskRefusal):
     if reason in _BAD_REQUEST:
         return jsonify({"error": reason.value}), 400
     return jsonify({"error": "not_found"}), 404
+
+
+def _wake_target_of(body: Any) -> "Optional[Union[Tuple[str, Headers], WakeRefusal]]":
+    """The (url, headers) of a wake-up body, a refusal, or None for a body of neither shape or of both: `{curl, secret}`
+    (the pasted command and its secret) or the older `{url, headers}`."""
+    if not isinstance(body, dict):
+        return None
+    if "curl" in body:
+        secret = body.get("secret", "")
+        if "url" in body or "headers" in body or not isinstance(body["curl"], str) \
+                or not isinstance(secret, (str, type(None))):
+            return None
+        return parse_wake_curl(body["curl"], secret or "")
+    lines = body.get("headers", "")
+    if "secret" in body or not isinstance(body.get("url"), str) or not isinstance(lines, (str, type(None))):
+        return None
+    headers = parse_header_lines(lines or "")
+    return headers if isinstance(headers, WakeRefusal) else (body["url"], headers)
 
 
 def _wake_refusal(refusal: WakeRefusal):
@@ -137,16 +159,16 @@ def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
     @auth_required
     async def external_workers_set_wake(worker_id: str):
         body = await request.get_json(silent=True)
-        lines = body.get("headers", "") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or not isinstance(body.get("url"), str) or not isinstance(lines, (str, type(None))):
+        parsed = _wake_target_of(body)
+        if parsed is None:
             return jsonify({"error": "invalid_body"}), 400
-        headers = parse_header_lines(lines or "")
-        if isinstance(headers, WakeRefusal):
-            return _wake_refusal(headers)
+        if isinstance(parsed, WakeRefusal):
+            return _wake_refusal(parsed)
+        url, headers = parsed
         if external_tasks is None:
             return _refusal(TaskRefusal.NOT_ENABLED)
         try:
-            worker = await external_tasks.save_wake_target(g.user_id, worker_id, body["url"], headers)
+            worker = await external_tasks.save_wake_target(g.user_id, worker_id, url, headers)
         except WakeTargetRefused as refused:
             return _wake_refusal(refused.refusal)
         except ExternalTaskRefused as refused:

@@ -26,6 +26,15 @@ class WakeRefusal(str, Enum):
     HEADER = "header"
     SERVER_ERROR = "server_error"
     UNREACHABLE = "unreachable"
+    # Save-time only: the Cabinet's pasted command could not be read (`src/domain/wake_curl.py`); never a send outcome.
+    CURL_SYNTAX = "curl_syntax"
+    CURL_OPTION = "curl_option"
+    CURL_METHOD = "curl_method"
+    CURL_URL = "curl_url"
+    CURL_VARIABLES = "curl_variables"
+    CURL_SECRET_MISSING = "curl_secret_missing"
+    CURL_SECRET_UNUSED = "curl_secret_unused"
+    CURL_SECRET = "curl_secret"
 
     @property
     def is_final(self) -> bool:
