@@ -80,6 +80,15 @@ class InMemoryMCPRepo(MCPClientRepository):
     async def revoke_user_refresh_tokens(self, user_id: str, now: datetime) -> int:
         raise NotImplementedError
 
+    async def list_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> list:
+        raise NotImplementedError
+
+    async def revoke_grant(self, user_id: str, grant_id: str, now: datetime) -> int:
+        raise NotImplementedError
+
+    async def revoke_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> int:
+        raise NotImplementedError
+
 
 @pytest.fixture
 def repo():
