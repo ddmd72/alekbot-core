@@ -164,6 +164,7 @@
         "#settings-drives-title": "nav.drives",
         "#settings-workers-title": "workers.title",
         "#workers-desc": "workers.desc",
+        "#workers-help-link": "workers.help_link",
         "#workers-label-label": "workers.label",
         "#workers-description-label": "workers.description",
         "#workers-add": "workers.add",
@@ -1069,6 +1070,8 @@
 
       function renderExternalWorkers(data) {
         const item = document.getElementById("settings-workers-item");
+        // The help page is static, so the Cabinet's language travels in the link.
+        document.getElementById("workers-help-link").href = `/cabinet/help/workers?lang=${encodeURIComponent(_currentLang)}`;
         const workers = data && data.enabled ? (data.workers || []) : [];
         item.classList.toggle("hidden", !(data && data.enabled));
         if (!(data && data.enabled)) {
@@ -1091,7 +1094,7 @@
               <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" data-key="${escapeHtml(k.key_id)}" onclick="revokeWorkerKey(this.dataset.worker, this.dataset.key)">${escapeHtml(t("workers.revoke_key"))}</button>
             </div>`).join("") : `<div class="c-mini-s">${escapeHtml(t("workers.no_keys"))}</div>`;
           const stamp = (iso) => escapeHtml(iso ? when(iso) : t("workers.grant_unknown"));
-          const grants = (w.grants || []).length ? `<div class="c-mini-s">${escapeHtml(t("workers.grants_title"))}</div>` +
+          const grants = (w.grants || []).length ? `<div class="c-mini-s">${escapeHtml(t("workers.grants_title"))}</div><div class="c-mini-s">${escapeHtml(t("workers.hint_grants"))}</div>` +
             w.grants.map((gr) => `<div class="c-mini-s">
               ${escapeHtml(gr.client_name)} · ${escapeHtml(t("workers.grant_granted"))}: ${stamp(gr.granted_at)} ·
               ${escapeHtml(t("workers.grant_refreshed"))}: ${stamp(gr.last_refresh)}
@@ -1101,6 +1104,7 @@
             <div class="c-mini-main">
               <div class="c-mini-t">${escapeHtml(w.label)}</div>
               ${w.description ? `<div class="c-mini-s">${escapeHtml(w.description)}</div>` : ""}
+              <div class="c-mini-s">${escapeHtml(t("workers.hint_keys"))}</div>
               ${keys}
               ${grants}
               ${w.wake_host ? `<div class="c-mini-s">${escapeHtml(t("workers.wake_on"))}: <span class="c-mono">${escapeHtml(w.wake_host)}</span>
@@ -1195,10 +1199,12 @@
             <div class="c-field">
               <label for="workers-wake-curl">${escapeHtml(t("workers.wake_curl"))}</label>
               <textarea id="workers-wake-curl" class="c-input" rows="4" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t("workers.wake_curl_placeholder"))}"></textarea>
+              <p class="c-hint">${escapeHtml(t("workers.hint_wake_curl"))}</p>
             </div>
             <div class="c-field">
               <label for="workers-wake-secret">${escapeHtml(t("workers.wake_secret"))}</label>
               <input id="workers-wake-secret" type="password" class="c-input" autocomplete="off" placeholder="${escapeHtml(t("workers.wake_secret_placeholder"))}" />
+              <p class="c-hint">${escapeHtml(t("workers.hint_wake_secret"))}</p>
             </div>
             <div class="c-btns">
               <button type="button" class="c-btn c-pri" data-worker="${escapeHtml(workerId)}" onclick="saveWorkerWake(this.dataset.worker)">${escapeHtml(t("workers.wake_save"))}</button>

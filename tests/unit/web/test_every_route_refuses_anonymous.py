@@ -293,6 +293,9 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
     ("create_user_cabinet_blueprint", "GET", "/cabinet"): "static Cabinet shell; every datum comes from the gated API",
     ("create_user_cabinet_blueprint", "GET", "/cabinet/assets/<name>"):
         "the Cabinet shell's static stylesheet and scripts, an allowlist of names; every datum comes from the gated API",
+    # reviewer edit, External workers help page: one fixed static file, no session read, no API call, nothing of a user.
+    ("create_user_cabinet_blueprint", "GET", "/cabinet/help/workers"):
+        "static External workers explainer, one fixed file; it reads no session and calls no API",
     ("create_voice_web_call_blueprint", "GET", "/cabinet/call"): "static call page; the call API is gated",
     ("create_voice_web_call_blueprint", "GET", "/cabinet/call/manifest.webmanifest"):
         "Home Screen install: iOS fetches it without the session cookie",
