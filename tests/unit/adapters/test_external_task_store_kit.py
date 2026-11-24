@@ -281,7 +281,7 @@ async def test_the_stored_documents(kit_db):
         "claims": 1,
         "result_meta": {"bytes": 12, "sha256": "a" * 64, "submitted_at": T0 + timedelta(seconds=5),
                         "submitted_via": "key", "client_id": None},
-        "failure": None, "delivery": None, "created_tainted": False, "created_at": T0, "updated_at": T0 + timedelta(seconds=5),
+        "failure": None, "delivery": None, "created_at": T0, "updated_at": T0 + timedelta(seconds=5),
         "deadline_at": T0 + timedelta(days=7), "purge_after": purge,
     }}
     assert fs.results() == {"tsk-1": {"text": "Kit B waters evenly.", "purge_after": purge}}

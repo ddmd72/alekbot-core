@@ -97,20 +97,12 @@ async def test_the_worker_enum_is_this_executions_registered_labels():
 
 # --- the taint rule through the engine --------------------------------------------------------------------------
 
-async def test_a_create_in_a_clean_execution_is_queued_and_the_owner_gets_the_full_text(world):
-    llm, response = await run(world, [tools(CREATE), text("Handed over.")])
-    [task] = world.tasks.tasks.values()
-    assert task.status is S.QUEUED and task.text == TEXT
-    assert (task.origin.platform, task.origin.channel_id, task.origin.session_id) == ("slack", "C-garden",
-                                                                                      "usr-1:C-garden")
-    [item] = [i for i in response.delivery_items if i.type == EXTERNAL_TASK_RECEIPT_DELIVERY]
-    assert item.data["text"] == TEXT and item.data["command"] is None
-
-
-async def test_a_create_in_a_turn_that_read_nothing_outside_still_waits_for_confirmation(world):
+async def test_a_create_in_a_clean_execution_waits_for_confirmation_and_the_owner_gets_the_full_text(world):
     llm, response = await run(world, [tools(CREATE), text("It waits for your confirmation.")])
     [task] = world.tasks.tasks.values()
     assert task.status is S.HELD and task.text == TEXT
+    assert (task.origin.platform, task.origin.channel_id, task.origin.session_id) == ("slack", "C-garden",
+                                                                                      "usr-1:C-garden")
     [item] = [i for i in response.delivery_items if i.type == EXTERNAL_TASK_RECEIPT_DELIVERY]
     assert item.data["text"] == TEXT and item.data["command"].startswith("$task send ")
 

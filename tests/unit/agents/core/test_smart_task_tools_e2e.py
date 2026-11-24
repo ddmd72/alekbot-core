@@ -8,7 +8,8 @@ the stored task and the tool result the model received. Every declared field of 
 """
 from src.domain.external_task_entry import TaskEntry
 from src.domain.agent import AgentStatus
-from src.domain.external_task import ExternalTaskStatus
+from src.domain.external_task import HOLD_S, ExternalTaskStatus
+from src.domain.external_task_texts import NOTE_PENDING
 from src.domain.user import UserBotConfig
 from tests.support.external_task_world import ORIGIN, TEXT, TITLE, ExternalTaskWorld
 from tests.support.scripted_llm import ScriptedLLM, text, tool_results, tools
@@ -41,12 +42,13 @@ async def run(world: ExternalTaskWorld, script):
 async def test_a_created_task_stores_worker_title_and_text():
     world = await ExternalTaskWorld().seed()
 
-    llm, _ = await run(world, [tools(("create_external_task", CREATE)), text("Handed over.")])
+    llm, _ = await run(world, [tools(("create_external_task", CREATE)), text("It waits for your confirmation.")])
 
     [task] = world.tasks.tasks.values()
-    assert (task.label, task.title, task.text, task.status) == ("research", TITLE, TEXT, S.QUEUED)
+    assert (task.label, task.title, task.text, task.status) == ("research", TITLE, TEXT, S.HELD)
     (name, result), = tool_results(llm)
-    assert name == "create_external_task" and f"task {task.task_id} is queued for research" in result
+    assert name == "create_external_task"
+    assert result == NOTE_PENDING.format(task_id=task.task_id, worker="research", hours=HOLD_S // 3600)
 
 
 async def test_a_cancelled_task_stores_the_cancellation_of_the_task_id_it_names():

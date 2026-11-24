@@ -63,6 +63,11 @@ async def test_a_flagged_note_in_the_prompt_holds_a_create(world):
     assert response.metadata[EXECUTION_TAINTED_KEY] is True
 
 
+async def test_an_unflagged_note_leaves_the_execution_clean(world):
+    response = await run(world, [tools(CREATE), text("ok")], [PLAIN])
+    assert response.metadata[EXECUTION_TAINTED_KEY] is False
+
+
 async def test_the_prompt_wraps_a_flagged_label_and_leaves_a_plain_one():
     render = lambda notes: _make_service()._inject_runtime_context(     # noqa: E731
         prompt=TEMPLATE, biographical_facts=[], conversation_history=[], user_id="usr-1", agent_notes=notes)
