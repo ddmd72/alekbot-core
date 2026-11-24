@@ -18,7 +18,10 @@ system. This record fixes how a task gets out, and how its outcome comes back.
    text, word for word, and a separate message with the command `$task send CODE`. The task goes to the worker only if
    the owner sends that command within the hold time, otherwise it lapses silently. The shape is the one of
    `$memory save` (`memory_facts_owner_confirmed.md`): the model's output is stored server-side, the owner sees the
-   literal artifact, the code never reaches a model, and the command is handled before any agent.
+   literal artifact, the code never reaches a model, and the command is handled before any agent. On Slack the
+   command message also carries a «Send» button, the button form of the same command: its press is checked to be the
+   task owner's and ends in the same confirmation with the same answers; Telegram keeps the command alone, and the
+   command keeps working on Slack (owner's map, "The Send button").
 3. **A task created while one of the owner's reminders runs goes straight to the queue.** The owner approved the
    reminder when it was set, so the control point is the reminder-creation notice, not a second confirmation. The
    mode comes from code-set context (the run's origin), never from model output.
