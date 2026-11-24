@@ -3,7 +3,7 @@
 
 A tool or parameter description is read by the model with the schema's authority, so a description placed there could
 plant a rule. The fix keeps every description out of all five tools' declarations and out of every tool result; the
-labels (charset-restricted) are what Smart sees, and `list_external_workers` stays on the clean allowlist because of it.
+labels (charset-restricted) are what Smart sees.
 
 Alex Doe (`usr-1`) registers `research` with a description that carries an instruction.
 """
@@ -46,7 +46,7 @@ async def test_no_declaration_of_the_five_tools_carries_a_description(world):
     assert sorted(worker["description"].splitlines()[1:]) == ["- calendar-watch", "- research"]
 
 
-async def test_the_workers_tool_returns_labels_only_and_stays_clean(world):
+async def test_the_workers_tool_returns_labels_only(world):
     out = await make_list_workers_handler(world.service, USER_ID)(ToolCall(name=LIST_EXTERNAL_WORKERS_TOOL, args={}))
     assert PLANTED not in out.result_str and "term dates" not in out.result_str
     assert sorted(out.result_str.splitlines()[1:]) == ["calendar-watch", "research"]

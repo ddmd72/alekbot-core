@@ -117,7 +117,7 @@ async def test_no_external_task_key_reaches_the_response_metadata(world):
     _, response = await run(world, script)
     task_id = next(iter(world.tasks.tasks))
     assert set(response.metadata) <= {"model", "tokens", "response_length", "response_summary",
-                                      "response_summary_task", "execution_tainted"}  # no history_context key of any tool
+                                      "response_summary_task"}  # no history_context key of any tool
     assert task_id not in str(response.metadata)
 
 
