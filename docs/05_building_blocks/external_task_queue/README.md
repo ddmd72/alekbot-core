@@ -67,9 +67,10 @@ wake-up POST behind the outbound-request guard; the operator flag script.
 
 Step 3 is in too: the worker MCP resource `/tasks-mcp` on worker keys (below).
 
-Step 4 is in progress: the authorization server binds the tasks scope to one worker, and the Cabinet lists each
-worker's OAuth grants (client name, granted time, last refresh) with Revoke; removing a worker revokes its grants. Not
-built yet: the consent page's worker picker, the registrable scope and the tasks verifier's OAuth route; and step 5,
+Step 4 is in progress: the authorization server binds the tasks scope to one worker; a client may register the scope
+(never a default) and the consent page asks which worker it acts as; the Cabinet lists each worker's OAuth grants
+(client name, granted time, last refresh) with Revoke; removing a worker revokes its grants. Not built yet: the tasks
+verifier's OAuth route; and step 5,
 the primary drive's Inbox as a destination. Code that mentions them (`WorkerDestination.DRIVE`, `SubmitVia.OAUTH`) is
 placeholder for those steps.
 

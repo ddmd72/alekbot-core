@@ -49,8 +49,8 @@ One authorization server fronts three protected resources, each its own FastMCP 
   (set in the Cabinet; unset means nothing).
 - **tasks**, `/tasks-mcp`, scope `external_tasks`: the external task queue's worker tools (`list_tasks`, `claim_task`,
   `renew_lease`, `submit_task_result`, `release_task`, `fail_task`), thin handlers over `ExternalTaskService`. It takes
-  worker keys only so far: the authorization server binds its scope and mints its tokens, bound to one worker, but the
-  scope is not registrable yet (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4, §9 step 4). The queue itself is
+  worker keys only so far: the authorization server registers its scope, binds it and mints its tokens, bound to one
+  worker picked at consent, but the resource does not accept them yet (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4, §9 step 4). The queue itself is
   [`external_task_queue`](../external_task_queue/README.md).
 
 Every tool call of every app reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
@@ -136,14 +136,19 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
    metadata; the authorization-server metadata is served by the facts app for both.
 2. **Registration** (`/register`, the SDK). `MCPSdkOAuthProvider.register_client` →
    `MCPAuthorizationService.save_client`: every redirect URI must be https (http only on loopback) and its host must be
-   one of `_ALLOWED_REDIRECT_HOSTS` or a subdomain. The client may register `user_context` and `drive_read`; none given
-   registers both (`_facts_auth_settings`).
+   one of `_ALLOWED_REDIRECT_HOSTS` or a subdomain. The client may register `user_context`, `drive_read` and
+   `external_tasks`; none given registers `user_context` and `drive_read` only (`_facts_auth_settings`: the tasks scope
+   is in `valid_scopes`, never in `default_scopes`), so an existing connector never gains the task queue. claude.ai
+   registers the one scope the resource's protected-resource metadata advertises (`scopes_supported`).
 3. **Authorize** (`/authorize`). `build_consent_redirect` requires a registered `redirect_uri`, PKCE with `S256`, binds
    resource and scope (`src/domain/mcp_resource.py::bind_resource`, below), requires the scope to be registered for the
    client, and returns `<host>/mcp/consent?req=<consent JWT>`.
 4. **Consent** (`src/web/mcp_consent_app.py::build_mcp_consent_blueprint`). No live Cabinet session (the one verifier,
    `src/web/cabinet_auth.py`: a revoked device grants nothing) redirects to `/auth/login?next=<self>`. Otherwise the page names the client and the scopes; a drive grant
-   gets the drive wording (`is_drive_grant`). On approve, `issue_auth_code_for_consent` stamps the Cabinet user and
+   gets the drive wording (`is_drive_grant`). A tasks grant (`is_tasks_grant`) gets the task wording and a radio list of
+   the user's active workers (`ExternalTaskService.list_workers`; labels and descriptions escaped, none picked in
+   advance); with no worker, the flag off, a locked account or no task queue the page says why and offers Deny only.
+   Its POST reads the workers again and answers 400 with no code for a `worker_id` that is not one of them. On approve, `issue_auth_code_for_consent` stamps the Cabinet user and
    account onto a new code and redirects to the client with `code` and `state`; deny redirects with
    `error=access_denied`. The user who is logged into the Cabinet at the moment of Approve is the identity the token
    carries.
