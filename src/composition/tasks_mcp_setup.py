@@ -79,6 +79,7 @@ from .token_text_fastmcp import TokenTextFastMCP
 
 TOOL_TEXTS_TOKEN = "MCP_TASK_TOOL_TEXTS"
 RESULT_TEXTS_TOKEN = "MCP_TASK_RESULT_TEXTS"
+ALERT_SUBJECT = "Task connector texts unavailable"
 # The texts are the tokens'; these two answers are given when no text is at hand.
 NO_TEXTS = "The task queue's texts are not available; try again later."
 NO_CREDENTIAL = "Authentication failed: no worker credential on this request."
@@ -296,7 +297,8 @@ async def build_tasks_mcp_or_none(*, external_tasks: Optional[ExternalTaskServic
             raise RuntimeError("the tasks MCP resource needs the prompt token store, which did not initialize")
         texts = ConnectorTextService(token_repo, tool_token_id=TOOL_TEXTS_TOKEN, result_token_id=RESULT_TEXTS_TOKEN,
                                      required_tool_keys=contract.REQUIRED_TOOL_KEYS,
-                                     required_result_keys=contract.REQUIRED_RESULT_KEYS, alert_sink=alert_sink)
+                                     required_result_keys=contract.REQUIRED_RESULT_KEYS, alert_sink=alert_sink,
+                                     alert_subject=ALERT_SUBJECT)
         app = build_tasks_mcp_app(
             external_tasks=external_tasks, limiter=build_external_task_api_limiter(db_client, env_config),
             gate=ExternalWorkerUserGate(user_repo, whitelist_repo), inactive_users=inactive_users, texts=texts,

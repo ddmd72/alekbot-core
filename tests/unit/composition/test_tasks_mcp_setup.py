@@ -444,6 +444,7 @@ class TestBuild:
         del world.store.tokens[RESULT_TOKEN]
         assert await self.build(world) is None
         assert len(world.sink.posts) == 1
+        assert world.sink.posts[0].startswith("Task connector texts unavailable: ") and RESULT_TOKEN in world.sink.posts[0]
 
     async def test_a_tool_outside_the_contract_refuses_the_build(self, world, monkeypatch):
         monkeypatch.setattr(c, "TOOL_PARAMETERS", {**c.TOOL_PARAMETERS, "fail_task": ("task_id", "lease_id")})
