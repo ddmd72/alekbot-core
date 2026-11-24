@@ -9,7 +9,8 @@ One send, in order, all inside `WAKE_TIMEOUT_S` (DNS included):
    while `Host` and the TLS SNI (and so certificate verification) carry the name. httpx is never handed the name to
    resolve again, so a second DNS answer cannot slip in between the check and the connect (rebinding).
 4. `follow_redirects=False` (a 3xx is `redirect`), `trust_env=False` (no proxy, no netrc from the environment).
-5. The answer's body is read up to `WAKE_RESPONSE_READ_MAX` bytes and dropped.
+5. The answer's body is asked for uncompressed (`Accept-Encoding: identity`) and read as raw bytes, never decompressed,
+   up to `WAKE_RESPONSE_READ_MAX` bytes, then dropped: a compressed body cannot expand past the cap.
 
 Outcomes: None for 2xx, else a `WakeRefusal`. Logs: `[Wake] host=<name> outcome=<code>` and, on an exception,
 `error=<class name>`; never the URL, a path, a query, a header, a status reason phrase or a body. httpx logs every request
@@ -110,7 +111,16 @@ class GuardedWebhookAdapter(OutboundWebhookPort):
 
     async def _send(self, checked: CheckedTarget, target: WakeTarget,
                     body: Mapping[str, Any]) -> Optional[WakeRefusal]:
-        _SENDING.set(True)      # this send runs in its own task (wait_for): the flag ends with it
+        # Since Python 3.12 `asyncio.wait_for` runs this coroutine in the caller's own task, so the flag is reset by
+        # its token on every way out: an httpx record the caller logs after the send is never dropped.
+        token = _SENDING.set(True)
+        try:
+            return await self._send_flagged(checked, target, body)
+        finally:
+            _SENDING.reset(token)
+
+    async def _send_flagged(self, checked: CheckedTarget, target: WakeTarget,
+                            body: Mapping[str, Any]) -> Optional[WakeRefusal]:
         try:
             addresses = list(await self._resolve(checked.host))
         except (OSError, UnicodeError) as exc:      # socket.gaierror is an OSError
@@ -122,20 +132,28 @@ class GuardedWebhookAdapter(OutboundWebhookPort):
             return WakeRefusal.ADDRESS
         address = addresses[0]
         literal = f"[{address}]" if ":" in address else address
+        # `identity`: the answer is counted in bytes as they arrive, so a compressed body cannot expand past the cap.
         headers = [*target.headers, ("Host", checked.host), ("Content-Type", "application/json"),
-                   ("User-Agent", _USER_AGENT)]
+                   ("Accept-Encoding", "identity"), ("User-Agent", _USER_AGENT)]
         content = json.dumps(dict(body), separators=(",", ":")).encode("utf-8")
         async with build_client(self._transport, self._timeout_s) as client:
             try:
                 async with client.stream("POST", f"https://{literal}{checked.request_target}", headers=headers,
                                          content=content, extensions={"sni_hostname": checked.host}) as response:
                     status = response.status_code
-                    read = 0
-                    async for chunk in response.aiter_bytes():
-                        read += len(chunk)
-                        if read >= self._read_max:
-                            break
+                    await self._drain(response)
             except httpx.HTTPError as exc:
                 logger.warning(f"[Wake] host={checked.host} error={type(exc).__name__}")
                 return WakeRefusal.UNREACHABLE
         return _status_refusal(status)
+
+    async def _drain(self, response: httpx.Response) -> None:
+        """Read the answer's raw bytes (never decompressed) up to the cap, then stop; nothing is kept. A response
+        already held in memory (no stream left to read) has nothing to drain."""
+        if response.is_stream_consumed:
+            return
+        read = 0
+        async for chunk in response.aiter_raw():
+            read += len(chunk)
+            if read >= self._read_max:
+                return

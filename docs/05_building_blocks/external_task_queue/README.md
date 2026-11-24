@@ -119,11 +119,13 @@ the closed `WakeRefusal` code. The task stays queued either way, for polling or 
 no userinfo, a DNS name of two labels or more (no IP literal, no numeric form), not under `.internal`, `.localhost`,
 `.local` or `.arpa`, not one of the bot's own hosts (built at boot from every deploy unit's configured URL,
 `wake_own_hosts` in `src/composition/external_task_setup.py`) and not under `run.app`; header names are tokens, values
-printable, framing and hop-by-hop headers refused, count and size capped. Then every resolved address must be public
-(no private, loopback, link-local or metadata, CGNAT, multicast, reserved, documentation, ULA, nor any range that embeds
-IPv4: NAT64, 6to4, Teredo), the connection goes to the vetted address with the name as `Host` and SNI (no second
-resolution, so no rebinding), no redirect is followed, no proxy is taken from the environment, and the answer is read
-up to a small cap and dropped. The Cabinet save runs the name-level rules only; every send runs them all again.
+printable, framing, hop-by-hop and `Accept-Encoding` headers refused, count and size capped. Then every resolved address
+must be public (no private, loopback, link-local or metadata, CGNAT, multicast, reserved, documentation, ULA, IPv6
+site-local, nor any range that embeds IPv4: NAT64, 6to4, Teredo), the connection goes to the vetted address with the
+name as `Host` and SNI (no second resolution, so no rebinding), no redirect is followed, no proxy is taken from the
+environment, and the answer is asked for uncompressed and read as raw bytes up to a small cap, then dropped (a
+compressed body cannot expand past the cap). The Cabinet save runs the name-level rules only; every send runs them all
+again.
 
 **Worker REST.** `create_external_task_api_blueprint` (`src/web/external_task_api.py:73`), not under `/api/`, not
 behind the Cabinet cookie. Per request: the `401` limits are checked first, then the key's shape, then `resolve_key`,

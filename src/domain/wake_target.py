@@ -44,8 +44,9 @@ _NAME_MAX_CHARS = 253
 _TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _VALUE = re.compile(r"[\x20-\x7e\t]*")
 # Hop-by-hop and framing headers: the transport sets them, a user value would change how the request is framed.
+# `accept-encoding` too: the sender asks for an uncompressed answer so its read cap counts what arrives.
 _FORBIDDEN_HEADERS = frozenset({"host", "content-length", "transfer-encoding", "connection", "keep-alive",
-                                "proxy-connection", "te", "trailer", "upgrade", "content-type"})
+                                "proxy-connection", "te", "trailer", "upgrade", "content-type", "accept-encoding"})
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 # IPv6 ranges that carry an IPv4 address inside: what they reach is decided by a translator, not by this check.
 _EMBEDS_IPV4 = tuple(ipaddress.ip_network(n) for n in ("64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32"))
@@ -187,8 +188,9 @@ def parse_header_lines(text: str) -> Union[Headers, WakeRefusal]:
 
 def address_is_public(address: str) -> bool:
     """True only for a globally routable unicast address. Refused: private, loopback, link-local (the metadata address
-    among them), CGNAT, multicast, reserved, unspecified and documentation ranges, IPv6 ULA and link-local, and every
-    IPv6 range that embeds IPv4 (NAT64, 6to4, Teredo). An IPv4-mapped IPv6 address is judged as its IPv4 address."""
+    among them), CGNAT, multicast, reserved, unspecified and documentation ranges, IPv6 ULA, site-local (`fec0::/10`,
+    which Python counts as global) and link-local, and every IPv6 range that embeds IPv4 (NAT64, 6to4, Teredo). An
+    IPv4-mapped IPv6 address is judged as its IPv4 address."""
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])
     except ValueError:
@@ -199,7 +201,8 @@ def address_is_public(address: str) -> bool:
         elif any(ip in net for net in _EMBEDS_IPV4):
             return False
     if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-            or ip.is_unspecified or (isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT)):
+            or ip.is_unspecified or (isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT)
+            or (isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local)):
         return False
     return ip.is_global
 
