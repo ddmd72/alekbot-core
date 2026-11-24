@@ -157,6 +157,7 @@ tests/unit/composition/test_platform_handler_parity.py :: marker :: slow  # ci-s
 tests/unit/composition/test_rich_content_shared_instance.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_sandbox_setup.py :: skipif :: os.geteuid() != 0 :: x1  # never: needs root to make a foreign-owned directory; CI and ci-gate run non-root
 tests/unit/composition/test_service_container_values.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
+tests/unit/composition/test_tasks_mcp_setup.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_user_agent_factory_values.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_voice_mcp_cross_side_pairing.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets
 tests/unit/composition/test_voice_mcp_setup.py :: marker :: slow  # ci-slow: skipped unless RUN_SLOW_TESTS=1, which `make ci` sets

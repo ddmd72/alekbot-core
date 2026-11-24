@@ -88,7 +88,6 @@ async def tasks():
     return w
 
 
-@pytest.mark.slow
 async def test_a_facts_or_a_drive_access_token_is_401_at_the_tasks_resource(seam, tasks):
     async with seam.running():
         facts = await seam.access_token("user_context", FACTS)
