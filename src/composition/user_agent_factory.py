@@ -69,6 +69,7 @@ from ..infrastructure.agent_config import (
     IMAGE_GENERATION as IMAGE_GENERATION_CFG,
     VIDEO_GENERATION as VIDEO_GENERATION_CFG,
     TUTOR as TUTOR_CFG,
+    EXTERNAL_TASKS as EXTERNAL_TASKS_CFG,
 )
 from ..agents.agent_runtime import AgentRuntime
 from ..agents.core.quick_response_agent import create_quick_response_agent
@@ -96,6 +97,8 @@ from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
 from ..agents.drive_agent import DriveAgent
+from ..agents.external_task_agent import ExternalTaskAgent
+from ..infrastructure.agent_manifest import EXTERNAL_TASKS
 from ..infrastructure.drive_operations import DriveOperations
 from .drive_specialist_build import build_drive_specialist
 from ..agents.domain_researcher_agent import DomainResearcherAgent
@@ -1026,6 +1029,23 @@ class UserAgentFactory(AgentFactoryPort):
             notes_enabled=self.drive_notes_enabled,
         )
 
+    def _build_external_tasks(self, user_id: str, ctx: _UserContext) -> ExternalTaskAgent:
+        """The task specialist (EXTERNAL_TASK_QUEUE_RFC §5.3). Built with the queue's service or without it: a deployment
+        with no task queue gets an agent that answers "not available here" with no LLM call, never an unknown
+        recipient."""
+        return ExternalTaskAgent(
+            config=AgentConfig(
+                agent_id=f"{EXTERNAL_TASKS.agent_id}_{user_id}",
+                agent_type=EXTERNAL_TASKS.agent_type,
+                timeout_ms=EXTERNAL_TASKS_CFG.timeout_ms,
+                capabilities=["external_tasks"],
+            ),
+            execution_context=self.context_builder.build(EXTERNAL_TASKS.agent_type, ctx.user_profile.config),
+            service=self.external_tasks,
+            prompt_builder=ctx.prompt_builder,
+            thinking=ctx.user_profile.config.get_thinking_for_agent(EXTERNAL_TASKS.agent_type),
+        )
+
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:
         execution_context = self.context_builder.build("domain_researcher", ctx.user_profile.config)
         return DomainResearcherAgent(
@@ -1213,6 +1233,7 @@ class UserAgentFactory(AgentFactoryPort):
         "claude_deep_research_runner": _build_claude_runner,
         "file_management": _build_file_management,
         "drive": _build_drive,
+        "external_tasks": _build_external_tasks,
         "domain_researcher": _build_domain_researcher,
         "image_generation": _build_image_generation,
         "video_generation": _build_video_generation,
@@ -1231,6 +1252,7 @@ class UserAgentFactory(AgentFactoryPort):
         "claude_deep_research_runner": "claude_deep_research_runner",
         "file_management": "file_management_agent",
         "drive": "drive_agent",
+        "external_tasks": "external_task_agent",
         "domain_researcher": "domain_researcher_agent",
         "image_generation": "image_generation_agent",
         "video_generation": "video_generation_agent",
