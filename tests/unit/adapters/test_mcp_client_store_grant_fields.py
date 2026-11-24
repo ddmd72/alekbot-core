@@ -78,3 +78,48 @@ async def test_a_refresh_token_stored_before_the_new_fields_loads_with_none(stor
         doc.pop(field)
     got = await store.repo.get_refresh_token("h" * 64)
     assert (got.worker_id, got.granted_at, got.issued_at, got.grant_id) == (None, None, None, "g" * 22)
+
+
+# ------------------------------------------------------------------------------- per-worker grants (the Cabinet)
+
+def tok(n: int, **over) -> MCPRefreshToken:
+    return refresh(token_hash=f"{n:064d}", **over)
+
+
+async def test_list_worker_grants_returns_the_live_tokens_of_that_user_and_worker_only(store):
+    await store.repo.save_refresh_token(tok(1, worker_id="w1", grant_id="ga"))
+    await store.repo.save_refresh_token(tok(2, worker_id="w1", grant_id="gb"))
+    await store.repo.save_refresh_token(tok(3, worker_id="w1", grant_id="gc", revoked_at=NOW))
+    await store.repo.save_refresh_token(tok(4, worker_id="w1", grant_id="gd", expires_at=NOW - timedelta(seconds=1)))
+    await store.repo.save_refresh_token(tok(5, worker_id="w2", grant_id="ge"))
+    await store.repo.save_refresh_token(tok(6, worker_id="w1", grant_id="gf", user_id="usr-2", account_id="acc-2"))
+    await store.repo.save_refresh_token(tok(7, grant_id="gg"))
+    got = await store.repo.list_worker_grants("usr-1", "w1", NOW)
+    assert sorted(t.grant_id for t in got) == ["ga", "gb"]
+    assert await store.repo.list_worker_grants("usr-1", "w-unknown", NOW) == []
+
+
+async def test_revoke_grant_revokes_every_unrevoked_token_of_that_users_grant_only(store):
+    await store.repo.save_refresh_token(tok(1, worker_id="w1", grant_id="ga"))
+    await store.repo.save_refresh_token(tok(2, worker_id="w1", grant_id="ga", revoked_at=NOW - timedelta(days=1)))
+    await store.repo.save_refresh_token(tok(3, worker_id="w1", grant_id="gb"))
+    await store.repo.save_refresh_token(tok(4, worker_id="w1", grant_id="ga", user_id="usr-2", account_id="acc-2"))
+    assert await store.repo.revoke_grant("usr-1", "ga", NOW) == 1
+    docs = store.db.collection(REFRESH).docs
+    assert docs[f"{1:064d}"]["revoked_at"] == NOW
+    assert docs[f"{2:064d}"]["revoked_at"] == NOW - timedelta(days=1)
+    assert docs[f"{3:064d}"]["revoked_at"] is None and docs[f"{4:064d}"]["revoked_at"] is None
+    assert await store.repo.has_active_grant("usr-1", "ga", NOW) is False
+    assert await store.repo.revoke_grant("usr-1", "unknown", NOW) == 0
+
+
+async def test_revoke_worker_grants_revokes_that_users_worker_only(store):
+    await store.repo.save_refresh_token(tok(1, worker_id="w1", grant_id="ga"))
+    await store.repo.save_refresh_token(tok(2, worker_id="w1", grant_id="gb"))
+    await store.repo.save_refresh_token(tok(3, worker_id="w2", grant_id="gc"))
+    await store.repo.save_refresh_token(tok(4, worker_id="w1", grant_id="gd", user_id="usr-2", account_id="acc-2"))
+    await store.repo.save_refresh_token(tok(5, grant_id="ge"))
+    assert await store.repo.revoke_worker_grants("usr-1", "w1", NOW) == 2
+    docs = store.db.collection(REFRESH).docs
+    assert [n for n in range(1, 6) if docs[f"{n:064d}"]["revoked_at"] is not None] == [1, 2]
+    assert await store.repo.list_worker_grants("usr-1", "w1", NOW) == []
