@@ -53,9 +53,8 @@ async def world():
     return await ExternalTaskWorld().seed()
 
 
-async def test_an_unflagged_note_leaves_the_create_queued(world):
+async def test_an_unflagged_note_leaves_the_execution_clean(world):
     response = await run(world, [tools(CREATE), text("ok")], [PLAIN])
-    assert next(iter(world.tasks.tasks.values())).status is S.QUEUED
     assert response.metadata[EXECUTION_TAINTED_KEY] is False
 
 

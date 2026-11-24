@@ -62,7 +62,6 @@ class UIMessage(Enum):
     MEMORY_DRAFT_NOT_FOUND = "memory_draft_not_found"
     MEMORY_UNAVAILABLE = "memory_unavailable"
     # External tasks (EXTERNAL_TASK_QUEUE_RFC §5.3): the literal receipt, `$task send` and its replies.
-    EXTERNAL_TASK_HANDED = "external_task_handed"
     EXTERNAL_TASK_HELD = "external_task_held"
     EXTERNAL_TASK_ID_LINE = "external_task_id_line"
     EXTERNAL_TASK_USAGE = "external_task_usage"

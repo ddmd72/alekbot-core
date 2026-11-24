@@ -3,6 +3,7 @@ audited: 2026-11-24
 covers:
   src/domain/external_task.py
   src/domain/external_task_alert.py
+  src/domain/external_task_entry.py
   src/domain/external_task_delivery.py
   src/domain/external_task_http.py
   src/domain/external_task_jobs.py
@@ -29,6 +30,7 @@ covers:
   src/adapters/firestore_window_counter.py
   src/services/external_task_service.py
   src/services/external_task_rate_limiter.py
+  src/services/external_worker_user_gate.py
   src/infrastructure/external_task_tools.py
   src/infrastructure/taint_tracker.py
   src/composition/external_task_setup.py
@@ -60,7 +62,7 @@ label `research` and the task "compare three community-garden irrigation kits fo
 ## State of the build
 
 Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; Smart's five tools (create, list, get,
-cancel, list workers) with taint tracking, held tasks and `$task send`; the REST worker endpoint `/external-tasks/v1/*`
+cancel, list workers) where every task created in a chat turn is held until the owner confirms it with `$task send`; the REST worker endpoint `/external-tasks/v1/*`
 with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
 keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
 wake-up POST behind the outbound-request guard; the operator flag script.
@@ -74,7 +76,7 @@ Firestore, database `us-production`, names from `EnvironmentConfig` (`external_t
 `external_task_results_collection`, `external_workers_collection`, `external_worker_keys_collection`), env prefix.
 
 - **tasks**: one `ExternalTask` per document (`domain/external_task.py`): status, `origin` (the creating turn's
-  channel; the delivery alert goes there), `hold`, `lease`, `result_meta`, `failure`, `delivery`, `created_tainted`. The result body
+  channel; the delivery alert goes there), `hold`, `lease`, `result_meta`, `failure`, `delivery` (a stored `created_tainted` of an older record is ignored on read and dropped at the next write). The result body
   is a separate document so a listing never reads it.
 - **results**: the submitted text, one per done task.
 - **workers** and **worker keys**: a worker is a label plus a description, bound to the registering account. A key is
@@ -89,8 +91,8 @@ Two of these carry `purge_after` (tasks, results) and are deleted by a TTL polic
 ## Flows
 
 **Create to deliver.** Smart's `create_external_task` handler (`src/infrastructure/external_task_tools.py:187`) calls
-`ExternalTaskService.create` (`src/services/external_task_service.py:328`): an untainted task is `queued` with a
-deadline timer; a worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
+`ExternalTaskService.create` (`src/services/external_task_service.py:328`): the `entry` decides: a chat create is `held` (below), a reminder create is `queued` with a
+deadline timer (Smart's local tool always passes `TaskEntry.CHAT`); a worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
 final state enqueues an `external_task_deliver` Cloud Task (dispatch deadline `DELIVER_DEADLINE_S`, the
 `EXTERNAL_TASK` notification budget plus headroom).
 
@@ -110,7 +112,8 @@ final and recorded, as for a reminder: no channel is logged, an empty answer is 
 again. Delivery is idempotent through `delivery.state` (Cloud Tasks may run it twice). Task types:
 `docs/07_deployment/SCHEDULERS.md`.
 
-**Held to sent.** A task created in an execution that read outside content is `held`, not queued. The service returns a
+**Held to sent.** Every task created in a chat turn waits for the owner's confirmation: it is `held`, not queued, whatever the turn read
+(`decisions/external_task_confirmation_and_alerts.md`). The service returns a
 confirmation code once (stored as a keyed digest). The owner's channel gets the task's full text and the command from
 the tool's own delivery item, never through the model; the model's result holds the task id only. The owner confirms
 with `$task send CODE` (`ConversationHandler`, the `task` command); the service moves it to `queued`. A held task
@@ -120,8 +123,8 @@ is invisible to every worker surface.
 **Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:518`) applies the
 kind's precondition, so a stale timer changes nothing. A timer further than Cloud Tasks can schedule re-enqueues itself.
 
-**Wake-up.** A worker with a target is pinged when work appears, instead of polling. When a task becomes `queued` (an
-untainted create or `$task send`) and it is the worker's oldest queued task, and no task of the worker holds an
+**Wake-up.** A worker with a target is pinged when work appears, instead of polling. When a task becomes `queued` (a
+reminder create or `$task send`) and it is the worker's oldest queued task, and no task of the worker holds an
 unexpired lease (the worker is draining), the service moves the worker's `wake_generation` on and enqueues
 `external_task_wake` for that generation; a lease timer that re-queues a task pings the same way. A held task never
 pings. `ExternalTaskWakeTask` calls `on_wake`, which re-reads the worker (a changed generation, a cleared target or no
@@ -145,7 +148,8 @@ again.
 
 **Worker REST.** `create_external_task_api_blueprint` (`src/web/external_task_api.py:73`), not under `/api/`, not
 behind the Cabinet cookie. Per request: the `401` limits are checked first, then the key's shape, then `resolve_key`,
-then the stored user (active, whitelisted), then the worker's own limits, then the body. A task of another worker, a
+then the stored user (active, whitelisted: `ExternalWorkerUserGate`, `src/services/external_worker_user_gate.py`, the
+one whitelist rule of every worker-key surface; the core leaves it out), then the worker's own limits, then the body. A task of another worker, a
 held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_REFERENCE.md`.
 
 ## Security rules enforced in code
@@ -153,7 +157,8 @@ held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_R
 The idea behind the taint rule, every taint source, how taint persists and what it does not cover, without reading
 code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
 
-- **Taint.** An execution is tainted when outside content entered it. `domain/execution_taint.py` is the pure rule and
+- **Taint (no longer decides the hold).** A chat create is held always; the taint tracker is still in the code for other
+  uses and is removed in later steps of the decision record. An execution is tainted when outside content entered it. `domain/execution_taint.py` is the pure rule and
   `TaintTracker` (`src/infrastructure/taint_tracker.py:25`) applies it per execution attempt, fed by the delegation
   engine after every tool batch. Sources: a wrapped result or attached-file reminder, any file part, any tool result
   not on the closed allowlist (`call_is_trusted`, `src/domain/execution_taint.py:61`; web search is not wrapped, which is
@@ -161,7 +166,7 @@ code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
   (`Message.execution_tainted`), an untrusted agent note, and every read of a result or failure reason
   (`get_external_task` is not on the list).
 - **The bit travels.** The final flag is stored on the saved model message, so the next turn builds on a tainted
-  answer as tainted. A list that shows a task created in a tainted execution taints the reader (`created_tainted`).
+  answer as tainted. 
 - **Nested Smart gets no tools.** The five tools are added only to an interactive-delivery turn that was not reached by
   delegation and whose user has the flag; the service re-checks flag and lock, so a stale cached profile gains nothing.
   The delivery's alert turn is a background run (`background:external_task_deliver`, no `interactive_delivery`), so a

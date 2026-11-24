@@ -6,10 +6,10 @@ the creating turn's origin are closed over, never arguments. Every result is a `
 of the handlers sets `history_context`, so nothing a tool returns is copied into the persisted turn's metadata.
 
 What the model reads and what the owner reads are different channels:
-- the model's result for a create is a note with the task id (and, for a held task, that it waits for the owner's
-  command); the raw confirmation code is NEVER in it;
+- the model's result for a create is a note with the task id and that the task waits for the owner's confirmation;
+  the raw confirmation code is NEVER in it;
 - the owner's channel is the returned `DeliveryItem`, posted literally after the answer with the task's full text
-  (and, for a held task, the command).
+  and the command that confirms it.
 
 A label that does not exist, a task of another user and a missing task all get the same `Tool error:` line, so nothing
 reveals whether a task exists.
@@ -17,7 +17,7 @@ reveals whether a task exists.
 Public interface:
     build_create_external_task_declaration(workers) / build_list_… / build_list_external_workers_… / build_get_… /
     build_cancel_…() -> declaration
-    make_create_handler(service, user_id, origin, tracker) -> LocalToolHandler
+    make_create_handler(service, user_id, origin) -> LocalToolHandler
     make_list_handler(service, user_id, tracker) / make_list_workers_handler(service, user_id) / make_get_handler(service, user_id, tracker) / make_cancel_handler(service, user_id)
 """
 import secrets
@@ -25,7 +25,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 from ..domain.agent import DeliveryItem
-from ..domain.external_task import ExternalTaskStatus, TaskFailureCode, TaskOrigin
+from ..domain.external_task import HOLD_S, ExternalTaskStatus, TaskFailureCode, TaskOrigin
+from ..domain.external_task_entry import TaskEntry
 from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, receipt_data
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.external_task_texts import (
@@ -56,11 +57,10 @@ from ..domain.external_task_texts import (
     NOTE_GET_NO_RESULT,
     NOTE_GET_REASON,
     NOTE_GET_RESULT,
-    NOTE_HELD,
     NOTE_LIST_EMPTY,
     NOTE_LIST_HEADER,
     NOTE_LIST_LINE,
-    NOTE_QUEUED,
+    NOTE_PENDING,
     NOTE_WORKERS_HEADER,
     NOTE_WORKERS_NONE,
     STATUS_PARAMETER_TEXT,
@@ -184,9 +184,8 @@ def build_cancel_external_task_declaration() -> Dict[str, Any]:
 
 # --- handlers (built per execution attempt) ---------------------------------------------------------------------
 
-def make_create_handler(service: "ExternalTaskService", user_id: str, origin: TaskOrigin,
-                        tracker: TaintTracker) -> LocalToolHandler:
-    """`tracker.tainted` is read at call time: a create after the execution read outside content is held."""
+def make_create_handler(service: "ExternalTaskService", user_id: str, origin: TaskOrigin) -> LocalToolHandler:
+    """A create in a chat turn always waits for the owner's confirmation, whatever the turn read."""
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         args = _args(tool_call)
@@ -196,13 +195,13 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
         if worker is None or title is None or text is None:
             return _error(tool_call, ERROR_ARGUMENTS)
         try:
-            created = await service.create(user_id, worker, title, text, origin, tainted=tracker.tainted)
+            created = await service.create(user_id, worker, title, text, origin,
+                                         entry=TaskEntry.CHAT)
         except ExternalTaskRefused as exc:
             return _refused(tool_call, exc)
         except Exception as exc:
             return _crashed(tool_call, exc)
-        held = created.status is ExternalTaskStatus.HELD
-        note = (NOTE_HELD if held else NOTE_QUEUED).format(task_id=created.task_id, worker=created.label)
+        note = NOTE_PENDING.format(task_id=created.task_id, worker=created.label, hours=HOLD_S // 3600)
         return ToolResult(
             name=tool_call.name, result_str=note,
             delivery_items=[DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))],
@@ -212,7 +211,7 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
 
 
 def make_list_handler(service: "ExternalTaskService", user_id: str, tracker: TaintTracker) -> LocalToolHandler:
-    """A listed title may have been written in a tainted execution: listing one marks this execution tainted."""
+    """`tracker` is no longer read here; it leaves the signature with the rest of the taint tracking."""
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         args = _args(tool_call)
@@ -230,8 +229,6 @@ def make_list_handler(service: "ExternalTaskService", user_id: str, tracker: Tai
             return _refused(tool_call, exc)
         except Exception as exc:
             return _crashed(tool_call, exc)
-        if any(t.created_tainted for t in tasks):
-            tracker.mark()
         if not tasks:
             return ToolResult(name=tool_call.name, result_str=NOTE_LIST_EMPTY)
         lines = [NOTE_LIST_LINE.format(task_id=t.task_id, worker=t.label, title=t.title, status=t.status.value,
