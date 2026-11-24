@@ -2,7 +2,7 @@
 
 Public interface:
     ExternalTaskService(tasks, workers, queue, users, inactive_users, *, digest_key, clock, new_id, random_bytes,
-                        cipher=None, webhook=None, own_hosts=(), delivery_deadline_s=None)
+                        cipher=None, webhook=None, own_hosts=())
 
     Owner side (Smart tools, `$task send`), user id closed over by the caller:
         .create(user_id, worker_label, title, text, origin, *, tainted) -> CreatedTask
@@ -98,6 +98,7 @@ from ..domain.external_task import (
     WorkerDestination,
 )
 from ..domain.external_task_jobs import (
+    DELIVER_DEADLINE_S,
     DeliverPayload,
     TaskNotice,
     TimerKind,
@@ -188,12 +189,9 @@ class ExternalTaskService:
                  users: UserRepository, inactive_users: "InactiveUserCheck", *, digest_key: bytes,
                  clock: Callable[[], datetime] = _utcnow, new_id: Callable[[], str] = _new_id,
                  random_bytes: Callable[[int], bytes] = secrets.token_bytes, cipher: Optional[CipherPort] = None,
-                 webhook: Optional[OutboundWebhookPort] = None, own_hosts: Collection[str] = (),
-                 delivery_deadline_s: Optional[int] = None) -> None:
+                 webhook: Optional[OutboundWebhookPort] = None, own_hosts: Collection[str] = ()) -> None:
         """`cipher`, `webhook` and `own_hosts` serve the wake-up: without the cipher or the webhook a target cannot be
-        stored (`wake_unavailable`) and no ping is sent; `own_hosts` are the bot's own host names (lowercase).
-        `delivery_deadline_s` is the Cloud Tasks dispatch deadline of a delivery, whose alert is a Smart run; the
-        graph derives it from the `EXTERNAL_TASK` notification budget (None: the queue's default)."""
+        stored (`wake_unavailable`) and no ping is sent; `own_hosts` are the bot's own host names (lowercase)."""
         if not digest_key:
             raise ValueError("the external task queue needs a digest key")
         self._tasks = tasks
@@ -208,7 +206,6 @@ class ExternalTaskService:
         self._cipher = cipher
         self._webhook = webhook
         self._own_hosts = frozenset(h.lower() for h in own_hosts)
-        self._delivery_deadline_s = delivery_deadline_s
 
     # -- checks ---------------------------------------------------------------------------------------------------
 
@@ -286,7 +283,7 @@ class ExternalTaskService:
             "external_task_deliver",
             {"user_id": payload.user_id, "account_id": payload.account_id, "task_id": payload.task_id,
              "notice": payload.notice.value},
-            dedup_key=deliver_key(task.task_id), deadline_seconds=self._delivery_deadline_s)
+            dedup_key=deliver_key(task.task_id), deadline_seconds=DELIVER_DEADLINE_S)
 
     async def _enqueue_notice_logged(self, task: ExternalTask, notice: TaskNotice) -> None:
         try:

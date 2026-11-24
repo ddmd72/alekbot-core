@@ -18,9 +18,7 @@ from ..adapters.firestore_external_worker_store import FirestoreExternalWorkerSt
 from ..adapters.outbound_webhook.guarded_webhook_adapter import GuardedWebhookAdapter
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
-from ..domain.notification_kind import NotificationKind
 from ..domain.wake_target import own_hosts_of
-from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..ports.cipher_port import CipherPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
@@ -49,6 +47,4 @@ def build_external_task_service(db_client: Any, env_config: EnvironmentConfig, *
     return ExternalTaskService(
         FirestoreExternalTaskStore(db_client, env_config), FirestoreExternalWorkerStore(db_client, env_config),
         task_queue, user_repo, inactive_users, digest_key=digest_key, cipher=cipher,
-        webhook=GuardedWebhookAdapter(own_hosts), own_hosts=own_hosts,
-        # Derived from NOTIFICATION_SLA here: services cannot import the infrastructure layer (REQ-ARCH-22).
-        delivery_deadline_s=dispatch_deadline_s(NotificationKind.EXTERNAL_TASK))
+        webhook=GuardedWebhookAdapter(own_hosts), own_hosts=own_hosts)
