@@ -25,6 +25,7 @@ from ..services.execute_reminder_task import ExecuteReminderTask
 from ..services.external_task_delivery_task import ExternalTaskDeliveryTask
 from ..services.external_task_service import ExternalTaskService
 from ..services.external_task_timer_task import ExternalTaskTimerTask
+from ..services.external_task_wake_task import ExternalTaskWakeTask
 from ..services.geo_mark_turn_task import GeoMarkTurnTask
 from ..services.gmail_reconnect_flag import GmailReconnectFlag
 from ..services.provider_registry import ProviderRegistry
@@ -51,7 +52,7 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
                        ) -> Mapping[str, WorkerTask]:
     """Task type -> runner for every task served outside `WorkerHandler`. `geo_mark_turn` is the platform's runner of
     a queued `$geo` question (the Slack adapter's entry); None: the task answers 501. `external_tasks` None (no task
-    queue): the two external task types answer 501; `workspace` None: a delivered result gets no workspace copy."""
+    queue): the three external task types answer 501; `workspace` None: a delivered result gets no workspace copy."""
     tasks: Dict[str, WorkerTask] = {}
     empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=alert_sink)
     if notes_port is None:
@@ -105,8 +106,13 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
         tasks["external_task_deliver"] = DisabledTask(
             "external_task_deliver: external task queue not configured", 501,
             {"error": "external tasks not configured"})
+        tasks["external_task_wake"] = DisabledTask(
+            "external_task_wake: external task queue not configured", 501,
+            {"error": "external tasks not configured"})
     else:
         tasks["external_task_timer"] = ExternalTaskTimerTask(external_tasks=external_tasks)
         tasks["external_task_deliver"] = ExternalTaskDeliveryTask(
             external_tasks=external_tasks, workspace=workspace, notification_service=notification_service)
+        tasks["external_task_wake"] = ExternalTaskWakeTask(
+            external_tasks=external_tasks, notification_service=notification_service)
     return tasks

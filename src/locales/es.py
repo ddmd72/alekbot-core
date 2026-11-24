@@ -186,6 +186,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_FAILED.value: "*{label}* informó de un fallo en la tarea *{title}* (tarea *{id}*). Pídeme que abra la tarea para ver el motivo indicado.",
     UIMessage.EXTERNAL_TASK_CLAIM_LOOP.value: "La tarea *{title}* (tarea *{id}*) se abandonó: *{label}* la tomó varias veces y nunca la terminó.",
     UIMessage.EXTERNAL_TASK_EXPIRED.value: "La tarea *{title}* (tarea *{id}*) venció antes de que *{label}* la terminara.",
+    UIMessage.EXTERNAL_TASK_WAKE_REFUSED.value: "La señal de activación para *{label}* fue rechazada (`{code}`). Sus tareas siguen en cola hasta que busque trabajo; puedes corregir o borrar la dirección de activación en el Cabinet.",
     UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ No pude procesar tu último mensaje porque estuve ocupado demasiado tiempo. Envíalo de nuevo, por favor.",
     UIMessage.MEMORY_REVIEW_QUESTION.value: "¿Sigue siendo cierto?",
     UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Sí",

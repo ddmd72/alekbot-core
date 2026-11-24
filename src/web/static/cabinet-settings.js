@@ -264,7 +264,7 @@
         const leftWorkers = _openSettingsRow === "workers" && id !== "workers";
         _openSettingsRow = id;
         if (leftPin) pinCancel();
-        if (leftWorkers) clearMintedWorkerKey();
+        if (leftWorkers) { clearMintedWorkerKey(); clearWorkerWakeForm(); }
         for (const row of SETTINGS_ROWS) {
           const open = row === id;
           const button = document.getElementById(`srow-${row}`);
@@ -1054,7 +1054,9 @@
 
       /* ── Settings → Connections: External workers (EXTERNAL_TASK_QUEUE_RFC §5.6) ─── */
       // The row exists only for a user with the flag. A minted key is shown once, in #workers-key-box, and is dropped
-      // from the page when the row closes; the list is redrawn from the server and never holds a key.
+      // from the page when the row closes; the list is redrawn from the server and never holds a key. A wake-up target
+      // (EXTERNAL_TASK_QUEUE_RFC §5.8) is typed into #workers-wake-box, always empty when it opens: after a save the
+      // server sends back only the host, so the URL and the header values never return to the page.
       async function loadExternalWorkers() {
         try {
           const res = await authFetch(`${API}/api/external-workers`, { credentials: "include" });
@@ -1069,6 +1071,7 @@
         item.classList.toggle("hidden", !(data && data.enabled));
         if (!(data && data.enabled)) {
           clearMintedWorkerKey();
+          clearWorkerWakeForm();
           if (_openSettingsRow === "workers") openSettingsRow("");
           return;
         }
@@ -1090,7 +1093,11 @@
               <div class="c-mini-t">${escapeHtml(w.label)}</div>
               ${w.description ? `<div class="c-mini-s">${escapeHtml(w.description)}</div>` : ""}
               ${keys}
+              ${w.wake_host ? `<div class="c-mini-s">${escapeHtml(t("workers.wake_on"))}: <span class="c-mono">${escapeHtml(w.wake_host)}</span>
+                <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" onclick="clearWorkerWake(this.dataset.worker)">${escapeHtml(t("workers.wake_clear"))}</button>
+              </div>` : `<div class="c-mini-s">${escapeHtml(t("workers.wake_polls"))}</div>`}
             </div>
+            <button type="button" class="c-lnk" data-worker="${escapeHtml(w.worker_id)}" data-label="${escapeHtml(w.label)}" onclick="openWorkerWake(this.dataset.worker, this.dataset.label)">${escapeHtml(t("workers.wake_set"))}</button>
             <button type="button" class="c-lnk" data-worker="${escapeHtml(w.worker_id)}" data-label="${escapeHtml(w.label)}" onclick="mintWorkerKey(this.dataset.worker, this.dataset.label)">${escapeHtml(t("workers.mint"))}</button>
             <button type="button" class="c-lnk c-lnk-danger" data-worker="${escapeHtml(w.worker_id)}" onclick="removeExternalWorker(this.dataset.worker)">${escapeHtml(t("workers.remove"))}</button>
           </div>`;
@@ -1168,6 +1175,61 @@
 
       function clearMintedWorkerKey() {
         document.getElementById("workers-key-box").innerHTML = "";
+      }
+
+      // The wake-up form of one worker: URL and `Name: value` header lines. Saving replaces the whole target.
+      function openWorkerWake(workerId, label) {
+        document.getElementById("workers-wake-box").innerHTML = `<div class="c-box">
+            <div class="c-box-title">${escapeHtml(label)}</div>
+            <p class="c-hint">${escapeHtml(t("workers.wake_hint"))}</p>
+            <div class="c-field">
+              <label for="workers-wake-url">${escapeHtml(t("workers.wake_url"))}</label>
+              <input id="workers-wake-url" type="url" class="c-input" autocomplete="off" placeholder="${escapeHtml(t("workers.wake_url_placeholder"))}" />
+            </div>
+            <div class="c-field">
+              <label for="workers-wake-headers">${escapeHtml(t("workers.wake_headers"))}</label>
+              <textarea id="workers-wake-headers" class="c-input" rows="3" autocomplete="off" placeholder="${escapeHtml(t("workers.wake_headers_placeholder"))}"></textarea>
+            </div>
+            <div class="c-btns">
+              <button type="button" class="c-btn c-pri" data-worker="${escapeHtml(workerId)}" onclick="saveWorkerWake(this.dataset.worker)">${escapeHtml(t("workers.wake_save"))}</button>
+              <button type="button" class="c-btn c-sec" onclick="clearWorkerWakeForm()">${escapeHtml(t("workers.wake_cancel"))}</button>
+            </div>
+          </div>`;
+      }
+
+      function clearWorkerWakeForm() {
+        document.getElementById("workers-wake-box").innerHTML = "";
+      }
+
+      async function saveWorkerWake(workerId) {
+        const url = document.getElementById("workers-wake-url");
+        const headers = document.getElementById("workers-wake-headers");
+        try {
+          const res = await authFetch(`${API}/api/external-workers/${encodeURIComponent(workerId)}/wake`, {
+            method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: url.value.trim(), headers: headers.value }),
+          });
+          if (!res.ok) { await workersFailure(res); return; }
+          clearWorkerWakeForm();
+          showToast(t("workers.wake_saved"), "success");
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
+        }
+      }
+
+      async function clearWorkerWake(workerId) {
+        if (!confirm(t("workers.wake_clear_confirm"))) return;
+        try {
+          const res = await authFetch(`${API}/api/external-workers/${encodeURIComponent(workerId)}/wake`, {
+            method: "DELETE", credentials: "include",
+          });
+          if (!res.ok) { await workersFailure(res); return; }
+          showToast(t("workers.wake_cleared"), "success");
+          loadExternalWorkers();
+        } catch {
+          showToast(t("workers.err_failed"), "error");
+        }
       }
 
       async function revokeWorkerKey(workerId, keyId) {

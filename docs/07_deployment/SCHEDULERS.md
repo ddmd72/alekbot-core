@@ -16,6 +16,7 @@ covers:
   src/services/geo_mark_turn_task.py
   src/services/external_task_timer_task.py
   src/services/external_task_delivery_task.py
+  src/services/external_task_wake_task.py
   scripts/infrastructure/cloudbuild_scheduler_jobs.sh
   scripts/infrastructure/setup-daily-email-review-scheduler.sh
   src/services/background_empty_answer_reporter.py
@@ -84,6 +85,7 @@ All Scheduler jobs POST to the main service, with OIDC (`/health` keep-alive exc
 | `deep_research_failed`, `geo_mark_turn` | Cloud Task | `DeepResearchFailedTask`, `GeoMarkTurnTask` | See below |
 | `external_task_timer` | Cloud Task | `ExternalTaskTimerTask` → `ExternalTaskService.on_timer` | Lease, deadline and hold timers of the external task queue; no Scheduler job; 501 without a task queue |
 | `external_task_deliver` | Cloud Task | `ExternalTaskDeliveryTask` | A final external task's workspace copy and notice; 501 without a task queue |
+| `external_task_wake` | Cloud Task | `ExternalTaskWakeTask` → `ExternalTaskService.on_wake` | The content-free wake-up POST to a worker's target through the outbound-request guard; no Scheduler job; 501 without a task queue |
 | `agent_execution`, `video_generation_polling`, `telegram_update`, queued Slack event | Cloud Task | agent worker, `VideoGenerationPollingTask`, platform workers | Platform entries answer 503 when the platform is not wired |
 
 ## Deadlines: two numbers, do not confuse them
@@ -322,6 +324,17 @@ takes no memory-write lease.
   history pair; no model runs. A refused copy (caps) or no workspace posts the "no copy" notice; no channel records the
   delivery and logs at error level; a store failure or a failed post answers 5xx and Cloud Tasks retries (the copy of
   an earlier attempt, found by its mark, is reused).
+- **`external_task_wake`** is enqueued by `ExternalTaskService` when a task becomes queued (an untainted create, a
+  `$task send`) and is its worker's oldest queued task, or when a lease timer re-queues a task, and only for a worker
+  that has a wake-up target and holds no unexpired lease (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.8). Body
+  `{user_id, account_id, worker_id, generation}`, never task content; dedup key `external_task_wake:<worker_id>:
+  <generation>`, where `generation` is the worker's stored `wake_generation` the enqueue moved on (rhythm from stored
+  state, not from the name). The runner answers 400 on a malformed body; 200 `skipped` (a stale generation, a cleared
+  target, a removed worker or no queued work) or `sent`; 503 `retry` when the target is down or slow (a 5xx, a
+  connection failure, a timeout), so Cloud Tasks retries with the queue's backoff, up to `WAKE_MAX_ATTEMPTS` deliveries
+  counted from `X-CloudTasks-TaskRetryCount`, after which it answers 200 `gave_up`; 200 `refused` when the guard refuses
+  the target or it answers 3xx/4xx: final, logged once, and one literal notice naming the worker's label and the closed
+  code goes to the origin channel of its oldest queued task. The task stays queued in every case.
 - **`geo_mark_turn`** is enqueued by `GeoMarkService.redeem_link` (`POST /geo/<link_id>`) when the owner wrote text after
   `$geo`; a failed enqueue appends the question and the mark to the session instead. `GeoMarkTurnTask` hands the payload
   to the Slack adapter's turn runner, which re-authorizes the user and runs the turn: 400 on a missing key or another

@@ -1,18 +1,38 @@
 # RFC: External task queue
 
-**Status:** Accepted (2026-11-23); step 1 implemented, steps 2–5 pending.
+**Status:** Accepted (2026-11-23); steps 1 and 2 implemented, steps 3–5 pending.
 **Owner's map:** `docs/05_building_blocks/external_task_queue/README.md`.
 The decisions are in §2. Every example below is invented: the user is Alex Doe, the worker labels are `research` and
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
 changed in the Example School term calendar".
 
 **Implementation notes (step 1).** The build differs from the body below in two ways; the body is kept as specified.
-Smart has five tools, not four: `list_external_workers` (the owner's registered labels and descriptions) was added and
+Smart has five tools, not four: `list_external_workers` (the owner's registered labels) was added and
 is on the taint allowlist. The taint rule has more sources and markers than §5.3 lists: the final flag is saved on the
 model message (`execution_tainted`), so later turns that load it are tainted; a forwarded Telegram message taints; a
 listing that shows a task created tainted (`created_tainted`) taints; reminders written in a tainted execution are
 flagged and wrapped wherever they reach a model; and every workspace write in a tainted execution carries the
 `tainted_execution` mark. The built rule as a whole: `docs/05_building_blocks/untrusted_content_taint/README.md`.
+
+**Implementation notes (step 2).** The build differs from §5.6 and §5.8 as follows; the body is kept as specified.
+- `wake_generation` moves on in its own worker transaction right after the task write, not inside it: the task and
+  the worker sit behind two stores. A crash between the two loses one ping, which §7 already tolerates.
+- "The first `queued` task" is read as "the worker's oldest queued task": of two concurrent creates the older pings,
+  and a confirmed held task that is older than waiting ones pings once more (harmless). A lease timer that re-queues a
+  task pings whether or not other tasks wait.
+- The wake body is `{user_id, account_id, worker_id, generation}`; the ping names the worker by its `worker_id`.
+- `WakeRefusal` has two more codes, `server_error` and `unreachable`, the retryable ones; they never reach the owner. A
+  name that does not resolve is `dns_failure` (final); a send that outruns `WAKE_TIMEOUT_S`, DNS included, is
+  `unreachable`. The wake task bounds its own deliveries (`WAKE_MAX_ATTEMPTS`, read from the retry-count header),
+  because the queue it shares has one retry setting for every task type.
+- Stricter than specified: `.localhost`, `.local` and `.arpa` are refused like `.internal`; `Content-Type`, `Keep-Alive`,
+  `TE`, `Trailer`, `Upgrade` and `Proxy-Connection` like the framing headers. The own-host list is every deploy URL the
+  main service is configured with (its URL, both OAuth callbacks, the MCP resource, the relay, the indexer, both
+  sandboxes); there is no separate custom-domain key, so a custom domain counts when it is one of those URLs.
+- The Cabinet shows the target's host only, not the header names (§5.1 keeps only the host in clear).
+- The refusal notice is a literal post to the origin channel of the worker's oldest queued task, with no history pair.
+- A worker's description is never shown to Smart (§5.1 said it is): it is free text typed in the Cabinet, and a tool
+  or parameter description is read with the schema's authority. Smart's tools carry labels only.
 
 ## 1. Purpose
 

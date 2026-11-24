@@ -1,9 +1,10 @@
 """A registered external worker (EXTERNAL_TASK_QUEUE_RFC §5.1, §5.6).
 
 `{prefix}external_workers`, doc id `{user_id}:{worker_id}`. The label is unique among the user's active workers and
-never changes; a removed worker is `revoked` and frees its label. The wake-up fields are declared for the record's
-shape; nothing in the queue core reads or writes them (wake-up is RFC step 2): `wake_secret` is one `CipherPort`
-ciphertext of `{url, headers}` with AAD `external_workers/{user_id}:{worker_id}` (E3).
+never changes; a removed worker is `revoked` and frees its label. The wake-up target (§5.8): `wake_host` is the
+plaintext part the Cabinet shows and `has_wake` says a target is set; `wake_secret` is one `CipherPort` ciphertext of
+`{url, headers}` (`WakeTarget.to_json`) with AAD `external_workers/{user_id}:{worker_id}` (E3), never shown again.
+`wake_generation` moves on at every ping the service starts; a wake task of an older generation sends nothing.
 
 One module on purpose: the record and its status enum.
 """

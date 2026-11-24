@@ -1,20 +1,25 @@
 """The Cabinet's External workers routes (EXTERNAL_TASK_QUEUE_RFC §5.6, §5.10), behind the Cabinet gate (`auth_required`
-sets `g.user_id`). Unit 1: register and remove a worker, mint and revoke its keys. No wake-up, edit, grants or drive
-destination.
+sets `g.user_id`). Register and remove a worker, mint and revoke its keys, set and clear its wake-up target. No edit of
+label or description, no grants, no drive destination.
 
-- `GET    /api/external-workers` — `{enabled, workers: [{worker_id, label, description, created_at,
-  keys: [{key_id, hint, created_at, last_used_at}]}]}`: active workers and their active keys. A user without the flag,
-  or a server without the service, gets `{enabled: false}` (200): the page hides the row.
+- `GET    /api/external-workers` — `{enabled, workers: [{worker_id, label, description, created_at, wake_host,
+  keys: [{key_id, hint, created_at, last_used_at}]}]}`: active workers and their active keys. `wake_host` is the
+  target's host, or null (the worker polls); the URL and the headers are never sent back. A user without the flag, or a
+  server without the service, gets `{enabled: false}` (200): the page hides the row.
 - `POST   /api/external-workers` `{label, description}` — the new worker (same shape, no keys).
 - `DELETE /api/external-workers/<worker_id>` — `{cancelled}`: how many non-final tasks the removal cancelled.
 - `POST   /api/external-workers/<worker_id>/keys` — `{key, key_id, hint}`: the raw key is in this one answer only.
 - `DELETE /api/external-workers/<worker_id>/keys/<key_id>` — revokes one key.
+- `PUT    /api/external-workers/<worker_id>/wake` `{url, headers}` — `{wake_host}`. `headers` is optional text, one
+  `Name: value` per line. The whole target is replaced (§5.6). A target the guard refuses is 400 with `error`
+  `wake_<code>` (the closed `WakeRefusal` code; `wake_header` also for a line that is not `Name: value`).
+- `DELETE /api/external-workers/<worker_id>/wake` — `{wake_host: null}`: the worker polls from now on.
 
 `key_id` is `fingerprint(key_digest)`: the page names a key by it and the server resolves it among that worker's own
 keys, so the digest never leaves the server. Refusals: `account_locked` is 423; a mutation while the flag is off,
-another user's worker and an unknown key are one 404 `not_found`; `label_invalid`, `label_taken`, `workers_cap` and
-`keys_cap` are 400 with the code as `error`. A refusal is never 401: `authFetch` answers a 401 by refreshing and
-re-sending (src/web/CLAUDE.md). Nothing here logs a key or a description.
+another user's worker and an unknown key are one 404 `not_found`; `label_invalid`, `label_taken`, `workers_cap`,
+`keys_cap` and `wake_unavailable` are 400 with the code as `error`. A refusal is never 401: `authFetch` answers a 401 by
+refreshing and re-sending (src/web/CLAUDE.md). Nothing here logs a key, a description, a wake-up URL or a header.
 """
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
@@ -24,11 +29,14 @@ from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.external_worker import ExternalWorker
 from ..domain.external_worker_key import ExternalWorkerKey
 from ..domain.secret_digest import fingerprint
+from ..domain.wake_refusal import WakeRefusal, WakeTargetRefused
+from ..domain.wake_target import parse_header_lines
 
 if TYPE_CHECKING:
     from ..services.external_task_service import ExternalTaskService
 
-_BAD_REQUEST = {TaskRefusal.LABEL_INVALID, TaskRefusal.LABEL_TAKEN, TaskRefusal.WORKERS_CAP, TaskRefusal.KEYS_CAP}
+_BAD_REQUEST = {TaskRefusal.LABEL_INVALID, TaskRefusal.LABEL_TAKEN, TaskRefusal.WORKERS_CAP, TaskRefusal.KEYS_CAP,
+                TaskRefusal.WAKE_UNAVAILABLE}
 
 
 def _key_view(key: ExternalWorkerKey) -> Dict[str, Any]:
@@ -38,7 +46,8 @@ def _key_view(key: ExternalWorkerKey) -> Dict[str, Any]:
 
 def _worker_view(worker: ExternalWorker, keys: List[ExternalWorkerKey]) -> Dict[str, Any]:
     return {"worker_id": worker.worker_id, "label": worker.label, "description": worker.description,
-            "created_at": worker.created_at.isoformat(), "keys": [_key_view(k) for k in keys if not k.is_revoked]}
+            "created_at": worker.created_at.isoformat(), "wake_host": worker.wake_host if worker.has_wake else None,
+            "keys": [_key_view(k) for k in keys if not k.is_revoked]}
 
 
 def _refusal(reason: TaskRefusal):
@@ -47,6 +56,10 @@ def _refusal(reason: TaskRefusal):
     if reason in _BAD_REQUEST:
         return jsonify({"error": reason.value}), 400
     return jsonify({"error": "not_found"}), 404
+
+
+def _wake_refusal(refusal: WakeRefusal):
+    return jsonify({"error": f"wake_{refusal.value}"}), 400
 
 
 def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
@@ -119,3 +132,34 @@ def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
         except ExternalTaskRefused as refused:
             return _refusal(refused.reason)
         return jsonify({"revoked": True}), 200
+
+    @bp.route("/api/external-workers/<worker_id>/wake", methods=["PUT"])
+    @auth_required
+    async def external_workers_set_wake(worker_id: str):
+        body = await request.get_json(silent=True)
+        lines = body.get("headers", "") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or not isinstance(body.get("url"), str) or not isinstance(lines, (str, type(None))):
+            return jsonify({"error": "invalid_body"}), 400
+        headers = parse_header_lines(lines or "")
+        if isinstance(headers, WakeRefusal):
+            return _wake_refusal(headers)
+        if external_tasks is None:
+            return _refusal(TaskRefusal.NOT_ENABLED)
+        try:
+            worker = await external_tasks.set_wake_target(g.user_id, worker_id, body["url"], headers)
+        except WakeTargetRefused as refused:
+            return _wake_refusal(refused.refusal)
+        except ExternalTaskRefused as refused:
+            return _refusal(refused.reason)
+        return jsonify({"wake_host": worker.wake_host}), 200
+
+    @bp.route("/api/external-workers/<worker_id>/wake", methods=["DELETE"])
+    @auth_required
+    async def external_workers_clear_wake(worker_id: str):
+        if external_tasks is None:
+            return _refusal(TaskRefusal.NOT_ENABLED)
+        try:
+            await external_tasks.clear_wake_target(g.user_id, worker_id)
+        except ExternalTaskRefused as refused:
+            return _refusal(refused.reason)
+        return jsonify({"wake_host": None}), 200

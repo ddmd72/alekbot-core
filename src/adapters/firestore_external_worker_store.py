@@ -122,6 +122,45 @@ class FirestoreExternalWorkerStore(ExternalWorkerStore):
 
         return await _run(self._db.transaction())
 
+    async def set_wake(self, user_id: str, worker_id: str, *, wake_host: Optional[str], wake_secret: Optional[str],
+                       now: datetime) -> bool:
+        if not worker_id:
+            return False
+        ref = self._workers.document(worker_doc_id(user_id, worker_id))
+
+        @firestore.async_transactional
+        async def _run(transaction: Any) -> bool:
+            snap = await ref.get(transaction=transaction)
+            if not snap.exists:
+                return False
+            worker = _worker(snap.to_dict())
+            if worker.user_id != user_id or not worker.is_active:
+                return False
+            transaction.update(ref, {"wake_host": wake_host, "wake_secret": wake_secret,
+                                     "has_wake": wake_secret is not None, "updated_at": now})
+            return True
+
+        return await _run(self._db.transaction())
+
+    async def bump_wake_generation(self, user_id: str, worker_id: str) -> Optional[int]:
+        if not worker_id:
+            return None
+        ref = self._workers.document(worker_doc_id(user_id, worker_id))
+
+        @firestore.async_transactional
+        async def _run(transaction: Any) -> Optional[int]:
+            snap = await ref.get(transaction=transaction)
+            if not snap.exists:
+                return None
+            worker = _worker(snap.to_dict())
+            if worker.user_id != user_id or not worker.is_active or not worker.has_wake:
+                return None
+            generation = worker.wake_generation + 1
+            transaction.update(ref, {"wake_generation": generation})
+            return generation
+
+        return await _run(self._db.transaction())
+
     # -- keys -------------------------------------------------------------------------------------------------------
 
     async def create_key(self, key: ExternalWorkerKey, max_active: int) -> Optional[TaskRefusal]:

@@ -553,6 +553,16 @@ URL. The metadata server and Google APIs (logging, image pull) keep working thro
 5. `.env`: `SANDBOX_VPC_NETWORK_DEV=<sandbox-vpc>`, `SANDBOX_VPC_SUBNET_DEV=<sandbox-subnet>`; the deployer needs
    `roles/compute.networkUser` on the subnet.
 
+### Main service egress: the wake-up guard's assumption
+
+The main service deploys with **no VPC egress**: its `gcloud run deploy` step sets no `--network`, `--subnet` or
+`--vpc-connector` (`cloudbuild-dev.yaml`), so the only network it reaches is the public internet. The external task
+queue's wake-up POST goes to a URL a user typed, and its guard (`src/adapters/outbound_webhook/`,
+[RFC](../10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md) §5.8, §6.2) refuses private, link-local, metadata and other non-public
+addresses and internal names, but it knows nothing of a private network's own ranges or DNS names. **Giving the main
+service a VPC connector or Direct VPC egress reopens server-side request forgery into that network: revisit the guard
+(its address and name rules) in the same change.**
+
 ### Sandbox render service
 
 `alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) and `render.pdf` (model-written
