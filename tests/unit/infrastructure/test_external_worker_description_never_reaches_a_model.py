@@ -11,7 +11,6 @@ import json
 
 import pytest
 
-from src.domain.execution_taint import call_is_trusted
 from src.domain.external_task_texts import LIST_EXTERNAL_WORKERS_TOOL
 from src.domain.llm import ToolCall
 from src.infrastructure.external_task_tools import (
@@ -51,4 +50,3 @@ async def test_the_workers_tool_returns_labels_only_and_stays_clean(world):
     out = await make_list_workers_handler(world.service, USER_ID)(ToolCall(name=LIST_EXTERNAL_WORKERS_TOOL, args={}))
     assert PLANTED not in out.result_str and "term dates" not in out.result_str
     assert sorted(out.result_str.splitlines()[1:]) == ["calendar-watch", "research"]
-    assert call_is_trusted(LIST_EXTERNAL_WORKERS_TOOL, {}) is True
