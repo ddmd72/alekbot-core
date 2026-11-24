@@ -38,13 +38,11 @@ class TaskSummary:
     created_at: datetime
     updated_at: datetime
     deadline_at: datetime
-    created_tainted: bool = False   # the title was written in a tainted execution (a listing of it taints the reader)
 
     @classmethod
     def of(cls, task: ExternalTask) -> "TaskSummary":
         return cls(task_id=task.task_id, label=task.label, title=task.title, status=task.status,
-                   created_at=task.created_at, updated_at=task.updated_at, deadline_at=task.deadline_at,
-                   created_tainted=task.created_tainted)
+                   created_at=task.created_at, updated_at=task.updated_at, deadline_at=task.deadline_at)
 
 
 @dataclass(frozen=True)

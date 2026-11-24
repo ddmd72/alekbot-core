@@ -6,6 +6,7 @@ A real `SmartResponseAgent` (`smart_rig`) over a scripted model; the real `Exter
 """
 import pytest
 
+from src.domain.external_task_entry import TaskEntry
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.external_task import ExternalTaskStatus
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY
@@ -96,14 +97,21 @@ async def test_the_worker_enum_is_this_executions_registered_labels():
 
 # --- the taint rule through the engine --------------------------------------------------------------------------
 
-async def test_a_create_in_a_clean_execution_is_queued_and_the_owner_gets_the_full_text(world):
-    llm, response = await run(world, [tools(CREATE), text("Handed over.")])
+async def test_a_create_in_a_clean_execution_waits_for_confirmation_and_the_owner_gets_the_full_text(world):
+    llm, response = await run(world, [tools(CREATE), text("It waits for your confirmation.")])
     [task] = world.tasks.tasks.values()
-    assert task.status is S.QUEUED and task.text == TEXT
+    assert task.status is S.HELD and task.text == TEXT
     assert (task.origin.platform, task.origin.channel_id, task.origin.session_id) == ("slack", "C-garden",
                                                                                       "usr-1:C-garden")
     [item] = [i for i in response.delivery_items if i.type == EXTERNAL_TASK_RECEIPT_DELIVERY]
-    assert item.data["text"] == TEXT and item.data["command"] is None
+    assert item.data["text"] == TEXT and item.data["command"].startswith("$task send ")
+
+
+async def test_a_create_after_a_memory_search_waits_for_confirmation_too(world):
+    script = [tools(("delegate_to_specialist", {"intent": "search_memory", "query": "irrigation"})),
+              tools(CREATE), text("ok")]
+    await run(world, script)
+    assert next(iter(world.tasks.tasks.values())).status is S.HELD
 
 
 async def test_after_a_web_search_result_the_create_is_held(world):
@@ -117,13 +125,6 @@ async def test_after_a_web_search_result_the_create_is_held(world):
     assert all(code not in str(result) for _, result in tool_results(llm))     # the model never reads the code
 
 
-async def test_after_a_memory_search_the_create_is_queued(world):
-    script = [tools(("delegate_to_specialist", {"intent": "search_memory", "query": "garden"})),
-              tools(CREATE), text("Handed over.")]
-    await run(world, script)
-    assert next(iter(world.tasks.tasks.values())).status is S.QUEUED
-
-
 async def test_a_chat_upload_in_the_request_holds_the_create(world):
     upload = MessagePart(file_data={"uri": "gs://bucket/plan.pdf", "mime_type": "application/pdf"})
     await run(world, [tools(CREATE), text("ok")], current_message_parts=[MessagePart(text="see plan"), upload])
@@ -131,7 +132,7 @@ async def test_a_chat_upload_in_the_request_holds_the_create(world):
 
 
 async def test_reading_a_task_holds_a_create_later_in_the_same_execution(world):
-    first = await world.service.create("usr-1", "research", "earlier", "an earlier brief", ORIGIN, tainted=False)
+    first = await world.service.create("usr-1", "research", "earlier", "an earlier brief", ORIGIN, entry=TaskEntry.REMINDER)
     script = [tools(("get_external_task", {"task_id": first.task_id})), tools(CREATE), text("ok")]
     await run(world, script)
     created = [t for t in world.tasks.tasks.values() if t.task_id != first.task_id]
@@ -203,12 +204,6 @@ async def test_a_flagged_model_message_in_the_history_holds_the_create(world):
     assert next(iter(world.tasks.tasks.values())).status is S.HELD
 
 
-@pytest.mark.parametrize("flag", [None, False])
-async def test_an_old_or_clean_model_message_does_not_taint_by_itself(world, flag):
-    await run_with_history(world, [tools(CREATE), text("ok")], _history(flag))
-    assert next(iter(world.tasks.tasks.values())).status is S.QUEUED
-
-
 async def test_a_turn_after_a_web_search_turn_is_held(world):
     _, first = await run(world, [tools(("delegate_to_specialist", {"intent": "search_web", "query": "q"})),
                                  text("found kits")])
@@ -222,9 +217,3 @@ async def test_a_forwarded_message_holds_the_create(world):
     await run(world, [tools(CREATE), text("ok")], metadata={"forwarded": True})
     assert next(iter(world.tasks.tasks.values())).status is S.HELD
 
-
-async def test_a_list_that_includes_a_task_created_tainted_holds_a_later_create(world):
-    await world.service.create("usr-1", "research", "from a web page", "brief", ORIGIN, tainted=True)
-    await run(world, [tools(("list_external_tasks", {})), tools(CREATE), text("ok")])
-    created = [t for t in world.tasks.tasks.values() if t.title == TITLE]
-    assert [t.status for t in created] == [S.HELD]
