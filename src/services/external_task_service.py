@@ -30,7 +30,7 @@ Public interface:
         .mint_key(user_id, worker_id) -> MintedKey
         .list_keys(user_id, worker_id) -> List[ExternalWorkerKey]
         .revoke_key(user_id, worker_id, key_digest) -> None
-        .set_wake_target(user_id, worker_id, url, headers) -> ExternalWorker   (WakeTargetRefused: the guard's code)
+        .save_wake_target(user_id, worker_id, url, headers) -> ExternalWorker   (WakeTargetRefused: the guard's code)
         .clear_wake_target(user_id, worker_id) -> ExternalWorker
 
 Every refusal raises `ExternalTaskRefused(reason)` and writes nothing. Checks, all fresh on every call: the account lock
@@ -656,7 +656,7 @@ class ExternalTaskService:
             raise ExternalTaskRefused(TaskRefusal.NOT_FOUND)
         logger.info(f"[TaskQueue] key revoked user={user_id[:8]} worker={fingerprint(worker_id)}")
 
-    async def set_wake_target(self, user_id: str, worker_id: str, url: str,
+    async def save_wake_target(self, user_id: str, worker_id: str, url: str,
                               headers: Sequence[Tuple[str, str]]) -> ExternalWorker:
         """Store an active worker's wake-up target (§5.6, E3), replacing any earlier one whole. The guard's name-level
         rules run first (no DNS): a refused target raises `WakeTargetRefused` with its code and stores nothing. The URL

@@ -146,7 +146,7 @@ def register_external_worker_routes(bp: Blueprint, auth_required: Callable,
         if external_tasks is None:
             return _refusal(TaskRefusal.NOT_ENABLED)
         try:
-            worker = await external_tasks.set_wake_target(g.user_id, worker_id, body["url"], headers)
+            worker = await external_tasks.save_wake_target(g.user_id, worker_id, body["url"], headers)
         except WakeTargetRefused as refused:
             return _wake_refusal(refused.refusal)
         except ExternalTaskRefused as refused:

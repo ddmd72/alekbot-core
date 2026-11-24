@@ -1,7 +1,7 @@
 """A worker's wake-up target and the guard's pure rules (EXTERNAL_TASK_QUEUE_RFC §5.1, §5.8 "Outbound-request guard").
 
 One module on purpose: the target, its checked form and the rules that turn one into the other are one contract shared
-by the Cabinet save (`ExternalTaskService.set_wake_target`, the name-level rules only) and the sending adapter
+by the Cabinet save (`ExternalTaskService.save_wake_target`, the name-level rules only) and the sending adapter
 (`src/adapters/outbound_webhook/`, the same rules again, then DNS and the addresses).
 
 Public interface:
