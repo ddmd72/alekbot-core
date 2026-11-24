@@ -298,3 +298,23 @@ def test_the_deliver_deadline_is_the_dispatch_deadline_of_the_external_task_kind
 def test_the_external_task_kind_has_the_reminder_default_budget():
     assert NOTIFICATION_SLA[NotificationKind.EXTERNAL_TASK].timeout_ms == 600_000
     assert not NOTIFICATION_SLA[NotificationKind.EXTERNAL_TASK].tier_overrides
+
+
+async def test_a_file_of_another_provenance_moves_the_failure_file_to_the_full_id(world):
+    task_id = await world.failed()
+    await world.store.put("usr-1", path_of(task_id), b"my own notes", WorkspaceWriteMeta(origin="chat"), 0)
+    await world.deliver()
+    full = f"references/external_tasks/{T0.date().isoformat()}-{task_id}.md"
+    assert (await world.store.read("usr-1", full)).entry.origin == f"background:external_task:{task_id}"
+    assert (await world.store.read("usr-1", path_of(task_id))).data == b"my own notes"
+    assert world.turn() == f"[System: {render_alert(AlertKind.FAILED_FILE, world.stored(task_id), full)}{SUFFIX}]"
+
+
+async def test_when_both_names_hold_other_files_the_alert_names_none(world):
+    task_id = await world.done()
+    full = f"references/external_tasks/{T0.date().isoformat()}-{task_id}.md"
+    for path in (path_of(task_id), full):
+        await world.store.put("usr-1", path, b"my own notes", WorkspaceWriteMeta(origin="chat"), 0)
+    await world.deliver()
+    assert world.turn() == f"[System: {render_alert(AlertKind.DONE_NO_COPY, world.stored(task_id), None)}{SUFFIX}]"
+    assert world.stored(task_id).delivery.path is None
