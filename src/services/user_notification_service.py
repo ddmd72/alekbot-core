@@ -23,6 +23,7 @@ from ..domain.drive_note_receipt import (
     drive_note_call_event, drive_note_call_posted, drive_note_late_event, render_drive_note_erase, render_drive_note_receipt,
 )
 from ..domain.language import LanguageCode
+from ..domain.literal_notice import LiteralNotice
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import MEDIA_CONTENT_TYPES, RichContent, SmartResponse, session_id_for
 from ..domain.notification_kind import NotificationKind
@@ -202,6 +203,7 @@ class UserNotificationService:
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
         literal: bool = False,
+        attachment: Optional[LiteralNotice] = None,
     ) -> bool:
         """
         Deliver text directly to user's channel. No agent reformatting.
@@ -209,6 +211,9 @@ class UserNotificationService:
         `literal=True` is for text the bot did not write (a stored fact quoted in a digest): it goes through
         `ResponseChannel.send_literal`, so nothing in it is formatted, linked or obeyed by the platform (`<!channel>`
         is shown). The default sends the text as the bot's own markdown.
+
+        `attachment`: a literal notice's file (`domain.literal_notice`), posted to the same channel before the text;
+        when it fails the text is not sent either (False).
 
         Uses fallback chain: override → primary → last active. Returns whether the text was sent; delivery
         errors are logged and swallowed (USER_DRIVE_INDEXING_RFC §26.2: the drive notice posts its text only
@@ -232,6 +237,10 @@ class UserNotificationService:
             return False
 
         try:
+            if attachment is not None:
+                await response_channel.send_file(
+                    content=attachment.content, filename=attachment.filename, title=attachment.title,
+                )
             if literal:
                 await response_channel.send_literal(text)
             else:
