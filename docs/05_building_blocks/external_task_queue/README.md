@@ -28,6 +28,7 @@ covers:
   src/adapters/firestore_window_counter.py
   src/services/external_task_service.py
   src/services/external_task_rate_limiter.py
+  src/services/external_worker_user_gate.py
   src/infrastructure/external_task_tools.py
   src/infrastructure/taint_tracker.py
   src/composition/external_task_setup.py
@@ -130,7 +131,8 @@ again.
 
 **Worker REST.** `create_external_task_api_blueprint` (`src/web/external_task_api.py:73`), not under `/api/`, not
 behind the Cabinet cookie. Per request: the `401` limits are checked first, then the key's shape, then `resolve_key`,
-then the stored user (active, whitelisted), then the worker's own limits, then the body. A task of another worker, a
+then the stored user (active, whitelisted: `ExternalWorkerUserGate`, `src/services/external_worker_user_gate.py`, the
+one whitelist rule of every worker-key surface; the core leaves it out), then the worker's own limits, then the body. A task of another worker, a
 held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_REFERENCE.md`.
 
 ## Security rules enforced in code

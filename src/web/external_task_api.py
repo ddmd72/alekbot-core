@@ -8,7 +8,8 @@ Per request, in order:
 1. `401` limits already exhausted (this address, or all addresses) -> `429` + `Retry-After`; the key store is not read;
 2. `Authorization: Bearer` parsed and the key's shape checked (`has_key_shape`); a malformed key is `401` and counts;
 3. `resolve_key`; `key_invalid` is `401` and counts; the service's own refusals (locked, flag off, revoked) are `403`;
-4. the whitelist, which the core leaves out: the stored user must still exist, have an email and be whitelisted;
+4. the whitelist, which the core leaves out (`ExternalWorkerUserGate`, shared with the MCP resource): the stored user
+   must still exist, have an email and be whitelisted;
 5. this worker's limits: `CALLS_PER_WINDOW`, and `CLAIMS_PER_WINDOW` on claim, `SUBMITS_PER_WINDOW` on submit;
 6. the body (a POST with a body must be `application/json`; capped before it is parsed) and the service call.
 
@@ -35,6 +36,7 @@ from ..ports.user_repository import UserRepository
 from ..ports.whitelist_repository import WhitelistRepository
 from ..services.external_task_rate_limiter import ExternalTaskRateLimiter
 from ..services.external_task_service import ExternalTaskService
+from ..services.external_worker_user_gate import ExternalWorkerUserGate
 from ..utils.logger import logger
 
 BODY_OVERHEAD_BYTES = 4_096       # the JSON envelope around a result; the service caps the text itself
@@ -73,6 +75,7 @@ class _Early(Exception):
 def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, limiter: ExternalTaskRateLimiter,
                                        user_repo: UserRepository, whitelist_repo: WhitelistRepository) -> Blueprint:
     bp = Blueprint("external_task_api", __name__, url_prefix="/external-tasks/v1")
+    gate = ExternalWorkerUserGate(user_repo, whitelist_repo)
 
     async def unauthorized() -> Response:
         """The one `401` answer; counted, and a `429` once the count is over a limit."""
@@ -101,11 +104,7 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
             if refused.reason is TaskRefusal.KEY_INVALID:
                 raise _Early(await unauthorized())
             raise
-        user = await user_repo.get_user(principal.user_id)
-        if user is not None and not user.is_active:
-            raise ExternalTaskRefused(TaskRefusal.ACCOUNT_LOCKED)
-        if user is None or not user.email or not (await whitelist_repo.get_whitelist()).is_allowed(user.email):
-            raise ExternalTaskRefused(TaskRefusal.NOT_ENABLED)
+        await gate.check(principal)
         worker = f"{principal.user_id}:{principal.worker_id}"
         for scope, limit in scopes:
             wait = await limiter.hit(scope, worker, limit, digest)
