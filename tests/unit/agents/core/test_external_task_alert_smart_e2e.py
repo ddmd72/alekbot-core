@@ -35,7 +35,7 @@ async def test_the_alert_reaches_smart_which_reads_the_result_file_and_is_offere
     llm = ScriptedLLM([tools(("workspace", {"command": "view", "path": f"workspace:{path}"})), text(ANSWER)])
     coordinator = AgentCoordinator()
     smart = smart_rig(llm, user_id="usr-1", coordinator=coordinator, workspace_service=world.workspace,
-                      external_tasks=world.service, user_config=UserBotConfig(external_tasks_enabled=True))
+                      user_config=UserBotConfig(external_tasks_enabled=True))
     coordinator.register_agent(smart)
     world.notifications = UserNotificationService(
         state_repo=AsyncMock(), channel_factory=world.factory, coordinator=coordinator,
