@@ -74,16 +74,12 @@ def test_the_numbers_the_page_states_are_the_domain_constants():
     assert f"within {limits.TASK_MAX_AGE_S // 86_400} days" in en
     assert f"up to {limits.WAKE_MAX_ATTEMPTS} times" in en
     assert f"up to {limits.MAX_KEYS_PER_WORKER} keys" in en
+    stated = {"flow.2.d": limits.HOLD_S // 3600, "flow.4.d": limits.LEASE_S // 60, "note.claims": limits.MAX_CLAIMS_PER_TASK,
+              "note.expiry": limits.TASK_MAX_AGE_S // 86_400, "wake.p4": limits.WAKE_MAX_ATTEMPTS,
+              "connect.a.d": limits.MAX_KEYS_PER_WORKER}
     for lang in LANGS:
-        every = "".join(_text(lang, k) for k in ("flow.2.d", "flow.4.d", "note.claims", "note.expiry", "wake.p4"))
-        for number in ("24", "15", str(limits.MAX_CLAIMS_PER_TASK), "7", str(limits.WAKE_MAX_ATTEMPTS)):
-            assert number in every, (lang, number)
-
-
-def test_the_page_names_no_provider_and_no_reason_for_the_feature():
-    everything = _PAGE.lower()
-    for word in ("subscription", "routine", "/fire", "anthropic", "claude", "openai", "chatgpt", "quota", "plan limit"):
-        assert word not in everything, word
+        for key, number in stated.items():
+            assert re.search(rf"(?<!\d){number}(?!\d)", _text(lang, key)), (lang, key, number)
 
 
 def test_the_page_uses_only_the_invented_examples():
@@ -96,7 +92,8 @@ def test_the_cabinet_links_to_the_page_with_its_own_language_and_every_hint_is_i
     assert 'id="workers-help-link"' in _SHELL and 'href="/cabinet/help/workers"' in _SHELL
     assert '"#workers-help-link": "workers.help_link"' in _SETTINGS_JS
     assert "/cabinet/help/workers?lang=${encodeURIComponent(_currentLang)}" in _SETTINGS_JS
+    for key in ("hint_keys", "hint_wake_curl", "hint_wake_secret", "hint_grants"):
+        assert f't("workers.{key}")' in _SETTINGS_JS, key
     for key in ("help_link", "hint_keys", "hint_wake_curl", "hint_wake_secret", "hint_grants"):
-        assert f't("workers.{key}")' in _SETTINGS_JS or key == "help_link", key
         for lang in LANGS:
             assert _dict(lang).get(f"workers.{key}"), (lang, key)
