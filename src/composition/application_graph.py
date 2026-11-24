@@ -242,7 +242,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     memory = build_memory(db_client, env_config, container=container, coordinator=coordinator,
                           agent_factory=agents.factory, identity=identity, ops=ops, routing=routing,
                           memory_search=memory_search, notifications=notifications, languages=languages,
-                          cabinet_memory_url=boot.deploy_topology.cabinet_memory_url)
+                          cabinet_memory_url=boot.deploy_topology.cabinet_memory_url, external_tasks=external_tasks)
     chat, slack_adapter = _build_slack(config, db_client, container=container, coordinator=coordinator, boot=boot,
                                        identity=identity, ops=ops, routing=routing, documents=documents,
                                        delivery=delivery, languages=languages, notifications=notifications,
@@ -373,6 +373,7 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
         device_sessions=device_sessions,
         facts_pin=facts_pin,
         external_tasks=external_tasks,
+        task_send_buttons=memory.task_send_buttons,
     )
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=notifications.slack_app,

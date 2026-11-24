@@ -45,8 +45,14 @@ from ..domain.device_session import SessionRevokeReason
 from ..domain.facts_pin_chat import is_code_command, reply_for
 from ..domain.facts_pin_policy import PinSurface
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
-from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, render as render_external_task_receipt
-from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
+from ..domain.external_task_receipt import (
+    EXTERNAL_TASK_RECEIPT_DELIVERY,
+    SEND_BUTTON_PLATFORMS,
+    render as render_external_task_receipt,
+    send_button,
+    send_refusal_reply,
+)
+from ..domain.external_task_refusal import ExternalTaskRefused
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
     MemoryFactDraft,
@@ -200,6 +206,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._long_turns = long_turn_service
         self._memory_facts = commands.memory_facts
         self._external_tasks = commands.external_tasks   # `$task send` (EXTERNAL_TASK_QUEUE_RFC §5.3)
+        self._task_send_buttons = commands.task_send_buttons   # the Slack Send button on a held task's command message
         self._fact_answers = fact_answers
         # owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` erase commands; None with the
         # notes kill switch off (the command then answers that notes are unavailable)
@@ -480,8 +487,9 @@ class ConversationHandler(ConversationHandlerPort):
         """Deliver an external task's receipt (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible"): the worker, the
         title, the FULL task text and the id, posted literally (the text is the model's, shown word for word, each line
         behind the literal notice's mark). A held task then gets its `$task send` command alone as a second message.
-        When the receipt fails the command is not sent: the owner never confirms text they were not shown. A failed post
-        never fails the turn: the task is stored."""
+        On Slack, with the Send button wired, that message carries the button too (`_post_task_command`). When the
+        receipt fails the command is not sent: the owner never confirms text they were not shown. A failed post never
+        fails the turn: the task is stored."""
         language = getattr(response_channel, "language", None)
 
         def strings(message: UIMessage) -> str:
@@ -491,9 +499,39 @@ class ConversationHandler(ConversationHandlerPort):
             post, command = render_external_task_receipt(item.data, strings)
             await response_channel.send_literal(post, thread_id)
             if command:
-                await response_channel.send_message(command, thread_id)
+                await self._post_task_command(item, command, strings, response_channel, thread_id)
         except Exception as e:
             logger.error("⚠️ [ConversationHandler] %s delivery failed: %s", item.type, e, exc_info=True)
+
+    async def _post_task_command(
+        self,
+        item: DeliveryItem,
+        command: str,
+        strings: Callable[[UIMessage], str],
+        response_channel: ResponseChannel,
+        thread_id: Optional[str],
+    ) -> None:
+        """The command message of a held task. On a platform with buttons (`SEND_BUTTON_PLATFORMS`) and with the click
+        path wired, it is the interactive message of `send_button`: the same command text with one «Send» button whose
+        press releases the task as the pasted command does; it goes in the receipt's thread when the receipt has one.
+        Anywhere else, or when that post fails (logged), the command is sent alone, as plain text: the command always
+        reaches the owner."""
+        buttons = self._task_send_buttons
+        platform = getattr(response_channel, "platform", None)
+        if buttons is not None and platform in SEND_BUTTON_PLATFORMS:
+            message = send_button(item.data, strings(UIMessage.EXTERNAL_TASK_SEND_BUTTON))
+            if message is not None:
+                channel_id = response_channel.channel_id
+                try:
+                    if thread_id:
+                        await buttons.post_reply(platform, channel_id, message, thread_id)
+                    else:
+                        await buttons.post(platform, channel_id, message)
+                    return
+                except Exception as e:
+                    logger.error("⚠️ [ConversationHandler] the Send button was not posted, the command goes alone: %s",
+                                 type(e).__name__, exc_info=True)
+        await response_channel.send_message(command, thread_id)
 
     def _render_skill_change_line(self, language: Optional[str], line: dict) -> str:
         """Localize one `FileChangeLine` dict (Task 6's `change_summary`) for the channel's
@@ -2134,11 +2172,8 @@ class ConversationHandler(ConversationHandlerPort):
         except ExternalTaskRefused as e:
             logger.info("ℹ️ [ConversationHandler] Task send refused for user %s: %s", context.user_id[:8],
                         e.reason.value)
-            unavailable = e.reason in (TaskRefusal.NOT_ENABLED, TaskRefusal.ACCOUNT_LOCKED)
             await response_channel.send_message(
-                self._ui_string(context, UIMessage.EXTERNAL_TASK_UNAVAILABLE if unavailable
-                                else UIMessage.EXTERNAL_TASK_NOT_FOUND),
-                thread_id=context.thread_id,
+                self._ui_string(context, send_refusal_reply(e.reason)), thread_id=context.thread_id,
             )
             return
         except Exception as e:

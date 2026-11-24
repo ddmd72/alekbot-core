@@ -7,7 +7,7 @@ memory-write lease (a consolidation batch and a review of the same account never
 """
 import os
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ..adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from ..adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
@@ -20,8 +20,12 @@ from ..domain.settings import SearchConfig
 from ..infrastructure.agent_config import CONSOLIDATION as CONSOLIDATION_CFG
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.interactive_message_router import InteractiveMessageRouter
+from ..ports.choice_handler_port import ChoiceHandlerPort
+from ..ports.interactive_message_port import InteractiveMessagePort
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.consolidation_service import ConsolidationService
+from ..services.external_task_send_choice import ExternalTaskSendChoice
+from ..services.external_task_service import ExternalTaskService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from ..services.fact_question_texts import FactQuestionTexts
@@ -44,7 +48,9 @@ from .session_routing_setup import SessionRouting
 @dataclass(frozen=True)
 class Memory:
     """`fact_answers`, `interactive_choice` and `fact_review` are None without a task queue (the review also needs the
-    ops alert sink); `/worker` then answers their tasks with 501."""
+    ops alert sink); `/worker` then answers their tasks with 501. `task_send_buttons` is the interactive-message router
+    for the chat handler's Slack Send button on a held external task, set only when the click service answers that
+    button (a queue and the external task service); None: the command goes alone."""
 
     consolidation_service: ConsolidationService
     fact_lifecycle_sweep: FactLifecycleSweepService
@@ -52,14 +58,15 @@ class Memory:
     interactive_choice: Optional[InteractiveChoiceService]
     fact_review: Optional[FactReviewService]
     cabinet_facts: CabinetFactService
+    task_send_buttons: Optional[InteractiveMessagePort] = None
 
 
 def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: Any, coordinator: AgentCoordinator,
                  agent_factory: Any, identity: Identity, ops: Operations, routing: SessionRouting,
                  memory_search: MemorySearch, notifications: Notifications, languages: Languages,
-                 cabinet_memory_url: str) -> Memory:
+                 cabinet_memory_url: str, external_tasks: Optional[ExternalTaskService] = None) -> Memory:
     """The services over the container's fact store, built after the agent factory (consolidation and the review run
-    agents). Two optional knobs are read here with os.getenv: FACT_PROFILER_MAX_PER_RUN (the profile step's cap) and
+    agents). `external_tasks` adds the Send button of a held external task to the one click path. Two optional knobs are read here with os.getenv: FACT_PROFILER_MAX_PER_RUN (the profile step's cap) and
     FACT_LIFECYCLE_SWEEP_DRY_RUN (the janitor is log-only unless it is an explicit off value)."""
     owner_zones = OwnerTimezoneResolver(account_repo=identity.account_repo, user_repo=identity.user_repo)
     lease = FirestoreMemoryWriteLease(db_client, env_config)
@@ -92,12 +99,13 @@ def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: An
         account_repo=identity.account_repo,
         user_repo=identity.user_repo,
     )
-    answers, choice, review = _build_fact_review(
+    answers, choice, review, buttons = _build_fact_review(
         container=container, coordinator=coordinator, agent_factory=agent_factory, identity=identity, ops=ops,
         routing=routing, memory_search=memory_search, notifications=notifications, languages=languages,
-        owner_zones=owner_zones, lease=lease, profile_step=profile_step, cabinet_memory_url=cabinet_memory_url)
+        owner_zones=owner_zones, lease=lease, profile_step=profile_step, cabinet_memory_url=cabinet_memory_url,
+        external_tasks=external_tasks)
     return Memory(consolidation_service=consolidation, fact_lifecycle_sweep=sweep, fact_answers=answers,
-                  interactive_choice=choice, fact_review=review,
+                  interactive_choice=choice, fact_review=review, task_send_buttons=buttons,
                   # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
                   cabinet_facts=CabinetFactService(container.repository, container.biographical_context_service))
 
@@ -105,10 +113,13 @@ def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: An
 def _build_fact_review(*, container: Any, coordinator: AgentCoordinator, agent_factory: Any, identity: Identity,
                        ops: Operations, routing: SessionRouting, memory_search: MemorySearch,
                        notifications: Notifications, languages: Languages, owner_zones: OwnerTimezoneResolver,
-                       lease: FirestoreMemoryWriteLease, profile_step: Any, cabinet_memory_url: str) -> Tuple[Optional[FactAnswerService], Optional[InteractiveChoiceService],
-                                                         Optional[FactReviewService]]:
-    """The memory review, the owner's answers and the click handler. Interactive messages (Facts S4 plan §3.20) are
-    buttons on Slack and numbered text on Telegram, picked by platform."""
+                       lease: FirestoreMemoryWriteLease, profile_step: Any, cabinet_memory_url: str,
+                       external_tasks: Optional[ExternalTaskService]) -> Tuple[
+                           Optional[FactAnswerService], Optional[InteractiveChoiceService], Optional[FactReviewService],
+                           Optional[InteractiveMessagePort]]:
+    """The memory review, the owner's answers and the click handler, and the router for the Send button when the click
+    handler answers it. Interactive messages (Facts S4 plan §3.20) are buttons on Slack and numbered text on Telegram,
+    picked by platform."""
     queue, sessions = ops.task_queue, container.session_store
     interactive = InteractiveMessageRouter({
         SLACK_PLATFORM: SlackInteractiveMessageAdapter(notifications.slack_app.client),
@@ -148,12 +159,20 @@ def _build_fact_review(*, container: Any, coordinator: AgentCoordinator, agent_f
         profile_answers=profile_answers,
         bio_cache=container.biographical_context_service,
     ) if queue else None
-    # The Slack interactivity route queues an owner's click; the worker's `interactive_choice` task runs it.
+    # The Slack interactivity route queues an owner's click; the worker's `interactive_choice` task runs it: a memory
+    # review answer, or the Send button of a held external task (the button form of `$task send`).
+    handlers: Dict[str, ChoiceHandlerPort] = {}
+    if answers is not None:
+        handlers[FACT_QUESTION_KIND] = answers
+    if answers is not None and external_tasks is not None:
+        send = ExternalTaskSendChoice(external_tasks, languages.resolver, languages.localization_port)
+        handlers[send.kind] = send
     choice = InteractiveChoiceService(
         iam=identity.iam_service,
-        handlers={FACT_QUESTION_KIND: answers},
+        handlers=handlers,
         interactive=interactive,
     ) if answers is not None else None
+    buttons = interactive if choice is not None and external_tasks is not None else None
     # Needs its answer path (and so the queue, for the deferral and the next question) and its ops sink.
     review = FactReviewService(
         repo=container.repository,
@@ -182,4 +201,4 @@ def _build_fact_review(*, container: Any, coordinator: AgentCoordinator, agent_f
         person_cards=memory_search.person_cards,
     ) if (answers is not None and fact_updates is not None and queue is not None
           and ops.alert_sink is not None) else None
-    return answers, choice, review
+    return answers, choice, review, buttons
