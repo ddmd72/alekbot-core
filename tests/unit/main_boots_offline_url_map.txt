@@ -66,6 +66,7 @@ GET /cabinet/call/tutor/manifest.webmanifest
 GET /cabinet/docs
 GET /cabinet/docs/
 GET /cabinet/docs/<path:filename>
+GET /cabinet/help/workers
 GET /d/<link_id>
 GET /external-tasks/v1/tasks
 GET /f/<token>

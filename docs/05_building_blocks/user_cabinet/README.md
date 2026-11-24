@@ -137,6 +137,11 @@ connections, deep-research-copy and connectors reads run in parallel) and, when 
 Retry button. Once the card is drawn, a re-open or the 2-minute poll keeps it as it is, whatever the read does. The
 call pages (`call.html`, `call_modes.html`) link back to `/cabinet` (Home), not to a section.
 
+The External workers card links to a plain-language help page, `GET /cabinet/help/workers`
+(`src/web/static/workers_help.html`, served like `/cabinet`: public static HTML, no-cache, holding nothing of the user's).
+It is a separate page in the four UI languages with its own dictionary; being static it cannot read the Cabinet's
+language, so the card's link carries it as `?lang=` (else the phone's language, else English).
+
 In a Settings row the title keeps at least 40% of the row and wraps only between words; the value takes at most 60%, on
 one line with an ellipsis (the opened row shows it whole), so a long value never squeezes the title on a phone.
 
