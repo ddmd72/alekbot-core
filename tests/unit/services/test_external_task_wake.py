@@ -57,7 +57,7 @@ class World(TaskWorld):
             own_hosts=("SVC.example.org",))
 
     async def target(self, worker_id: Optional[str] = None) -> None:
-        await self.service.set_wake_target("usr-1", worker_id or self.research.worker_id, URL, HEADERS)
+        await self.service.save_wake_target("usr-1", worker_id or self.research.worker_id, URL, HEADERS)
 
     def worker(self, worker_id: Optional[str] = None):
         return self.workers.workers[("usr-1", worker_id or self.research.worker_id)]
@@ -77,7 +77,7 @@ async def world() -> World:
 # ---------------------------------------------------------------------------------------------------- targets (§5.6)
 
 async def test_a_target_is_stored_as_one_ciphertext_bound_to_the_record_and_only_its_host_in_clear(world):
-    worker = await world.service.set_wake_target("usr-1", world.research.worker_id, f"  {URL} ", HEADERS)
+    worker = await world.service.save_wake_target("usr-1", world.research.worker_id, f"  {URL} ", HEADERS)
     stored = world.worker()
     assert worker == stored
     assert stored.wake_host == "hooks.example.com" and stored.has_wake is True and stored.wake_generation == 0
@@ -91,7 +91,7 @@ async def test_a_target_is_stored_as_one_ciphertext_bound_to_the_record_and_only
 
 async def test_saving_again_replaces_the_whole_target(world):
     await world.target()
-    await world.service.set_wake_target("usr-1", world.research.worker_id, "https://relay.example.net/", ())
+    await world.service.save_wake_target("usr-1", world.research.worker_id, "https://relay.example.net/", ())
     plain = await world.cipher.decrypt(world.worker().wake_secret, aad=wake_aad("usr-1", world.research.worker_id))
     assert WakeTarget.from_json(plain) == WakeTarget("https://relay.example.net/", ())
     assert world.worker().wake_host == "relay.example.net"
@@ -107,14 +107,14 @@ async def test_saving_again_replaces_the_whole_target(world):
 ])
 async def test_a_target_the_name_rules_refuse_raises_its_code_and_stores_nothing(world, url, code):
     with pytest.raises(WakeTargetRefused) as refused:
-        await world.service.set_wake_target("usr-1", world.research.worker_id, url, ())
+        await world.service.save_wake_target("usr-1", world.research.worker_id, url, ())
     assert refused.value.refusal is code
     assert world.worker().has_wake is False and world.worker().wake_secret is None and world.cipher.encrypts == 0
 
 
 async def test_a_framing_header_is_refused_at_save_time(world):
     with pytest.raises(WakeTargetRefused) as refused:
-        await world.service.set_wake_target("usr-1", world.research.worker_id, URL, (("Host", "elsewhere.example"),))
+        await world.service.save_wake_target("usr-1", world.research.worker_id, URL, (("Host", "elsewhere.example"),))
     assert refused.value.refusal is WakeRefusal.HEADER and world.worker().has_wake is False
 
 
@@ -125,22 +125,22 @@ async def test_save_time_runs_no_dns_and_sends_nothing(world):
 
 async def test_a_target_is_refused_for_a_foreign_revoked_or_unflagged_worker_and_without_a_cipher(world):
     with pytest.raises(ExternalTaskRefused) as foreign:
-        await world.service.set_wake_target("usr-2", world.research.worker_id, URL, ())
+        await world.service.save_wake_target("usr-2", world.research.worker_id, URL, ())
     assert foreign.value.reason is TaskRefusal.NOT_FOUND
     await world.service.revoke_worker("usr-1", world.watch.worker_id)
     with pytest.raises(ExternalTaskRefused) as revoked:
-        await world.service.set_wake_target("usr-1", world.watch.worker_id, URL, ())
+        await world.service.save_wake_target("usr-1", world.watch.worker_id, URL, ())
     assert revoked.value.reason is TaskRefusal.WORKER_REVOKED
     with pytest.raises(ExternalTaskRefused) as cleared:
         await world.service.clear_wake_target("usr-1", world.watch.worker_id)
     assert cleared.value.reason is TaskRefusal.WORKER_REVOKED
     await world.flag("usr-1", False)
     with pytest.raises(ExternalTaskRefused) as off:
-        await world.service.set_wake_target("usr-1", world.research.worker_id, URL, ())
+        await world.service.save_wake_target("usr-1", world.research.worker_id, URL, ())
     assert off.value.reason is TaskRefusal.NOT_ENABLED
     bare = await World(cipher=False).seed()
     with pytest.raises(ExternalTaskRefused) as unavailable:
-        await bare.service.set_wake_target("usr-1", bare.research.worker_id, URL, ())
+        await bare.service.save_wake_target("usr-1", bare.research.worker_id, URL, ())
     assert unavailable.value.reason is TaskRefusal.WAKE_UNAVAILABLE
 
 
