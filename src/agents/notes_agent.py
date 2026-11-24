@@ -27,8 +27,8 @@ Context injection:
   - Biographical facts included (include_biographical=True)
 
 Transparency: every mutation sends notify_raw() to the user's last active channel. A create or update notice is a
-literal notice (domain/literal_notice.py): the name, the instruction the reminder runs word for word, then the schedule
-line — shown only, nothing to confirm.
+literal notice (domain/literal_notice.py): the instruction the reminder runs, byte for byte, as the file reminder.txt,
+then the name and the schedule line — shown only, nothing to confirm.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate
 from ..domain.exceptions import WorkspaceRefused
-from ..domain.literal_notice import render_literal_notice
+from ..domain.literal_notice import LiteralNotice, render_literal_notice
 from ..domain.local_time import wall_time_instant
 from ..domain.task_complexity import TaskComplexity
 from ..domain.workspace import (
@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from ..services.user_notification_service import UserNotificationService
 
 _NOTES_SOFT_THRESHOLD = 20
+_REMINDER_FILENAME = "reminder.txt"   # the set / updated notice's file: the instruction the reminder runs
 
 # One schedule language for both tools. RRULE (RFC 5545) rather than a fixed
 # type+interval pair: "Tuesdays and Fridays", "08:00 and 20:00" and "last Sunday of
@@ -559,16 +560,13 @@ class NotesAgent(BaseAgent):
                     f"(soft cap: {_NOTES_SOFT_THRESHOLD}). "
                     "Review working_memory and delete stale reminders."
                 )
-            await self._notify(
-                user_id, account_id,
-                render_literal_notice(
-                    f"📌 Reminder set: \"{note.text}\"",
-                    note.instruction,
-                    [self._fmt_due(note.due) + self._fmt_recurrence(note.recurrence)
-                     + self._fmt_binding(binding, creating=True)],
-                ),
-                literal=True,
+            notice = render_literal_notice(
+                f"📌 Reminder set: \"{note.text}\"", note.instruction,
+                filename=_REMINDER_FILENAME, title=note.text or _REMINDER_FILENAME,
+                lines=[self._fmt_due(note.due) + self._fmt_recurrence(note.recurrence)
+                       + self._fmt_binding(binding, creating=True)],
             )
+            await self._notify(user_id, account_id, notice.message, literal=True, attachment=notice)
             return result
 
         if name == "update_self_reminder":
@@ -615,16 +613,13 @@ class NotesAgent(BaseAgent):
                 clear_workspace_file=bool(binding and binding.clear),
             ))
             # The stored instruction after the update: what the reminder will run, changed in this call or not.
-            await self._notify(
-                user_id, account_id,
-                render_literal_notice(
-                    f"📝 Reminder updated: \"{note.text}\"",
-                    note.instruction,
-                    [self._fmt_due(note.due) + self._fmt_recurrence(note.recurrence)
-                     + self._fmt_binding(binding, creating=False)],
-                ),
-                literal=True,
+            notice = render_literal_notice(
+                f"📝 Reminder updated: \"{note.text}\"", note.instruction,
+                filename=_REMINDER_FILENAME, title=note.text or _REMINDER_FILENAME,
+                lines=[self._fmt_due(note.due) + self._fmt_recurrence(note.recurrence)
+                       + self._fmt_binding(binding, creating=False)],
             )
+            await self._notify(user_id, account_id, notice.message, literal=True, attachment=notice)
             return {"note_id": note.note_id, "status": "updated"}
 
         if name == "delete_self_reminder":
@@ -686,14 +681,18 @@ class NotesAgent(BaseAgent):
             return summary
         return f"{summary}\n({BINDING_NOT_APPLIED}: no reminder was created or updated in this request.)"
 
-    async def _notify(self, user_id: str, account_id: str, text: str, *, literal: bool = False) -> None:
+    async def _notify(self, user_id: str, account_id: str, text: str, *, literal: bool = False,
+                      attachment: Optional[LiteralNotice] = None) -> None:
         """Best-effort transparency notification — failure is logged and swallowed. `literal`: the text carries the
         reminder's words, which the model wrote; the platform shows them and obeys nothing in them. The set / updated
-        notices are `render_literal_notice`s: the name, the instruction the reminder runs word for word, the schedule."""
+        notices are literal notices (`attachment`): the instruction the reminder runs, byte for byte, in
+        `reminder.txt`, then the name and the schedule line."""
         if not self._notification_service:
             return
         try:
-            extra = {"literal": True} if literal else {}
+            extra: Dict[str, Any] = {"literal": True} if literal else {}
+            if attachment is not None and attachment.text:   # no instruction: no file to show
+                extra["attachment"] = attachment
             await self._notification_service.notify_raw(
                 user_id=user_id,
                 account_id=account_id,

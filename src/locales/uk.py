@@ -158,7 +158,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_SAVED.value: "✅ Передано в пам'ять: {count}. Пошук знайде їх після фонової консолідації, зазвичай за кілька годин.",
     UIMessage.MEMORY_DRAFT_NOT_FOUND.value: "❌ Немає пропозиції з кодом `{code}`. Попросіть мене запропонувати факти знову.",
     UIMessage.MEMORY_UNAVAILABLE.value: "Збереження фактів зараз недоступне.",
-    UIMessage.EXTERNAL_TASK_HELD.value: 'Чекає на твоє підтвердження: завдання для *{worker}*: *{title}*. Повний текст нижче. Його буде надіслано лише якщо ти вставиш команду, що йде далі, протягом {hours} год.',
+    UIMessage.EXTERNAL_TASK_HELD.value: 'Чекає на твоє підтвердження: завдання для *{worker}*: *{title}*. Повний текст у файлі вище. Його буде надіслано лише якщо ти вставиш команду, що йде далі, протягом {hours} год.',
     UIMessage.EXTERNAL_TASK_ID_LINE.value: 'Ідентифікатор завдання: `{task_id}`',
     UIMessage.EXTERNAL_TASK_USAGE.value: '`$task send КОД` — надіслати завдання, яке чекає на твоє підтвердження.',
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Надіслано: *{title}* для *{worker}*.',

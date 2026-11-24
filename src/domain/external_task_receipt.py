@@ -1,10 +1,10 @@
 """The literal receipt of an external task create (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible").
 
 One pure renderer for the delivery item `create_external_task` returns and `ConversationHandler` posts after the
-answer. The post is a literal notice (`domain.literal_notice`, shared with the reminder notices): the task text is shown
-word for word as it was stored, each line behind `TEXT_MARK`, never passed through a template, and never cut: the
-owner must see exactly what leaves the system, or what waits for their command, whatever the model said in its answer.
-`TASK_TEXT_MAX_CHARS` is bounded so the whole text fits one literal post.
+answer. The receipt is a literal notice (`domain.literal_notice`, shared with the memory-fact draft and the reminder
+notices): the task text goes byte for byte as it was stored in a file `task-<id>.txt`, never passed through a template
+and never cut, and the message after it carries the header and the task id. The owner must see exactly what leaves the
+system, or what waits for their command, whatever the model said in its answer.
 
 Every task created in a chat turn waits for the owner's confirmation, so the receipt is always the confirmation
 prompt: the receipt, and the command to paste, returned apart so the handler can post it as its own message, the
@@ -22,13 +22,14 @@ Public interface:
     EXTERNAL_TASK_SEND_KIND                                          the binding kind of the Send button
     SEND_BUTTON_PLATFORMS                                            where the command message carries the button
     receipt_data(created) -> dict                                    the item's `data` from a `CreatedTask`
-    render(data, strings) -> (literal_post, command)
+    render(data, strings) -> (LiteralNotice, command)
     send_button(data, label) -> Optional[InteractiveMessage]         the command message with the button, from the data
     send_button_message(task_id, code, label) -> InteractiveMessage  the same message, from its parts (the click side)
     send_refusal_reply(reason) -> UIMessage                          the line of a refused confirmation, command or button
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Dict, Final, FrozenSet, Mapping, Optional, Tuple
 
 from .external_task import HOLD_S
@@ -37,7 +38,7 @@ from .external_task_views import CreatedTask
 from .interactive_binding import InteractiveBinding
 from .interactive_message import InteractiveMessage
 from .interactive_option import InteractiveOption
-from .literal_notice import render_literal_notice
+from .literal_notice import LiteralNotice, render_literal_notice
 from .ui_messages import UIMessage
 
 EXTERNAL_TASK_RECEIPT_DELIVERY = "external_task_receipt"
@@ -57,15 +58,20 @@ def receipt_data(created: CreatedTask) -> Dict[str, Any]:
     }
 
 
-def render(data: Mapping[str, Any], strings: Strings) -> Tuple[str, Optional[str]]:
-    """The post, and the command alone. A receipt without a command is never produced; if the data carries none, the
-    post still says the task was not sent."""
+def render(data: Mapping[str, Any], strings: Strings) -> Tuple[LiteralNotice, Optional[str]]:
+    """The notice (the task text as a file, then the header and the id line), and the command alone. A receipt without
+    a command is never produced; if the data carries none, the message still says the task was not sent. The file is
+    named by the task id (characters outside `[A-Za-z0-9_-]` dropped) and shown under the task's title."""
+    task_id = str(data.get("task_id") or "")
+    title = str(data.get("title") or "")
     header = strings(UIMessage.EXTERNAL_TASK_HELD).format(
-        worker=data.get("worker") or "?", title=data.get("title") or "", hours=HOLD_S // 3600)
-    footer = strings(UIMessage.EXTERNAL_TASK_ID_LINE).format(task_id=data.get("task_id") or "?")
-    post = render_literal_notice(header, data.get("text") or "", [footer])
+        worker=data.get("worker") or "?", title=title, hours=HOLD_S // 3600)
+    id_line = strings(UIMessage.EXTERNAL_TASK_ID_LINE).format(task_id=task_id or "?")
+    filename = f"task-{re.sub(r'[^A-Za-z0-9_-]', '', task_id) or 'text'}.txt"
+    notice = render_literal_notice(header, str(data.get("text") or ""), filename=filename, title=title or filename,
+                                   lines=[id_line])
     command = data.get("command")
-    return post, (f"`{command}`" if command else None)
+    return notice, (f"`{command}`" if command else None)
 
 
 def send_button_message(task_id: str, code: str, label: str) -> InteractiveMessage:

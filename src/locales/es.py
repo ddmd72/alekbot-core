@@ -129,7 +129,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_SAVED.value: "✅ Enviado a la memoria: {count}. Se podrán buscar tras la consolidación en segundo plano, normalmente en unas horas.",
     UIMessage.MEMORY_DRAFT_NOT_FOUND.value: "❌ No hay ninguna propuesta con el código `{code}`. Pídeme que proponga los hechos de nuevo.",
     UIMessage.MEMORY_UNAVAILABLE.value: "Guardar hechos no está disponible en este momento.",
-    UIMessage.EXTERNAL_TASK_HELD.value: 'A la espera de tu confirmación: una tarea para *{worker}*: *{title}*. Su texto completo está abajo. Solo se envía si pegas el comando que sigue, dentro de {hours} horas.',
+    UIMessage.EXTERNAL_TASK_HELD.value: 'A la espera de tu confirmación: una tarea para *{worker}*: *{title}*. Su texto completo está en el archivo de arriba. Solo se envía si pegas el comando que sigue, dentro de {hours} horas.',
     UIMessage.EXTERNAL_TASK_ID_LINE.value: 'Id de la tarea: `{task_id}`',
     UIMessage.EXTERNAL_TASK_USAGE.value: '`$task send CÓDIGO` — enviar una tarea que espera tu confirmación.',
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Enviada: *{title}* para *{worker}*.',

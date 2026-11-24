@@ -57,8 +57,9 @@ from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
     MemoryFactDraft,
     ProposedFact,
-    render_preview_file,
+    render_preview_notice,
 )
+from ..domain.literal_notice import LiteralNotice
 from ..domain.skill import (
     SKILL_CONTEXT_KEY,
     SKILL_PREVIEW_DELIVERY,
@@ -420,23 +421,18 @@ class ConversationHandler(ConversationHandlerPort):
         response_channel: ResponseChannel,
         thread_id: Optional[str],
     ) -> None:
-        """Deliver a `MEMORY_PREVIEW_DELIVERY` item: the facts as a file (chat adapters truncate
-        long text), a header, then the save command alone. If the file or the header fails, the
-        command is not sent: the owner must never confirm facts they were not shown."""
+        """Deliver a `MEMORY_PREVIEW_DELIVERY` item: a literal notice (the facts in `memory-facts.txt`, then the count
+        line), then the save command alone. If the file or the line fails, the command is not sent: the owner must never
+        confirm facts they were not shown."""
         language = getattr(response_channel, "language", None)
+
+        def strings(message: UIMessage) -> str:
+            return self._ui_string_for_language(language, message)
+
         try:
             facts = [ProposedFact(**f) for f in item.data["facts"]]
-            count = len(facts)
-            await response_channel.send_file(
-                content=render_preview_file(MemoryFactDraft(facts=facts)).encode("utf-8"),
-                filename="memory-facts.txt",
-                title=self._ui_string_for_language(language, UIMessage.MEMORY_PREVIEW_FILE_TITLE, count=count),
-                thread_id=thread_id,
-            )
-            await response_channel.send_message(
-                self._ui_string_for_language(language, UIMessage.MEMORY_PREVIEW_HEADER, count=count),
-                thread_id,
-            )
+            await self._send_literal_notice(
+                render_preview_notice(MemoryFactDraft(facts=facts), strings), response_channel, thread_id)
         except Exception as e:
             logger.error("⚠️ [ConversationHandler] memory_preview delivery failed: %s", e, exc_info=True)
             try:
@@ -484,9 +480,9 @@ class ConversationHandler(ConversationHandlerPort):
         response_channel: ResponseChannel,
         thread_id: Optional[str],
     ) -> None:
-        """Deliver an external task's receipt (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible"): the worker, the
-        title, the FULL task text and the id, posted literally (the text is the model's, shown word for word, each line
-        behind the literal notice's mark). A held task then gets its `$task send` command alone as a second message.
+        """Deliver an external task's receipt (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible"): a literal
+        notice — the FULL task text byte for byte in `task-<id>.txt`, then the worker, the title and the id in a literal
+        message. A held task then gets its `$task send` command alone as a third message.
         On Slack, with the Send button wired, that message carries the button too (`_post_task_command`). When the
         receipt fails the command is not sent: the owner never confirms text they were not shown. A failed post never
         fails the turn: the task is stored."""
@@ -496,12 +492,23 @@ class ConversationHandler(ConversationHandlerPort):
             return self._ui_string_for_language(language, message)
 
         try:
-            post, command = render_external_task_receipt(item.data, strings)
-            await response_channel.send_literal(post, thread_id)
+            notice, command = render_external_task_receipt(item.data, strings)
+            await self._send_literal_notice(notice, response_channel, thread_id)
             if command:
                 await self._post_task_command(item, command, strings, response_channel, thread_id)
         except Exception as e:
             logger.error("⚠️ [ConversationHandler] %s delivery failed: %s", item.type, e, exc_info=True)
+
+    @staticmethod
+    async def _send_literal_notice(
+        notice: LiteralNotice, response_channel: ResponseChannel, thread_id: Optional[str],
+    ) -> None:
+        """Post a literal notice (`domain.literal_notice`): the exact text as its file, then its message literally. A
+        failure is raised: the caller then sends no command."""
+        await response_channel.send_file(
+            content=notice.content, filename=notice.filename, title=notice.title, thread_id=thread_id,
+        )
+        await response_channel.send_literal(notice.message, thread_id)
 
     async def _post_task_command(
         self,

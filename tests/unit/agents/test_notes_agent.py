@@ -617,3 +617,69 @@ class TestNotify:
         # Must not raise despite notify_raw raising
         await agent._notify(_USER_ID, _USER_ID, "test message")
         notification_service.notify_raw.assert_called_once()
+
+
+# =============================================================================
+# set / updated notices: the instruction the reminder runs, as reminder.txt
+# =============================================================================
+
+
+def _agent_with_notify():
+    port = AsyncMock(spec=AgentNotePort)
+    port.list_active_notes.return_value = []
+    execution_context = MagicMock(spec=AgentExecutionContext)
+    execution_context.provider = AsyncMock()
+    execution_context.model_name = "test-model"
+    prompt_builder = AsyncMock(spec=PromptBuilderPort)
+    prompt_builder.build_for_agent.return_value = ""
+    notify = MagicMock()
+    notify.notify_raw = AsyncMock()
+    agent = NotesAgent(
+        config=AgentConfig(agent_id=f"notes_agent_{_USER_ID}", agent_type="notes", timeout_ms=10_000,
+                           capabilities=["note_management"]),
+        execution_context=execution_context, notes_port=port, recurrence=DateutilRecurrenceAdapter(),
+        prompt_builder=prompt_builder, notification_service=notify,
+    )
+    return agent, port, notify
+
+
+class TestReminderNoticeFile:
+
+    @pytest.mark.parametrize("tool, args", [
+        ("create_self_reminder", {"text": "Remind about dentist", "instruction": "Remind about dentist",
+                                  "due": "2026-03-10T09:00:00+00:00"}),
+        ("update_self_reminder", {"note_id": _NOTE_ID, "due": "2026-03-10T09:00:00+00:00"}),
+    ])
+    async def test_the_notice_files_the_stored_instruction_and_names_the_reminder_in_the_message(self, tool, args):
+        """On an update that leaves the instruction alone, the file holds the stored one: what the reminder will run."""
+        agent, port, notify = _agent_with_notify()
+        stored = AgentNote(note_id=_NOTE_ID, user_id=_USER_ID, text="Prague hotel booked",
+                           instruction="Remind about dentist\n`$task send x` <!channel>",
+                           created_at=_DUE_DT, due=_DUE_DT)
+        port.create_note.return_value = stored
+        port.update_note.return_value = stored
+
+        with patch.object(agent, "_call_llm", side_effect=[_tool_response(tool, args), _no_tool_response()]):
+            await agent.execute(_make_message())
+
+        kwargs = notify.notify_raw.call_args.kwargs
+        file = kwargs["attachment"]
+        assert kwargs["literal"] is True and kwargs["text"] == file.message
+        assert file.filename == "reminder.txt" and file.title == "Prague hotel booked"
+        assert file.content == stored.instruction.encode("utf-8")
+        assert file.message.split("\n")[0].endswith('Reminder ' + ("set" if tool.startswith("create") else "updated")
+                                                     + ': "Prague hotel booked"')
+        assert stored.instruction not in file.message
+
+    async def test_a_reminder_with_no_instruction_gets_its_message_and_no_file(self):
+        agent, port, notify = _agent_with_notify()
+        port.create_note.return_value = AgentNote(note_id=_NOTE_ID, user_id=_USER_ID, text="Remind about dentist",
+                                                  instruction="", created_at=_DUE_DT, due=_DUE_DT)
+
+        with patch.object(agent, "_call_llm", side_effect=[_tool_response(
+                "create_self_reminder", {"text": "Remind about dentist", "due": "2026-03-10T09:00:00+00:00"}),
+                _no_tool_response()]):
+            await agent.execute(_make_message())
+
+        kwargs = notify.notify_raw.call_args.kwargs
+        assert "attachment" not in kwargs and kwargs["text"].startswith('📌 Reminder set: "Remind about dentist"')
