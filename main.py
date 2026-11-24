@@ -575,7 +575,8 @@ async def main():
                             external_tasks=app.external_tasks, db_client=db_client, env_config=env_config,
                             user_repo=app.user_repo, whitelist_repo=app.whitelist_repo,
                             token_repo=assembly.token_repo if assembly is not None else None, alert_sink=app.alert_sink,
-                            inactive_users=mcp_components.inactive_users, auth_config=app.auth_config)
+                            inactive_users=mcp_components.inactive_users, auth_config=app.auth_config,
+                            authorization_service=mcp_components.authorization_service)   # OAuth worker grants
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",

@@ -1,6 +1,6 @@
 # RFC: External task queue
 
-**Status:** Accepted (2026-11-23); steps 1–3 implemented, steps 4–5 pending.
+**Status:** Accepted (2026-11-23); steps 1–4 implemented, step 5 pending.
 **Owner's map:** `docs/05_building_blocks/external_task_queue/README.md`.
 The decisions are in §2. Every example below is invented: the user is Alex Doe, the worker labels are `research` and
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
@@ -62,6 +62,23 @@ flagged and wrapped wherever they reach a model; and every workspace write in a 
   (`code: stale_lease`); `not_enabled` and `worker_revoked` share one neutral line with no code. A failure other than
   a refusal answers a generic tool error naming only the exception type.
 - `external_tasks` is not in `SCOPE_OF` yet and no registration can carry it: that is step 4.
+
+**Implementation notes (step 4).** The build differs from §5.4 "OAuth" and §5.6 as follows; the body is kept as
+specified.
+- Refresh tokens also record `granted_at` (the code exchange, copied through every rotation) and `issued_at` (their
+  own issue): the Cabinet shows them as "granted" and "last refresh". Older tokens read both as null.
+- The authorization service serves the tasks resource when its `scope_of` holds the tasks scope (composition's
+  `SCOPE_OF` does), with the URI derived from the facts URI as the drive URI is; there is no separate constructor
+  argument, because the constructor is at the arity cap. Without the scope the tasks URI and scope are refused.
+- Removing a worker revokes its grants through the Cabinet route, which calls the queue's `revoke_worker` and then the
+  authorization service's `revoke_worker_grants`: services never call each other. A failed grant revocation is
+  finished by a retry of the removal, which is safe to repeat.
+- The flag check at code exchange also refuses a tasks code that carries no worker.
+- Per call, a refused grant answers the neutral refused line (`isError`) that `not_enabled` and `worker_revoked` share;
+  the limits are the worker's buckets for a key and an OAuth grant alike (step 3's note).
+- `main.py` builds the MCP components before the Cabinet blueprint, so the Cabinet gets the authorization service; a
+  failed build still leaves the bot up without MCP.
+- §10 Q1's remaining live check (the authorize-time scope equals the registered one) is run after the deploy.
 
 ## 1. Purpose
 
