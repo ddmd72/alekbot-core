@@ -1177,18 +1177,18 @@
         document.getElementById("workers-key-box").innerHTML = "";
       }
 
-      // The wake-up form of one worker: URL and `Name: value` header lines. Saving replaces the whole target.
+      // The wake-up form of one worker: a pasted curl command and its secret (the server reads the address and headers). Saving replaces the whole target.
       function openWorkerWake(workerId, label) {
         document.getElementById("workers-wake-box").innerHTML = `<div class="c-box">
             <div class="c-box-title">${escapeHtml(label)}</div>
             <p class="c-hint">${escapeHtml(t("workers.wake_hint"))}</p>
             <div class="c-field">
-              <label for="workers-wake-url">${escapeHtml(t("workers.wake_url"))}</label>
-              <input id="workers-wake-url" type="url" class="c-input" autocomplete="off" placeholder="${escapeHtml(t("workers.wake_url_placeholder"))}" />
+              <label for="workers-wake-curl">${escapeHtml(t("workers.wake_curl"))}</label>
+              <textarea id="workers-wake-curl" class="c-input" rows="4" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t("workers.wake_curl_placeholder"))}"></textarea>
             </div>
             <div class="c-field">
-              <label for="workers-wake-headers">${escapeHtml(t("workers.wake_headers"))}</label>
-              <textarea id="workers-wake-headers" class="c-input" rows="3" autocomplete="off" placeholder="${escapeHtml(t("workers.wake_headers_placeholder"))}"></textarea>
+              <label for="workers-wake-secret">${escapeHtml(t("workers.wake_secret"))}</label>
+              <input id="workers-wake-secret" type="password" class="c-input" autocomplete="off" placeholder="${escapeHtml(t("workers.wake_secret_placeholder"))}" />
             </div>
             <div class="c-btns">
               <button type="button" class="c-btn c-pri" data-worker="${escapeHtml(workerId)}" onclick="saveWorkerWake(this.dataset.worker)">${escapeHtml(t("workers.wake_save"))}</button>
@@ -1202,12 +1202,12 @@
       }
 
       async function saveWorkerWake(workerId) {
-        const url = document.getElementById("workers-wake-url");
-        const headers = document.getElementById("workers-wake-headers");
+        const curl = document.getElementById("workers-wake-curl");
+        const secret = document.getElementById("workers-wake-secret");
         try {
           const res = await authFetch(`${API}/api/external-workers/${encodeURIComponent(workerId)}/wake`, {
             method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: url.value.trim(), headers: headers.value }),
+            body: JSON.stringify({ curl: curl.value, secret: secret.value.trim() }),
           });
           if (!res.ok) { await workersFailure(res); return; }
           clearWorkerWakeForm();

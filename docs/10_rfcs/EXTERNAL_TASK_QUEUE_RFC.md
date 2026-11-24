@@ -25,6 +25,7 @@ flagged and wrapped wherever they reach a model; and every workspace write in a 
   name that does not resolve is `dns_failure` (final); a send that outruns `WAKE_TIMEOUT_S`, DNS included, is
   `unreachable`. The wake task bounds its own deliveries (`WAKE_MAX_ATTEMPTS`, read from the retry-count header),
   because the queue it shares has one retry setting for every task type.
+- The Cabinet enters the wake-up target as a pasted `curl` command plus a secret (`src/domain/wake_curl.py`, new save-time `WakeRefusal` codes `curl_*`); the stored `{url, headers}` is unchanged.
 - Stricter than specified: `.localhost`, `.local` and `.arpa` are refused like `.internal`; `Content-Type`, `Keep-Alive`,
   `TE`, `Trailer`, `Upgrade` and `Proxy-Connection` like the framing headers. The own-host list is every deploy URL the
   main service is configured with (its URL, both OAuth callbacks, the MCP resource, the relay, the indexer, both
