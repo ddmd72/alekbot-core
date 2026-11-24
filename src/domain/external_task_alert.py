@@ -138,7 +138,7 @@ _OUTCOME = {
 # --- the alert of a task with a note: the bot's own instructions, then the outcome, then the worker's file -----------
 
 _NOTE_HEAD = (
-    "An external task you handed over has ended. You gave task {task_id} to {label}, a worker the owner registered "
+    "An external task has ended. You gave task {task_id} to {label}, a worker the owner registered "
     "outside this chat, which works on its own schedule and reports back to the system, not to this conversation. The "
     "owner has not been told: what you answer now is the only news of it they get.\n"
 )
