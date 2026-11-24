@@ -83,7 +83,12 @@ A body with one child is screenshotted as that child, otherwise the body is, wit
 3. The alert goes to the agent as the current message (`AgentCoordinator.route_message`, with `origin_channel_id` and
    `origin_platform` in the context so an async document returns to this channel). The reply text is sent by
    `_send_answer_text` (a stored Slack user id, `U...`, gets an `<@U...>` mention), the history pair is saved, and a `structured_data`
-   item goes through `_send_rich_content` into step 2 above.
+   item goes through `_send_rich_content` into step 2 above. The history pair's user line is the caller's
+   `system_alert_summary` (else the alert), with the full alert as `full_text`, or `system_alert_history` when the caller
+   gives one (the external task alert keeps its bot-written note out of history that way). The only delivery item a
+   background run's reply posts is an external task's receipt (`EXTERNAL_TASK_RECEIPT_DELIVERY`, a reminder's run queues
+   its task at once): its literal notice, file then message, after the reply, no command, not in history; every other
+   item is dropped.
 4. `NotifyResult` (`src/domain/notify_result.py`) tells the caller how far it got: whether the user got a message and whether the turn started.
    Callers decide their own retry rule: reminder and daily review retry only when `is_retryable_failure` (turn never
    started); the deep-research notice retries whenever nothing was sent (see `notify`'s docstring).

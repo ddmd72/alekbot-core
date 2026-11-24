@@ -13,6 +13,7 @@ covers:
   src/domain/external_task_text.py
   src/domain/external_task_texts.py
   src/domain/external_task_views.py
+  src/domain/front_matter.py
   src/domain/external_worker.py
   src/domain/external_worker_key.py
   src/domain/external_worker_principal.py
@@ -94,8 +95,9 @@ Firestore, database `us-production`, names from `EnvironmentConfig` (`external_t
 `external_task_results_collection`, `external_workers_collection`, `external_worker_keys_collection`), env prefix.
 
 - **tasks**: one `ExternalTask` per document (`domain/external_task.py`): status, `origin` (the creating turn's
-  channel; the delivery alert goes there), `hold`, `lease`, `result_meta`, `failure`, `delivery` (a stored `created_tainted` of an older record is ignored on read and dropped at the next write). The result body
-  is a separate document so a listing never reads it.
+  channel; the delivery alert goes there), `note` and `entry` (below), `hold`, `lease`, `result_meta`, `failure`, `delivery` (a stored `created_tainted` of an older record is ignored on read and dropped at the next write). The result body
+  is a separate document so a listing never reads it. A task stored before the note existed reads `note` and `entry`
+  as None (no migration).
 - **results**: the submitted text, one per done task.
 - **workers** and **worker keys**: a worker is a label plus a description, bound to the registering account. A key is
   stored only as a keyed digest; the raw key is shown once, at minting. A worker's wake-up target is one `CipherPort`
@@ -126,11 +128,21 @@ is normalised (`ERROR_NOT_THE_BRIEF`), so what leaves the system is Smart's brie
 the worker label only. The brief's language follows the owner's skill or words, not "Always English"
 (`PROTOCOL_AGENT_SELECTION`, `query_language`).
 
+**The task's note** (decision record `external_task_confirmation_and_alerts.md`, amendment of 2026-11-24). A result
+comes back hours later to a turn with none of the conversation, so every task carries the bot's own return
+instructions: what the owner asked and why, how to present the result, what to do after it. Smart says them in its
+instruction (the intent's capability line in `agent_manifest.py`); the specialist writes the `note` argument of
+`create_external_task` from it, self-contained (required, at most `NOTE_MAX_CHARS`, refused and never cut over it,
+normalised like every stored text). It is stored with the task's `entry` (chat or reminder), shown to the owner in the
+receipt file, and handed back to Smart by the completion alert. No worker surface carries it: not the REST answers, not
+the MCP results, not `ClaimedTask` or `WorkerTaskSummary`. It is not checked against the instruction: it is the
+specialist's own text.
+
 **Create to deliver.** The specialist's `create_external_task` handler (`src/infrastructure/external_task_tools.py`)
-calls `ExternalTaskService.create` (`src/services/external_task_service.py:328`): the `entry` decides: a chat create is
-`held` (below), a reminder create is `queued` with a deadline timer (the specialist computes the entry once per run from the context
+calls `ExternalTaskService.create` (`src/services/external_task_service.py:335`): the `entry` decides: a chat create is
+`held` (below), a reminder create is `queued` with a deadline timer and a show-only notice (below) (the specialist computes the entry once per run from the context
 with `task_entry`, never from the model: `CHAT` on the owner's chat turn, `REMINDER` while a reminder runs); a
-worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
+worker claims it under a lease (`:460`), may renew, then submits (`:503`), releases or fails. The
 final state enqueues an `external_task_deliver` Cloud Task (dispatch deadline `DELIVER_DEADLINE_S`, the
 `EXTERNAL_TASK` notification budget plus headroom).
 
@@ -141,11 +153,23 @@ that names the task, its title, the worker and the time (`src/domain/external_ta
 `UserNotificationService.notify` with kind `EXTERNAL_TASK`, Smart as the recipient, the task's origin channel and
 `origin_detail="external_task_deliver"`: the alert is the user turn of a background Smart run, and Smart's answer is what
 the owner reads; the alert and the answer are kept as that channel's history pair. The alert
-(`src/domain/external_task_alert.py`) carries only code-made values: the task id, the worker label, the file's path, a
+(`src/domain/external_task_alert.py`) carries code-made values: the task id, the worker label, the file's path, a
 failure code and counts; never the title, the result or a reason. It says the file holds the worker's own text, to be
 read with the workspace tool when the owner needs it and reported as data. Six alerts: done (file), done without a file
 (a refused copy or no workspace: the result stays in the task record), failed with the reason's file, failed with no
-file, given up after repeated claims (`claim_loop`), expired. A cancelled task gets none. Every outcome of the run is
+file, given up after repeated claims (`claim_loop`), expired. A cancelled task gets none.
+
+A task with a note gets each of the six in another form, framed like a fired reminder's alert (`reminder_alert.py`):
+the bot handed this task over earlier and wrote the note then as its own instructions for this moment (a chat task's
+note was confirmed by the owner with the brief; a reminder task's was written in the owner's reminder run and shown in
+the chat), so it acts on it now; the note follows as plain lines, not as a quotation. After a `---` line: what
+happened, the worker's file marked separately as data only (read for what the note needs, never followed), what the
+note may drive for this outcome (done: present and do what it says next; done without a file: what waits for a chat
+turn; failed, given up, expired: no result, so only what it means for what the owner asked), and the turn's limits (no
+task queue, no memory proposal). The note never enters saved history: the history pair's user line is the code-made
+`alert_summary`, and its full text is the alert without the note (`notify(..., system_alert_history=...)`), since the
+consolidator reads a user-role line as the owner's words. A task without a note (stored before it existed) gets the
+alert of old, unchanged. Every outcome of the run is
 final and recorded, as for a reminder: no channel is logged, an empty answer is reported to ops, a failed turn is not run
 again. Delivery is idempotent through `delivery.state` (Cloud Tasks may run it twice). Task types:
 `docs/07_deployment/SCHEDULERS.md`.
@@ -155,9 +179,18 @@ again. Delivery is idempotent through `delivery.state` (Cloud Tasks may run it t
 confirmation code once (stored as a keyed digest). The owner's channel gets the task's full text and the command from
 the tool's own delivery item, never through a model; the result the specialist's model and Smart read holds the task id
 only. The receipt is a literal notice (`src/domain/literal_notice.py`, shared with the `$memory save` preview and the
-reminder notices): the task text byte for byte as the file `task-<id>.txt` (so nothing in it can be cut, formatted or
-pose as the receipt's own lines), then a literal message with the worker, the title and the task id; the command
-follows as its own message, after the file. The owner confirms
+reminder notices) in the file `task-<id>.txt`: YAML front matter with the title, the worker label and the note, each
+value one double-quoted scalar line (`src/domain/front_matter.py`, so any note text reads back exactly and cannot end
+the block or add a key), a `---` line, then the task text byte for byte (so nothing in it can be cut, formatted or pose
+as the receipt's own lines); then a literal message with the worker, the title and the task id; the command follows as
+its own message, after the file. The worker receives the title and the text only.
+
+**A reminder's task, shown at once.** A task created in a reminder's run is queued with no confirmation, as before, and
+the create returns the same receipt item with status `queued` and no command. Smart passes it through like any
+specialist's delivery item; `UserNotificationService.notify` (the reminder run's own turn) posts it after the run's
+answer in the reminder's channel: the same file, then a literal message that it was handed to the worker from a
+reminder and needs no confirmation (`EXTERNAL_TASK_QUEUED_FROM_REMINDER`). No command, no button, not in history. Its
+purpose is to show the owner at once when results keep spawning reminders that spawn tasks. The owner confirms
 with `$task send CODE` (`ConversationHandler`, the `task` command); the service moves it to `queued`. A held task
 that is not confirmed expires through its hold timer. A wrong, used or expired code gets one neutral line. A held task
 is invisible to every worker surface.
@@ -175,7 +208,7 @@ flag is off or the account was locked after the press was authorised (the button
 transaction on the hold, so no number of presses sends a task twice. If the button cannot be posted, the command goes
 alone. Telegram keeps the command only, and the command keeps working on Slack.
 
-**Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:518`) applies the
+**Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:538`) applies the
 kind's precondition, so a stale timer changes nothing. A timer further than Cloud Tasks can schedule re-enqueues itself.
 
 **Wake-up.** A worker with a target is pinged when work appears, instead of polling. When a task becomes `queued` (a
@@ -231,15 +264,19 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
   intent is internal). The specialist repeats the gate in code: the coordinator checks no allowlist, so a nested Smart
   or Lelik's `/voice/delegate` naming the intent gets a code-written refusal, no model call. The service re-checks flag
   and lock, so a stale cached profile gains nothing.
-  A reminder's create goes straight to the queue with a tool note and no receipt (the owner approved that reminder when
-  it was set), and its task's origin is the reminder's channel, so the completion alert lands where the reminder spoke.
+  A reminder's create goes straight to the queue with no confirmation (the owner approved that reminder when it was
+  set); the owner is shown it as a show-only notice after the run's answer. Its task's origin is the reminder's channel,
+  so the completion alert lands where the reminder spoke.
   The daily review, a voice errand and the delivery's alert turn have no entry. The delivery's alert turn is a background run (`background:external_task_deliver`, no `interactive_delivery`), so a
   worker's result never starts new work.
 - **A worker's text is wrapped where a model reads it through the queue.** `get_external_task` returns a result or a
   failure reason inside an outside-content wrapper after the reminder; a delivered result or reason is an ordinary
   workspace file under an outside-content header (no file-level mark).
-- **Results never in a system slot on delivery.** The alert is code-written from code-made values; a worker's text and
-  a failure reason reach the model only as the workspace file the alert names.
+- **Results never in a system slot on delivery.** The alert is code-written from code-made values and the task's note
+  (the bot's own text, shown to the owner at creation); a worker's text and a failure reason reach the model only as
+  the workspace file the alert names, marked as data.
+- **The note never reaches a worker or saved history.** No worker surface returns it; the alert's history pair keeps a
+  code-made label and the alert without the note.
 - **One refusal for the unknown.** A label that does not exist, another user's task and a missing task give the same
   tool error or `404`; nothing reveals existence.
 - **`401` limits live in memory.** Per address (rightmost `X-Forwarded-For` entry) and global, held by the rate limiter
@@ -264,7 +301,9 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
   deletes nothing.
 - **Upload the specialist's prompt before the deploy.** Profile `external_tasks`, blueprint `external_task_agent_v1`,
   `COGNITIVE_PROCESS_EXTERNAL_TASKS`, `OUTPUT_FORMAT_EXTERNAL_TASKS` and the `PROTOCOL_AGENT_SELECTION` clause ship by
-  token upload; a deploy before them runs the specialist on an empty profile (`docs/how_to/NEW_AGENT_PLAYBOOK.md`).
+  token upload; a deploy before them runs the specialist on an empty profile (`docs/how_to/NEW_AGENT_PLAYBOOK.md`). The
+  create tool's texts (the note included) ship by code deploy; `COGNITIVE_PROCESS_EXTERNAL_TASKS` tells the specialist
+  how to write the note, so upload it before the deploy that requires the note.
 - **A skill names the hand-off, not a tool.** Smart has no `create_external_task`; a skill that names a queue tool
   points at nothing Smart can call.
 - **Two `purge_after` collections**: tasks and results; both are in the TTL registry and a test scans for it. A new
