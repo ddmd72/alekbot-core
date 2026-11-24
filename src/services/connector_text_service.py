@@ -2,10 +2,11 @@
 
 Public interface:
     ConnectorTextService(token_repo, *, tool_token_id, result_token_id, required_tool_keys, required_result_keys,
-                         ttl_s=60.0, clock=time.monotonic, alert_sink=None)
+                         ttl_s=60.0, clock=time.monotonic, alert_sink=None, alert_subject=GENERIC_ALERT_SUBJECT)
     await texts() -> ConnectorTexts
 
-The first load failing raises `ConnectorTextsUnavailable` (and posts one ops alert when a sink is given). A later
+The first load failing raises `ConnectorTextsUnavailable` (and posts one ops alert when a sink is given, headed by
+`alert_subject`: each connector names itself, the drive one "Drive connector texts unavailable"). A later
 refresh failing logs an error and keeps serving the last good value. There is never an inline default text. A key
 no surface requires is not a failure (DRIVE_MCP_CONNECTOR_RFC §14.8: a token uploaded ahead of a deploy must not
 break the running revision): the texts load without it, and one WARNING names the unknown keys each time their set
@@ -27,6 +28,8 @@ from src.utils.logger import logger
 # The token's `metadata["validation"]["risk_level"]` values we accept. LOW is accepted because no adapter produces it
 # and none rewrites text at LOW (only MEDIUM is sanitized); MEDIUM is cleaned silently, so it is refused here.
 _ACCEPTED_RISK_LEVELS = frozenset({"safe", "low"})
+# The ops alert's subject when the caller names no connector.
+GENERIC_ALERT_SUBJECT = "Connector texts unavailable"
 
 
 class ConnectorTextService:
@@ -35,7 +38,8 @@ class ConnectorTextService:
     def __init__(self, token_repo: TokenRepository, *, tool_token_id: str, result_token_id: str,
                  required_tool_keys: AbstractSet[str], required_result_keys: AbstractSet[str],
                  ttl_s: float = 60.0, clock: Callable[[], float] = time.monotonic,
-                 alert_sink: Optional[AlertSinkPort] = None) -> None:
+                 alert_sink: Optional[AlertSinkPort] = None,
+                 alert_subject: str = GENERIC_ALERT_SUBJECT) -> None:
         self._repo = token_repo
         self._tool_token_id = tool_token_id
         self._result_token_id = result_token_id
@@ -44,6 +48,7 @@ class ConnectorTextService:
         self._ttl_s = ttl_s
         self._clock = clock
         self._alert_sink = alert_sink
+        self._alert_subject = alert_subject
         self._lock = asyncio.Lock()
         self._value: Optional[ConnectorTexts] = None
         self._loaded_at = 0.0
@@ -106,6 +111,6 @@ class ConnectorTextService:
         if self._alert_sink is None:
             return
         try:
-            await self._alert_sink.post(f"Drive connector texts unavailable: {message}")
+            await self._alert_sink.post(f"{self._alert_subject}: {message}")
         except Exception as exc:  # best-effort: the alert never replaces the real failure
             logger.warning(f"[ConnectorTexts] alert not delivered ({type(exc).__name__})")

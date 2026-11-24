@@ -77,6 +77,9 @@ class AlekAccessToken(SDKAccessToken):
     kind: McpTokenKind = McpTokenKind.OAUTH
     # The tools it may call; None (an OAuth token) is every tool of its resource (`voice_mcp_token.tool_permitted`).
     tools: Optional[List[str]] = None
+    # The external task queue's worker this credential acts for (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.7); None on
+    # every other resource.
+    worker_id: Optional[str] = None
 
 
 def voice_access_token(verified: VerifiedVoiceToken) -> AlekAccessToken:

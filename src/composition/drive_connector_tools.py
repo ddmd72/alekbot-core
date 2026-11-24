@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
 TOOL_TEXTS_TOKEN = "MCP_DRIVE_TOOL_TEXTS"
 RESULT_TEXTS_TOKEN = "MCP_DRIVE_RESULT_TEXTS"
+ALERT_SUBJECT = "Drive connector texts unavailable"
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
         raise RuntimeError("drive connector tools need the prompt token store, which did not initialize")
     texts = ConnectorTextService(token_repo, tool_token_id=TOOL_TEXTS_TOKEN, result_token_id=RESULT_TEXTS_TOKEN,
                                  required_tool_keys=REQUIRED_TOOL_KEYS, required_result_keys=REQUIRED_RESULT_KEYS,
-                                 alert_sink=alert_sink)
+                                 alert_sink=alert_sink, alert_subject=ALERT_SUBJECT)
     initial = await texts.texts()
     operations = DriveOperations(conversion_service=conversion_service, drive_service=drive_service,
                                  drive_search=drive_search, notification=None, localization=None,

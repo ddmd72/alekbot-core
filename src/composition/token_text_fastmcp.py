@@ -5,7 +5,8 @@ FastMCP registers its bound `list_tools` as the `tools/list` handler and builds 
 call (`mcp/server/fastmcp/server.py`, `_setup_handlers`, `list_tools`); the override here reads `ConnectorTextService`
 (60 s cache) and, per registered tool, deep-copies the schema the SDK built from the handler's signature (types,
 required, defaults: never touched), fills the tool's `description` and every `properties[p].description` from the
-texts (`<tool>`, `<tool>.<param>`), marks the tool `readOnlyHint`, and passes the tool's registered `_meta` through as
+texts (`<tool>`, `<tool>.<param>`), marks the tool `readOnlyHint` when it is read-only (`read_only_tools`; None:
+every tool, as the drive app's), and passes the tool's registered `_meta` through as
 a copy. The registered tool objects are never mutated: they are shared by concurrent requests.
 
 The server `instructions` (`INSTRUCTIONS_KEY`) come from the low-level server's `create_initialization_options`, which
@@ -20,7 +21,7 @@ registered outside the contract, which the drive builder refuses at build.
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional
+from typing import AbstractSet, Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.lowlevel.server import NotificationOptions
@@ -35,13 +36,16 @@ from ..services.connector_text_service import ConnectorTextService
 
 
 class TokenTextFastMCP(FastMCP):
-    """`texts` serves the tool texts; `initial` is a value it already returned (the boot load). Every other keyword
-    is FastMCP's; `instructions` is not one: they come from the texts."""
+    """`texts` serves the tool texts; `initial` is a value it already returned (the boot load); `read_only_tools` names
+    the tools listed with `readOnlyHint` (None: every tool; a tool outside the set is listed with no annotations).
+    Every other keyword is FastMCP's; `instructions` is not one: they come from the texts."""
 
-    def __init__(self, *, texts: ConnectorTextService, initial: ConnectorTexts, **settings: Any) -> None:
+    def __init__(self, *, texts: ConnectorTextService, initial: ConnectorTexts,
+                 read_only_tools: Optional[AbstractSet[str]] = None, **settings: Any) -> None:
         super().__init__(**settings)
         self._text_service = texts
         self._latest = initial
+        self._read_only_tools = frozenset(read_only_tools) if read_only_tools is not None else None
         built_in = self._mcp_server.create_initialization_options
 
         def initialization_options(notification_options: Optional[NotificationOptions] = None,
@@ -62,10 +66,11 @@ class TokenTextFastMCP(FastMCP):
 
     async def list_tools(self) -> list[MCPTool]:
         texts = await self.current_texts()
-        return [_listed(info, texts) for info in self._tool_manager.list_tools()]
+        return [_listed(info, texts, self._read_only_tools is None or info.name in self._read_only_tools)
+                for info in self._tool_manager.list_tools()]
 
 
-def _listed(info: RegisteredTool, texts: ConnectorTexts) -> MCPTool:
+def _listed(info: RegisteredTool, texts: ConnectorTexts, read_only: bool) -> MCPTool:
     schema = copy.deepcopy(info.parameters)
     for name, prop in schema.get("properties", {}).items():
         prop["description"] = texts.tools[text_key_of_parameter(info.name, name)]
@@ -75,7 +80,7 @@ def _listed(info: RegisteredTool, texts: ConnectorTexts) -> MCPTool:
         description=texts.tools[info.name],
         inputSchema=schema,
         outputSchema=copy.deepcopy(info.output_schema),
-        annotations=ToolAnnotations(readOnlyHint=True),
+        annotations=ToolAnnotations(readOnlyHint=True) if read_only else None,
         icons=info.icons,
         _meta=copy.deepcopy(info.meta),
     )

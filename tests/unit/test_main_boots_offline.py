@@ -50,6 +50,9 @@ from src.domain.email import IndexingJob
 from tests.support import http_boundary_fake
 from tests.support.oauth_credentials_store import creds
 from src.composition.drive_connector_tools import RESULT_TEXTS_TOKEN, TOOL_TEXTS_TOKEN
+from src.composition.tasks_mcp_setup import RESULT_TEXTS_TOKEN as TASK_RESULT_TEXTS_TOKEN
+from src.composition.tasks_mcp_setup import TOOL_TEXTS_TOKEN as TASK_TOOL_TEXTS_TOKEN
+from src.domain.mcp_resource import DRIVE_PATH, TASKS_PATH
 from tests.support.prompt_seed import seed_agent_prompt, seed_tokens
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -203,6 +206,7 @@ class Boot:
     served_is_quart: Optional[bool] = None
     mcp_discovery: Optional[Tuple[int, Any]] = None
     health_through_served: Optional[int] = None
+    resource_metadata: Dict[str, Tuple[int, Any]] = field(default_factory=dict)   # resource path -> its PRM answer
     seeded: Optional[Tuple[Any, Any]] = None
     connects: List[Tuple[Any, Optional[str]]] = field(default_factory=list)
     recorded_names: List[str] = field(default_factory=list)
@@ -299,6 +303,8 @@ async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCa
     boot.served_is_quart = isinstance(served, quart.Quart)
     boot.mcp_discovery = await _through_asgi(served, "/.well-known/oauth-authorization-server")
     boot.health_through_served = (await _through_asgi(served, "/health"))[0]
+    for path in RESOURCE_APP_PATHS:
+        boot.resource_metadata[path] = await _through_asgi(served, "/.well-known/oauth-protected-resource" + path)
     boot.startup = list(caplog.records)
     boot.rules = sorted(
         f"{','.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))} {rule.rule}" for rule in app.url_map.iter_rules())
@@ -336,8 +342,10 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
     boot = Boot()
     services = prod_env.install_offline_services(monkeypatch)
     boot.db = services.db
-    # The drive connector's tools load these two tokens at boot (DRIVE_MCP_CONNECTOR_RFC §5.3), as the uploaded tokens.
-    await seed_tokens(services.db, EnvironmentConfig(), (TOOL_TEXTS_TOKEN, RESULT_TEXTS_TOKEN))
+    # The drive connector's tools (DRIVE_MCP_CONNECTOR_RFC §5.3) and the tasks MCP resource's tools
+    # (EXTERNAL_TASK_QUEUE_RFC §5.4) each load two tokens at boot, as the uploaded tokens.
+    await seed_tokens(services.db, EnvironmentConfig(), (TOOL_TEXTS_TOKEN, RESULT_TEXTS_TOKEN,
+                                                         TASK_TOOL_TEXTS_TOKEN, TASK_RESULT_TEXTS_TOKEN))
     monkeypatch.setattr(main, "init_telemetry", lambda *a, **k: None)
     monkeypatch.setattr(main, "build_memory_telemetry", lambda *a, **k: None)
 
@@ -451,6 +459,21 @@ def _check_served_app(boot: Boot) -> List[str]:
         problems.append(f"an MCP path did not reach the SDK app: {status} {body}")
     if boot.health_through_served != 200:
         problems.append(f"a non-MCP path did not reach the Quart app through the dispatcher: {boot.health_through_served}")
+    return problems
+
+
+# The MCP apps beside the facts app; each is built at boot and handed to the dispatcher (`build_shared_asgi`).
+RESOURCE_APP_PATHS = (DRIVE_PATH, TASKS_PATH)
+
+
+def _check_resource_apps_served(boot: Boot) -> List[str]:
+    """Each resource app answers its protected-resource metadata through the served dispatcher: it was built (its
+    texts loaded) and main.py handed it over. An app left out answers the Quart app's 404."""
+    problems = []
+    for path in RESOURCE_APP_PATHS:
+        status, body = boot.resource_metadata.get(path, (None, None))
+        if status != 200 or not isinstance(body, dict) or not str(body.get("resource", "")).endswith(path):
+            problems.append(f"{path} is not served by its MCP app: {status} {body}")
     return problems
 
 
@@ -642,7 +665,8 @@ def _check_seeded_rows(boot: Boot) -> List[str]:
 
 
 CHECKS = [
-    _check_startup, _check_served_app, _check_agent_task_queue, _check_url_map, _check_blueprint_calls, _check_cabinet_repository,
+    _check_startup, _check_served_app, _check_resource_apps_served, _check_agent_task_queue, _check_url_map,
+    _check_blueprint_calls, _check_cabinet_repository,
     _check_seed, _check_matrix, _check_platform_workers, _check_seeded_rows,
 ]
 
@@ -779,6 +803,17 @@ def test_serve_must_get_the_dispatcher_with_the_mcp_app_behind_it():
         served_is_quart=False, mcp_discovery=(404, {"error": "x"}), health_through_served=200)))
     assert any("non-MCP path" in p for p in _check_served_app(Boot(
         served_is_quart=False, mcp_discovery=(200, {"authorization_endpoint": "x"}), health_through_served=404)))
+
+
+def test_every_resource_app_must_answer_its_metadata_through_the_dispatcher():
+    def prm(path: str) -> Tuple[int, Any]:
+        return 200, {"resource": "https://mcp.example.test" + path}
+    assert _check_resource_apps_served(Boot(resource_metadata={p: prm(p) for p in RESOURCE_APP_PATHS})) == []
+    missing = Boot(resource_metadata={DRIVE_PATH: prm(DRIVE_PATH), TASKS_PATH: (404, None)})
+    assert _check_resource_apps_served(missing) == [f"{TASKS_PATH} is not served by its MCP app: 404 None"]
+    wrong = Boot(resource_metadata={DRIVE_PATH: prm(DRIVE_PATH), TASKS_PATH: prm(DRIVE_PATH)})
+    assert len(_check_resource_apps_served(wrong)) == 1
+    assert len(_check_resource_apps_served(Boot())) == len(RESOURCE_APP_PATHS)
 
 
 def test_a_none_on_both_sides_of_the_cabinet_identity_is_a_problem():

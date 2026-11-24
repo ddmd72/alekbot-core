@@ -1,6 +1,6 @@
 # RFC: External task queue
 
-**Status:** Accepted (2026-11-23); steps 1 and 2 implemented, steps 3–5 pending.
+**Status:** Accepted (2026-11-23); steps 1–3 implemented, steps 4–5 pending.
 **Owner's map:** `docs/05_building_blocks/external_task_queue/README.md`.
 The decisions are in §2. Every example below is invented: the user is Alex Doe, the worker labels are `research` and
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
@@ -42,6 +42,20 @@ flagged and wrapped wherever they reach a model; and every workspace write in a 
 - The refusal notice is a literal post to the origin channel of the worker's oldest queued task, with no history pair.
 - A worker's description is never shown to Smart (§5.1 said it is): it is free text typed in the Cabinet, and a tool
   or parameter description is read with the schema's authority. Smart's tools carry labels only.
+
+**Implementation notes (step 3).** The build differs from §5.4 and §5.11 as follows; the body is kept as specified.
+- A worker key that `resolve_key` or the whitelist refuses on `/tasks-mcp` is a `401` at the door, not a tool error:
+  the SDK's verifier returns a token or nothing. REST answers `403` for a locked, switched-off, revoked or
+  not-whitelisted key. The lock text still answers a lock that happens between the verify and the call.
+- The rate limits are counted per worker (`user:worker`) and shared with REST, in REST's buckets, not per key or per
+  grant. The `401` address limits of REST are not applied on MCP.
+- `TokenTextFastMCP` takes a read-only tool set: only `list_tasks` carries `readOnlyHint`; the five tools that write
+  carry no annotations.
+- The whitelist rule moved out of the REST route into `ExternalWorkerUserGate`, which both surfaces call.
+- The task text in a claim result is plain: the owner's brief, never wrapped. Every refusal line names its code
+  (`code: stale_lease`); `not_enabled` and `worker_revoked` share one neutral line with no code. A failure other than
+  a refusal answers a generic tool error naming only the exception type.
+- `external_tasks` is not in `SCOPE_OF` yet and no registration can carry it: that is step 4.
 
 ## 1. Purpose
 
