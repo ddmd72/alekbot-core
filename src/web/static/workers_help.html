@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>External workers, explained</title>
+    <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* The Cabinet's tokens (cabinet.css), light and dark. A static page, public like the Cabinet shell. */
+      :root {
+        --bg-app: #f2f2f7;
+        --bg-panel-solid: #ffffff;
+        --bg-inset: rgba(118, 118, 128, 0.07);
+        --text-main: #000000;
+        --text-muted: #86868b;
+        --text-secondary: #6e6e73;
+        --border-light: rgba(0, 0, 0, 0.08);
+        --accent: #0071e3;
+        --tint-accent: rgba(0, 113, 227, 0.1);
+        --tint-warning: rgba(255, 149, 0, 0.14);
+        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+        --radius-sm: 10px;
+        --radius-lg: 24px;
+        --font-sans:
+          "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-app: #000000;
+          --bg-panel-solid: #1c1c1e;
+          --bg-inset: rgba(118, 118, 128, 0.16);
+          --text-main: #f5f5f7;
+          --text-secondary: #a1a1a6;
+          --border-light: rgba(255, 255, 255, 0.12);
+          --accent: #0a84ff;
+          --tint-accent: rgba(10, 132, 255, 0.18);
+          --tint-warning: rgba(255, 159, 10, 0.18);
+          --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.6);
+        }
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        background-color: var(--bg-app);
+        color: var(--text-main);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        letter-spacing: -0.01em;
+        line-height: 1.5;
+      }
+      .page {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: calc(16px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom));
+      }
+      .back-link { display: inline-block; padding: 8px 0; font-size: 15px; font-weight: 500; color: var(--text-muted); text-decoration: none; }
+      .back-link:hover { color: var(--text-main); }
+      h1 { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 8px 0 10px; }
+      h2 { font-size: 22px; font-weight: 700; margin: 36px 0 12px; scroll-margin-top: 12px; }
+      h3 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+      p, li { font-size: 16px; color: var(--text-secondary); }
+      p + p, p + ul, ul + p, p + ol { margin-top: 10px; }
+      ul, ol { padding-left: 22px; margin-top: 10px; }
+      li { margin-top: 6px; }
+      b { color: var(--text-main); font-weight: 600; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em;
+        background: var(--bg-inset);
+        color: var(--text-main);
+        padding: 1px 6px;
+        border-radius: 6px;
+        overflow-wrap: anywhere;
+      }
+      .lead { font-size: 17px; }
+      .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+      .toc a {
+        font-size: 14px; font-weight: 500; color: var(--accent); text-decoration: none;
+        background: var(--tint-accent); padding: 6px 12px; border-radius: 999px;
+      }
+      .tldr { background: var(--tint-accent); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px; }
+      .tldr-label { display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+      .tldr p { color: var(--text-main); font-size: 17px; font-weight: 500; margin-top: 2px; }
+      .card {
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        padding: 16px 18px;
+        margin-top: 12px;
+      }
+      .mini { font-size: 15px; }
+      .flow { margin-top: 12px; display: flex; flex-direction: column; align-items: stretch; }
+      .step {
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-sm);
+        padding: 12px 14px;
+        box-shadow: var(--shadow-md);
+      }
+      .step-t { font-weight: 600; color: var(--text-main); font-size: 17px; }
+      .step-d { font-size: 15px; color: var(--text-secondary); margin-top: 2px; }
+      .arrow { text-align: center; font-size: 22px; line-height: 1.2; color: var(--accent); padding: 2px 0; }
+      .note { margin-top: 10px; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 15px; color: var(--text-main); background: var(--tint-warning); }
+      .tools { list-style: none; padding-left: 0; }
+      .tools li { font-size: 15px; }
+      .dash { color: var(--text-muted); }
+      .trouble { padding: 14px 18px; }
+      .sym { font-weight: 600; color: var(--text-main); font-size: 16px; }
+      .fix { margin-top: 6px; font-size: 15px; color: var(--text-secondary); }
+      .fix-label { font-weight: 700; color: var(--text-main); }
+      .fix-label::after { content: " →"; color: var(--accent); }
+      .footer { margin-top: 36px; text-align: center; font-size: 15px; color: var(--text-muted); }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <a class="back-link" href="/cabinet" data-i18n="back.cabinet"></a>
+      <h1 data-i18n="hero.title"></h1>
+      <p class="lead" data-i18n="hero.sub"></p>
+      <nav class="toc">
+        <a href="#what" data-i18n="toc.what"></a>
+        <a href="#journey" data-i18n="toc.journey"></a>
+        <a href="#connect" data-i18n="toc.connect"></a>
+        <a href="#wake" data-i18n="toc.wake"></a>
+        <a href="#several" data-i18n="toc.several"></a>
+        <a href="#recipes" data-i18n="toc.recipes"></a>
+        <a href="#help" data-i18n="toc.help"></a>
+      </nav>
+
+      <section id="what">
+        <h2 data-i18n="what.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="what.tldr"></p></div>
+        <p data-i18n="what.body"></p>
+        <ul><li data-i18n="what.b1"></li><li data-i18n="what.b2"></li><li data-i18n="what.b3"></li></ul>
+      </section>
+
+      <section id="journey">
+        <h2 data-i18n="journey.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="journey.tldr"></p></div>
+        <div class="flow">
+          <div class="step"><div class="step-t" data-i18n="flow.1.t"></div><div class="step-d" data-i18n="flow.1.d"></div></div>
+          <div class="arrow" aria-hidden="true">↓</div>
+          <div class="step"><div class="step-t" data-i18n="flow.2.t"></div><div class="step-d" data-i18n="flow.2.d"></div></div>
+          <div class="arrow" aria-hidden="true">↓</div>
+          <div class="step"><div class="step-t" data-i18n="flow.3.t"></div><div class="step-d" data-i18n="flow.3.d"></div></div>
+          <div class="arrow" aria-hidden="true">↓</div>
+          <div class="step"><div class="step-t" data-i18n="flow.4.t"></div><div class="step-d" data-i18n="flow.4.d"></div></div>
+          <div class="arrow" aria-hidden="true">↓</div>
+          <div class="step"><div class="step-t" data-i18n="flow.5.t"></div><div class="step-d" data-i18n="flow.5.d"></div></div>
+          <div class="arrow" aria-hidden="true">↓</div>
+          <div class="step"><div class="step-t" data-i18n="flow.6.t"></div><div class="step-d" data-i18n="flow.6.d"></div></div>
+        </div>
+        <p class="note" data-i18n="note.reminder"></p>
+        <p class="note" data-i18n="note.claims"></p>
+        <p class="note" data-i18n="note.expiry"></p>
+      </section>
+
+      <section id="connect">
+        <h2 data-i18n="connect.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="connect.tldr"></p></div>
+        <p data-i18n="connect.add"></p>
+        <div class="card">
+          <h3 data-i18n="connect.a.t"></h3>
+          <p data-i18n="connect.a.d"></p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="connect.b.t"></h3>
+          <p data-i18n="connect.b.d"></p>
+          <p class="mini"><b data-i18n="tools.title"></b></p>
+          <ul class="tools"><li><code>claim_task</code> <span class="dash">–</span> <span data-i18n="tool.claim"></span></li><li><code>renew_lease</code> <span class="dash">–</span> <span data-i18n="tool.renew"></span></li><li><code>submit_task_result</code> <span class="dash">–</span> <span data-i18n="tool.submit"></span></li><li><code>fail_task</code> <span class="dash">–</span> <span data-i18n="tool.fail"></span></li><li><code>release_task</code> <span class="dash">–</span> <span data-i18n="tool.release"></span></li><li><code>list_tasks</code> <span class="dash">–</span> <span data-i18n="tool.list"></span></li></ul>
+        </div>
+      </section>
+
+      <section id="wake">
+        <h2 data-i18n="wake.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="wake.tldr"></p></div>
+        <p data-i18n="wake.why"></p>
+        <ol>
+          <li data-i18n="wake.s1"></li>
+          <li data-i18n="wake.s2"></li>
+          <li data-i18n="wake.s3"></li>
+          <li data-i18n="wake.s4"></li>
+        </ol>
+        <ul><li data-i18n="wake.p1"></li><li data-i18n="wake.p2"></li><li data-i18n="wake.p3"></li><li data-i18n="wake.p4"></li><li data-i18n="wake.p5"></li></ul>
+      </section>
+
+      <section id="several">
+        <h2 data-i18n="several.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="several.tldr"></p></div>
+        <p data-i18n="several.why"></p>
+        <ul><li data-i18n="several.b1"></li><li data-i18n="several.b2"></li><li data-i18n="several.b3"></li><li data-i18n="several.b4"></li></ul>
+      </section>
+
+      <section id="recipes">
+        <h2 data-i18n="recipes.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="recipes.tldr"></p></div>
+        <div class="card recipe">
+          <h3 data-i18n="r1.t"></h3>
+          <p class="mini"><b data-i18n="recipe.ingredients"></b>: <span data-i18n="r1.need"></span></p>
+          <p class="mini"><b data-i18n="recipe.steps"></b>:</p>
+          <ol data-i18n-list="r1.steps"></ol>
+          <p class="mini"><b data-i18n="recipe.result"></b>: <span data-i18n="r1.result"></span></p>
+        </div>
+        <div class="card recipe">
+          <h3 data-i18n="r2.t"></h3>
+          <p class="mini"><b data-i18n="recipe.ingredients"></b>: <span data-i18n="r2.need"></span></p>
+          <p class="mini"><b data-i18n="recipe.steps"></b>:</p>
+          <ol data-i18n-list="r2.steps"></ol>
+          <p class="mini"><b data-i18n="recipe.result"></b>: <span data-i18n="r2.result"></span></p>
+        </div>
+        <div class="card recipe">
+          <h3 data-i18n="r3.t"></h3>
+          <p class="mini"><b data-i18n="recipe.ingredients"></b>: <span data-i18n="r3.need"></span></p>
+          <p class="mini"><b data-i18n="recipe.steps"></b>:</p>
+          <ol data-i18n-list="r3.steps"></ol>
+          <p class="mini"><b data-i18n="recipe.result"></b>: <span data-i18n="r3.result"></span></p>
+        </div>
+      </section>
+
+      <section id="help">
+        <h2 data-i18n="help.title"></h2>
+        <div class="tldr"><span class="tldr-label" data-i18n="tldr.label"></span><p data-i18n="help.tldr"></p></div>
+        <div class="card trouble"><div class="sym" data-i18n="h1.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h1.f"></span></div></div>
+        <div class="card trouble"><div class="sym" data-i18n="h2.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h2.f"></span></div></div>
+        <div class="card trouble"><div class="sym" data-i18n="h3.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h3.f"></span></div></div>
+        <div class="card trouble"><div class="sym" data-i18n="h4.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h4.f"></span></div></div>
+        <div class="card trouble"><div class="sym" data-i18n="h5.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h5.f"></span></div></div>
+        <div class="card trouble"><div class="sym" data-i18n="h6.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h6.f"></span></div></div>
+        <div class="card trouble"><div class="sym" data-i18n="h7.s"></div><div class="fix"><span class="fix-label" data-i18n="help.fix"></span> <span data-i18n="h7.f"></span></div></div>
+      </section>
+
+      <p class="footer" data-i18n="footer"></p>
+    </main>
+
+    <script>
+      const LANG_DICT = {
+        en: {
+          "app.title": "External workers, explained",
+          "back.cabinet": "← Cabinet",
+          "hero.title": "External workers, in plain words 🛠️",
+          "hero.sub": "Your bot can hand big jobs to a helper that lives somewhere else. This page shows how to set one up. No jargon, promise. Grab a snack. 🍪",
+          "toc.what": "🤖 What",
+          "toc.journey": "🗺️ Journey",
+          "toc.connect": "🔌 Connect",
+          "toc.wake": "🔔 Wake-up",
+          "toc.several": "👯 Several",
+          "toc.recipes": "🍳 Recipes",
+          "toc.help": "🆘 Help",
+          "tldr.label": "In one line",
+          "what.title": "1. 🤖 What is a worker?",
+          "what.tldr": "A worker is an outside program or AI client that does the heavy jobs the bot hands over.",
+          "what.body": "Think of the bot as a manager and a worker as a freelancer. The manager writes a job on a card and drops it in a box. The freelancer drops by, picks a card, does the job and brings back the result.",
+          "what.b1": "Each task is addressed to **one** worker, by its label (for example `research` or `calendar-watch`).",
+          "what.b2": "A worker sees and takes **only its own** tasks. Never another worker's.",
+          "what.b3": "You can have several workers. Each one has its own keys.",
+          "journey.title": "2. 🗺️ The journey of one task",
+          "journey.tldr": "You ask in chat, you say OK, a worker takes it and does it, and the bot tells you the result.",
+          "flow.1.t": "💬 Created in chat",
+          "flow.1.d": "You ask the bot to hand something off. For example: compare three community-garden irrigation kits for Shelbyville.",
+          "flow.2.t": "✋ Waits for your OK",
+          "flow.2.d": "You get the full text and a short code. Press **Send** (Slack) or type `$task send CODE`. Do nothing for 24 hours and it lapses.",
+          "flow.3.t": "📥 In the queue",
+          "flow.3.d": "Ready, and waiting for its worker.",
+          "flow.4.t": "🤝 A worker takes it",
+          "flow.4.d": "The worker holds a **lease**: 15 minutes, and it must renew it while it works. If the lease runs out, the task goes back to the queue.",
+          "flow.5.t": "✅ Result (or a failure)",
+          "flow.5.d": "The worker hands in the result, or says it could not do it.",
+          "flow.6.t": "📬 You hear about it",
+          "flow.6.d": "The bot saves the result as a file in your workspace (`references/external_tasks/…`) and tells you in the chat the task came from.",
+          "note.reminder": "⏰ Made by one of your reminders? It skips the OK step. You already approved the reminder when you set it.",
+          "note.claims": "🔁 Taken 5 times and never finished? The bot gives up on it and tells you.",
+          "note.expiry": "⌛ Nobody finishes it within 7 days? It expires, and you are told.",
+          "connect.title": "3. 🔌 Connect a worker",
+          "connect.tldr": "Add the worker in the Cabinet, then connect it with a key (your own scripts) or with the connector (AI clients).",
+          "connect.add": "**First, add the worker.** In Settings → Connections → External workers, type a label (lowercase letters, digits, dashes, up to 32 characters) and a short description, then press **Add worker**.",
+          "connect.a.t": "🔑 Way A: a key",
+          "connect.a.d": "Best for your own scripts. Press **New key** on the worker. The key shows up **once**: copy it right away, you cannot see it again. Your script sends it with every request as `Authorization: Bearer YOUR_KEY`. Lost it? Revoke it and make a new one. A worker can hold up to 3 keys.",
+          "connect.b.t": "🔗 Way B: the connector (MCP)",
+          "connect.b.d": "Best for AI clients. In the client, add a **custom MCP server** with this address: `https://{host}/tasks-mcp`. The client sends you to a consent page that asks **which worker** this connection is for. Pick one and approve.",
+          "tools.title": "The worker's six tools",
+          "tool.claim": "take a task",
+          "tool.renew": "keep it a bit longer (renew the lease)",
+          "tool.submit": "hand in the result",
+          "tool.fail": "say it did not work",
+          "tool.release": "put it back in the queue",
+          "tool.list": "see what is waiting",
+          "wake.title": "4. 🔔 Wake-up (the “push”)",
+          "wake.tldr": "Without it, a worker only learns about a task the next time it runs by itself. With it, the bot taps it on the shoulder.",
+          "wake.why": "Think of a doorbell. No doorbell: the worker has to open the door now and then to check. With a doorbell: the bot rings when there is work.",
+          "wake.s1": "Your client gives you a **trigger request**: a `curl` command, and usually a token (a secret).",
+          "wake.s2": "On the worker, press **Wake-up URL**.",
+          "wake.s3": "Paste the request into the first box and the token into the second, then press **Save**.",
+          "wake.s4": "Done. When a task is ready and the worker holds no live lease, the bot sends **one** empty ping to that address.",
+          "wake.p1": "The ping carries **no task text**. It only says “there is work”. The worker then takes the task itself.",
+          "wake.p2": "Only public `https` addresses on a real domain name get through the bot's outbound guard. No `localhost`, no bare IP numbers.",
+          "wake.p3": "A worker has **one** wake address. Saving a new one replaces the old one. The address is stored encrypted, and only its host is ever shown again.",
+          "wake.p4": "Target down or slow? The bot tries again, up to 5 times.",
+          "wake.p5": "Target says no (wrong request or token, a redirect, an error in the 400s, or an address that is not allowed)? You get **one** notice in the chat, and the task simply waits in the queue.",
+          "several.title": "5. 👯 Several connections on one worker",
+          "several.tldr": "One worker can have many connections (keys and connected apps), but each task is taken by only one of them.",
+          "several.why": "Why? For example, one client is woken by push and another runs on a schedule. Both work on the same worker's tasks.",
+          "several.b1": "Whoever takes a task first gets it (that is what the lease is for). The other one finds nothing to do.",
+          "several.b2": "The push goes only to the worker's wake address, not to every connection.",
+          "several.b3": "Connected apps are listed under the worker. You can revoke them one by one.",
+          "several.b4": "Removing a worker revokes all its keys and connections and cancels its open tasks.",
+          "recipes.title": "6. 🍳 Recipes",
+          "recipes.tldr": "Three set-ups that work. Pick the one that sounds like you.",
+          "recipe.ingredients": "You need",
+          "recipe.steps": "Steps",
+          "recipe.result": "What you get",
+          "r1.t": "🗓️ Schedule only",
+          "r1.need": "1 worker · 1 client that runs on a schedule · no wake-up form",
+          "r1.steps": "Add the worker.|Connect the client (key or connector).|Set the client to run every so often.|Leave the Wake-up URL empty.",
+          "r1.result": "Tasks wait in the queue until the next run picks them up. Simple and calm.",
+          "r2.t": "🔔 Push + schedule as a safety net",
+          "r2.need": "1 worker · 1 client with the wake-up form · another client on a schedule",
+          "r2.steps": "Connect both clients to the same worker.|Paste the first client's trigger request into the Wake-up URL form.|Set the second client to run on a schedule.|One client that supports both a trigger and a schedule works too.",
+          "r2.result": "Usually the push gets there first. If it ever misses, the scheduled run catches the task.",
+          "r3.t": "👭 Two workers, each with its own push",
+          "r3.need": "2 workers (say `research` and `calendar-watch`) · each with its own client and wake-up form",
+          "r3.steps": "Add two workers with different labels.|Connect a client to each one.|Fill in each worker's own Wake-up URL form.|When you ask in chat, name the worker you mean. Forget to? The bot may ask you which one.",
+          "r3.result": "Each worker is woken only for its own tasks. No mix-ups.",
+          "help.title": "7. 🆘 Something's off?",
+          "help.tldr": "Find your symptom on the left, do the fix on the right.",
+          "help.fix": "Fix",
+          "h1.s": "😵 The worker gets 401 (or 403)",
+          "h1.f": "The key or connection was revoked, the worker was removed, or the feature is switched off for you. Make a **New key**, or reconnect the app and pick the worker again.",
+          "h2.s": "⏳ My task sits in the queue and nothing happens",
+          "h2.f": "No wake-up form and no scheduled run yet. Run the worker by hand, or fill in the Wake-up URL form.",
+          "h3.s": "🙈 The task never even reaches the queue",
+          "h3.f": "It is probably still waiting for your OK. Press **Send** or type `$task send CODE` within 24 hours.",
+          "h4.s": "🚫 A “wake-up refused” notice in the chat",
+          "h4.f": "The address said no. Open **Wake-up URL** and paste the request and the token again. Check it is a public `https` address.",
+          "h5.s": "🤔 The worker says there was no task text",
+          "h5.f": "That is normal! The ping never has any. The worker should now **take the task** (`claim_task`) to get its text.",
+          "h6.s": "🗝️ I lost the key",
+          "h6.f": "Revoke it and make a new one. A key cannot be shown a second time.",
+          "h7.s": "🕳️ A task vanished after a week",
+          "h7.f": "Nobody finished it within 7 days, so it expired. Ask the bot again.",
+          "footer": "Still stuck? Ask the bot in the chat to list your workers and tasks. 💙",
+        },
+        uk: {
+          "app.title": "Зовнішні виконавці простими словами",
+          "back.cabinet": "← Кабінет",
+          "hero.title": "Зовнішні виконавці простими словами 🛠️",
+          "hero.sub": "Твій бот може передавати великі справи помічнику, який живе деінде. Ця сторінка покаже, як його налаштувати. Без мудрованих слів, чесно. Візьми щось смачненьке. 🍪",
+          "toc.what": "🤖 Хто це",
+          "toc.journey": "🗺️ Шлях",
+          "toc.connect": "🔌 Підключити",
+          "toc.wake": "🔔 Пробудження",
+          "toc.several": "👯 Кілька",
+          "toc.recipes": "🍳 Рецепти",
+          "toc.help": "🆘 Допомога",
+          "tldr.label": "Одним рядком",
+          "what.title": "1. 🤖 Що таке виконавець?",
+          "what.tldr": "Виконавець — це зовнішня програма або ШІ-клієнт, що виконує важкі завдання, які передає бот.",
+          "what.body": "Уяви, що бот — керівник, а виконавець — фрилансер. Керівник пише завдання на картці й кладе в ящик. Фрилансер заходить, бере картку, робить справу й приносить результат.",
+          "what.b1": "Кожне завдання адресоване **одному** виконавцю — за його міткою (наприклад, `research` або `calendar-watch`).",
+          "what.b2": "Виконавець бачить і бере **лише свої** завдання. Ніколи чужі.",
+          "what.b3": "Виконавців може бути кілька. Кожен має власні ключі.",
+          "journey.title": "2. 🗺️ Шлях одного завдання",
+          "journey.tldr": "Ти просиш у чаті, кажеш «ОК», виконавець бере завдання й робить його, а бот повідомляє результат.",
+          "flow.1.t": "💬 Створено в чаті",
+          "flow.1.d": "Ти просиш бота передати справу. Наприклад: порівняти три набори для поливу в громадському саду Шелбівіля.",
+          "flow.2.t": "✋ Чекає на твоє «ОК»",
+          "flow.2.d": "Ти отримуєш повний текст і короткий код. Натисни **Send** (Slack) або напиши `$task send CODE`. Нічого не робити 24 години — і завдання згасне.",
+          "flow.3.t": "📥 У черзі",
+          "flow.3.d": "Готове й чекає свого виконавця.",
+          "flow.4.t": "🤝 Виконавець бере його",
+          "flow.4.d": "Виконавець отримує **оренду**: 15 хвилин, і поки працює, мусить її продовжувати. Якщо оренда спливла — завдання повертається в чергу.",
+          "flow.5.t": "✅ Результат (або невдача)",
+          "flow.5.d": "Виконавець здає результат або каже, що не вдалося.",
+          "flow.6.t": "📬 Ти дізнаєшся",
+          "flow.6.d": "Бот зберігає результат файлом у твоєму робочому просторі (`references/external_tasks/…`) і повідомляє в чаті, звідки прийшло завдання.",
+          "note.reminder": "⏰ Створене одним із твоїх нагадувань? Крок «ОК» пропускається: нагадування вже схвалено в момент, коли його створювали.",
+          "note.claims": "🔁 Брали 5 разів і так і не завершили? Бот здається й повідомляє тебе.",
+          "note.expiry": "⌛ Ніхто не завершив за 7 днів? Завдання спливає, і тебе про це повідомляють.",
+          "connect.title": "3. 🔌 Підключення виконавця",
+          "connect.tldr": "Додай виконавця в Кабінеті, потім підключи його ключем (твої власні скрипти) або конектором (ШІ-клієнти).",
+          "connect.add": "**Спершу додай виконавця.** У Налаштування → Підключення → Зовнішні виконавці введи мітку (малі літери, цифри, дефіси, до 32 символів) і короткий опис, тоді натисни **Додати виконавця**.",
+          "connect.a.t": "🔑 Спосіб А: ключ",
+          "connect.a.d": "Найкраще для твоїх власних скриптів. Натисни **Новий ключ** біля виконавця. Ключ показується **один раз**: скопіюй одразу, удруге його не побачиш. Скрипт надсилає його з кожним запитом як `Authorization: Bearer YOUR_KEY`. Загубився? Відклич і створи новий. Виконавець може мати до 3 ключів.",
+          "connect.b.t": "🔗 Спосіб Б: конектор (MCP)",
+          "connect.b.d": "Найкраще для ШІ-клієнтів. У клієнті додай **власний MCP-сервер** за адресою `https://{host}/tasks-mcp`. Клієнт відправить тебе на сторінку згоди, де спитають, **для якого виконавця** це підключення. Обери й підтверди.",
+          "tools.title": "Шість інструментів виконавця",
+          "tool.claim": "взяти завдання",
+          "tool.renew": "потримати ще (продовжити оренду)",
+          "tool.submit": "здати результат",
+          "tool.fail": "сказати, що не вийшло",
+          "tool.release": "повернути в чергу",
+          "tool.list": "подивитися, що чекає",
+          "wake.title": "4. 🔔 Пробудження («поштовх»)",
+          "wake.tldr": "Без нього виконавець дізнається про завдання лише під час свого наступного запуску. З ним бот легенько торкається його плеча.",
+          "wake.why": "Уяви дзвінок у двері. Без нього виконавець мусить час від часу сам відчиняти й перевіряти. З дзвінком бот дзвонить, коли є робота.",
+          "wake.s1": "Твій клієнт дає **запит-тригер**: команду `curl` і зазвичай токен (секрет).",
+          "wake.s2": "Біля виконавця натисни **Адреса пробудження**.",
+          "wake.s3": "Встав запит у перше поле, а токен у друге, потім натисни **Зберегти**.",
+          "wake.s4": "Готово. Коли завдання готове, а в виконавця немає чинної оренди, бот надсилає на цю адресу **один** порожній сигнал.",
+          "wake.p1": "Сигнал **не містить тексту завдання**. Він лише каже «є робота». Далі виконавець сам бере завдання.",
+          "wake.p2": "Охорону вихідних запитів бота проходять лише публічні адреси `https` із справжнім доменним іменем. Без `localhost` і голих IP-номерів.",
+          "wake.p3": "У виконавця **одна** адреса пробудження. Нова замінює стару. Адреса зберігається зашифрованою, і знову показується лише її хост.",
+          "wake.p4": "Адресат лежить або гальмує? Бот пробує знову, до 5 разів.",
+          "wake.p5": "Адресат відмовляє (хибний запит чи токен, перенаправлення, помилка на 4xx або недозволена адреса)? Ти отримуєш **одне** повідомлення в чаті, а завдання просто чекає в черзі.",
+          "several.title": "5. 👯 Кілька підключень в одного виконавця",
+          "several.tldr": "В одного виконавця може бути багато підключень (ключі й під'єднані застосунки), але кожне завдання бере лише одне з них.",
+          "several.why": "Навіщо? Наприклад, один клієнт прокидається від поштовху, а інший працює за розкладом. Обидва беруть завдання того самого виконавця.",
+          "several.b1": "Хто перший взяв завдання — того воно й є (для цього й оренда). Інший не знаходить, що робити.",
+          "several.b2": "Поштовх іде лише на адресу пробудження виконавця, а не на кожне підключення.",
+          "several.b3": "Підключені застосунки перелічено під виконавцем. Відкликати їх можна по одному.",
+          "several.b4": "Видалення виконавця відкликає всі його ключі й підключення та скасовує його відкриті завдання.",
+          "recipes.title": "6. 🍳 Рецепти",
+          "recipes.tldr": "Три робочі схеми. Обери ту, що схожа на тебе.",
+          "recipe.ingredients": "Тобі потрібно",
+          "recipe.steps": "Кроки",
+          "recipe.result": "Що отримаєш",
+          "r1.t": "🗓️ Лише розклад",
+          "r1.need": "1 виконавець · 1 клієнт, що працює за розкладом · без форми пробудження",
+          "r1.steps": "Додай виконавця.|Підключи клієнта (ключем або конектором).|Налаштуй клієнта, щоб він запускався час від часу.|Залиш адресу пробудження порожньою.",
+          "r1.result": "Завдання чекають у черзі, доки їх не підхопить наступний запуск. Просто й спокійно.",
+          "r2.t": "🔔 Поштовх + розклад про всяк випадок",
+          "r2.need": "1 виконавець · 1 клієнт із формою пробудження · інший клієнт за розкладом",
+          "r2.steps": "Підключи обох клієнтів до того самого виконавця.|Встав запит-тригер першого клієнта у форму адреси пробудження.|Налаштуй другого клієнта на запуск за розкладом.|Один клієнт, що вміє і тригер, і розклад, теж підійде.",
+          "r2.result": "Зазвичай поштовх встигає першим. Якщо раптом промахнеться — завдання підбере запуск за розкладом.",
+          "r3.t": "👭 Два виконавці, кожен зі своїм поштовхом",
+          "r3.need": "2 виконавці (скажімо, `research` і `calendar-watch`) · кожен зі своїм клієнтом і формою пробудження",
+          "r3.steps": "Додай двох виконавців із різними мітками.|Підключи клієнта до кожного.|Заповни форму адреси пробудження для кожного окремо.|Просячи в чаті, назви потрібного виконавця. Не вказали? Бот може перепитати, котрого саме.",
+          "r3.result": "Кожного виконавця будять лише через його власні завдання. Жодної плутанини.",
+          "help.title": "7. 🆘 Щось не так?",
+          "help.tldr": "Знайди свій симптом ліворуч, зроби виправлення праворуч.",
+          "help.fix": "Що робити",
+          "h1.s": "😵 Виконавець отримує 401 (або 403)",
+          "h1.f": "Ключ або підключення відкликано, виконавця видалено, або функцію для тебе вимкнено. Створи **Новий ключ** або перепідключи застосунок і знову обери виконавця.",
+          "h2.s": "⏳ Завдання лежить у черзі й нічого не відбувається",
+          "h2.f": "Немає форми пробудження, а запуску за розкладом ще не було. Запусти виконавця вручну або заповни форму адреси пробудження.",
+          "h3.s": "🙈 Завдання взагалі не потрапляє в чергу",
+          "h3.f": "Ймовірно, воно досі чекає на твоє «ОК». Натисни **Send** або напиши `$task send CODE` протягом 24 годин.",
+          "h4.s": "🚫 У чаті повідомлення «пробудження відхилено»",
+          "h4.f": "Адреса відмовила. Відкрий **Адреса пробудження** й встав запит і токен ще раз. Переконайся, що це публічна адреса `https`.",
+          "h5.s": "🤔 Виконавець каже, що тексту завдання не було",
+          "h5.f": "Це нормально! У сигналі його ніколи немає. Тепер виконавець має **взяти завдання** (`claim_task`), щоб отримати текст.",
+          "h6.s": "🗝️ Ключ загубився",
+          "h6.f": "Відклич його й створи новий. Ключ удруге не показують.",
+          "h7.s": "🕳️ Завдання зникло за тиждень",
+          "h7.f": "Ніхто не завершив його за 7 днів, тож воно спливло. Попроси бота ще раз.",
+          "footer": "Все ще не виходить? Попроси бота в чаті показати твоїх виконавців і завдання. 💙",
+        },
+        fr: {
+          "app.title": "Les agents externes, expliqués",
+          "back.cabinet": "← Cabinet",
+          "hero.title": "Les agents externes, en clair 🛠️",
+          "hero.sub": "Ton bot peut confier les gros travaux à un assistant qui vit ailleurs. Cette page montre comment en mettre un en place. Sans jargon, promis. Prends un goûter. 🍪",
+          "toc.what": "🤖 Quoi",
+          "toc.journey": "🗺️ Parcours",
+          "toc.connect": "🔌 Connecter",
+          "toc.wake": "🔔 Réveil",
+          "toc.several": "👯 Plusieurs",
+          "toc.recipes": "🍳 Recettes",
+          "toc.help": "🆘 Aide",
+          "tldr.label": "En une ligne",
+          "what.title": "1. 🤖 C'est quoi, un agent ?",
+          "what.tldr": "Un agent est un programme ou un client IA extérieur qui fait les gros travaux que le bot lui confie.",
+          "what.body": "Imagine le bot comme un chef et l'agent comme un freelance. Le chef écrit un travail sur une fiche et la dépose dans une boîte. Le freelance passe, prend une fiche, fait le travail et rapporte le résultat.",
+          "what.b1": "Chaque tâche est adressée à **un seul** agent, par son étiquette (par exemple `research` ou `calendar-watch`).",
+          "what.b2": "Un agent voit et prend **uniquement ses propres** tâches. Jamais celles d'un autre.",
+          "what.b3": "Tu peux avoir plusieurs agents. Chacun a ses propres clés.",
+          "journey.title": "2. 🗺️ Le parcours d'une tâche",
+          "journey.tldr": "Tu demandes dans le chat, tu dis OK, un agent la prend et la fait, et le bot te donne le résultat.",
+          "flow.1.t": "💬 Créée dans le chat",
+          "flow.1.d": "Tu demandes au bot de confier quelque chose. Par exemple : comparer trois kits d'irrigation de jardin partagé pour Shelbyville.",
+          "flow.2.t": "✋ Attend ton OK",
+          "flow.2.d": "Tu reçois le texte complet et un court code. Appuie sur **Send** (Slack) ou tape `$task send CODE`. Sans réponse pendant 24 heures, elle expire.",
+          "flow.3.t": "📥 Dans la file",
+          "flow.3.d": "Prête, elle attend son agent.",
+          "flow.4.t": "🤝 Un agent la prend",
+          "flow.4.d": "L'agent obtient un **bail** : 15 minutes, à renouveler tant qu'il travaille. Si le bail expire, la tâche retourne dans la file.",
+          "flow.5.t": "✅ Résultat (ou échec)",
+          "flow.5.d": "L'agent rend le résultat, ou dit qu'il n'a pas pu.",
+          "flow.6.t": "📬 Tu es prévenu",
+          "flow.6.d": "Le bot enregistre le résultat comme fichier dans ton espace de travail (`references/external_tasks/…`) et te prévient dans le chat d'où venait la tâche.",
+          "note.reminder": "⏰ Créée par un de tes rappels ? Elle saute l'étape OK. Tu as déjà approuvé le rappel en le créant.",
+          "note.claims": "🔁 Prise 5 fois sans jamais être terminée ? Le bot abandonne et te prévient.",
+          "note.expiry": "⌛ Personne ne la termine en 7 jours ? Elle expire, et tu es prévenu.",
+          "connect.title": "3. 🔌 Connecter un agent",
+          "connect.tldr": "Ajoute l'agent dans le Cabinet, puis connecte-le avec une clé (tes propres scripts) ou avec le connecteur (clients IA).",
+          "connect.add": "**D'abord, ajoute l'agent.** Dans Paramètres → Connexions → Agents externes, saisis une étiquette (minuscules, chiffres, tirets, 32 caractères max) et une courte description, puis appuie sur **Ajouter un agent**.",
+          "connect.a.t": "🔑 Voie A : une clé",
+          "connect.a.d": "Idéal pour tes propres scripts. Appuie sur **Nouvelle clé** sur l'agent. La clé s'affiche **une seule fois** : copie-la tout de suite, tu ne pourras plus la revoir. Ton script l'envoie avec chaque requête sous la forme `Authorization: Bearer YOUR_KEY`. Perdue ? Révoque-la et crées-en une autre. Un agent peut avoir jusqu'à 3 clés.",
+          "connect.b.t": "🔗 Voie B : le connecteur (MCP)",
+          "connect.b.d": "Idéal pour les clients IA. Dans le client, ajoute un **serveur MCP personnalisé** à cette adresse : `https://{host}/tasks-mcp`. Le client t'envoie vers une page de consentement qui demande **pour quel agent** est cette connexion. Choisis-en un et approuve.",
+          "tools.title": "Les six outils de l'agent",
+          "tool.claim": "prendre une tâche",
+          "tool.renew": "la garder un peu plus (renouveler le bail)",
+          "tool.submit": "rendre le résultat",
+          "tool.fail": "dire que ça n'a pas marché",
+          "tool.release": "la remettre dans la file",
+          "tool.list": "voir ce qui attend",
+          "wake.title": "4. 🔔 Le réveil (le « push »)",
+          "wake.tldr": "Sans lui, un agent n'apprend l'existence d'une tâche qu'à son prochain lancement. Avec lui, le bot lui tape sur l'épaule.",
+          "wake.why": "Pense à une sonnette. Sans sonnette, l'agent doit ouvrir la porte de temps en temps pour vérifier. Avec, le bot sonne dès qu'il y a du travail.",
+          "wake.s1": "Ton client te donne une **requête de déclenchement** : une commande `curl`, et en général un jeton (un secret).",
+          "wake.s2": "Sur l'agent, appuie sur **Adresse de réveil**.",
+          "wake.s3": "Colle la requête dans la première case et le jeton dans la seconde, puis appuie sur **Enregistrer**.",
+          "wake.s4": "C'est fait. Quand une tâche est prête et que l'agent n'a aucun bail en cours, le bot envoie **un seul** ping vide à cette adresse.",
+          "wake.p1": "Le ping ne contient **aucun texte de tâche**. Il dit seulement « il y a du travail ». L'agent prend ensuite la tâche lui-même.",
+          "wake.p2": "Seules les adresses `https` publiques, avec un vrai nom de domaine, passent la garde des requêtes sortantes du bot. Pas de `localhost`, pas d'adresse IP brute.",
+          "wake.p3": "Un agent a **une seule** adresse de réveil. En enregistrer une nouvelle remplace l'ancienne. L'adresse est stockée chiffrée, et seul son hôte est réaffiché.",
+          "wake.p4": "Cible en panne ou lente ? Le bot réessaie, jusqu'à 5 fois.",
+          "wake.p5": "La cible refuse (mauvaise requête ou mauvais jeton, redirection, erreur en 4xx, ou adresse non autorisée) ? Tu reçois **une** notification dans le chat, et la tâche attend simplement dans la file.",
+          "several.title": "5. 👯 Plusieurs connexions sur un agent",
+          "several.tldr": "Un agent peut avoir plusieurs connexions (clés et applis connectées), mais chaque tâche n'est prise que par une seule.",
+          "several.why": "Pourquoi ? Par exemple, un client est réveillé par push et un autre tourne selon un horaire. Les deux travaillent sur les tâches du même agent.",
+          "several.b1": "Le premier qui prend une tâche l'obtient (c'est le rôle du bail). L'autre ne trouve rien à faire.",
+          "several.b2": "Le push va uniquement à l'adresse de réveil de l'agent, pas à chaque connexion.",
+          "several.b3": "Les applis connectées sont listées sous l'agent. Tu peux les révoquer une par une.",
+          "several.b4": "Supprimer un agent révoque toutes ses clés et connexions et annule ses tâches ouvertes.",
+          "recipes.title": "6. 🍳 Recettes",
+          "recipes.tldr": "Trois montages qui marchent. Choisis celui qui te ressemble.",
+          "recipe.ingredients": "Il te faut",
+          "recipe.steps": "Étapes",
+          "recipe.result": "Ce que tu obtiens",
+          "r1.t": "🗓️ Horaire seulement",
+          "r1.need": "1 agent · 1 client qui tourne selon un horaire · pas de formulaire de réveil",
+          "r1.steps": "Ajoute l'agent.|Connecte le client (clé ou connecteur).|Règle le client pour qu'il tourne de temps en temps.|Laisse l'adresse de réveil vide.",
+          "r1.result": "Les tâches attendent dans la file jusqu'au prochain passage. Simple et tranquille.",
+          "r2.t": "🔔 Push + horaire en filet de sécurité",
+          "r2.need": "1 agent · 1 client avec le formulaire de réveil · un autre client sur horaire",
+          "r2.steps": "Connecte les deux clients au même agent.|Colle la requête de déclenchement du premier client dans le formulaire d'adresse de réveil.|Règle le second client pour qu'il tourne sur horaire.|Un seul client qui gère à la fois un déclencheur et un horaire marche aussi.",
+          "r2.result": "En général, le push arrive en premier. S'il rate, le passage prévu rattrape la tâche.",
+          "r3.t": "👭 Deux agents, chacun avec son push",
+          "r3.need": "2 agents (disons `research` et `calendar-watch`) · chacun avec son client et son formulaire de réveil",
+          "r3.steps": "Ajoute deux agents avec des étiquettes différentes.|Connecte un client à chacun.|Remplis le formulaire d'adresse de réveil de chaque agent.|Dans le chat, nomme l'agent voulu. Tu oublies ? Le bot peut te demander lequel.",
+          "r3.result": "Chaque agent n'est réveillé que pour ses propres tâches. Pas de confusion.",
+          "help.title": "7. 🆘 Quelque chose cloche ?",
+          "help.tldr": "Trouve ton symptôme à gauche, applique le remède à droite.",
+          "help.fix": "Remède",
+          "h1.s": "😵 L'agent reçoit une 401 (ou 403)",
+          "h1.f": "La clé ou la connexion a été révoquée, l'agent a été supprimé, ou la fonction est désactivée pour toi. Crée une **Nouvelle clé**, ou reconnecte l'appli et choisis de nouveau l'agent.",
+          "h2.s": "⏳ Ma tâche reste dans la file et rien ne se passe",
+          "h2.f": "Pas de formulaire de réveil et pas encore de passage prévu. Lance l'agent à la main, ou remplis le formulaire d'adresse de réveil.",
+          "h3.s": "🙈 La tâche n'arrive même pas dans la file",
+          "h3.f": "Elle attend sans doute encore ton OK. Appuie sur **Send** ou tape `$task send CODE` dans les 24 heures.",
+          "h4.s": "🚫 Une notification « réveil refusé » dans le chat",
+          "h4.f": "L'adresse a dit non. Ouvre **Adresse de réveil** et recolle la requête et le jeton. Vérifie que c'est une adresse `https` publique.",
+          "h5.s": "🤔 L'agent dit qu'il n'y avait pas de texte de tâche",
+          "h5.f": "C'est normal ! Le ping n'en contient jamais. L'agent doit maintenant **prendre la tâche** (`claim_task`) pour en avoir le texte.",
+          "h6.s": "🗝️ J'ai perdu la clé",
+          "h6.f": "Révoque-la et crées-en une autre. Une clé ne peut pas être réaffichée.",
+          "h7.s": "🕳️ Une tâche a disparu après une semaine",
+          "h7.f": "Personne ne l'a terminée en 7 jours, elle a donc expiré. Redemande au bot.",
+          "footer": "Toujours bloqué ? Demande au bot, dans le chat, de lister tes agents et tes tâches. 💙",
+        },
+        es: {
+          "app.title": "Agentes externos, explicados",
+          "back.cabinet": "← Panel",
+          "hero.title": "Agentes externos, en cristiano 🛠️",
+          "hero.sub": "Tu bot puede pasar los trabajos grandes a un ayudante que vive en otro sitio. Esta página te enseña a montarlo. Sin jerga, lo prometo. Coge un tentempié. 🍪",
+          "toc.what": "🤖 Qué es",
+          "toc.journey": "🗺️ Viaje",
+          "toc.connect": "🔌 Conectar",
+          "toc.wake": "🔔 Aviso",
+          "toc.several": "👯 Varias",
+          "toc.recipes": "🍳 Recetas",
+          "toc.help": "🆘 Ayuda",
+          "tldr.label": "En una línea",
+          "what.title": "1. 🤖 ¿Qué es un agente?",
+          "what.tldr": "Un agente es un programa o cliente de IA externo que hace los trabajos pesados que le pasa el bot.",
+          "what.body": "Imagina el bot como un jefe y el agente como un autónomo. El jefe escribe un trabajo en una ficha y la deja en una caja. El autónomo pasa, coge una ficha, hace el trabajo y trae el resultado.",
+          "what.b1": "Cada tarea va dirigida a **un solo** agente, por su etiqueta (por ejemplo `research` o `calendar-watch`).",
+          "what.b2": "Un agente ve y toma **solo sus propias** tareas. Nunca las de otro.",
+          "what.b3": "Puedes tener varios agentes. Cada uno tiene sus propias claves.",
+          "journey.title": "2. 🗺️ El viaje de una tarea",
+          "journey.tldr": "Pides en el chat, das el OK, un agente la toma y la hace, y el bot te cuenta el resultado.",
+          "flow.1.t": "💬 Creada en el chat",
+          "flow.1.d": "Le pides al bot que delegue algo. Por ejemplo: comparar tres kits de riego para el huerto comunitario de Shelbyville.",
+          "flow.2.t": "✋ Espera tu OK",
+          "flow.2.d": "Recibes el texto completo y un código corto. Pulsa **Send** (Slack) o escribe `$task send CODE`. Si no haces nada en 24 horas, caduca.",
+          "flow.3.t": "📥 En la cola",
+          "flow.3.d": "Lista, esperando a su agente.",
+          "flow.4.t": "🤝 Un agente la toma",
+          "flow.4.d": "El agente consigue un **arrendamiento**: 15 minutos, que debe renovar mientras trabaja. Si caduca, la tarea vuelve a la cola.",
+          "flow.5.t": "✅ Resultado (o fallo)",
+          "flow.5.d": "El agente entrega el resultado, o dice que no pudo.",
+          "flow.6.t": "📬 Te enteras",
+          "flow.6.d": "El bot guarda el resultado como archivo en tu espacio de trabajo (`references/external_tasks/…`) y te avisa en el chat de donde salió la tarea.",
+          "note.reminder": "⏰ ¿La creó uno de tus recordatorios? Se salta el paso del OK. Ya aprobaste el recordatorio al crearlo.",
+          "note.claims": "🔁 ¿Tomada 5 veces sin terminarse? El bot se rinde y te avisa.",
+          "note.expiry": "⌛ ¿Nadie la termina en 7 días? Caduca, y te avisan.",
+          "connect.title": "3. 🔌 Conectar un agente",
+          "connect.tldr": "Añade el agente en el Panel y conéctalo con una clave (tus propios scripts) o con el conector (clientes de IA).",
+          "connect.add": "**Primero, añade el agente.** En Ajustes → Conexiones → Agentes externos, escribe una etiqueta (minúsculas, dígitos, guiones, hasta 32 caracteres) y una descripción corta, y pulsa **Añadir agente**.",
+          "connect.a.t": "🔑 Vía A: una clave",
+          "connect.a.d": "Ideal para tus propios scripts. Pulsa **Nueva clave** en el agente. La clave aparece **una sola vez**: cópiala enseguida, no podrás verla otra vez. Tu script la envía con cada solicitud como `Authorization: Bearer YOUR_KEY`. ¿La perdiste? Revócala y crea otra. Un agente puede tener hasta 3 claves.",
+          "connect.b.t": "🔗 Vía B: el conector (MCP)",
+          "connect.b.d": "Ideal para clientes de IA. En el cliente, añade un **servidor MCP personalizado** con esta dirección: `https://{host}/tasks-mcp`. El cliente te lleva a una página de consentimiento que pregunta **para qué agente** es esta conexión. Elige uno y aprueba.",
+          "tools.title": "Las seis herramientas del agente",
+          "tool.claim": "tomar una tarea",
+          "tool.renew": "quedársela un rato más (renovar el arrendamiento)",
+          "tool.submit": "entregar el resultado",
+          "tool.fail": "decir que no funcionó",
+          "tool.release": "devolverla a la cola",
+          "tool.list": "ver qué está esperando",
+          "wake.title": "4. 🔔 El aviso (el «push»)",
+          "wake.tldr": "Sin él, un agente solo se entera de una tarea la próxima vez que se ejecuta. Con él, el bot le da un toquecito en el hombro.",
+          "wake.why": "Piensa en un timbre. Sin timbre, el agente tiene que abrir la puerta de vez en cuando para mirar. Con timbre, el bot llama cuando hay trabajo.",
+          "wake.s1": "Tu cliente te da una **solicitud de disparo**: un comando `curl` y, normalmente, un token (un secreto).",
+          "wake.s2": "En el agente, pulsa **Dirección de activación**.",
+          "wake.s3": "Pega la solicitud en la primera casilla y el token en la segunda, y pulsa **Guardar**.",
+          "wake.s4": "Listo. Cuando una tarea está lista y el agente no tiene un arrendamiento vivo, el bot envía **un** aviso vacío a esa dirección.",
+          "wake.p1": "El aviso **no lleva texto de la tarea**. Solo dice «hay trabajo». Luego el agente toma la tarea por sí mismo.",
+          "wake.p2": "Solo pasan por la guardia de salida del bot las direcciones `https` públicas con un nombre de dominio real. Nada de `localhost` ni de números IP sueltos.",
+          "wake.p3": "Un agente tiene **una sola** dirección de activación. Guardar otra sustituye la anterior. La dirección se guarda cifrada y solo se vuelve a mostrar su host.",
+          "wake.p4": "¿El destino está caído o lento? El bot reintenta, hasta 5 veces.",
+          "wake.p5": "¿El destino dice que no (solicitud o token equivocados, una redirección, un error 4xx o una dirección no permitida)? Recibes **un** aviso en el chat y la tarea simplemente espera en la cola.",
+          "several.title": "5. 👯 Varias conexiones en un agente",
+          "several.tldr": "Un agente puede tener muchas conexiones (claves y aplicaciones conectadas), pero cada tarea la toma solo una.",
+          "several.why": "¿Para qué? Por ejemplo, un cliente se despierta con el aviso y otro funciona con horario. Los dos trabajan con las tareas del mismo agente.",
+          "several.b1": "Quien toma primero una tarea se la queda (para eso sirve el arrendamiento). El otro no encuentra nada que hacer.",
+          "several.b2": "El aviso va solo a la dirección de activación del agente, no a cada conexión.",
+          "several.b3": "Las aplicaciones conectadas aparecen bajo el agente. Puedes revocarlas una a una.",
+          "several.b4": "Quitar un agente revoca todas sus claves y conexiones y cancela sus tareas abiertas.",
+          "recipes.title": "6. 🍳 Recetas",
+          "recipes.tldr": "Tres montajes que funcionan. Elige el que más se parezca a ti.",
+          "recipe.ingredients": "Necesitas",
+          "recipe.steps": "Pasos",
+          "recipe.result": "Qué consigues",
+          "r1.t": "🗓️ Solo horario",
+          "r1.need": "1 agente · 1 cliente con horario · sin formulario de activación",
+          "r1.steps": "Añade el agente.|Conecta el cliente (clave o conector).|Programa el cliente para que se ejecute cada cierto tiempo.|Deja vacía la dirección de activación.",
+          "r1.result": "Las tareas esperan en la cola hasta que las recoge la siguiente ejecución. Simple y tranquilo.",
+          "r2.t": "🔔 Aviso + horario como red de seguridad",
+          "r2.need": "1 agente · 1 cliente con el formulario de activación · otro cliente con horario",
+          "r2.steps": "Conecta los dos clientes al mismo agente.|Pega la solicitud de disparo del primer cliente en el formulario de dirección de activación.|Programa el segundo cliente con horario.|Un solo cliente que admita disparo y horario también sirve.",
+          "r2.result": "Normalmente el aviso llega primero. Si alguna vez falla, la ejecución programada recoge la tarea.",
+          "r3.t": "👭 Dos agentes, cada uno con su aviso",
+          "r3.need": "2 agentes (por ejemplo `research` y `calendar-watch`) · cada uno con su cliente y su formulario de activación",
+          "r3.steps": "Añade dos agentes con etiquetas distintas.|Conecta un cliente a cada uno.|Rellena el formulario de dirección de activación de cada agente.|Al pedir en el chat, nombra al agente que quieres. ¿Se te olvida? El bot puede preguntarte cuál.",
+          "r3.result": "Cada agente solo se despierta por sus propias tareas. Sin líos.",
+          "help.title": "7. 🆘 ¿Algo va mal?",
+          "help.tldr": "Busca tu síntoma a la izquierda y aplica el arreglo a la derecha.",
+          "help.fix": "Arreglo",
+          "h1.s": "😵 El agente recibe un 401 (o 403)",
+          "h1.f": "Se revocó la clave o la conexión, se quitó el agente, o la función está desactivada para ti. Crea una **Nueva clave**, o reconecta la aplicación y elige otra vez el agente.",
+          "h2.s": "⏳ Mi tarea está en la cola y no pasa nada",
+          "h2.f": "No hay formulario de activación y aún no toca ejecución programada. Ejecuta el agente a mano, o rellena el formulario de dirección de activación.",
+          "h3.s": "🙈 La tarea ni siquiera llega a la cola",
+          "h3.f": "Seguramente sigue esperando tu OK. Pulsa **Send** o escribe `$task send CODE` dentro de 24 horas.",
+          "h4.s": "🚫 Un aviso de «activación rechazada» en el chat",
+          "h4.f": "La dirección dijo que no. Abre **Dirección de activación** y pega otra vez la solicitud y el token. Comprueba que sea una dirección `https` pública.",
+          "h5.s": "🤔 El agente dice que no había texto de la tarea",
+          "h5.f": "¡Es normal! El aviso nunca lo lleva. Ahora el agente debe **tomar la tarea** (`claim_task`) para obtener su texto.",
+          "h6.s": "🗝️ Perdí la clave",
+          "h6.f": "Revócala y crea otra. Una clave no se puede mostrar por segunda vez.",
+          "h7.s": "🕳️ Una tarea desapareció tras una semana",
+          "h7.f": "Nadie la terminó en 7 días, así que caducó. Pídeselo otra vez al bot.",
+          "footer": "¿Sigues atascado? Pídele al bot en el chat que liste tus agentes y tus tareas. 💙",
+        },
+      };
+
+      // The language comes from the Cabinet's link (?lang=, the Cabinet's own interface language). A bare visit falls
+      // back to the phone's language, then English. The page is static and public: it cannot read the Cabinet's setting.
+      function hasLanguage(code) {
+        return typeof code === "string" && Object.prototype.hasOwnProperty.call(LANG_DICT, code);
+      }
+
+      function pickLanguage() {
+        const asked = (new URLSearchParams(window.location.search).get("lang") || "").slice(0, 2).toLowerCase();
+        if (hasLanguage(asked)) return asked;
+        const phone = (navigator.language || "en").slice(0, 2).toLowerCase();
+        return hasLanguage(phone) ? phone : "en";
+      }
+
+      const LANG = pickLanguage();
+
+      function t(key) {
+        return (LANG_DICT[LANG] || LANG_DICT.en)[key] || LANG_DICT.en[key] || key;
+      }
+
+      // Text with **bold** and `code` marks becomes DOM nodes: no HTML string is ever built from a dictionary.
+      function fillRich(el, text) {
+        el.textContent = "";
+        const host = window.location.host;
+        for (const part of text.replace(/\{host\}/g, host).split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+          if (!part) continue;
+          if (part.startsWith("**")) {
+            const b = document.createElement("b");
+            b.textContent = part.slice(2, -2);
+            el.appendChild(b);
+          } else if (part.startsWith("`")) {
+            const c = document.createElement("code");
+            c.textContent = part.slice(1, -1);
+            el.appendChild(c);
+          } else {
+            el.appendChild(document.createTextNode(part));
+          }
+        }
+      }
+
+      function render() {
+        document.documentElement.lang = LANG;
+        document.title = t("app.title");
+        for (const el of document.querySelectorAll("[data-i18n]")) fillRich(el, t(el.dataset.i18n));
+        for (const ol of document.querySelectorAll("[data-i18n-list]")) {
+          ol.textContent = "";
+          for (const item of t(ol.dataset.i18nList).split("|")) {
+            const li = document.createElement("li");
+            fillRich(li, item);
+            ol.appendChild(li);
+          }
+        }
+      }
+
+      render();
+    </script>
+  </body>
+</html>

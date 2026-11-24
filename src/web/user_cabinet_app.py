@@ -246,6 +246,15 @@ def create_user_cabinet_blueprint(
         response.headers["Cache-Control"] = "no-cache"
         return response
 
+    @bp.route("/cabinet/help/workers")
+    async def serve_workers_help():
+        """The External workers explainer: static, public like the Cabinet shell, and it holds nothing of the user's.
+        The page picks its language from `?lang=` (the Cabinet's link passes its own), else the phone's, else English."""
+        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+        response = await send_file(os.path.join(static_dir, "workers_help.html"))
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @bp.route("/join")
     async def join_team_page():
         """

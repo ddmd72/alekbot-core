@@ -38,6 +38,7 @@ covers:
   src/web/external_task_api.py
   src/web/cabinet_external_workers.py
   scripts/set_external_tasks_flag.py
+  src/web/static/workers_help.html
 -->
 # External task queue
 
@@ -70,6 +71,10 @@ worker endpoint `/external-tasks/v1/*`
 with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
 keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
 wake-up POST behind the outbound-request guard; the operator flag script.
+
+For the owner, a plain-language help page explains the whole feature (the task's journey, keys and the connector, the
+wake-up, several connections, recipes, troubleshooting): `/cabinet/help/workers`, linked from the card
+(`src/web/static/workers_help.html`; its numbers are this block's constants, so change both together).
 
 Step 3 is in too: the worker MCP resource `/tasks-mcp` on worker keys (below).
 
