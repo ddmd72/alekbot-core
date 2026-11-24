@@ -65,7 +65,8 @@ async def test_a_reminder_receipt_shows_the_reminders_words_and_obeys_none_of_th
         agent, port, _ = _agent()
         agent._notification_service = _notifications(channel)
         for call, method in ((CREATE, port.create_note), (UPDATE, port.update_note)):
-            method.return_value = AgentNote(note_id=NOTE_ID, user_id=USER, text=f"Tell {HOSTILE}", instruction="x",
+            method.return_value = AgentNote(note_id=NOTE_ID, user_id=USER, text=f"Tell {HOSTILE}",
+                                            instruction=f"Say {HOSTILE}",
                                             created_at=datetime(2030, 3, 9, tzinfo=timezone.utc), due=DUE)
             agent._call_llm = AsyncMock(side_effect=[_tools(call), _text()])
             assert (await agent.execute(_message())).status == AgentStatus.SUCCESS
@@ -76,6 +77,10 @@ async def test_a_reminder_receipt_shows_the_reminders_words_and_obeys_none_of_th
     assert api.posts[0]["text"].startswith("📌 Reminder set") and api.posts[1]["text"].startswith("📝 Reminder updated")
     for post in api.posts:
         _shown_not_obeyed(post)
+    # Each notice's file, before its message: the instruction byte for byte (a file is shown, never parsed).
+    assert [kind for kind, _ in api.events] == ["file", "post", "file", "post"]
+    assert [(u["filename"], u["content"], u["channel_id"]) for u in api.uploads] == \
+        [("reminder.txt", f"Say {HOSTILE}".encode("utf-8"), "D1")] * 2
 
 
 async def test_a_drive_receipt_shows_the_path_and_obeys_none_of_it():

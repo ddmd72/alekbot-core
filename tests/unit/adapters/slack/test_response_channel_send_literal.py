@@ -2,6 +2,7 @@
 
 Two layers. The real `slack_sdk` `AsyncWebClient` posts to a local HTTP server, so the assertion is on the bytes the Slack
 Web API would receive; and the SDK client method is mocked for the cases that need no wire (chunking, errors)."""
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,24 +17,59 @@ HOSTILE = "Wipe <!channel> and <@U1ABC>, see <https://example.test|click> & R&D;
 
 
 class FakeSlackApi:
-    """A local stand-in for slack.com: records every chat.postMessage body as the SDK sent it."""
+    """A local stand-in for slack.com: records every chat.postMessage body as the SDK sent it, and every file
+    `files_upload_v2` sends in its three steps (files.getUploadURLExternal, the bytes POSTed to the issued URL,
+    files.completeUploadExternal). `uploads` holds one dict per completed file (filename, length, content, title,
+    channel_id, thread_ts); `events` holds every post and completed file in order as ("post", text) / ("file", filename)."""
 
     def __init__(self) -> None:
         self.posts: list = []
+        self.uploads: list = []
+        self.events: list = []
+        self._pending: dict = {}
+
+    @staticmethod
+    async def _body(request: web.Request) -> dict:
+        """The call's arguments: the SDK sends some methods' as query parameters (`params=`), others in the body."""
+        if request.content_type == "application/json":
+            return {**request.query, **await request.json()}
+        return {**request.query, **await request.post()}
 
     async def post_message(self, request: web.Request) -> web.Response:
-        if request.content_type == "application/json":
-            body = await request.json()
-        else:
-            body = dict(await request.post())
+        body = await self._body(request)
         self.posts.append(body)
+        self.events.append(("post", body.get("text")))
         return web.json_response({"ok": True, "channel": "D1", "ts": f"1729760100.{len(self.posts):06d}"})
+
+    async def get_upload_url(self, request: web.Request) -> web.Response:
+        body = await self._body(request)
+        file_id = f"F{len(self._pending) + 1:04d}"
+        self._pending[file_id] = {"filename": body.get("filename"), "length": int(body.get("length"))}
+        return web.json_response({"ok": True, "file_id": file_id,
+                                  "upload_url": str(request.url.with_path(f"/upload/{file_id}").with_query(None))})
+
+    async def upload(self, request: web.Request) -> web.Response:
+        self._pending[request.match_info["file_id"]]["content"] = await request.read()
+        return web.Response(text="OK")
+
+    async def complete_upload(self, request: web.Request) -> web.Response:
+        body = await self._body(request)
+        files = json.loads(body["files"]) if isinstance(body["files"], str) else body["files"]
+        for entry in files:
+            done = {**self._pending[entry["id"]], "title": entry.get("title"),
+                    "channel_id": body.get("channel_id"), "thread_ts": body.get("thread_ts")}
+            self.uploads.append(done)
+            self.events.append(("file", done["filename"]))
+        return web.json_response({"ok": True, "files": [{"id": entry["id"]} for entry in files]})
 
 
 async def _wire_channel():
     api = FakeSlackApi()
     app = web.Application()
     app.router.add_post("/chat.postMessage", api.post_message)
+    app.router.add_post("/files.getUploadURLExternal", api.get_upload_url)
+    app.router.add_post("/upload/{file_id}", api.upload)
+    app.router.add_post("/files.completeUploadExternal", api.complete_upload)
     server = TestServer(app)
     await server.start_server()
     client = AsyncWebClient(token="xoxb-test", base_url=str(server.make_url("/")))
