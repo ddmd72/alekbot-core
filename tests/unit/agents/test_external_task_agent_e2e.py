@@ -49,6 +49,18 @@ async def test_a_created_task_stores_worker_title_and_text():
     assert result == NOTE_PENDING.format(task_id=task.task_id, worker="research", hours=HOLD_S // 3600)
 
 
+async def test_a_created_task_stores_its_note_with_its_entry_and_the_receipt_shows_it():
+    world = await ExternalTaskWorld().seed()
+
+    llm, response = await run(world, [tools(("create_external_task", CREATE)), text("It waits for your confirmation.")])
+
+    [task] = world.tasks.tasks.values()
+    assert (task.note, task.entry) == (NOTE, TaskEntry.CHAT)
+    [item] = response.delivery_items
+    assert item.data["note"] == NOTE
+    assert all(NOTE not in result for _, result in tool_results(llm)) and NOTE not in response.result
+
+
 async def test_a_cancelled_task_stores_the_cancellation_of_the_task_id_it_names():
     world = await ExternalTaskWorld().seed()
     first = await world.service.create("usr-1", "research", "keep", "stays queued", ORIGIN, entry=TaskEntry.REMINDER, note=NOTE)
