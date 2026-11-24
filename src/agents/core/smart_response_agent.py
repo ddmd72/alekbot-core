@@ -779,7 +779,7 @@ class SmartResponseAgent(BaseAgent):
                 session_id=str(session_id or ""),
             )
             tools.append(build_create_external_task_declaration(workers))
-            local_tools[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(service, user_id, origin, taint)
+            local_tools[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(service, user_id, origin)
         tools.append(build_list_external_tasks_declaration())
         local_tools[LIST_EXTERNAL_TASKS_TOOL] = make_list_handler(service, user_id, taint)
         tools.append(build_list_external_workers_declaration())
