@@ -176,6 +176,14 @@ class AgentProviderStrategy:
             "fallback": "openai",
             "fallback_tier": PerformanceTier.PERFORMANCE,
         },
+        # The task specialist (EXTERNAL_TASK_QUEUE_RFC §5.3): Claude BALANCED, thinking low. Any native-tools provider
+        # can carry it: the brief is copied and checked in code, not trusted to the model.
+        "external_tasks": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "openai", "gemini"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "openai",
+        },
         "notes": {
             "default_provider": "openai",
             "allowed_providers": ["openai", "gemini", "claude"],

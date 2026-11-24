@@ -97,7 +97,6 @@ def smart_rig(
     memory_fact_service: Optional[Any] = None,
     workspace_service: Optional[Any] = None,
     turn_key_source: Optional[Any] = None,
-    external_tasks: Optional[Any] = None,
 ) -> SmartResponseAgent:
     """A real Smart over `llm`; see the module docstring for what each None means."""
     ctx = execution_context if execution_context is not None else _execution_context(llm, "smart")
@@ -122,7 +121,6 @@ def smart_rig(
         memory_fact_service=memory_fact_service,
         workspace_service=workspace_service,
         turn_key_source=turn_key_source,
-        external_tasks=external_tasks,
     )
 
 

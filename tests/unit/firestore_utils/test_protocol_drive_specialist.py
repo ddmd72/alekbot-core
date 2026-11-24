@@ -16,10 +16,16 @@ ser = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ser)
 
 # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the rule gains the content-need exemption after the find's quoting rule.
-QUERY_LANGUAGE = ('query_language: "Always English — regardless of the user\'s input language — except the words to '
-                  'find on the drive in work_with_drive_files: quote the user\'s own few key words, in ONE language, as '
-                  'the user wrote them — no synonym lists, no translations, no extra words. That quoting is for a find; '
-                  'for what the files say (a content need), write the self-contained request in the user\'s language."')
+# Reviewer (decisions/external_task_specialist.md, owner-approved): the line gains, after the drive exception, a second
+# exception for the external-task brief, which the worker receives word for word; the line ends there.
+DRIVE_EXCEPTION = ('query_language: "Always English — regardless of the user\'s input language — except the words to '
+                   'find on the drive in work_with_drive_files: quote the user\'s own few key words, in ONE language, '
+                   'as the user wrote them — no synonym lists, no translations, no extra words. That quoting is for a '
+                   'find; for what the files say (a content need), write the self-contained request in the user\'s '
+                   'language.')
+BRIEF_EXCEPTION = ('Also except the brief in work_with_external_tasks, which the worker receives word for word: write '
+                   'it in the language the owner\'s skill or words ask for, otherwise in the user\'s language.')
+QUERY_LANGUAGE = f'{DRIVE_EXCEPTION} {BRIEF_EXCEPTION}"'
 KNOWLEDGE_BASE = ('knowledge_base: "The drive holds the user\'s own documents; memory holds facts about the user. When '
                   'the answer may be written in a document they keep (a contract term, an amount, a date, a booking, '
                   'a receipt, meeting notes), search the drive even if they did not ask for a file. One question can '
@@ -57,6 +63,7 @@ def test_the_mirror_round_trips_and_the_upload_draft_says_the_same():
 def test_the_query_language_rule_carries_the_drive_exception_once():
     for name, body in _bodies().items():
         assert body.count(QUERY_LANGUAGE) == 1, name
+        assert body.count(DRIVE_EXCEPTION) == 1 and body.count(BRIEF_EXCEPTION) == 1, name
         assert "query_language:" in body and body.count("query_language:") == 1, name
 
 

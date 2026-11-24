@@ -50,3 +50,15 @@ async def test_the_workers_tool_returns_labels_only(world):
     out = await make_list_workers_handler(world.service, USER_ID)(ToolCall(name=LIST_EXTERNAL_WORKERS_TOOL, args={}))
     assert PLANTED not in out.result_str and "term dates" not in out.result_str
     assert sorted(out.result_str.splitlines()[1:]) == ["calendar-watch", "research"]
+
+
+async def test_the_task_specialist_shows_its_model_labels_only(world):
+    """The specialist's `queue_state` block and its declarations carry labels; no description reaches its requests."""
+    from tests.support.external_task_agent_rig import specialist_message, specialist_rig
+    from tests.support.scripted_llm import ScriptedLLM, text, tools
+
+    llm = ScriptedLLM([tools((LIST_EXTERNAL_WORKERS_TOOL, {})), text("research and calendar-watch")])
+    response = await specialist_rig(llm, world).execute(specialist_message("Which workers are registered?"))
+    seen = json.dumps([r.model_dump(mode="json") for r in llm.requests], ensure_ascii=False) + str(response.result)
+    assert PLANTED not in seen and "term dates" not in seen
+    assert "calendar-watch" in llm.requests[0].system_instruction and "research" in llm.requests[0].system_instruction
