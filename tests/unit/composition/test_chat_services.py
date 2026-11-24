@@ -31,6 +31,7 @@ HELD_AS = {
     "device_sessions": "_device_sessions",
     "facts_pin": "_facts_pin",
     "external_tasks": "_external_tasks",
+    "task_send_buttons": "_task_send_buttons",
 }
 
 
