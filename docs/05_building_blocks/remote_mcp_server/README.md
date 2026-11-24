@@ -49,7 +49,8 @@ One authorization server fronts three protected resources, each its own FastMCP 
   (set in the Cabinet; unset means nothing).
 - **tasks**, `/tasks-mcp`, scope `external_tasks`: the external task queue's worker tools (`list_tasks`, `claim_task`,
   `renew_lease`, `submit_task_result`, `release_task`, `fail_task`), thin handlers over `ExternalTaskService`. It takes
-  worker keys only: no OAuth scope binds to it yet (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4, §9 step 4). The queue itself is
+  worker keys only so far: the authorization server binds its scope and mints its tokens, bound to one worker, but the
+  scope is not registrable yet (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4, §9 step 4). The queue itself is
   [`external_task_queue`](../external_task_queue/README.md).
 
 Every tool call of every app reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
@@ -78,12 +79,15 @@ the presented one and has no hashing hook, ciphertext at rest. A cipher failure 
 
 **`mcp_auth_codes`** (`mcp_auth_codes_collection`): one-shot authorization codes. Doc id = the keyed digest of the
 code (`SECRET_DIGEST_KEY`, purpose `mcp_code`); the raw code is stored nowhere. The document holds the client, `user_id`
-and `account_id` (bound at consent), `redirect_uri`, the PKCE challenge, `resource`, `scopes`, `expires_at`.
+and `account_id` (bound at consent), `redirect_uri`, the PKCE challenge, `resource`, `scopes`, `expires_at`, and
+`worker_id`: the worker picked at consent for a grant of the tasks resource, null on every other.
 
 **`mcp_refresh_tokens`** (`mcp_refresh_tokens_collection`): doc id = `sha256` hex of the opaque token. Fields:
 client, user, account, `scopes`, `resource`, `expires_at`, `revoked_at`, and `grant_id`, the grant's stable id,
 minted at code exchange and copied through every rotation and into the access token as `gid`. A token stored before
-the field existed gets one at its first rotation.
+the field existed gets one at its first rotation. `worker_id` (a tasks grant's worker, copied through every rotation and
+into the access token as `wid`), `granted_at` (the code exchange, copied through every rotation) and `issued_at` (this
+token's own issue) serve the task queue's grants; each reads as null on a document stored before it.
 
 The deployment runbook lists a TTL policy on `expires_at` for both token collections
 ([deployment](../../07_deployment/README.md)); the code never depends on it: a refresh token is checked against
@@ -97,7 +101,7 @@ Written by `FirestoreDriveLinkStore.create` and `consume`.
 **Stateless, stored nowhere:**
 
 - *Access token*: HS256 JWT under `AuthConfig.oauth_session_secret`; claims `sub`, `account_id`, `client_id`, `scope`,
-  `type=mcp_access`, `aud` (the bound resource URI), `gid`, `iat`, `exp`.
+  `type=mcp_access`, `aud` (the bound resource URI), `gid`, `wid` (a tasks grant only), `iat`, `exp`.
 - *Consent state*: HS256 JWT in the `?req=` of the consent URL, `aud=mcp-consent`, carrying the whole authorization
   request.
 - *Voice token*: see Voice token below; its live-call record is the one stored thing, in the voice tickets store.
@@ -126,7 +130,7 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
 (`build_tasks_mcp_or_none`): no task queue, no prompt token store or a failed first load of its texts leaves it out and
 `/tasks-mcp` answers 404.
 
-### Authorization (both resources)
+### Authorization (every resource)
 
 1. **Discovery.** An unauthenticated call gets 401 and a `WWW-Authenticate` pointing at the resource's protected-resource
    metadata; the authorization-server metadata is served by the facts app for both.
@@ -156,9 +160,19 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
    The drive verifier copies `gid` into the token it hands the tools; the facts one does not need it.
 
 **Resource and scope binding.** `bind_resource` is applied at authorize and again at refresh. With `resource` given it
-must canonicalise to the facts or drive URI, every requested scope must be that resource's own, and no scope means the
-resource's own. Without `resource`, `drive_read` alone selects drive, an empty or `user_context`-only request selects
-facts, and a mix or an unknown scope is refused. A token never carries an audience its scope does not belong to.
+must canonicalise to a served resource's URI, every requested scope must be that resource's own, and no scope means the
+resource's own. Without `resource`, `drive_read` alone selects drive, `external_tasks` alone selects tasks, an empty or
+`user_context`-only request selects facts, and a mix or an unknown scope is refused. A token never carries an audience
+its scope does not belong to. The service serves the tasks resource only when its `scope_of` holds the tasks scope
+(composition's `SCOPE_OF` does); without it the tasks URI and scope are refused.
+
+**A grant of the tasks resource** (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4 "OAuth") is bound to one worker:
+`issue_auth_code_for_consent(..., worker_id)` refuses a tasks consent without a worker and any other consent with one,
+and stamps the worker on the code; the code exchange copies it onto the refresh token and into the access token as
+`wid`, and every rotation keeps it. The user's flag (`external_tasks_enabled`) joins the allow rule for this resource
+only (`_allow_reason(user_id, resource)`): it is checked at consent (no code), at code exchange (the code is consumed
+and refused) and at every refresh rotation (the presented token is revoked). The service does not check that the
+worker is the user's: the consent page does, and every tool call does through the queue.
 
 ### Facts tool call
 

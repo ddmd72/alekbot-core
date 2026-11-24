@@ -9,6 +9,10 @@ Owns:
 - Authorization code issuance + PKCE verification
 - Access token (stateless JWT) and refresh token (stored by hash) lifecycle
 - Refresh token rotation on every exchange
+- The task queue's worker resource (EXTERNAL_TASK_QUEUE_RFC §5.4 "OAuth"): served only when `scope_of` holds its
+  scope (its URI is the facts host with `TASKS_PATH`, as the drive URI); a grant of it is bound to one worker
+  (`worker_id` on the code and the refresh token, `wid` in the access token) and needs the user's flag at consent,
+  at code exchange and at every refresh rotation
 
 This service is intentionally SDK-free. The `mcp` Python SDK calls into
 `MCPSdkOAuthProvider` (an adapter), which translates the SDK's typed
@@ -30,6 +34,7 @@ from ..domain.mcp_resource import (
     ScopeRefused,
     bind_resource,
     canonical_resource,
+    tasks_resource_uri,
 )
 from ..ports.mcp_client_repository import MCPClientRepository
 from ..ports.user_repository import UserRepository
@@ -85,6 +90,7 @@ class VerifiedAccessToken:
     resource: Optional[str]
     expires_at: int  # unix seconds
     grant_id: Optional[str] = None  # the `gid` claim; None on a token minted before the grant id existed
+    worker_id: Optional[str] = None  # the `wid` claim: a tasks-resource grant's worker; None on every other grant
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +166,9 @@ class MCPAuthorizationService:
                 substrings (e.g. ("claude.ai", "claude.com", "localhost"))
             drive_resource_uri: canonical URI of the drive connector
                 resource (the second audience this server mints)
-            scope_of: the one OAuth scope of each resource (injected: the strings live in composition)
+            scope_of: the one OAuth scope of each resource (injected: the strings live in composition). The tasks
+                resource is served only when it has a scope here; without one its scope is refused (fail closed).
+                Its URI is derived from `mcp_resource_uri`, as composition derives the drive URI (no new key)
             user_repo / whitelist_repo: read at every refresh rotation
                 (required, no default: a missing reader must fail the
                 build, not open the gate)
@@ -175,6 +183,10 @@ class MCPAuthorizationService:
             MCPResource.DRIVE: canonical_resource(drive_resource_uri),
         }
         self._scope_of = dict(scope_of)
+        self._tasks_uri: Optional[str] = None
+        if MCPResource.TASKS in self._scope_of:
+            self._tasks_uri = canonical_resource(tasks_resource_uri(mcp_resource_uri))
+            self._uris[MCPResource.TASKS] = self._tasks_uri
         self._user_repo = user_repo
         self._whitelist_repo = whitelist_repo
         self._consent_base_url = consent_base_url
@@ -269,15 +281,29 @@ class MCPAuthorizationService:
         )
 
     async def issue_auth_code_for_consent(
-        self, consent_jwt: str, user_id: str, account_id: str
+        self, consent_jwt: str, user_id: str, account_id: str, worker_id: Optional[str] = None
     ) -> tuple[str, ConsentRequest]:
         """
         Verify the consent JWT, mint a one-shot authorization code bound
         to (user_id, account_id), persist it, and return (code, req).
         The caller uses `req.redirect_uri` + `req.state` to build the
         redirect back to the OAuth client.
+
+        A grant of the tasks resource needs `worker_id` (the worker the
+        user picked; the caller has checked it is the user's active one)
+        and a user allowed it now (lock, whitelist, flag); any other grant
+        refuses a `worker_id`. A refusal raises MCPAuthError, no code.
         """
         req = self.verify_consent_request(consent_jwt)
+        if self._is_tasks(req.resource):
+            if not worker_id:
+                raise MCPAuthError("a worker is required for the task queue resource")
+            reason = await self._allow_reason(user_id, req.resource)
+            if reason is not None:
+                logger.warning(f"MCP consent refused: user={user_id[:8]} resource=tasks reason={reason}")
+                raise MCPAuthError("grant not allowed")
+        elif worker_id is not None:
+            raise MCPAuthError("a worker is only bound to a grant of the task queue resource")
         code_value = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(
             seconds=self._auth_code_ttl
@@ -293,6 +319,7 @@ class MCPAuthorizationService:
             resource=req.resource,
             scopes=req.scopes,
             expires_at=expires_at,
+            worker_id=worker_id,
         )
         await self._repo.save_auth_code(auth_code)
         logger.info(
@@ -323,6 +350,14 @@ class MCPAuthorizationService:
             # A code issued from a Cabinet session just before the account lock: consumed, never exchanged.
             logger.warning(f"MCP code exchange refused: user={code_obj.user_id[:8]} reason=inactive")
             raise MCPInvalidGrant("grant no longer allowed")
+        if self._is_tasks(code_obj.resource):
+            # The tasks resource re-checks the whole allow rule (flag included) at exchange; the code is consumed.
+            reason = "no_worker" if not code_obj.worker_id else await self._allow_reason(
+                code_obj.user_id, code_obj.resource)
+            if reason is not None:
+                logger.warning(f"MCP code exchange refused: user={code_obj.user_id[:8]} resource=tasks "
+                               f"reason={reason}")
+                raise MCPInvalidGrant("grant no longer allowed")
 
         now = datetime.now(timezone.utc)
         grant_id = self._new_grant_id()
@@ -333,6 +368,7 @@ class MCPAuthorizationService:
             scopes=code_obj.scopes,
             resource=code_obj.resource,
             grant_id=grant_id,
+            worker_id=code_obj.worker_id,
         )
         refresh_token_value = secrets.token_urlsafe(48)
         await self._repo.save_refresh_token(
@@ -345,6 +381,9 @@ class MCPAuthorizationService:
                 resource=code_obj.resource,
                 expires_at=now + timedelta(seconds=self._refresh_token_ttl),
                 grant_id=grant_id,
+                worker_id=code_obj.worker_id,
+                granted_at=now,
+                issued_at=now,
             )
         )
         return IssuedToken(
@@ -380,7 +419,7 @@ class MCPAuthorizationService:
         if existing is None:
             raise MCPInvalidGrant("refresh token not found or revoked")
         try:
-            await self._require_allowed(existing.user_id)
+            await self._require_allowed(existing.user_id, existing.resource)
         except MCPInvalidGrant:
             await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
             raise
@@ -411,6 +450,9 @@ class MCPAuthorizationService:
                 resource=existing.resource,
                 expires_at=now + timedelta(seconds=self._refresh_token_ttl),
                 grant_id=grant_id,
+                worker_id=existing.worker_id,
+                granted_at=existing.granted_at,
+                issued_at=now,
             )
         )
         access_token = self._mint_access_token(
@@ -420,6 +462,7 @@ class MCPAuthorizationService:
             scopes=final_scopes,
             resource=existing.resource,
             grant_id=grant_id,
+            worker_id=existing.worker_id,
         )
         return IssuedToken(
             access_token=access_token,
@@ -469,6 +512,7 @@ class MCPAuthorizationService:
             resource=payload.get("aud"),
             expires_at=int(payload["exp"]),
             grant_id=payload.get("gid"),
+            worker_id=payload.get("wid"),
         )
 
     async def revoke_refresh_token_value(self, refresh_token_value: str) -> None:
@@ -507,9 +551,15 @@ class MCPAuthorizationService:
         user = await self._user_repo.get_user(user_id)
         return user is not None and not user.is_active
 
-    async def _allow_reason(self, user_id: str) -> Optional[str]:
+    def _is_tasks(self, resource: Optional[str]) -> bool:
+        """The resource is the task queue's worker resource, and this server serves it."""
+        return (self._tasks_uri is not None and resource is not None
+                and canonical_resource(resource) == self._tasks_uri)
+
+    async def _allow_reason(self, user_id: str, resource: Optional[str] = None) -> Optional[str]:
         """None when the user exists, is active (not locked: CABINET_DEVICE_SESSIONS_RFC §7.8), has an email and is
-        whitelisted; otherwise the refusal reason."""
+        whitelisted, and, for the task queue's resource, has the queue's flag (EXTERNAL_TASK_QUEUE_RFC §5.4);
+        otherwise the refusal reason."""
         user = await self._user_repo.get_user(user_id)
         if user is None:
             return "no_user"
@@ -519,15 +569,18 @@ class MCPAuthorizationService:
             return "no_email"
         if not (await self._whitelist_repo.get_whitelist()).is_allowed(user.email):
             return "not_whitelisted"
+        if self._is_tasks(resource) and not user.config.external_tasks_enabled:
+            return "not_enabled"
         return None
 
-    async def _require_allowed(self, user_id: str) -> None:
-        """Raise MCPInvalidGrant unless the grant's user exists, has an email and is whitelisted.
+    async def _require_allowed(self, user_id: str, resource: Optional[str] = None) -> None:
+        """Raise MCPInvalidGrant unless the grant's user exists, has an email and is whitelisted (and, for the task
+        queue's resource, has its flag).
 
         A repository error propagates (the SDK answers 500, no token is minted: fail closed). The log line
         carries the reason, never the email.
         """
-        reason = await self._allow_reason(user_id)
+        reason = await self._allow_reason(user_id, resource)
         if reason is not None:
             logger.warning(f"MCP refresh refused: user={user_id[:8]} reason={reason}")
             raise MCPInvalidGrant("grant no longer allowed")
@@ -574,6 +627,7 @@ class MCPAuthorizationService:
         scopes: List[str],
         resource: Optional[str],
         grant_id: Optional[str] = None,
+        worker_id: Optional[str] = None,
     ) -> str:
         now = datetime.now(timezone.utc)
         exp = now + timedelta(seconds=self._access_token_ttl)
@@ -589,6 +643,8 @@ class MCPAuthorizationService:
         }
         if grant_id:
             payload["gid"] = grant_id
+        if worker_id:
+            payload["wid"] = worker_id
         return jwt.encode(payload, self._secret, algorithm=_JWT_ALG)
 
     @staticmethod

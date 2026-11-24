@@ -190,6 +190,9 @@ class MCPAuthCode(BaseModel):
     resource: Optional[str] = None
     scopes: List[str] = Field(default_factory=list)
     expires_at: datetime
+    # The external task queue's worker the user picked at consent (EXTERNAL_TASK_QUEUE_RFC §5.4); set only on a
+    # grant of the tasks resource, None on every other.
+    worker_id: Optional[str] = None
 
 
 class MCPRefreshToken(BaseModel):
@@ -202,6 +205,13 @@ class MCPRefreshToken(BaseModel):
     through every rotation (and into the access token as `gid`). It is None
     only on a token stored before the one-time drive link existed; such a
     token gets one at its first rotation.
+
+    `worker_id` is the worker a grant of the tasks resource acts for (copied
+    from the code, through every rotation, into the access token as `wid`);
+    None on every other grant. `granted_at` is when the grant's code was
+    exchanged (copied through every rotation), `issued_at` when this token
+    was issued (its rotation time): the Cabinet shows them as "granted" and
+    "last refresh". Both are None on a token stored before they existed.
     """
     token_hash: str
     client_id: str
@@ -212,6 +222,9 @@ class MCPRefreshToken(BaseModel):
     expires_at: datetime
     revoked_at: Optional[datetime] = None
     grant_id: Optional[str] = None
+    worker_id: Optional[str] = None
+    granted_at: Optional[datetime] = None
+    issued_at: Optional[datetime] = None
 
     @property
     def is_active(self) -> bool:
