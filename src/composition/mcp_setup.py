@@ -54,10 +54,11 @@ MCP_DEFAULT_SCOPE = "user_context"
 # The drive connector's scope (DRIVE_MCP_CONNECTOR_RFC §3). Both scope strings live here, in composition: the facts
 # one is also a Firestore collection name, which core layers must not spell.
 DRIVE_SCOPE = "drive_read"
-SCOPE_OF = {MCPResource.FACTS: MCP_DEFAULT_SCOPE, MCPResource.DRIVE: DRIVE_SCOPE}
-# The external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). Not in SCOPE_OF and not
-# registrable until the resource's OAuth step: today only a worker key carries it (`tasks_mcp_setup`).
+# The external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). In SCOPE_OF, so the
+# authorization service serves the resource (binds it, mints its tokens); never a default scope, so a registration
+# that names no scope never gains it.
 TASKS_SCOPE = "external_tasks"
+SCOPE_OF = {MCPResource.FACTS: MCP_DEFAULT_SCOPE, MCPResource.DRIVE: DRIVE_SCOPE, MCPResource.TASKS: TASKS_SCOPE}
 
 # Redirect-URI host allowlist for DCR. Any OAuth client registering via
 # /register must supply a redirect_uri whose host matches (or is a
