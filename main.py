@@ -540,6 +540,7 @@ async def main():
                         mcp_consent_bp = build_mcp_consent_blueprint(
                             mcp_service=mcp_components.authorization_service,
                             cabinet_sessions=cabinet_sessions,
+                            external_tasks=app.external_tasks,   # a task grant's worker picker
                         )
                         main_app.register_blueprint(mcp_consent_bp)
                         logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
