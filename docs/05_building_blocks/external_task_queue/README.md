@@ -91,7 +91,7 @@ Two of these carry `purge_after` (tasks, results) and are deleted by a TTL polic
 `ExternalTaskService.create` (`src/services/external_task_service.py:328`): an untainted task is `queued` with a
 deadline timer; a worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
 final state enqueues an `external_task_deliver` Cloud Task. Delivery writes the result into the workspace as a
-flagged copy, posts one literal notice to the origin channel and appends a code-written pair to that channel's history;
+copy under an outside-content header, posts one literal notice to the origin channel and appends a code-written pair to that channel's history;
 it reads no model. A failed or expired task gets the notice and no copy. Delivery is idempotent through
 `delivery.state` (Cloud Tasks may run it twice). Task types: `docs/07_deployment/SCHEDULERS.md`.
 
@@ -149,9 +149,8 @@ code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
   answer as tainted. A list that shows a task created in a tainted execution taints the reader (`created_tainted`).
 - **Nested Smart gets no tools.** The five tools are added only to an interactive-delivery turn that was not reached by
   delegation and whose user has the flag; the service re-checks flag and lock, so a stale cached profile gains nothing.
-- **Untrusted flag on stored copies.** A delivered result is a workspace file marked `external_task:<id>`; agent
-  notes written by a tainted execution carry `untrusted`. A later read is wrapped (`agent_skills_workspace`, "the
-  untrusted flag").
+- **Untrusted flag on stored copies.** A delivered result is an ordinary workspace file under an outside-content
+  header (no file-level mark); agent notes written by a tainted execution carry `untrusted`.
 - **Results never in a model turn on delivery.** Notices are literal and code-written; a worker's text and a failure
   reason are never quoted in them.
 - **One refusal for the unknown.** A label that does not exist, another user's task and a missing task give the same

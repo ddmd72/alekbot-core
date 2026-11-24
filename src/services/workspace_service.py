@@ -8,10 +8,9 @@ store error at ERROR, everything else at INFO. Content is never logged.
 """
 
 import asyncio
-import secrets
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
 from ..domain.exceptions import EmailFileNotTransferable, WorkspaceConflict, WorkspaceRefused
@@ -25,7 +24,7 @@ from ..domain.workspace import (
     INSERT_END,
     MAX_FILE_BYTES,
     MUTATING_COMMANDS,
-    MarkedWrite,
+    BackgroundWrite,
     TEXT_EXTENSIONS,
     TEXT_FOLDERS,
     WORKSPACE_REF_PREFIX,
@@ -65,7 +64,6 @@ from ..domain.workspace import (
     window_note,
     workspace_kind,
 )
-from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ..ports.workspace_store_port import WorkspaceStorePort
 from ..utils.logger import logger
 from ..utils.safe_regex import InvalidPattern, compile_line_matcher
@@ -111,10 +109,8 @@ def _now(text: str, data: bytes) -> str:
 
 class WorkspaceService:
 
-    def __init__(self, store: WorkspaceStorePort, file_conversion: Optional["FileConversionService"] = None,
-                 nonce: Callable[[], str] = lambda: secrets.token_hex(8)) -> None:
+    def __init__(self, store: WorkspaceStorePort, file_conversion: Optional["FileConversionService"] = None) -> None:
         self._store = store
-        self._nonce = nonce      # one per wrapped read: a file's text cannot guess the closing tag
         # Copy sources from chat uploads and delivered documents (§7.3 copy). None → such copies are refused.
         self._file_conversion = file_conversion
 
@@ -215,17 +211,8 @@ class WorkspaceService:
             # B1: an earlier attempt of this same fire wrote it; name the version from before the fire.
             versions = await self._store.list(call.user_id, path, include_versions=True)
             parts.append(render_same_fire_line(prior_generation_before_fire(versions, call.fire_key)))
-        parts += self._shown(entry, self._body(text, entry.size, args))
-        return WorkspaceResult(text="\n".join(parts), generations={path: entry.generation},
-                               untrusted=bool(entry.untrusted))
-
-    def _shown(self, entry: WorkspaceEntry, body: List[str]) -> List[str]:
-        """The body of a read as the model gets it: a file with an untrusted mark (outside content that reached the
-        workspace, wherever it was renamed or copied) is wrapped as outside content; any other body is unchanged."""
-        if not entry.untrusted:
-            return body
-        return [EXTERNAL_REMINDER, wrap_untrusted("\n".join(body), nonce=self._nonce(), store="workspace",
-                                                  ref=f"{WORKSPACE_REF_PREFIX}{entry.path}", label=entry.path)]
+        parts += self._body(text, entry.size, args)
+        return WorkspaceResult(text="\n".join(parts), generations={path: entry.generation})
 
     @staticmethod
     def _body(text: str, size: int, args: Mapping[str, Any]) -> List[str]:
@@ -250,9 +237,9 @@ class WorkspaceService:
         if text is None:
             raise WorkspaceRefused(binary_message(path), reason="binary")
         parts = [render_view_header(blob.entry, len(text.splitlines()), version_view=True)]
-        parts += self._shown(blob.entry, self._body(text, blob.entry.size, args))
+        parts += self._body(text, blob.entry.size, args)
         # Read-only: not recorded, so no later create can overwrite on the strength of an old version (§7.3).
-        return WorkspaceResult(text="\n".join(parts), untrusted=bool(blob.entry.untrusted))
+        return WorkspaceResult(text="\n".join(parts))
 
     async def _read_version(self, call: WorkspaceCall, path: str, generation: int) -> WorkspaceBlob:
         try:
@@ -311,7 +298,6 @@ class WorkspaceService:
         gate = asyncio.Semaphore(_GREP_READ_CONCURRENCY)
 
         seen: Dict[str, int] = {}
-        marked = {e.path for e in scope if e.untrusted}
 
         async def fetch(entry: WorkspaceEntry) -> Optional[Tuple[str, str]]:
             async with gate:
@@ -327,48 +313,22 @@ class WorkspaceService:
 
         fetched = await asyncio.gather(*(fetch(e) for e in sorted(scope, key=lambda e: e.path)))
         files = [f for f in fetched if f is not None]
-        wrapped: List[str] = []
-
-        def wrap_hits(file_path: str, hits: str) -> Optional[str]:
-            if file_path not in marked:
-                return None
-            wrapped.append(file_path)
-            return wrap_untrusted(hits, nonce=self._nonce(), store="workspace",
-                                  ref=f"{WORKSPACE_REF_PREFIX}{file_path}", label=file_path)
 
         text, matches = await asyncio.to_thread(
             render_grep, pattern, path, files, matcher,
             context=parse_context(args.get("context")), files_only=parse_flag(args.get("files_only")),
-            wrap_hits=wrap_hits,
         )
-        if wrapped:
-            text = f"{EXTERNAL_REMINDER}\n{text}"
         log.files = len(files)
         log.matches = matches
         # Line numbers only: an insert at a line taken from this grep passes the staleness guard, but a grep is not a
         # view (it neither lets `create` overwrite nor silences the same-fire note) (D18).
-        return WorkspaceResult(text=text, line_generations=seen, untrusted=bool(wrapped))
+        return WorkspaceResult(text=text, line_generations=seen)
 
     # -- text writes ---------------------------------------------------------------------------------------------
 
     @staticmethod
-    def _meta(call: WorkspaceCall, restored_from: Optional[int] = None,
-              untrusted: Optional[str] = None) -> WorkspaceWriteMeta:
-        """`untrusted` is the mark every later version of a flagged file keeps (`external_task:<id>`)."""
-        return WorkspaceWriteMeta(origin=call.origin, fire=call.fire_key, restored_from=restored_from,
-                                  untrusted=untrusted or call.write_mark)
-
-    def _echo(self, path: str, echo: str, mark: Optional[str]) -> Tuple[str, bool]:
-        """The changed lines a write shows back, wrapped as outside content when the file carries a mark."""
-        if not mark:
-            return echo, False
-        wrapped = wrap_untrusted(echo, nonce=self._nonce(), store="workspace",
-                                 ref=f"{WORKSPACE_REF_PREFIX}{path}", label=path)
-        return f"{EXTERNAL_REMINDER}\n{wrapped}", True
-
-    async def _live_mark(self, user_id: str, path: str) -> Optional[str]:
-        """The untrusted mark of the live version of `path`, None when unflagged or absent."""
-        return next((e.untrusted for e in await self._store.list(user_id, path) if e.path == path and e.live), None)
+    def _meta(call: WorkspaceCall, restored_from: Optional[int] = None) -> WorkspaceWriteMeta:
+        return WorkspaceWriteMeta(origin=call.origin, fire=call.fire_key, restored_from=restored_from)
 
     @staticmethod
     def _text_path(raw: object, command: str) -> str:
@@ -396,8 +356,7 @@ class WorkspaceService:
         known = call.known.get(path)
         if known is not None:
             # This execution viewed the current version: overwrite it, guarded by that generation.
-            mark = await self._live_mark(call.user_id, path)
-            entry = await self._store.put(call.user_id, path, data, self._meta(call, untrusted=mark), known)
+            entry = await self._store.put(call.user_id, path, data, self._meta(call), known)
             log.gen = str(entry.generation)
             return WorkspaceResult(
                 text=f"overwritten workspace:{path} · generation {entry.generation} · {_lines(text)} · {format_size(len(data))}",
@@ -435,18 +394,18 @@ class WorkspaceService:
             data = replaced.text.encode("utf-8")
             check_file_size(path, data)
             try:
-                entry = await self._store.put(call.user_id, path, data,
-                                              self._meta(call, untrusted=blob.entry.untrusted), blob.entry.generation)
+                entry = await self._store.put(call.user_id, path, data, self._meta(call), blob.entry.generation)
             except WorkspaceConflict:
                 if attempt == 2:
                     raise
                 continue
             log.gen, log.nbytes = str(entry.generation), len(data)
-            echo, flagged = self._echo(path, render_mutation_echo(replaced), blob.entry.untrusted or call.write_mark)
             return WorkspaceResult(
-                text=f"replaced in workspace:{path} · generation {entry.generation}{_now(replaced.text, data)}\n{echo}",
+                text=(
+                    f"replaced in workspace:{path} · generation {entry.generation}{_now(replaced.text, data)}\n"
+                    f"{render_mutation_echo(replaced)}"
+                ),
                 generations={path: entry.generation},
-                untrusted=flagged,
             )
         raise WorkspaceConflict(path)  # unreachable: the second attempt returns or raises
 
@@ -474,8 +433,7 @@ class WorkspaceService:
             data = inserted.text.encode("utf-8")
             check_file_size(path, data)
             try:
-                entry = await self._store.put(call.user_id, path, data,
-                                              self._meta(call, untrusted=blob.entry.untrusted), blob.entry.generation)
+                entry = await self._store.put(call.user_id, path, data, self._meta(call), blob.entry.generation)
             except WorkspaceConflict:
                 if middle:
                     raise stale from None
@@ -485,14 +443,13 @@ class WorkspaceService:
             log.gen, log.nbytes = str(entry.generation), len(data)
             last = inserted.first_line + inserted.line_count - 1
             where = f"line {last}" if inserted.line_count == 1 else f"lines {inserted.first_line}–{last}"
-            echo, flagged = self._echo(path, render_mutation_echo(inserted), blob.entry.untrusted or call.write_mark)
             return WorkspaceResult(
                 text=(
                     f"inserted {inserted.line_count} line{'' if inserted.line_count == 1 else 's'} at {where} of workspace:{path} · "
-                    f"generation {entry.generation}{_now(inserted.text, data)}\n{echo}"
+                    f"generation {entry.generation}{_now(inserted.text, data)}\n"
+                    f"{render_mutation_echo(inserted)}"
                 ),
                 generations={path: entry.generation},
-                untrusted=flagged,
             )
         raise WorkspaceConflict(path)  # unreachable
 
@@ -541,8 +498,7 @@ class WorkspaceService:
         blob = await self._store.read(call.user_id, src)
         log.nbytes = blob.entry.size
         try:
-            created = await self._store.put(call.user_id, dst, blob.data,
-                                            self._meta(call, untrusted=blob.entry.untrusted), 0)
+            created = await self._store.put(call.user_id, dst, blob.data, self._meta(call), 0)
         except WorkspaceConflict:
             raise WorkspaceRefused(
                 f"{dst} already exists; pick another new_path, or view and delete it first", reason="exists",
@@ -593,10 +549,8 @@ class WorkspaceService:
             check_caps(live, len(blob.data))  # restoring a deleted file adds a live file
         else:
             check_replace_caps(live, current.size, len(blob.data))
-        # either version flagged keeps the file flagged: restoring never launders outside content
-        mark = blob.entry.untrusted or (current.untrusted if current else None)
         entry = await self._store.put(
-            call.user_id, path, blob.data, self._meta(call, restored_from=generation, untrusted=mark),
+            call.user_id, path, blob.data, self._meta(call, restored_from=generation),
             current.generation if current else 0,
         )
         log.gen = str(entry.generation)
@@ -611,7 +565,7 @@ class WorkspaceService:
         dst = parse_workspace_path(args.get("path"))
         log.path = dst
         source = str(args.get("source") or "").strip().strip('"')
-        data, source_mark = await self._copy_source(call, source, dst)
+        data = await self._copy_source(call, source, dst)
         check_file_size(dst, data)
         log.nbytes = len(data)
         known = call.known.get(dst)
@@ -620,8 +574,7 @@ class WorkspaceService:
             current = next((e for e in live if e.path == dst), None)
             if current is not None:
                 check_replace_caps(live, current.size, len(data))
-            mark = source_mark or (current.untrusted if current else None)
-            entry = await self._store.put(call.user_id, dst, data, self._meta(call, untrusted=mark), known)
+            entry = await self._store.put(call.user_id, dst, data, self._meta(call), known)
         else:
             live = await self._store.list(call.user_id, "")
             if any(e.path == dst for e in live):
@@ -629,15 +582,14 @@ class WorkspaceService:
                     f"{dst} exists. View it first to overwrite it with copy, or pick another path", reason="exists",
                 )
             check_caps(live, len(data))
-            entry = await self._store.put(call.user_id, dst, data, self._meta(call, untrusted=source_mark), 0)
+            entry = await self._store.put(call.user_id, dst, data, self._meta(call), 0)
         log.gen = str(entry.generation)
         return WorkspaceResult(
             text=f"copied {source} to workspace:{dst} · {format_size(len(data))} · generation {entry.generation}",
             generations={dst: entry.generation},
         )
 
-    async def _copy_source(self, call: WorkspaceCall, source: str, dst: str) -> Tuple[bytes, Optional[str]]:
-        """The bytes to copy and the untrusted mark of the source (a workspace file only)."""
+    async def _copy_source(self, call: WorkspaceCall, source: str, dst: str) -> bytes:
         if not source:
             raise WorkspaceRefused(
                 "copy needs a source: a chat file name, a delivered-document key or a workspace path", reason="source",
@@ -646,7 +598,7 @@ class WorkspaceService:
             raise WorkspaceRefused(
                 f"'{source}' is a skill file; read it with open_file instead of copying it", reason="wrong_store",
             )
-        data, mark = await self._read_source(call, source)
+        data = await self._read_source(call, source)
         # §6: binary_files/ holds binary files only; a text file lands in projects/, references/ or scratch/.
         text = is_text(dst, data)
         if folder_of(dst) == BINARY_FOLDER and text:
@@ -659,14 +611,13 @@ class WorkspaceService:
             raise WorkspaceRefused(
                 f"invalid workspace path '{dst}': binary files go only under binary_files/", reason="kind",
             )
-        return data, mark
+        return data
 
-    async def _read_source(self, call: WorkspaceCall, source: str) -> Tuple[bytes, Optional[str]]:
+    async def _read_source(self, call: WorkspaceCall, source: str) -> bytes:
         if source.startswith(WORKSPACE_REF_PREFIX) or source.startswith(FOLDERS):
             src = parse_workspace_path(source)
             try:
-                blob = await self._store.read(call.user_id, src)
-                return blob.data, blob.entry.untrusted
+                return (await self._store.read(call.user_id, src)).data
             except FileNotFoundError:
                 raise WorkspaceRefused(
                     f"workspace:{src} does not exist; view it to see its history", reason="not_found",
@@ -675,7 +626,7 @@ class WorkspaceService:
             raise WorkspaceRefused("copying chat files and delivered documents is unavailable here", reason="source")
         is_drive = drive_ref.is_drive_ref(source)   # tagged or not (MULTI_DRIVE_RFC §9)
         try:
-            return await self._file_conversion.resolve_bytes(source, call.user_id), None
+            return await self._file_conversion.resolve_bytes(source, call.user_id)
         except EmailFileNotTransferable as e:
             raise WorkspaceRefused(str(e), reason="source") from None
         except DriveRefRefused as e:
@@ -709,12 +660,12 @@ class WorkspaceService:
         except PermissionError:
             raise WorkspaceRefused(f"'{source}' does not belong to this user", reason="source") from None
 
-    # -- background writes of outside content ----------------------------------------------------------------------
+    # -- background writes ------------------------------------------------------------------------------------------
 
-    async def write_marked(self, user_id: str, path: str, text: str, *, origin: str, mark: str) -> MarkedWrite:
-        """Create `path` with `text` and the untrusted `mark`, for code that stores outside content (the external task
-        delivery). Not a model command: nothing is overwritten. A live file with the same mark is an earlier attempt
-        of the same write and stays (REUSED); a live file with another provenance is left alone (TAKEN). Refusals
+    async def write_background(self, user_id: str, path: str, text: str, *, origin: str) -> BackgroundWrite:
+        """Create `path` with `text`, for code that stores a file without a model turn (the external task delivery).
+        Not a model command: nothing is overwritten. A live file with the same origin is an earlier attempt of the
+        same write and stays (REUSED); a live file with another origin is left alone (TAKEN). Refusals
         (caps, size, path) raise WorkspaceRefused; a store failure propagates."""
         path = parse_workspace_path(path)
         data = text.encode("utf-8")
@@ -723,11 +674,11 @@ class WorkspaceService:
             live = await self._store.list(user_id, "")
             existing = next((e for e in live if e.path == path), None)
             if existing is not None:
-                return MarkedWrite.REUSED if existing.untrusted == mark else MarkedWrite.TAKEN
+                return BackgroundWrite.REUSED if existing.origin == origin else BackgroundWrite.TAKEN
             check_caps(live, len(data))
             try:
-                await self._store.put(user_id, path, data, WorkspaceWriteMeta(origin=origin, untrusted=mark), 0)
+                await self._store.put(user_id, path, data, WorkspaceWriteMeta(origin=origin), 0)
             except WorkspaceConflict:
                 continue      # a concurrent writer took the path: look again
-            return MarkedWrite.WRITTEN
-        return MarkedWrite.TAKEN
+            return BackgroundWrite.WRITTEN
+        return BackgroundWrite.TAKEN

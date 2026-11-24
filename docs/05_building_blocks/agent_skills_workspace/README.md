@@ -156,23 +156,16 @@ name wins, and its content always comes from Firestore; otherwise the system bun
   written by a model must run in linear time. Scan size (`GREP_MAX_SCAN_BYTES`, refused over it), pattern length,
   match count and output size are bounded.
 
-### Workspace: the untrusted flag
+### Workspace: background writes
 
-A file can carry a file-level provenance mark, `untrusted` (object metadata, `WorkspaceEntry.untrusted`). Two marks
-exist: `external_task:<task_id>`, written by the external task delivery through `WorkspaceService.write_marked`, which
-creates and never overwrites; and `TAINTED_EXECUTION_MARK`, which every write of the workspace tool carries when its
-execution had read outside content (`WorkspaceCall.write_mark`, set from Smart's taint tracker by
-`make_workspace_handler`; `docs/05_building_blocks/untrusted_content_taint/README.md`). A file that is already flagged
-keeps its own mark. The mark follows the content, not the folder: `create` over the file, `str_replace`, `insert`,
-`rename`, `copy` (from or onto a flagged path) and `restore` (when the live or the restored version is flagged) all
-write the next version with the same mark. Every model-facing read of a flagged file is wrapped as outside content
-(`EXTERNAL_REMINDER` + `wrap_untrusted(store=workspace)` with a fresh nonce): `view`, `view` of a version, the hit lines
-of `grep`, and the changed lines a `str_replace` or `insert` echoes back; such a read sets `ToolResult.untrusted`, so it
-taints the reading execution. (`open_file` and prefetch of a `workspace:` ref are wrapped for every workspace file by
-the document presenter, flagged or not.) An unflagged file reads exactly as before through the workspace tool. Text a
-model retypes into a new file in a tainted execution is flagged by that write mark; only text that reaches an untainted
-execution some other way (memory, for one) is written unflagged, which narrows the residual risk of
-`EXTERNAL_TASK_QUEUE_RFC` §6.1.
+A workspace file carries no provenance mark: a file the external task delivery stores is an ordinary workspace file,
+read, searched, edited, renamed and copied like any other (`view` and `grep` return its text as it is). Code that stores
+a file without a model turn uses `WorkspaceService.write_background(user_id, path, text, origin=...)`: it creates and
+never overwrites; a live file with the same origin is an earlier attempt of the same write (`REUSED`), a live file with
+another origin is left alone (`TAKEN`; the caller tries the next path), caps and size refusals raise `WorkspaceRefused`.
+A worker's result stays wrapped where the specialist tool `get_external_task` returns it
+(`docs/05_building_blocks/external_task_queue/README.md`). Objects written earlier that still carry an `untrusted`
+metadata key read fine: the adapter ignores the key.
 
 ### Workspace: reminders
 

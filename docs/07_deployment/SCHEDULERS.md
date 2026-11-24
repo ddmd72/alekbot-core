@@ -319,11 +319,11 @@ takes no memory-write lease.
   dedup key is `lease:<task_id>:<generation>:<renewals>`, `deadline:<task_id>:<epoch s>` or `hold:<task_id>`; the
   delivery's is `deliver:<task_id>`. The timer answers 200 `{"changed": bool}` (a stale timer is a no-op) and 400 on a
   malformed body. The delivery answers 400 on a malformed body, 200 `gone` (no such final task), `already` (delivered
-  before), `no_notice` (a cancelled task) or `delivered`. It writes a done task's result as a flagged workspace file
+  before), `no_notice` (a cancelled task) or `delivered`. It writes a done task's result as a workspace file
   under `references/external_tasks/`, posts one literal notice to the task's origin channel and appends a code-written
   history pair; no model runs. A refused copy (caps) or no workspace posts the "no copy" notice; no channel records the
   delivery and logs at error level; a store failure or a failed post answers 5xx and Cloud Tasks retries (the copy of
-  an earlier attempt, found by its mark, is reused).
+  an earlier attempt, found by its origin, is reused).
 - **`external_task_wake`** is enqueued by `ExternalTaskService` when a task becomes queued (an untainted create, a
   `$task send`) and is its worker's oldest queued task, or when a lease timer re-queues a task, and only for a worker
   that has a wake-up target and holds no unexpired lease (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.8). Body

@@ -596,7 +596,6 @@ class SmartResponseAgent(BaseAgent):
                         skills=tuple((s.name, s.body) for s in skills),
                         notes=tuple(n for n in agent_notes if isinstance(n, dict)),
                     ),
-                    is_tainted=lambda: taint.tainted,
                 )
 
             running = await self._load_running_jobs(prompt_user_id, message)
