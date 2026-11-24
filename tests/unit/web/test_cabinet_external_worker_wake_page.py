@@ -4,6 +4,7 @@ read as text. The form always opens empty and is dropped when the row closes; af
 Examples: Alex Doe's worker `research`, woken at `hooks.example.com`.
 """
 import json
+import re
 
 from src.domain.wake_refusal import WakeRefusal
 from tests.unit.web.test_cabinet_external_workers_page import LANGS, _SHELL, _WORKER, _dict, _node, _run
@@ -36,20 +37,23 @@ def test_a_card_shows_the_host_escaped_or_that_the_worker_polls():
 
 
 @_node
-def test_the_form_opens_empty_saves_url_and_header_lines_and_closes():
-    out = _run("""openWorkerWake("wrk-1", "research");
+def test_the_form_opens_empty_saves_the_command_and_the_trimmed_secret_and_closes():
+    command = "curl -X POST https://hooks.example.com/wake \\\n  -H 'Authorization: Bearer $TOKEN'"
+    out = _run(f"""openWorkerWake("wrk-1", "research");
       const form = els["workers-wake-box"].innerHTML;
-      els["workers-wake-url"].value = "  https://hooks.example.com/wake?token=abc  ";
-      els["workers-wake-headers"].value = "Authorization: Bearer abc";
-      replies = [{status: 200, body: {wake_host: "hooks.example.com"}}, {status: 200, body: {enabled: false}}];
+      els["workers-wake-curl"].value = {json.dumps(command)};
+      els["workers-wake-secret"].value = "  abc  ";
+      replies = [{{status: 200, body: {{wake_host: "hooks.example.com"}}}}, {{status: 200, body: {{enabled: false}}}}];
       await saveWorkerWake("wrk-1");
       return [form, calls, els["workers-wake-box"].innerHTML, toasts];""")
     form, calls, after, toasts = out
-    assert 'id="workers-wake-url"' in form and 'id="workers-wake-headers"' in form and "research" in form
+    assert 'id="workers-wake-curl"' in form and 'id="workers-wake-secret"' in form and "research" in form
+    assert "workers-wake-url" not in form and "workers-wake-headers" not in form
+    secret_input = re.search(r'<input id="workers-wake-secret"[^>]*>', form).group(0)
+    assert 'type="password"' in secret_input and 'autocomplete="off"' in secret_input
     assert "value=" not in form and "abc" not in form
     assert calls[0] == {"url": "/api/external-workers/wrk-1/wake", "method": "PUT",
-                        "body": {"url": "https://hooks.example.com/wake?token=abc",
-                                 "headers": "Authorization: Bearer abc"}}
+                        "body": {"curl": command, "secret": "abc"}}
     assert calls[1]["url"] == "/api/external-workers" and after == ""
     assert toasts == [[_dict("en")["workers.wake_saved"], "success"]]
 
