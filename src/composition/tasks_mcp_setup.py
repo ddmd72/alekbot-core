@@ -7,11 +7,13 @@ Named `tasks_mcp_setup`, not `mcp_tasks_setup`: the drive-notes isolation test t
 
 **Credentials.** `TasksTokenVerifier` routes on the credential's shape: one with the worker-key prefix goes to
 `ExternalTaskService.resolve_key` (shape, digest, revocation, worker, lock, flag) and then `ExternalWorkerUserGate`
-(the access whitelist), the same two checks the REST endpoint runs; anything else is refused (an OAuth token for this
-resource is the RFC's next step). A refused key is no token, which the SDK answers with `401`: a locked, switched-off,
-revoked or not-whitelisted key is refused at the door, where REST answers `403` (plan Δ1). The verified token carries
-kind `WORKER_KEY`, the worker id, the scope `external_tasks`, no expiry, and in `token` the key's stored digest, never
-the key.
+(the access whitelist), the same two checks the REST endpoint runs; anything else goes to the OAuth verifier only
+(`MCPAuthorizationService.verify_access_token` with `aud` = the tasks URI), which also requires the `wid` claim (the
+worker the grant is bound to; §5.4 "OAuth"). Without the authorization service every OAuth token is refused. A refused
+credential is no token, which the SDK answers with `401`: a locked, switched-off, revoked or not-whitelisted key is
+refused at the door, where REST answers `403` (plan Δ1). A verified key carries kind `WORKER_KEY`, the worker id, the
+scope `external_tasks`, no expiry, and in `token` the key's stored digest, never the key; a verified OAuth token carries
+kind `OAUTH`, its client, grant id (`gid`), worker id (`wid`), scope and expiry.
 
 **Tools**, each a thin handler over one service operation: `list_tasks`, `claim_task`, `renew_lease`,
 `submit_task_result`, `release_task`, `fail_task`. None takes a user, an account, a worker or a label: the principal is
@@ -22,11 +24,14 @@ service as sent (None is ""): the service normalises them. Only `list_tasks` is 
 **Each call** (`_TaskCaller.run`, the RFC's order):
 1. the principal from the verified token;
 2. the account lock, read fresh (`ACCOUNT_LOCKED_TOOL_ERROR`);
-3. (the OAuth grant check: the RFC's next step);
+3. for an OAuth token, the grant: `grant_allowed(user, gid)` (an active refresh token of the grant, the user active
+   and whitelisted), so a grant revoked in the Cabinet is refused on its next call, not when its access token expires;
+   a refused grant answers the neutral refused line;
 4. the flag and the worker: every service operation checks them again (`not_enabled` / `worker_revoked` answer one
    neutral line);
 5. this worker's limits, the REST endpoint's own buckets (`calls`, plus `claims` on a claim and `submits` on a submit,
-   counted per `user:worker`): over a limit answers the wait in seconds;
+   counted per `user:worker`, the same buckets for a key and for an OAuth grant of that worker): over a limit answers
+   the wait in seconds;
 6. the service operation; its answer is composed by `external_task_mcp_result` from the result texts.
 One span `mcp.tasks.<tool>` and one log line `[TaskMCP] tool=… user=<8> worker=<fingerprint> status=… ms=…` per call;
 never a task text, a title, a result, a reason, a key or a header. A refusal is an `isError` result with its line; a
@@ -70,6 +75,7 @@ from ..services.external_task_rate_limiter import ExternalTaskRateLimiter
 from ..services.external_task_service import ExternalTaskService
 from ..services.external_worker_user_gate import ExternalWorkerUserGate
 from ..services.inactive_user_check import InactiveUserCheck
+from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from .external_task_api_setup import build_external_task_api_limiter
@@ -102,16 +108,19 @@ _Raw = Annotated[str, BeforeValidator(_as_sent)]
 
 
 class TasksTokenVerifier:
-    """Satisfies mcp.server.auth.provider.TokenVerifier for the tasks resource: a worker key, or nothing."""
+    """Satisfies mcp.server.auth.provider.TokenVerifier for the tasks resource: a worker key, an OAuth access token of
+    the tasks resource bound to a worker, or nothing."""
 
-    def __init__(self, external_tasks: ExternalTaskService, gate: ExternalWorkerUserGate, resource_uri: str) -> None:
+    def __init__(self, external_tasks: ExternalTaskService, gate: ExternalWorkerUserGate, resource_uri: str,
+                 authorization_service: Optional[MCPAuthorizationService] = None) -> None:
         self._tasks = external_tasks
         self._gate = gate
         self._resource_uri = resource_uri
+        self._authorization = authorization_service
 
     async def verify_token(self, token: str) -> Optional[AlekAccessToken]:
         if not token.startswith(WORKER_KEY_PREFIX):
-            return None
+            return self._verify_oauth(token)
         try:
             principal = await self._tasks.resolve_key(token)
             await self._gate.check(principal)
@@ -123,18 +132,36 @@ class TasksTokenVerifier:
             expires_at=None, resource=self._resource_uri, user_id=principal.user_id,
             account_id=principal.account_id, kind=McpTokenKind.WORKER_KEY, worker_id=principal.worker_id)
 
+    def _verify_oauth(self, token: str) -> Optional[AlekAccessToken]:
+        """An access token minted for the tasks resource and bound to a worker; anything else is None."""
+        if self._authorization is None:
+            return None
+        verified = self._authorization.verify_access_token(token, resource=self._resource_uri)
+        if verified is None:
+            return None
+        if not verified.worker_id:
+            logger.info(f"[TaskMCP] oauth token refused: user={verified.user_id[:8]} reason=no_worker")
+            return None
+        return AlekAccessToken(
+            token=verified.token, client_id=verified.client_id, scopes=list(verified.scopes),
+            expires_at=verified.expires_at, resource=verified.resource, user_id=verified.user_id,
+            account_id=verified.account_id, grant_id=verified.grant_id, kind=McpTokenKind.OAUTH,
+            worker_id=verified.worker_id)
+
 
 def build_tasks_mcp_app(*, external_tasks: ExternalTaskService, limiter: ExternalTaskRateLimiter,
                         gate: ExternalWorkerUserGate, inactive_users: InactiveUserCheck,
                         texts: ConnectorTextService, initial_texts: ConnectorTexts,
-                        auth_config: AuthConfig) -> TokenTextFastMCP:
-    """The tasks app with its six tools. Raises when a registered tool strays from the contract."""
+                        auth_config: AuthConfig,
+                        authorization_service: Optional[MCPAuthorizationService] = None) -> TokenTextFastMCP:
+    """The tasks app with its six tools. Raises when a registered tool strays from the contract. Without
+    `authorization_service` (the facts app's, the authorization server) only worker keys are accepted."""
     tasks_uri = tasks_resource_uri(auth_config.mcp_resource_uri)
     issuer = urlparse(auth_config.mcp_resource_uri)    # the facts app is the authorization server
     app = TokenTextFastMCP(
         texts=texts, initial=initial_texts, read_only_tools=contract.READ_ONLY_TOOLS,
         name="alekbot-tasks",
-        token_verifier=TasksTokenVerifier(external_tasks, gate, tasks_uri),
+        token_verifier=TasksTokenVerifier(external_tasks, gate, tasks_uri, authorization_service),
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(f"{issuer.scheme}://{issuer.netloc}"),
             resource_server_url=AnyHttpUrl(tasks_uri),
@@ -145,7 +172,7 @@ def build_tasks_mcp_app(*, external_tasks: ExternalTaskService, limiter: Externa
         transport_security=build_transport_security(auth_config.mcp_resource_uri),
         stateless_http=True,  # Cloud Run may route subsequent requests to different instances
     )
-    _register_tools(app, _TaskCaller(app, limiter, inactive_users), external_tasks)
+    _register_tools(app, _TaskCaller(app, limiter, inactive_users, authorization_service), external_tasks)
     _check_contract(app)
     return app
 
@@ -211,17 +238,20 @@ def _missing_id(texts: Mapping[str, str], task_id: str, lease_id: str) -> Option
 class _TaskCaller:
     """Runs one tool call: principal, lock, texts, limits, operation, span, log."""
 
-    def __init__(self, app: TokenTextFastMCP, limiter: ExternalTaskRateLimiter,
-                 inactive_users: InactiveUserCheck) -> None:
+    def __init__(self, app: TokenTextFastMCP, limiter: ExternalTaskRateLimiter, inactive_users: InactiveUserCheck,
+                 authorization_service: Optional[MCPAuthorizationService] = None) -> None:
         self._app = app
         self._limiter = limiter
         self._inactive_users = inactive_users
+        self._authorization = authorization_service
 
     async def run(self, tool: str, ctx: Context, scopes: _Scopes, op: _Op) -> CallToolResult:
         started = time.monotonic()
         token = _worker_token(ctx, tool)
+        oauth = token.kind is McpTokenKind.OAUTH
         principal = WorkerPrincipal(user_id=token.user_id, account_id=token.account_id,
-                                    worker_id=token.worker_id or "", via=SubmitVia.KEY)
+                                    worker_id=token.worker_id or "", via=SubmitVia.OAUTH if oauth else SubmitVia.KEY,
+                                    client_id=token.client_id if oauth else None)
         who = f"user={principal.user_id[:8]} worker={fingerprint(principal.worker_id)}"
         # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a lock after the key was verified still refuses here.
         if await self._inactive_users.is_inactive(principal.user_id):
@@ -229,7 +259,7 @@ class _TaskCaller:
             return _answer(TaskToolAnswer(text=ACCOUNT_LOCKED_TOOL_ERROR, is_error=True, status="account_locked"))
         with start_span(f"mcp.tasks.{tool}", {"tool": tool}) as span:
             try:
-                answer = await self._answer(tool, token.token, principal, scopes, op)
+                answer = await self._answer(tool, token, principal, scopes, op)
             except Exception as exc:
                 logger.error(f"❌ [TaskMCP] tool={tool} {who} failed: {type(exc).__name__}")
                 span.set_attribute("status", "failed")
@@ -240,12 +270,20 @@ class _TaskCaller:
         logger.info(f"[TaskMCP] tool={tool} {who} status={answer.status} ms={ms}")
         return _answer(answer)
 
-    async def _answer(self, tool: str, key_digest: str, principal: WorkerPrincipal, scopes: _Scopes,
+    async def _answer(self, tool: str, token: AlekAccessToken, principal: WorkerPrincipal, scopes: _Scopes,
                       op: _Op) -> TaskToolAnswer:
         try:
             texts = (await self._app.current_texts()).results
         except ConnectorTextsUnavailable:
             return TaskToolAnswer(text=NO_TEXTS, is_error=True, status="no_texts")
+        key_digest: Optional[str] = token.token     # a key's stored digest; an OAuth token is never remembered
+        if principal.via is SubmitVia.OAUTH:
+            key_digest = None
+            # The grant is re-checked on every call: a grant revoked in the Cabinet, or a user taken off the
+            # whitelist, is refused now, not when the access token expires (EXTERNAL_TASK_QUEUE_RFC §5.4 step 3).
+            if self._authorization is None or not await self._authorization.grant_allowed(principal.user_id,
+                                                                                         token.grant_id):
+                return TaskToolAnswer(text=texts[contract.REFUSED], is_error=True, status="grant_refused")
         worker = f"{principal.user_id}:{principal.worker_id}"
         for scope, limit in scopes:
             wait = await self._limiter.hit(scope, worker, limit, key_digest)
@@ -267,7 +305,8 @@ def _worker_token(ctx: Context, tool: str) -> AlekAccessToken:
     so only a request built around it gets here)."""
     request = ctx.request_context.request
     token = getattr(getattr(request, "user", None), "access_token", None)
-    if not isinstance(token, AlekAccessToken) or token.kind is not McpTokenKind.WORKER_KEY or not token.worker_id:
+    if (not isinstance(token, AlekAccessToken) or token.kind not in (McpTokenKind.WORKER_KEY, McpTokenKind.OAUTH)
+            or not token.worker_id):
         logger.warning(f"[TaskMCP] tool={tool}: no verified worker credential on the request")
         raise ToolError(NO_CREDENTIAL)
     return token
@@ -286,7 +325,9 @@ async def build_tasks_mcp_or_none(*, external_tasks: Optional[ExternalTaskServic
                                   env_config: EnvironmentConfig, user_repo: UserRepository,
                                   whitelist_repo: WhitelistRepository, token_repo: Optional[TokenRepository],
                                   alert_sink: Optional[AlertSinkPort], inactive_users: InactiveUserCheck,
-                                  auth_config: AuthConfig) -> Optional[TokenTextFastMCP]:
+                                  auth_config: AuthConfig,
+                                  authorization_service: Optional[MCPAuthorizationService] = None,
+                                  ) -> Optional[TokenTextFastMCP]:
     """The tasks app, or None: no task queue (`external_tasks` None), no prompt token store, or a failed build (the
     texts' first load included, which alerts through `alert_sink`). The facts and drive apps run on either way. The
     limiter is the REST endpoint's kind over the same counters, so both surfaces share each worker's buckets."""
@@ -302,7 +343,7 @@ async def build_tasks_mcp_or_none(*, external_tasks: Optional[ExternalTaskServic
         app = build_tasks_mcp_app(
             external_tasks=external_tasks, limiter=build_external_task_api_limiter(db_client, env_config),
             gate=ExternalWorkerUserGate(user_repo, whitelist_repo), inactive_users=inactive_users, texts=texts,
-            initial_texts=await texts.texts(), auth_config=auth_config)
+            initial_texts=await texts.texts(), auth_config=auth_config, authorization_service=authorization_service)
     except Exception as exc:
         logger.error(f"❌ Failed to initialize the tasks MCP resource: {type(exc).__name__}: {exc}", exc_info=True)
         logger.warning("🤖 Bot will continue without /tasks-mcp")

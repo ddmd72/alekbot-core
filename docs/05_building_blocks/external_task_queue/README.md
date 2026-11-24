@@ -67,12 +67,15 @@ wake-up POST behind the outbound-request guard; the operator flag script.
 
 Step 3 is in too: the worker MCP resource `/tasks-mcp` on worker keys (below).
 
-Step 4 is in progress: the authorization server binds the tasks scope to one worker; a client may register the scope
-(never a default) and the consent page asks which worker it acts as; the Cabinet lists each worker's OAuth grants
-(client name, granted time, last refresh) with Revoke; removing a worker revokes its grants. Not built yet: the tasks
-verifier's OAuth route; and step 5,
-the primary drive's Inbox as a destination. Code that mentions them (`WorkerDestination.DRIVE`, `SubmitVia.OAUTH`) is
-placeholder for those steps.
+Step 4 is in too: OAuth for `/tasks-mcp` (a claude.ai custom connector). A client may register the scope
+`external_tasks` (never a default); the consent page asks which worker the client acts as and the grant is bound to it
+(`wid`); the flag is checked at consent, code exchange and refresh, and every tool call re-checks the grant; the
+Cabinet lists each worker's OAuth grants (client name, granted time, last refresh) with Revoke, and removing a worker
+revokes its grants. The live check of §10 Q1 (the authorize-time scope equals the registered one) is run after the
+deploy.
+
+Not built: step 5, the primary drive's Inbox as a destination. Code that mentions it (`WorkerDestination.DRIVE`) is
+placeholder for that step.
 
 ## Owned data
 

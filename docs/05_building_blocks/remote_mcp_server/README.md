@@ -49,8 +49,8 @@ One authorization server fronts three protected resources, each its own FastMCP 
   (set in the Cabinet; unset means nothing).
 - **tasks**, `/tasks-mcp`, scope `external_tasks`: the external task queue's worker tools (`list_tasks`, `claim_task`,
   `renew_lease`, `submit_task_result`, `release_task`, `fail_task`), thin handlers over `ExternalTaskService`. It takes
-  worker keys only so far: the authorization server registers its scope, binds it and mints its tokens, bound to one
-  worker picked at consent, but the resource does not accept them yet (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4, §9 step 4). The queue itself is
+  worker keys (a CLI client or a script sends one as the bearer) and OAuth access tokens bound to one worker picked at
+  consent (a claude.ai custom connector) (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4). The queue itself is
   [`external_task_queue`](../external_task_queue/README.md).
 
 Every tool call of every app reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
@@ -162,7 +162,9 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
 7. **Bearer check** on every call. `MCPSdkOAuthProvider.load_access_token` (facts) and
    `src/composition/drive_mcp_setup.py::DriveTokenVerifier` (drive) call `verify_access_token`: signature, `type`, and
    `aud` equal to the resource in canonical form (`canonical_resource`: lowercase scheme and host, no trailing slash).
-   The drive verifier copies `gid` into the token it hands the tools; the facts one does not need it.
+   The drive verifier copies `gid` into the token it hands the tools; the facts one does not need it. The tasks
+   verifier (below) sends every credential without the worker-key prefix here with `aud` = the tasks URI and copies
+   `gid` and `wid`; a token without `wid` is refused.
 
 **Resource and scope binding.** `bind_resource` is applied at authorize and again at refresh. With `resource` given it
 must canonicalise to a served resource's URI, every requested scope must be that resource's own, and no scope means the
@@ -229,15 +231,22 @@ every listing; the server instructions are served from the texts last read.
 
 `src/composition/tasks_mcp_setup.py::build_tasks_mcp_app` builds a third `TokenTextFastMCP`, a resource server only.
 
-- **Verifier** (`TasksTokenVerifier`): a credential with the worker-key prefix (`WORKER_KEY_PREFIX`) goes to
-  `ExternalTaskService.resolve_key` and then `ExternalWorkerUserGate` (the whitelist), the REST endpoint's two checks;
-  anything else is refused. A refused key is no token, so the SDK answers `401` at the door, where REST answers `403`
-  for a locked, switched-off, revoked or not-whitelisted key. The token handed to the tools has kind `WORKER_KEY`, the
-  worker id, scope `external_tasks`, no expiry, and in its `token` field the key's stored digest, never the key. The
-  facts and drive verifiers know nothing of keys, so a worker key is `401` there.
-- **One call** (`_TaskCaller.run`): the principal from the token; the account lock (`ACCOUNT_LOCKED_TOOL_ERROR`); the
-  texts; the worker's limits, the REST endpoint's own buckets (`calls`, plus `claims` or `submits`, per `user:worker`),
-  so both surfaces count against one budget; the service operation, which re-checks the worker and the flag. One span
+- **Verifier** (`TasksTokenVerifier`), routed on the credential's shape: one with the worker-key prefix
+  (`WORKER_KEY_PREFIX`) goes to `ExternalTaskService.resolve_key` and then `ExternalWorkerUserGate` (the whitelist), the
+  REST endpoint's two checks, and nowhere else; anything else goes to `verify_access_token` with `aud` = the tasks URI
+  only, and must carry `wid`. A refused credential is no token, so the SDK answers `401` at the door, where REST answers
+  `403` for a locked, switched-off, revoked or not-whitelisted key. A key's token has kind `WORKER_KEY`, the worker id,
+  scope `external_tasks`, no expiry, and in its `token` field the key's stored digest, never the key; an OAuth token has
+  kind `OAUTH`, its client, `gid`, `wid`, scope and expiry. The facts and drive verifiers know nothing of keys, and a
+  tasks access token's audience is not theirs, so both are `401` there. Built without the authorization service, the
+  app refuses every OAuth token.
+- **One call** (`_TaskCaller.run`): the principal from the token (`via=oauth` and the client id for an OAuth token);
+  the account lock (`ACCOUNT_LOCKED_TOOL_ERROR`); the texts; for an OAuth token, `grant_allowed(user, gid)` (the grant
+  still has an active refresh token, the user is active and whitelisted), so a grant revoked in the Cabinet is refused
+  on its next call with the neutral refused line, not when its access token expires; the worker's limits, the REST
+  endpoint's own buckets (`calls`, plus `claims` or `submits`, per `user:worker`), so every surface and credential of
+  one worker counts against one budget; the service operation, which re-checks the worker (`wid` naming a revoked or
+  foreign worker is refused) and the flag. One span
   `mcp.tasks.<tool>` and one `[TaskMCP] tool=… user=<8> worker=<fingerprint> status=… ms=…` line; never a task text, a
   result, a reason, a key or a header.
 - **Results** (`src/domain/external_task_mcp_result.py`): text only. A claim prints code-written provenance first (task
@@ -296,7 +305,9 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
   in the log). `isError` is only for authentication, a backend fault, or no phrases at all.
   `decisions/mcp_tool_schema_liberal_input.md`.
 - **claude.ai caches `tools/list` at registration.** A changed facts tool schema or description needs the connector
-  removed and re-added. A client that caches `tools/list` needs the same re-add to see new drive or tasks texts, which the server reads from tokens on each listing; a changed tasks tool parameter needs it too.
+  removed and re-added. A client that caches `tools/list` needs the same re-add to see new drive or tasks texts, which the server reads from tokens on each listing; a changed tasks tool parameter needs it too: a claude.ai
+  task connector keeps calling with the cached schema until it is removed and added again (a new grant, a new worker
+  pick).
 - **No `Mount`.** Starlette's `Mount("/mcp")` does not match an exact `POST /mcp` and strips the prefix, which breaks
   the SDK's absolute routes; that is why the dispatcher is plain ASGI. `/mcp/consent` reaches Quart only because the
   facts matcher is exact on `/mcp` and `/mcp/`: a new FastMCP path under `/mcp/` would shadow it. The tasks and drive
