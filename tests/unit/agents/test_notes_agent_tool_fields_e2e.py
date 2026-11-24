@@ -157,7 +157,10 @@ async def test_create_with_every_field_and_a_workspace_file_is_stored():
     assert doc["complexity"] == "deep_reasoning"
     assert doc["workspace_file"] == FILE
     assert len(rig.receipts) == 1
-    assert rig.receipts[0].startswith('📌 Reminder set: "Springfield news every morning" — 13 Mar 2030 08:00 CET')
+    lines = rig.receipts[0].split("\n")
+    assert lines[0] == '📌 Reminder set: "Springfield news every morning"'
+    assert lines[2] == f"{TEXT_MARK} Look up the news in Springfield and send a short digest."
+    assert lines[-1].startswith("13 Mar 2030 08:00 CET")
     assert rig.receipts[0].endswith(" · workspace file projects/morning-briefing.md")
     assert rig.finished()
 

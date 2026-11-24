@@ -7,6 +7,9 @@ from src.domain.ui_messages import UIMessage
 from src.locales import en
 
 TEXT = "compare three community-garden irrigation kits for Shelbyville.\n\nBraces {like} {this} and a $task send x stay text."
+# TEXT as the post must show it: every line whole, in order, behind the mark (the blank line is the mark alone).
+MARKED_TEXT = (f"{TEXT_MARK} compare three community-garden irrigation kits for Shelbyville.\n{TEXT_MARK}\n"
+               f"{TEXT_MARK} Braces {{like}} {{this}} and a $task send x stay text.")
 
 
 def strings(message: UIMessage) -> str:
@@ -19,14 +22,15 @@ def _created(status, code=None):
 
 def test_the_text_is_appended_byte_for_byte_never_run_through_a_template():
     post, _ = render(receipt_data(_created(ExternalTaskStatus.QUEUED)), strings)
-    assert TEXT in post
+    assert MARKED_TEXT in post
+    assert "Braces {like} {this} and a $task send x stay text." in post   # no template ate the braces
 
 
 def test_a_held_receipt_says_it_waits_for_confirmation_with_the_full_text_and_returns_the_command_alone():
     data = receipt_data(_created(ExternalTaskStatus.HELD, code="a1b2c3d4"))
     post, command = render(data, strings)
     assert post.startswith("Waiting for your confirmation: a task for *research*: *Irrigation kits*.")
-    assert TEXT in post and post.endswith("Task id: `tsk-1`")
+    assert MARKED_TEXT in post and post.endswith("Task id: `tsk-1`")
     assert f"{HOLD_S // 3600} hours" in post
     assert command == "`$task send a1b2c3d4`"
     assert "a1b2c3d4" not in post
