@@ -12,7 +12,7 @@ import pytest
 
 from src.domain.agent import AgentIntent, AgentStatus
 from src.domain.external_task import HOLD_S, ExternalTaskStatus
-from src.domain.external_task_entry import TaskEntry
+from src.domain.external_task_entry import REMINDER_RUN_ORIGIN, TaskEntry
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY
 from src.domain.external_task_texts import (
     ANSWER_CUT,
@@ -25,7 +25,10 @@ from src.domain.external_task_texts import (
     ANSWER_UNAVAILABLE_TURN,
     ERROR_FAILED,
     ERROR_NOT_THE_BRIEF,
+    CREATE_DESCRIPTION_CHAT,
+    CREATE_DESCRIPTION_REMINDER,
     NOTE_PENDING,
+    NOTE_QUEUED,
 )
 from src.domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest, LLMResponse
 from src.domain.untrusted_text import EXTERNAL_REMINDER
@@ -318,3 +321,50 @@ async def test_a_run_cut_before_any_tool_says_nothing_was_done(world):
     _, response = await run(world, [RuntimeError("provider down")])
     assert response.status is AgentStatus.SUCCESS and response.result == ANSWER_CUT_BEFORE_ANY_TOOL
     assert response.delivery_items == []
+
+
+# --- a reminder's run: queued at once, no receipt ------------------------------------------------------------------
+
+REMINDER_RUN = {"interactive_delivery": None, "run_origin": REMINDER_RUN_ORIGIN}
+
+
+def create_declaration(llm):
+    return next(t for t in llm.requests[0].tools if t["name"] == "create_external_task")
+
+
+async def test_a_reminders_create_is_queued_at_once_with_a_note_and_no_receipt(world):
+    llm, response = await run(world, [tools(CREATE), text("Handed over.")], **REMINDER_RUN)
+
+    [task] = world.tasks.tasks.values()
+    assert task.status is S.QUEUED and task.hold is None and task.text == TEXT and task.origin == ORIGIN
+    assert receipts(response) == [] and response.delivery_items == []
+    queued = NOTE_QUEUED.format(task_id=task.task_id, worker="research", title=TITLE)
+    assert response.result == "\n\n".join([ANSWER_RESULTS_HEAD, queued]) + f"\n\n{ANSWER_NOTE_HEAD}\nHanded over."
+    assert [j["kind"] for j in world.jobs("external_task_timer")] == ["deadline"]     # no hold timer: nothing waits
+    assert all(NOTE_PENDING.format(task_id=task.task_id, worker="research", hours=HOURS) not in str(r)
+               for _, r in tool_results(llm))
+
+
+async def test_a_chat_create_still_waits_and_each_entry_reads_its_own_create_description(world):
+    chat_llm, chat = await run(world, [tools(CREATE), text("Held.")])
+    reminder_llm, _ = await run(world, [text("Nothing.")], **REMINDER_RUN)
+
+    assert create_declaration(chat_llm)["description"] == CREATE_DESCRIPTION_CHAT
+    assert create_declaration(reminder_llm)["description"] == CREATE_DESCRIPTION_REMINDER
+    assert CREATE_DESCRIPTION_CHAT != CREATE_DESCRIPTION_REMINDER
+    assert len(receipts(chat)) == 1 and next(iter(world.tasks.tasks.values())).status is S.HELD
+
+
+async def test_a_model_cannot_choose_the_entry_through_its_arguments(world):
+    forged = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT, "entry": "reminder"})
+    _, response = await run(world, [tools(forged), text("Held.")])
+    assert next(iter(world.tasks.tasks.values())).status is S.HELD and len(receipts(response)) == 1
+
+
+@pytest.mark.parametrize("run_origin", ["background:daily_email_review", "background:external_task_deliver",
+                                        "voice:delegate"])
+async def test_the_gate_refuses_every_other_background_run(world, run_origin):
+    llm = ScriptedLLM([])
+    response = await specialist_rig(llm, world).execute(
+        specialist_message(INSTRUCTION, interactive_delivery=None, run_origin=run_origin))
+    assert response.result == ANSWER_UNAVAILABLE_TURN and llm.requests == [] and world.tasks.tasks == {}

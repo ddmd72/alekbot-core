@@ -8,18 +8,20 @@ finished task reaches the bot as a system alert).
 
 Smart has no queue tool. The five tools of the generic external task queue (create, list, get, cancel, list workers)
 belong to one LLM specialist, `ExternalTaskAgent` (`src/agents/external_task_agent.py`), behind the internal intent
-`work_with_external_tasks`. Smart offers that intent only on the owner's own chat turn of a user with the queue switched
-on, and writes the specialist a natural-language instruction: the worker's name and the whole brief, or which task to
+`work_with_external_tasks`. Smart offers that intent only on the owner's own chat turn or while one of the owner's reminders runs, of a user with the
+queue switched on, and writes the specialist a natural-language instruction: the worker's name and the whole brief, or which task to
 read or cancel. The orchestrator gives a specialist instructions, not parameters: the intent carries no payload field.
 
 Five rules come with the move:
 - **The brief is Smart's, word for word.** The create handler refuses a text that is not a part of the instruction
   after whitespace is normalised (`ERROR_NOT_THE_BRIEF`). The specialist chooses the title and the worker label, never
   the words that leave the system.
-- **Every task it creates waits for the owner's confirmation.** The specialist creates with `TaskEntry.CHAT`: the owner
-  is shown the exact text and a command only they see, and nothing leaves until they send it. The code reaches the
-  owner's receipt only, never a model.
-- **The specialist repeats the gate in code** before any model call: an interactive turn, a call chain of itself alone,
+- **A chat task waits for the owner's confirmation; a reminder's task does not.** The specialist computes the entry once
+  per run from the context (`task_entry`), never from the model. `TaskEntry.CHAT`: the owner is shown the exact text and
+  a command only they see, and nothing leaves until they send it; the code reaches the owner's receipt only, never a
+  model. `TaskEntry.REMINDER`: queued at once with a tool note and no receipt, because the owner approved that reminder
+  when it was set.
+- **The specialist repeats the gate in code** before any model call: a run with a task entry, a call chain of itself alone,
   a service, a user, then the service's fresh flag and lock check. The coordinator checks no allowlist, so the offer
   alone is not a gate: a nested Smart or Lelik's `/voice/delegate` naming the intent gets a code-written refusal.
 - **The answer is composed by code** from the record of tool calls (every result verbatim, the note, a cut line), and
@@ -69,5 +71,4 @@ specialists.
 
 ## Revisit if
 
-The hand-off becomes frequent enough that the extra model call matters, or a reminder run needs to create tasks (the
-next step: a reminder's create is queued, not held, `decisions/external_task_confirmation_and_alerts.md`).
+The hand-off becomes frequent enough that the extra model call matters.
