@@ -453,9 +453,16 @@ class TestBuild:
         assert await self.build(world) is None
 
 
-def test_the_tasks_scope_binds_to_no_resource_before_its_oauth_step():
-    assert MCPResource.TASKS not in SCOPE_OF
+def test_the_tasks_scope_is_in_scope_of_and_binds_only_where_it_is_served():
+    # reviewer edit, task queue step 4.1 (RFC §5.4 "OAuth"): the pre-OAuth state (TASKS absent from SCOPE_OF) is
+    # superseded; the scope string is in SCOPE_OF, and binding still fails closed without it or without its URI
+    assert SCOPE_OF[MCPResource.TASKS] == TASKS_SCOPE == "external_tasks"
     uris = {MCPResource.FACTS: AUTH_CONFIG.mcp_resource_uri,
             MCPResource.DRIVE: drive_resource_uri(AUTH_CONFIG.mcp_resource_uri)}
+    served = {**uris, MCPResource.TASKS: TASKS_URI}
+    assert bind_resource(None, [TASKS_SCOPE], served, SCOPE_OF) == (MCPResource.TASKS, TASKS_URI, [TASKS_SCOPE])
+    without_tasks = {k: v for k, v in SCOPE_OF.items() if k is not MCPResource.TASKS}
+    with pytest.raises(ScopeRefused):
+        bind_resource(None, [TASKS_SCOPE], served, without_tasks)
     with pytest.raises(ScopeRefused):
         bind_resource(None, [TASKS_SCOPE], uris, SCOPE_OF)
