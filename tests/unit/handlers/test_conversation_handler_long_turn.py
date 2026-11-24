@@ -18,7 +18,7 @@ from src.services.long_turn_service import LongTurnService
 _CHANNEL_METHODS = (
     "send_status", "send_message", "send_chunked_message", "send_flat_response",
     "update_message", "send_rich_content", "update_status_with_phrase_and_dots",
-    "send_late_answer", "on_long_turn", "send_document_link", "send_file",
+    "send_late_answer", "on_long_turn", "send_document_link", "send_file", "send_literal",
 )
 
 

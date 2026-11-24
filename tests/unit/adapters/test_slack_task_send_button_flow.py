@@ -82,13 +82,16 @@ class Flow:
         self.http = app.test_client()
 
     async def receipt(self):
-        """A held task created in a chat turn, and its receipt delivered on Slack: the literal post, then the button."""
+        """A held task created in a chat turn, and its receipt delivered on Slack: the text file, the literal post, then
+        the button."""
         created = await self.world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
         channel = MagicMock()
         channel.platform, channel.channel_id, channel.language = "slack", CHANNEL, "en"
-        channel.send_message, channel.send_literal = AsyncMock(), AsyncMock()
+        channel.send_message, channel.send_literal, channel.send_file = AsyncMock(), AsyncMock(), AsyncMock()
         item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
         await self.chat._deliver_item(item, channel, None, USER_ID)
+        assert channel.send_file.await_args.kwargs["content"] == TEXT.encode("utf-8")
+        channel.send_literal.assert_awaited_once()
         channel.send_message.assert_not_awaited()
         return created
 

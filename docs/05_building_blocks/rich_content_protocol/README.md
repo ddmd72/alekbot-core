@@ -89,7 +89,8 @@ A body with one child is screenshotted as that child, otherwise the body is, wit
    started); the deep-research notice retries whenever nothing was sent (see `notify`'s docstring).
 5. The other `notify_*` entry points skip the agent and post fixed or given text, files or links; the ones that also
    append a history pair are `notify_call_summary`, `notify_drive_note_receipt` and `notify_document_link`.
-   `notify_answer_copy` is the chat copy of a call answer. `notify_raw(literal=True)` is for text the bot did not write.
+   `notify_answer_copy` is the chat copy of a call answer. `notify_raw(literal=True)` is for text the bot did not write;
+   its `attachment` (a literal notice, `src/domain/literal_notice.py`) posts that notice's file before the text.
 
 ### Wiring
 

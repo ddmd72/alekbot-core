@@ -153,7 +153,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_SAVED.value: "✅ Sent to memory: {count}. They become searchable after background consolidation, usually within hours.",
     UIMessage.MEMORY_DRAFT_NOT_FOUND.value: "❌ No proposal with code `{code}`. Ask me to propose the facts again.",
     UIMessage.MEMORY_UNAVAILABLE.value: "Saving facts is not available right now.",
-    UIMessage.EXTERNAL_TASK_HELD.value: 'Waiting for your confirmation: a task for *{worker}*: *{title}*. Its full text is below. It is sent only if you paste the command that follows within {hours} hours.',
+    UIMessage.EXTERNAL_TASK_HELD.value: 'Waiting for your confirmation: a task for *{worker}*: *{title}*. Its full text is in the file above. It is sent only if you paste the command that follows within {hours} hours.',
     UIMessage.EXTERNAL_TASK_ID_LINE.value: 'Task id: `{task_id}`',
     UIMessage.EXTERNAL_TASK_USAGE.value: '`$task send CODE` — send a task that waits for your confirmation.',
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Sent: *{title}* for *{worker}*.',

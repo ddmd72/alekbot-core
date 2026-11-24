@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
+from src.domain.literal_notice import render_literal_notice
 from src.domain.notification import NotificationChannel
 from src.domain.ui_messages import UIMessage
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
@@ -123,3 +124,31 @@ async def test_no_stored_channel_or_no_localization_sends_nothing(caplog):
     await state.save("u", "telegram", "chat-1")
     assert await service.notify_ui_notice_all_channels("u", _LOCKED) == 0
     assert factory.sent == [] and "No localization wired" in caplog.text
+
+
+# ------------------------------------------------- a literal notice's file (domain.literal_notice), before its text
+
+_NOTICE = render_literal_notice("📌 Reminder set: \"Morning briefing\"", "Follow the workspace file.",
+                                filename="reminder.txt", title="Morning briefing")
+
+
+async def test_an_attachment_posts_the_file_first_then_the_text_literally():
+    service, channel = _service()
+    order = []
+    channel.send_file = AsyncMock(side_effect=lambda **kw: order.append(("file", kw)))
+    channel.send_literal.side_effect = lambda text: order.append(("literal", text))
+
+    assert await service.notify_raw("u", "a", _NOTICE.message, literal=True, attachment=_NOTICE) is True
+
+    assert order == [
+        ("file", {"content": b"Follow the workspace file.", "filename": "reminder.txt", "title": "Morning briefing"}),
+        ("literal", _NOTICE.message),
+    ]
+
+
+async def test_a_failed_file_sends_no_text_and_reports_not_sent():
+    service, channel = _service()
+    channel.send_file = AsyncMock(side_effect=RuntimeError("slack down"))
+
+    assert await service.notify_raw("u", "a", _NOTICE.message, literal=True, attachment=_NOTICE) is False
+    channel.send_literal.assert_not_awaited()

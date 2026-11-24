@@ -30,11 +30,12 @@ async def test_late_answer_delivers_the_memory_preview_file_then_the_command(lt)
     order = []
     lt.channel.send_late_answer.side_effect = lambda *a, **k: order.append("late")
     lt.channel.send_file.side_effect = lambda **k: order.append("file")
+    lt.channel.send_literal.side_effect = lambda text, thread=None: order.append("literal")
     lt.channel.send_message.side_effect = lambda text, thread=None: order.append(text)
 
     await lt.handle()
 
-    assert order[0] == "late" and order[1] == "file" and order[-1] == "`$memory save ab12`"
+    assert order[:3] == ["late", "file", "literal"] and order[-1] == "`$memory save ab12`"
     assert lt.channel.send_file.await_args.kwargs["thread_id"] is None
 
 

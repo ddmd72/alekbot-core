@@ -33,6 +33,7 @@ def _channel(platform: str = "slack") -> MagicMock:
     ch.platform, ch.channel_id, ch.language = platform, "D1", None
     ch.send_message = AsyncMock()
     ch.send_literal = AsyncMock()
+    ch.send_file = AsyncMock()   # the receipt's text file (ResponseChannel.send_file), posted before the literal message
     return ch
 
 
@@ -67,8 +68,10 @@ async def test_on_slack_the_command_message_carries_the_send_button_after_the_li
 
     await _handler(world.service, client)._deliver_item(item, ch, None, USER_ID)
 
+    [file] = [c.kwargs for c in ch.send_file.await_args_list]
+    assert file["content"] == TEXT.encode("utf-8") and created.code.encode() not in file["content"]
     [post] = [c.args[0] for c in ch.send_literal.await_args_list]
-    assert TEXT in post and created.code not in post
+    assert TITLE in post and created.code not in post
     ch.send_message.assert_not_awaited()
     posted = client.chat_postMessage.call_args.kwargs
     assert posted["channel"] == "D1" and "thread_ts" not in posted
@@ -86,6 +89,7 @@ async def test_in_a_thread_the_button_message_goes_in_the_receipts_thread(world)
 
     await _handler(world.service, client)._deliver_item(item, ch, "T1", USER_ID)
 
+    assert ch.send_file.await_args.kwargs["thread_id"] == "T1"
     assert ch.send_literal.await_args.args[1] == "T1"
     assert client.chat_postMessage.call_args.kwargs["thread_ts"] == "T1"
     ch.send_message.assert_not_awaited()
@@ -120,10 +124,11 @@ async def test_a_failed_button_post_still_sends_the_command_alone(world):
     assert [(c.args[0], c.args[1]) for c in ch.send_message.await_args_list] == [(f"`$task send {created.code}`", "T1")]
 
 
-async def test_a_failed_receipt_posts_no_button(world):
+@pytest.mark.parametrize("failing", ["send_file", "send_literal"])
+async def test_a_failed_receipt_posts_no_button(world, failing):
     _, item = await _item(world)
     ch, client = _channel(), _slack_client()
-    ch.send_literal.side_effect = RuntimeError("slack down")
+    getattr(ch, failing).side_effect = RuntimeError("slack down")
 
     await _handler(world.service, client)._deliver_item(item, ch, None, USER_ID)
 

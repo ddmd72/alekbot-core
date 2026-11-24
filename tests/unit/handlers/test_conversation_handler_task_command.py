@@ -39,6 +39,7 @@ def _channel() -> MagicMock:
     ch = MagicMock()
     ch.send_message = AsyncMock()
     ch.send_literal = AsyncMock()
+    ch.send_file = AsyncMock()   # a literal notice's text file (ResponseChannel.send_file), posted before its message
     ch.language = None
     return ch
 
@@ -71,23 +72,28 @@ async def _held(world):
 
 class TestReceiptDelivery:
 
-    async def test_a_held_receipt_posts_the_text_literally_then_the_command_alone(self, world):
+    async def test_a_held_receipt_posts_the_text_file_then_the_literal_message_then_the_command_alone(self, world):
         created = await _held(world)
         ch = _channel()
         item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
 
         await _handler(world.service)._deliver_item(item, ch, "T1", USER_ID)
 
+        [file] = [c.kwargs for c in ch.send_file.await_args_list]
+        assert file["content"] == TEXT.encode("utf-8") and file["thread_id"] == "T1"
         [post] = _literal(ch)
-        assert TEXT in post and TITLE in post and "research" in post and created.task_id in post
+        assert TITLE in post and "research" in post and created.task_id in post
         assert created.code not in post
         assert _sent(ch) == [f"`$task send {created.code}`"]
         assert ch.send_literal.await_args.args[1] == "T1" and ch.send_message.await_args.args[1] == "T1"
+        assert [name for name, _, _ in ch.mock_calls if name in {"send_file", "send_literal", "send_message"}] == [
+            "send_file", "send_literal", "send_message"]
 
-    async def test_a_failed_receipt_never_sends_the_command(self, world):
+    @pytest.mark.parametrize("failing", ["send_file", "send_literal"])
+    async def test_a_failed_receipt_never_sends_the_command(self, world, failing):
         created = await _held(world)
         ch = _channel()
-        ch.send_literal.side_effect = RuntimeError("slack down")
+        getattr(ch, failing).side_effect = RuntimeError("slack down")
         item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
 
         await _handler(world.service)._deliver_item(item, ch, None, USER_ID)

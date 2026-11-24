@@ -4,7 +4,7 @@ The real `NotesAgent` (its own `_call_llm`, tool loop and dispatch) behind a scr
 reaches it: `AgentCoordinator.handle_delegation` over a registry holding the Notes descriptor, so the delegate field
 `workspace_file` arrives through the `params` spread. The store is the real `FirestoreAgentNoteAdapter` on `EvalDb`;
 the receipts go through the real `UserNotificationService` to a recording channel. Every assertion reads a stored
-document, the delegation's response or a posted text.
+document, the delegation's response or a posted text or file.
 
 Every script is `[tools(<call>), text("<summary>")]`: after any create/update/delete the agent makes a second,
 tool-less request and only then returns (`notes_agent.py:466-480`), so a script of one item would run out.
@@ -16,7 +16,7 @@ Two bad-value cases are pinned as plain tests, each beside a passing control (bo
   (`test_an_unparsable_due_on_update_is_refused_not_dropped`).
 """
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
@@ -26,7 +26,7 @@ from src.agents.notes_agent import NotesAgent
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentConfig, AgentResponse, AgentStatus
 from src.domain.agent_note import NoteCreate
-from src.domain.literal_notice import TEXT_MARK, render_literal_notice
+from src.domain.literal_notice import render_literal_notice
 from src.domain.task_complexity import TaskComplexity
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import NOTES, Intent
@@ -131,6 +131,16 @@ class Rig:
     def receipts(self) -> List[str]:
         return [t for _, _, t in self.channels.sent_literal]
 
+    @property
+    def files(self) -> List[Tuple[str, str, bytes]]:
+        """(filename, title, content) of every notice's file, in order."""
+        return [(name, title, content) for _, _, name, title, content in self.channels.sent_files]
+
+    @property
+    def posts(self) -> List[Tuple[str, str]]:
+        """Every delivery to the user's channel in order: ("file", filename) or ("literal" | "text", text)."""
+        return [post for channel in self.channels.channels.values() for post in channel.posts]
+
 
 def _call(template: Dict[str, Any], note_id: str) -> Dict[str, Any]:
     return {**template, "note_id": note_id}
@@ -157,10 +167,12 @@ async def test_create_with_every_field_and_a_workspace_file_is_stored():
     assert doc["complexity"] == "deep_reasoning"
     assert doc["workspace_file"] == FILE
     assert len(rig.receipts) == 1
+    assert rig.posts == [("file", "reminder.txt"), ("literal", rig.receipts[0])]
+    assert rig.files == [("reminder.txt", "Springfield news every morning",
+                          b"Look up the news in Springfield and send a short digest.")]
     lines = rig.receipts[0].split("\n")
     assert lines[0] == '📌 Reminder set: "Springfield news every morning"'
-    assert lines[2] == f"{TEXT_MARK} Look up the news in Springfield and send a short digest."
-    assert lines[-1].startswith("13 Mar 2030 08:00 CET")
+    assert len(lines) == 2 and lines[-1].startswith("13 Mar 2030 08:00 CET")
     assert rig.receipts[0].endswith(" · workspace file projects/morning-briefing.md")
     assert rig.finished()
 
@@ -302,9 +314,13 @@ async def test_the_set_and_updated_notices_show_the_stored_instruction_word_for_
 
     stored = rig.docs[note_id]["instruction"]
     assert stored == UPDATE_ALL["instruction"]
-    assert [r.split("\n")[2] for r in rig.receipts] == [
-        f"{TEXT_MARK} {CREATE_ALL['instruction']}", f"{TEXT_MARK} {stored}", f"{TEXT_MARK} {stored}"]
-    assert rig.receipts[0] == render_literal_notice(
+    assert [content for _, _, content in rig.files] == [
+        CREATE_ALL["instruction"].encode("utf-8"), stored.encode("utf-8"), stored.encode("utf-8")]
+    assert [kind for kind, _ in rig.posts] == ["file", "literal"] * 3
+    notice = render_literal_notice(
         f"📌 Reminder set: \"{CREATE_ALL['text']}\"", CREATE_ALL["instruction"],
-        ["13 Mar 2030 08:00 CET (repeats every day at 08:00) · workspace file projects/morning-briefing.md"])
+        filename="reminder.txt", title=CREATE_ALL["text"],
+        lines=["13 Mar 2030 08:00 CET (repeats every day at 08:00) · workspace file projects/morning-briefing.md"])
+    assert rig.receipts[0] == notice.message
+    assert rig.files[0] == (notice.filename, notice.title, notice.content)
     assert rig.finished()

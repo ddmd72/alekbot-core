@@ -38,6 +38,7 @@ def _context(text: str = "memory save ab12") -> MessageContext:
 def _channel() -> MagicMock:
     ch = MagicMock()
     ch.send_message = AsyncMock()
+    ch.send_literal = AsyncMock()   # the preview's count line goes literally, after the file
     ch.send_file = AsyncMock()
     ch.language = None
     return ch
@@ -69,6 +70,7 @@ class TestPreviewDelivery:
         ch = _channel()
         order = []
         ch.send_file.side_effect = lambda **kw: order.append("file")
+        ch.send_literal.side_effect = lambda text, thread: order.append(("literal", text))
         ch.send_message.side_effect = lambda text, thread: order.append(text)
         item = DeliveryItem(type=MEMORY_PREVIEW_DELIVERY, data={"facts": [FACT], "command": "$memory save ab12"})
 
@@ -79,8 +81,8 @@ class TestPreviewDelivery:
         assert kw["filename"] == "memory-facts.txt"
         assert kw["title"] == _ui(UIMessage.MEMORY_PREVIEW_FILE_TITLE, count=1)
         assert kw["thread_id"] == "T1"
-        assert order == ["file", _ui(UIMessage.MEMORY_PREVIEW_HEADER, count=1), "`$memory save ab12`"]
-        assert all(c.args[1] == "T1" for c in ch.send_message.await_args_list)
+        assert order == ["file", ("literal", _ui(UIMessage.MEMORY_PREVIEW_HEADER, count=1)), "`$memory save ab12`"]
+        assert all(c.args[1] == "T1" for c in ch.send_message.await_args_list + ch.send_literal.await_args_list)
 
     async def test_failed_file_sends_notice_and_never_the_command(self):
         handler = _handler()
@@ -95,13 +97,13 @@ class TestPreviewDelivery:
     async def test_failed_header_sends_notice_and_never_the_command(self):
         handler = _handler()
         ch = _channel()
-        ch.send_message.side_effect = [RuntimeError("slack down"), None]
+        ch.send_literal.side_effect = RuntimeError("slack down")
         item = DeliveryItem(type=MEMORY_PREVIEW_DELIVERY, data={"facts": [FACT], "command": "$memory save ab12"})
 
         await handler._deliver_item(item, ch, None, _USER_ID)
 
         sent = _sent(ch)
-        assert sent[-1] == _ui(UIMessage.MEMORY_PREVIEW_DELIVERY_FAILED)
+        assert sent == [_ui(UIMessage.MEMORY_PREVIEW_DELIVERY_FAILED)]
         assert not any("$memory save" in t for t in sent)
 
 

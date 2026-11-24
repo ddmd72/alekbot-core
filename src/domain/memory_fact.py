@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from pydantic import BaseModel, field_validator
+
+from .literal_notice import LiteralNotice, render_literal_notice
+from .ui_messages import UIMessage
 
 PROPOSE_MEMORY_FACTS_TOOL = "propose_memory_facts"
 MEMORY_PREVIEW_DELIVERY = "memory_preview"
@@ -60,6 +63,17 @@ def render_preview_file(draft: MemoryFactDraft) -> str:
     silently and the owner must never confirm a fact they were not shown."""
     return "\n".join(
         f"{i}. {f.text}\n   source: {f.source}\n" for i, f in enumerate(draft.facts, start=1)
+    )
+
+
+def render_preview_notice(draft: MemoryFactDraft, strings: Callable[[UIMessage], str]) -> LiteralNotice:
+    """The preview as a literal notice (`domain.literal_notice`, shared with the task receipt and the reminder
+    notices): `render_preview_file` in `memory-facts.txt`, then the localized count line; the caller sends the save
+    command after it."""
+    count = len(draft.facts)
+    return render_literal_notice(
+        strings(UIMessage.MEMORY_PREVIEW_HEADER).format(count=count), render_preview_file(draft),
+        filename="memory-facts.txt", title=strings(UIMessage.MEMORY_PREVIEW_FILE_TITLE).format(count=count),
     )
 
 

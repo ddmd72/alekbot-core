@@ -72,10 +72,12 @@ reads its `text`, and the removed `visible_after` / `expires_after` fields are i
    (this time with each `instruction`); CRUD tools run against `AgentNotePort` (`NotesAgent._execute_tool`), followed by a
    tool-less summary call. Every mutation sends a transparency notice to the owner (`NotesAgent._notify`; best-effort,
    failures are swallowed); create and update pass the model's words as `literal`, delete does not. The create and
-   update notices show the instruction the reminder will run, word for word (on an update: the stored instruction after
-   it, changed or not), between the name and the schedule line, each line behind a `│` mark. They are rendered by
-   `src/domain/literal_notice.py::render_literal_notice`, like the external task receipt, and are shown only: a reminder
-   needs no confirmation, since Smart may set one at Lelik's request.
+   update notices are literal notices (`src/domain/literal_notice.py::render_literal_notice`, shared with the
+   `$memory save` preview and the external task receipt): the instruction the reminder will run, byte for byte, as the
+   file `reminder.txt` (on an update: the stored instruction after it, changed or not), then a literal message with the
+   name and the schedule line. `UserNotificationService.notify_raw(..., attachment=notice)` posts the file before the
+   text. A reminder with an empty instruction gets the message alone. The notices are shown only: a reminder needs no
+   confirmation, since Smart may set one at Lelik's request.
 3. `due` arrives as ISO-8601; a time without an offset is the owner's wall time in `UserBotConfig.timezone`
    (`src/domain/local_time.py::wall_time_instant`). A wall time the clocks skip is refused, never guessed.
 4. A recurrence goes through `RecurrencePort.normalize` (a rejected rule comes back to the model as a tool error it can
