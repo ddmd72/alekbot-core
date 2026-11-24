@@ -478,9 +478,10 @@ class ConversationHandler(ConversationHandlerPort):
         thread_id: Optional[str],
     ) -> None:
         """Deliver an external task's receipt (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible"): the worker, the
-        title, the FULL task text and the id, posted literally (the text is the model's, never reformatted). A held task
-        then gets its `$task send` command alone as a second message. When the receipt fails the command is not sent:
-        the owner never confirms text they were not shown. A failed post never fails the turn: the task is stored."""
+        title, the FULL task text and the id, posted literally (the text is the model's, shown word for word, each line
+        behind the literal notice's mark). A held task then gets its `$task send` command alone as a second message.
+        When the receipt fails the command is not sent: the owner never confirms text they were not shown. A failed post
+        never fails the turn: the task is stored."""
         language = getattr(response_channel, "language", None)
 
         def strings(message: UIMessage) -> str:
