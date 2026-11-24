@@ -18,4 +18,5 @@ src/composition/platform_kit.py::channels.register_platform  # *  # permanent: t
 src/composition/platform_kit.py::notifications.register_platform  # *  # permanent: the late Telegram platform binding (owner ruling 2026-11-17: Telegram is all or nothing and its adapter takes the notification service, so register_late_platform binds it only after the whole chain built)
 src/composition/platform_kit.py::worker.register_telegram_worker  # *  # permanent: the late Telegram platform binding (owner ruling 2026-11-17: Telegram is all or nothing and its adapter takes the notification service, so register_late_platform binds it only after the whole chain built)
 src/composition/service_container.py::self.registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
+src/composition/tasks_mcp_setup.py::span.set_attribute  # *  # permanent: a tracing span attribute, not wiring
 src/composition/user_agent_factory.py::self.coordinator.register_agent  # *  # permanent: Registry pattern (AgentCoordinator.register_agent)
