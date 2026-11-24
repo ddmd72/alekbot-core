@@ -5,7 +5,7 @@ One module on purpose: these are the read shapes of one service, each a few fiel
 
 What each shape leaves out is the contract:
 - `TaskSummary` (owner listings) never carries a result or a failure reason;
-- `TaskView` (owner `get`) carries the result and the failure reason as raw stored text with `untrusted = True`: the
+- `TaskView` (owner `get`) carries the result and the failure reason as raw stored text: the
   Smart tool wraps them (`wrap_untrusted(store=workspace)` after `EXTERNAL_REMINDER`); nothing here wraps;
 - `WorkerTaskSummary` (worker listings) carries the lease's expiry but never its id;
 - `MintedKey` carries the raw key once; nothing stores or returns it again.
@@ -48,15 +48,11 @@ class TaskSummary:
 @dataclass(frozen=True)
 class TaskView:
     """One task for its owner. `result` (done) and `failure_reason` (failed by the worker) are worker text, untrusted
-    by assumption; `untrusted` is True whenever either is present."""
+    by assumption: the Smart tool wraps them."""
     summary: TaskSummary
     failure_code: Optional[TaskFailureCode] = None
     result: Optional[str] = None
     failure_reason: Optional[str] = None
-
-    @property
-    def untrusted(self) -> bool:
-        return self.result is not None or self.failure_reason is not None
 
 
 @dataclass(frozen=True)

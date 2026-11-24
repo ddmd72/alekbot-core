@@ -57,8 +57,6 @@ factory and the worker. `main.py` mounts the adapter's blueprint at `/telegram`,
    location gets a one-line notice and is not taken; a forwarded point is not a mark.
 4. Text starting with `$` (after `unwrapped`) goes to `ConversationHandler.handle_command`, unless the message is
    forwarded.
-   A forwarded message is marked `forwarded` in the turn's message metadata; Smart treats it as outside content, so a
-   task handed to an external worker in that turn is held for `$task send`.
 5. Otherwise attachments are translated (`_translate_platform_files`) and the turn goes to `ConversationHandler.handle_message`.
 
 **Files.** Telegram sends a `file_id`, not a URL. `_translate_platform_files` calls `bot.get_file` for each file in

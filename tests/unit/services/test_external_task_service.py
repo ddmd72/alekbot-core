@@ -267,20 +267,20 @@ async def test_list_get_and_cancel_on_the_owner_side(world):
     assert [t.task_id for t in await world.service.list_tasks("usr-1", status=S.LEASED)] == [claim.task_id]
     await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
     view = await world.service.get_task("usr-1", first.task_id)
-    assert view.summary.status is S.DONE and view.result == "Kit B waters evenly." and view.untrusted
+    assert view.summary.status is S.DONE and view.result == "Kit B waters evenly." and view.failure_reason is None
     queued = await world.service.get_task("usr-1", second.task_id)
-    assert queued.result is None and queued.failure_reason is None and not queued.untrusted
+    assert queued.result is None and queued.failure_reason is None
     assert (await world.service.cancel("usr-1", second.task_id)).status is S.CANCELLED
     assert await refused(world.service.cancel("usr-1", first.task_id)) is R.ALREADY_FINAL
     assert await refused(world.service.get_task("usr-1", "absent")) is R.NOT_FOUND
 
 
-async def test_a_worker_failure_reason_comes_back_untrusted_and_a_claim_loop_has_none(world):
+async def test_a_worker_failure_reason_comes_back_stripped_with_no_result_and_a_claim_loop_has_none(world):
     claim = await world.claimed()
     await world.service.fail(world.alex, claim.task_id, claim.lease_id, "supplier \x1b[31mdown")
     view = await world.service.get_task("usr-1", claim.task_id)
     assert view.failure_code is TaskFailureCode.WORKER_FAILED and view.failure_reason == "supplier [31mdown"
-    assert view.untrusted and view.result is None
+    assert view.result is None
     assert world.jobs(EXTERNAL_TASK_DELIVER) == [{"task_type": EXTERNAL_TASK_DELIVER, "user_id": "usr-1",
                                                   "account_id": "acc-1", "task_id": claim.task_id,
                                                   "notice": "failed"}]
