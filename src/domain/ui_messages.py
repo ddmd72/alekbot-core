@@ -114,13 +114,6 @@ class UIMessage(Enum):
     DRIVE_INACCESSIBLE_LIST_TITLE = "drive_inaccessible_list_title"
     # A reminder fire that ended final with nothing sent: not re-run (`execute_reminder`); `{name}` is the note text.
     REMINDER_NOT_RUN = "reminder_not_run"
-    # The external task queue's delivery notices (EXTERNAL_TASK_QUEUE_RFC §5.9): posted literally, with `{label}`, `{title}`,
-    # `{id}` and, for the first, `{path}`. None of them quotes a result or a failure reason.
-    EXTERNAL_TASK_DONE = "external_task_done"
-    EXTERNAL_TASK_DONE_NO_COPY = "external_task_done_no_copy"
-    EXTERNAL_TASK_FAILED = "external_task_failed"
-    EXTERNAL_TASK_CLAIM_LOOP = "external_task_claim_loop"
-    EXTERNAL_TASK_EXPIRED = "external_task_expired"
     # The refused wake-up of a worker (EXTERNAL_TASK_QUEUE_RFC §5.8): `{label}` and the closed `WakeRefusal` `{code}`.
     EXTERNAL_TASK_WAKE_REFUSED = "external_task_wake_refused"
     # Slack message dropped after the session stayed busy through every re-queue (s1b AB2).
