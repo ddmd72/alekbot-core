@@ -40,6 +40,7 @@ from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE
 from tests.support.fact_review_world import FakeLanguageService
+from tests.support.task_receipt_file import receipt_parts
 from tests.support.mcp_gate_fakes import FakeWhitelistRepo
 from tests.unit.adapters.test_slack_interactivity_route import ACTION_TS, SECRET, form, sign
 from tests.unit.web.gate_fakes import Tripwire
@@ -90,7 +91,9 @@ class Flow:
         channel.send_message, channel.send_literal, channel.send_file = AsyncMock(), AsyncMock(), AsyncMock()
         item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
         await self.chat._deliver_item(item, channel, None, USER_ID)
-        assert channel.send_file.await_args.kwargs["content"] == TEXT.encode("utf-8")
+        front, body = receipt_parts(channel.send_file.await_args.kwargs["content"])
+        assert body == TEXT.encode("utf-8")
+        assert front == {"title": TITLE, "worker": "research", "note": NOTE}
         channel.send_literal.assert_awaited_once()
         channel.send_message.assert_not_awaited()
         return created

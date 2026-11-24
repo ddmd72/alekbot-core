@@ -21,6 +21,7 @@ from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.locales import uk as uk_locale
 from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld, NOTE
+from tests.support.task_receipt_file import receipt_parts
 
 S = ExternalTaskStatus
 
@@ -80,7 +81,9 @@ class TestReceiptDelivery:
         await _handler(world.service)._deliver_item(item, ch, "T1", USER_ID)
 
         [file] = [c.kwargs for c in ch.send_file.await_args_list]
-        assert file["content"] == TEXT.encode("utf-8") and file["thread_id"] == "T1"
+        front, body = receipt_parts(file["content"])
+        assert body == TEXT.encode("utf-8") and file["thread_id"] == "T1"
+        assert front == {"title": TITLE, "worker": "research", "note": NOTE}
         [post] = _literal(ch)
         assert TITLE in post and "research" in post and created.task_id in post
         assert created.code not in post

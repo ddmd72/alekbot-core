@@ -278,7 +278,7 @@ async def test_the_stored_documents(kit_db):
         "user_id": "usr-1", "account_id": "acc-1", "worker_id": "wrk-1", "label": "research",
         "title": "Irrigation kits", "text": TEXT,
         "origin": {"platform": "slack", "channel_id": "C-garden", "session_id": "usr-1:C-garden"},
-        "status": "done", "hold": None,
+        "status": "done", "note": None, "entry": None, "hold": None,
         "lease": {"lease_id": "lease-a", "until": T0 + timedelta(seconds=1 + LEASE_S), "generation": 1, "renewals": 0},
         "claims": 1,
         "result_meta": {"bytes": 12, "sha256": "a" * 64, "submitted_at": T0 + timedelta(seconds=5),

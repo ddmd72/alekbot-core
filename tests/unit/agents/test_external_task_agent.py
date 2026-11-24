@@ -325,7 +325,7 @@ async def test_a_run_cut_before_any_tool_says_nothing_was_done(world):
     assert response.delivery_items == []
 
 
-# --- a reminder's run: queued at once, no receipt ------------------------------------------------------------------
+# --- a reminder's run: queued at once, a show-only receipt ---------------------------------------------------------
 
 REMINDER_RUN = {"interactive_delivery": None, "run_origin": REMINDER_RUN_ORIGIN}
 
@@ -334,12 +334,15 @@ def create_declaration(llm):
     return next(t for t in llm.requests[0].tools if t["name"] == "create_external_task")
 
 
-async def test_a_reminders_create_is_queued_at_once_with_a_note_and_no_receipt(world):
+async def test_a_reminders_create_is_queued_at_once_with_a_note_and_a_show_only_receipt(world):
     llm, response = await run(world, [tools(CREATE), text("Handed over.")], **REMINDER_RUN)
 
     [task] = world.tasks.tasks.values()
     assert task.status is S.QUEUED and task.hold is None and task.text == TEXT and task.origin == ORIGIN
-    assert receipts(response) == [] and response.delivery_items == []
+    assert response.delivery_items == receipts(response)    # the receipt is the only item
+    [item] = receipts(response)
+    assert item.data == {"status": "queued", "worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
+                         "task_id": task.task_id, "command": None}    # nothing to confirm: shown, never a command
     queued = NOTE_QUEUED.format(task_id=task.task_id, worker="research", title=TITLE)
     assert response.result == "\n\n".join([ANSWER_RESULTS_HEAD, queued]) + f"\n\n{ANSWER_NOTE_HEAD}\nHanded over."
     assert [j["kind"] for j in world.jobs("external_task_timer")] == ["deadline"]     # no hold timer: nothing waits

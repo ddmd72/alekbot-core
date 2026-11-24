@@ -150,7 +150,8 @@ async def test_a_done_task_becomes_a_system_alert_to_smart_in_its_origin_channel
     assert world.ensured == ["usr-1"]
     [message] = world.bot.messages
     assert message.recipient == "smart_response_agent_usr-1"
-    assert world.turn() == f"[System: {render_alert(AlertKind.DONE, task, path)}{SUFFIX}]"
+    assert world.turn() == f"[System: {render_alert(AlertKind.DONE, task, path, note=True)}{SUFFIX}]"
+    assert task.note and task.note in world.turn()      # the live turn reads the bot's note
     assert message.context["run_origin"] == "background:external_task_deliver"
     assert "interactive_delivery" not in message.context and message.context["suppress_transient_retry"] is True
     assert (message.context["origin_platform"], message.context["origin_channel_id"]) == ("slack", "C-garden")
@@ -158,7 +159,8 @@ async def test_a_done_task_becomes_a_system_alert_to_smart_in_its_origin_channel
     world.factory.create.assert_called_once_with(platform="slack", channel_id="C-garden")
 
     assert world.channel.posts == [ANSWER]
-    alert = render_alert(AlertKind.DONE, task, path)
+    alert = render_alert(AlertKind.DONE, task, path, note=False)     # history keeps the alert without the note
+    assert task.note not in str(world.sessions.appended)
     assert world.sessions.appended == [("usr-1:C-garden", [
         ("user", alert_summary(AlertKind.DONE, task, path), alert),
         ("model", ANSWER, ANSWER)])]

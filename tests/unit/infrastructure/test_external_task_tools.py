@@ -75,7 +75,7 @@ async def test_the_create_declaration_lists_each_label_and_no_description(world)
     assert sorted(worker["description"].splitlines()[1:]) == ["- calendar-watch", "- research"]
     assert {w.description for w in workers} == {"research worker", "calendar-watch worker"}
     assert all(w.description not in worker["description"] for w in workers)
-    assert decl["parameters"]["required"] == ["worker", "title", "text"]
+    assert decl["parameters"]["required"] == ["worker", "title", "text", "note"]
 
 
 def test_the_other_declarations_are_crud_shaped():
@@ -97,7 +97,7 @@ async def test_a_create_holds_the_task_and_the_receipt_carries_its_full_text_and
     [item] = result.delivery_items
     assert isinstance(item, DeliveryItem) and item.type == EXTERNAL_TASK_RECEIPT_DELIVERY
     code = item.data["command"].removeprefix("$task send ")
-    assert item.data == {"status": "held", "worker": "research", "title": TITLE, "text": TEXT,
+    assert item.data == {"status": "held", "worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
                          "task_id": task.task_id, "command": f"$task send {code}"}
     assert task.hold.code_digest == keyed_digest(DIGEST_KEY, HOLD_CODE_DIGEST_PURPOSE, code)
 

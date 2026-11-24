@@ -20,6 +20,7 @@ from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.locales import uk as uk_locale
 from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld, NOTE
+from tests.support.task_receipt_file import receipt_parts
 
 FACT = {"text": "User's passport expires on 2031-03-04.", "source": "passport.pdf"}
 
@@ -80,7 +81,9 @@ async def test_a_held_receipt_is_the_text_file_then_the_literal_message_then_the
 
     assert [(kind, thread) for kind, _, thread in ch.posts] == [("file", "T1"), ("literal", "T1"), ("message", "T1")]
     [file] = ch.files
-    assert file["content"] == TEXT.encode("utf-8") and file["filename"] == f"task-{task_id}.txt"
+    front, body = receipt_parts(file["content"])
+    assert body == TEXT.encode("utf-8") and file["filename"] == f"task-{task_id}.txt"
+    assert front == {"title": TITLE, "worker": "research", "note": NOTE}
     assert file["title"] == TITLE
     message = ch.posts[1][1]
     assert TITLE in message and "research" in message and task_id in message

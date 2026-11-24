@@ -10,6 +10,7 @@ from src.domain.memory_fact import MemoryFactDraft, ProposedFact, render_preview
 from src.domain.ui_messages import UIMessage
 from src.locales import en
 from tests.support.external_task_world import NOTE
+from tests.support.task_receipt_file import receipt_parts
 
 TEXT = "compare three community-garden irrigation kits for Shelbyville.\n\nBraces {like} {this} and a $task send x stay text."
 
@@ -57,7 +58,9 @@ def test_the_task_receipt_is_the_text_in_its_file_then_the_header_and_the_id_lin
     header = strings(UIMessage.EXTERNAL_TASK_HELD).format(worker="research", title="Irrigation kits",
                                                         hours=HOLD_S // 3600)
     assert notice.filename == "task-tsk-1.txt" and notice.title == "Irrigation kits"
-    assert notice.content == TEXT.encode("utf-8")
+    front, body = receipt_parts(notice.content)
+    assert body == TEXT.encode("utf-8")
+    assert front == {"title": "Irrigation kits", "worker": "research", "note": NOTE}
     assert notice.message == f"{header}\nTask id: `tsk-1`"
     assert command == "`$task send a1b2c3d4`" and "a1b2c3d4" not in notice.message
 
