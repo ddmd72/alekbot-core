@@ -63,7 +63,9 @@ The wire contract is in `src/domain/agent.py`: `AgentMessage` (its `AgentIntent`
    `AgentRegistry.get_available_intents_for(descriptor)`.
 2. `allowed_intents is None` gives every non-internal intent. A frozenset gives exactly the registered intents it names,
    internal ones included. `internal=True` means "not offered by default", not "unreachable"
-   (`decisions/allowlist_names_internal_intent.md`).
+   (`decisions/allowlist_names_internal_intent.md`). Smart adds one internal intent under its own gate, the task
+   specialist's `work_with_external_tasks`, by asking for an allowlist view of its descriptor that names it
+   (`SmartResponseAgent._get_tool_declarations`).
 3. `BaseAgent._build_delegate_tool_declaration` renders them into the one tool, merging every `context_schemas` field.
 
 ### 2. A SYNC delegation
@@ -156,7 +158,8 @@ The service is built in `build_application_graph`; without it the turn returns t
 
 ## Invariants and traps
 
-- **Orchestrators never change for a new specialist.** Both read intents from the registry; the descriptor tests
+- **Orchestrators never change for a new specialist**, except one offered under a gate of its own: the task specialist,
+  which Smart adds itself (flow 1). Both read intents from the registry; the descriptor tests
   (`tests/unit/infrastructure/test_agent_manifest.py`, `test_registry_internal_allowlist.py`) check the descriptor fields
   and allowlist filtering, not the orchestrators.
 - **`ALL_DESCRIPTORS` is the whole registry.** An agent built by the factory but missing from it has no intent, so no
