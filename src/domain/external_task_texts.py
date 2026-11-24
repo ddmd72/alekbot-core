@@ -53,7 +53,8 @@ _CREATE_LEAD = (
     "title and the text, never the conversation, and acts on them on its own schedule; its result reaches the system "
     "later as an alert, never in this turn. That alert starts a new turn of the orchestrator, possibly hours later, "
     "with none of this conversation, so every task also carries a note: the system's own return instructions for that "
-    "moment, written here from the orchestrator's instruction, which the alert quotes. The worker never sees the note. "
+    "moment, written here from the orchestrator's instruction, which the alert hands back as the system's own "
+    "instructions for that turn. The worker never sees the note. "
 )
 _CREATE_RULES = (
     "Rules: the text is the orchestrator's brief exactly as its instruction gives it; the note is yours, written from "
@@ -117,8 +118,8 @@ TEXT_PARAMETER_TEXT = (
 NOTE_PARAMETER_TEXT = (
     "The task's note: the return instructions the system itself reads when the worker's result comes back. That "
     "happens later, possibly hours later, in a new turn of the orchestrator that has none of this conversation; the "
-    "alert that starts it quotes this note, and it is then the only account of why the task exists and what the owner "
-    "wants done with its outcome. The owner is shown the note next to the brief; the worker never sees it. Write it "
+    "alert that starts it gives this note back as the system's own instructions for that turn, and it is then the "
+    "only account of why the task exists and what the owner wants done with its outcome. The owner is shown the note next to the brief; the worker never sees it. Write it "
     "from the orchestrator's instruction: what the owner asked for and why, how the result is to be presented to them, "
     "and what is to be done with it afterwards, as far as the instruction says. It stands on its own: name things "
     "instead of pointing back at the conversation, which will not be there. It never repeats the brief, which stays the "

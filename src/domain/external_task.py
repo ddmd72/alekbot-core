@@ -164,8 +164,8 @@ class ExternalTask(BaseModel):
 
     `note` is the bot's own return instructions, written by the task specialist when it handed the task over: what the
     owner asked and why, how to present the result, what to do after it. The owner is shown it with the brief; the
-    completion alert quotes it; no worker surface ever carries it. `entry` is where the task was created from (a chat
-    turn or a reminder's run), which the alert names when it quotes the note. A task stored before the note existed
+    completion alert hands it back to the bot; no worker surface ever carries it. `entry` is where the task was created
+    from (a chat turn or a reminder's run), which the alert names when it gives the note back. A task stored before the note existed
     has neither (None)."""
     model_config = ConfigDict(frozen=True)
 

@@ -17,7 +17,7 @@ A task it creates in a chat turn waits for the owner's confirmation (the service
 its exact text and note and a command only they see, and nothing leaves until they send it. One it creates while a
 reminder runs (`TaskEntry.REMINDER`) is queued at once: the owner approved that reminder when it was set, and is shown
 the task as a show-only notice (no command) after the reminder run's answer. Every task carries a note the model writes
-from the instruction: the bot's own return instructions, quoted by the completion alert and never shown to a worker.
+from the instruction: the bot's own return instructions, handed back by the completion alert and never shown to a worker.
 The entry is computed once per run from the context, never by the model. A worker's result or failure reason read by
 `get_external_task` reaches the orchestrator inside its outside-content wrapper.
 
