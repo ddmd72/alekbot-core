@@ -140,13 +140,13 @@ A worker's result and failure reason are treated as hostile from the start.
 - **Text only, normalised, capped.** A submitted result must be valid UTF-8. It is normalised (NFC, control and
   invisible format characters stripped, the system tag word neutralised) and refused when it is empty or too large,
   never repaired (`src/domain/external_task_text.py:57`, `:73`). A failure reason is truncated to its cap.
-- **Delivery runs no model turn.** `external_task_deliver` writes the copy, posts one notice and records the delivery
-  (`src/services/external_task_delivery_task.py`). The notice is a code-written UI string that never quotes the result
-  or a reason (`src/services/user_notification_service.py:439`).
-- **The history pair carries no title and no result.** The pair appended to the channel's session names only the task
-  id, the worker label and the workspace path (`history_pair`, `src/domain/external_task_delivery.py:96`). The memory
-  consolidator reads every user-role line as the owner's own words. A result or a title in that line would turn
-  worker text, or text the title quoted, into the owner's facts.
+- **Delivery is a system alert of code-made values.** `external_task_deliver` writes the result (or a worker's
+  failure reason) as a workspace file and sends Smart an alert through `notify`
+  (`src/services/external_task_delivery_task.py`). The alert names only the task id, the worker label, the file's path,
+  a failure code and counts (`src/domain/external_task_alert.py`); never the title, the result or a reason. Its history
+  pair holds that alert and Smart's answer. The memory consolidator reads every user-role line as the owner's own words,
+  so a result or a title in that line would turn worker text into the owner's facts. The alert turn is a background run
+  and is offered no queue tool.
 - **The copy is an ordinary workspace file.** The result lands in the workspace under a name the bot chooses, below a
   code-written header that says it is outside content; the file carries no mark. Reading it through
   `get_external_task` is wrapped (`external_task_tools.py:290`).
