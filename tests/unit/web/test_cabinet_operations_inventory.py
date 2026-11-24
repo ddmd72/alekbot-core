@@ -31,7 +31,8 @@ HANDLERS = [
     "logout", "logoutAllDevices", "logoutDevice", "logoutOtherDevices", "makeDrivePrimary", "navigate",
     "onRecurrenceChange", "onReviewChange", "onReviewClick", "openCorrectModal", "openDrivePicker",
     "openDrivePickerFolder", "openInvalidModal", "relockFacts", "removeDrivePickerChip", "removeDriveScopeFolder",
-    "removePasskey", "renameDrive", "requestCloseDrivePicker", "resumeDrivePicker", "runSearch", "saveDailyReview",
+    "removePasskey", "renameDrive", "requestCloseDrivePicker", "resumeDrivePicker", "revokeWorkerGrant", "runSearch",
+    "saveDailyReview",
     "saveDeepResearch", "saveDeepResearchCopy", "saveDriveConnectorAccess", "saveDriveIndexing", "saveDrivePicker",
     "saveDriveSearchedByDefault", "saveGmailAutoIndex", "saveLanguage", "saveLocation", "saveReminder",
     "saveTimezone", "saveVoiceLanguages", "selectDriveTab", "setDomainFilter", "setDrivePickerFilter",
@@ -110,6 +111,8 @@ SERVER_CALLS = [
     ("PUT", "/api/drive/connections/{}/indexing"),
     ("GET", "/api/drive/deep-research-copy"),
     ("PUT", "/api/drive/deep-research-copy"),
+    # added by review, task queue step 4.2 (EXTERNAL_TASK_QUEUE_RFC §5.6 "Revoke grant")
+    ("DELETE", "/api/external-workers/{}/grants/{}"),
 ]
 
 PAGE_TARGETS = ["/cabinet/call", "/cabinet/call/modes", "/auth/connect/{}", "/auth/login", "/auth/login/google"]
