@@ -7,6 +7,7 @@ covers:
   src/composition/drive_connector_tools.py
   src/composition/drive_link_setup.py
   src/composition/voice_mcp_setup.py
+  src/composition/tasks_mcp_setup.py
   src/web/mcp_consent_app.py
   src/web/mcp_dispatcher.py
   src/web/mcp_error_logger.py
@@ -23,6 +24,8 @@ covers:
   src/domain/mcp_resource.py
   src/domain/connector_texts.py
   src/domain/voice_mcp_token.py
+  src/domain/external_task_mcp_contract.py
+  src/domain/external_task_mcp_result.py
   src/ports/media_stream_port.py
   src/adapters/http_media_stream_adapter.py
 -->
@@ -35,7 +38,7 @@ exocortex as a tool provider. Claude has the better chat experience but knows no
 has the memory. The connector closes that gap at conversation time, in one direction: the client calls in, the
 exocortex never calls out through this block.
 
-One authorization server fronts two protected resources, each its own FastMCP app with its own OAuth scope:
+One authorization server fronts three protected resources, each its own FastMCP app with its own scope:
 
 - **facts**, `/mcp`, scope `user_context`: the tool `get_user_context(queries)`. It hands the phrases to the memory
   search agent (`FactsMemoryAgent`, the same entry point Smart, Quick and Lelik use) and returns the matching facts as
@@ -44,8 +47,12 @@ One authorization server fronts two protected resources, each its own FastMCP ap
   `read_passages`, `open_drive_file`, `list_folder`, `get_note`, `get_download_link`), all thin handlers over the chat's
   own drive operations. Nothing that writes is registered. What a call may see is each drive's *connector access*
   (set in the Cabinet; unset means nothing).
+- **tasks**, `/tasks-mcp`, scope `external_tasks`: the external task queue's worker tools (`list_tasks`, `claim_task`,
+  `renew_lease`, `submit_task_result`, `release_task`, `fail_task`), thin handlers over `ExternalTaskService`. It takes
+  worker keys only: no OAuth scope binds to it yet (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4, §9 step 4). The queue itself is
+  [`external_task_queue`](../external_task_queue/README.md).
 
-Every tool call of both apps reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
+Every tool call of every app reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
 `ACCOUNT_LOCKED_TOOL_ERROR` for a locked account (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8): an access token issued before
 the lock still verifies until it expires.
 
@@ -97,16 +104,16 @@ Written by `FirestoreDriveLinkStore.create` and `consume`.
 
 TTLs (access token, refresh token, code, consent request) are `AuthConfig.mcp_*_ttl`; the facts resource URI is
 `MCP_RESOURCE_URI`, the drive URI is derived from it (`src/domain/mcp_resource.py::drive_resource_uri`: same host, path
-`DRIVE_PATH`; no second deploy key).
+`DRIVE_PATH`; no second deploy key), and so is the tasks URI (`tasks_resource_uri`, path `TASKS_PATH`).
 
 ## Flows
 
 ### Routing
 
-`main.py` builds the facts app (`src/composition/mcp_setup.py::build_mcp_components`), then the drive app, then wraps
-both and the Quart app in one plain ASGI callable (`src/web/mcp_dispatcher.py::build_shared_asgi`,
-`build_mcp_parent_asgi`). `mcp_owner` decides by path: drive paths first (`/drive-mcp`, its protected-resource
-metadata), then the facts set (`/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, the two `.well-known` families),
+`main.py` builds the facts app (`src/composition/mcp_setup.py::build_mcp_components`), then the drive app, then the
+tasks app, then wraps them and the Quart app in one plain ASGI callable (`src/web/mcp_dispatcher.py::build_shared_asgi`,
+`build_mcp_parent_asgi`). `mcp_owner` decides by path: tasks paths first (`/tasks-mcp`, its protected-resource
+metadata), then drive paths (`/drive-mcp`, its protected-resource metadata), then the facts set (`/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, the two `.well-known` families),
 everything else to Quart, including `/mcp/consent`, `/d/<id>` and `/auth/*`. The lifespan enters every built FastMCP
 session manager. `McpErrorLogger` wraps each app but acts only on `/mcp` and `/mcp/`: it logs why they answered 400 or above (401 excluded), without the `Authorization`
 header.
@@ -115,7 +122,9 @@ The authorization-server endpoints sit at the server root and `issuer_url` is th
 routes at absolute paths; `resource_server_url` is `/mcp`, so the protected-resource metadata and the
 `WWW-Authenticate` hint agree. `main.py` builds the drive connector in its own `try`: a failure there (a missing
 connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` falls through to Quart as a 404, and the
-`/d/` route is registered only when the drive app built.
+`/d/` route is registered only when the drive app built. The tasks app is built the same way
+(`build_tasks_mcp_or_none`): no task queue, no prompt token store or a failed first load of its texts leaves it out and
+`/tasks-mcp` answers 404.
 
 ### Authorization (both resources)
 
@@ -186,6 +195,29 @@ key and on a tool text over `MAX_TOOL_DESCRIPTION_CHARS`; an unknown key is drop
 uploaded ahead of a deploy does not break the running revision. `TokenTextFastMCP.list_tools` fills the descriptions on
 every listing; the server instructions are served from the texts last read.
 
+### Tasks tool call
+
+`src/composition/tasks_mcp_setup.py::build_tasks_mcp_app` builds a third `TokenTextFastMCP`, a resource server only.
+
+- **Verifier** (`TasksTokenVerifier`): a credential with the worker-key prefix (`WORKER_KEY_PREFIX`) goes to
+  `ExternalTaskService.resolve_key` and then `ExternalWorkerUserGate` (the whitelist), the REST endpoint's two checks;
+  anything else is refused. A refused key is no token, so the SDK answers `401` at the door, where REST answers `403`
+  for a locked, switched-off, revoked or not-whitelisted key. The token handed to the tools has kind `WORKER_KEY`, the
+  worker id, scope `external_tasks`, no expiry, and in its `token` field the key's stored digest, never the key. The
+  facts and drive verifiers know nothing of keys, so a worker key is `401` there.
+- **One call** (`_TaskCaller.run`): the principal from the token; the account lock (`ACCOUNT_LOCKED_TOOL_ERROR`); the
+  texts; the worker's limits, the REST endpoint's own buckets (`calls`, plus `claims` or `submits`, per `user:worker`),
+  so both surfaces count against one budget; the service operation, which re-checks the worker and the flag. One span
+  `mcp.tasks.<tool>` and one `[TaskMCP] tool=… user=<8> worker=<fingerprint> status=… ms=…` line; never a task text, a
+  result, a reason, a key or a header.
+- **Results** (`src/domain/external_task_mcp_result.py`): text only. A claim prints code-written provenance first (task
+  id, created time, lease id and end, who wrote the brief), then the title, then the brief as written. A claim that
+  finds nothing is a success; every refusal, an empty id and a rate limit are `isError` with their line, which names
+  the refusal code; `not_enabled` and `worker_revoked` share one neutral line. Only `list_tasks` is listed read-only
+  (`TokenTextFastMCP(read_only_tools=...)`).
+- **Texts** come from `MCP_TASK_TOOL_TEXTS` and `MCP_TASK_RESULT_TEXTS`, loaded and validated as the drive texts; the
+  key sets are `src/domain/external_task_mcp_contract.py`.
+
 ### One-time download link
 
 `get_download_link(file_ref)` (and an open that is withheld as an image or an untranscribed recording, which prints
@@ -234,14 +266,14 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
   in the log). `isError` is only for authentication, a backend fault, or no phrases at all.
   `decisions/mcp_tool_schema_liberal_input.md`.
 - **claude.ai caches `tools/list` at registration.** A changed facts tool schema or description needs the connector
-  removed and re-added. A client that caches `tools/list` needs the same re-add to see new drive texts, which the server reads from tokens on each listing.
+  removed and re-added. A client that caches `tools/list` needs the same re-add to see new drive or tasks texts, which the server reads from tokens on each listing; a changed tasks tool parameter needs it too.
 - **No `Mount`.** Starlette's `Mount("/mcp")` does not match an exact `POST /mcp` and strips the prefix, which breaks
   the SDK's absolute routes; that is why the dispatcher is plain ASGI. `/mcp/consent` reaches Quart only because the
-  facts matcher is exact on `/mcp` and `/mcp/`: a new FastMCP path under `/mcp/` would shadow it. The drive checks run
-  first because the facts metadata test is a prefix match (`tests/unit/test_mcp_dispatch.py`).
+  facts matcher is exact on `/mcp` and `/mcp/`: a new FastMCP path under `/mcp/` would shadow it. The tasks and drive
+  checks run first because the facts metadata test is a prefix match (`tests/unit/test_mcp_dispatch.py`).
 - **DNS-rebinding protection** must list the public host. FastMCP's default allowlist is loopback, which on Cloud Run
   rejects every request as `Invalid Host header`; `build_transport_security` allows the public host from
-  `MCP_RESOURCE_URI` plus loopback, protection stays on. Both apps run `stateless_http`: Cloud Run may send the next
+  `MCP_RESOURCE_URI` plus loopback, protection stays on. Every app runs `stateless_http`: Cloud Run may send the next
   request to another instance.
 - **A token's audience matches its scope.** `bind_resource` runs at authorize and at refresh
   (`tests/unit/services/test_mcp_resource_binding.py`, `tests/unit/composition/test_drive_mcp_auth_seam.py`); the
@@ -284,6 +316,7 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
 - [`DRIVE_MCP_CONNECTOR_RFC.md`](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md): the drive connector (tools, token texts,
   connector access, the link, wide results).
 - [`LELIK_VOICE_MCP_RFC.md`](../../10_rfcs/LELIK_VOICE_MCP_RFC.md): the voice token kind and the xAI session consumer.
+- [`EXTERNAL_TASK_QUEUE_RFC.md`](../../10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md) §5.4: the tasks resource.
 - [`mcp_tool_schema_liberal_input.md`](../../04_solution_strategy/decisions/mcp_tool_schema_liberal_input.md),
   [`secrets_at_rest_cipher_and_digest.md`](../../04_solution_strategy/decisions/secrets_at_rest_cipher_and_digest.md).
 - Deployment keys and the TTL runbook: [`07_deployment/README.md`](../../07_deployment/README.md) (`MCP_RESOURCE_URI`,
@@ -300,3 +333,4 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
 - `src/composition/drive_mcp_setup.py::build_drive_mcp_app`: the drive app and `_Caller.run`, the shape of one call.
 - `src/services/drive_link_service.py::DriveLinkService`: issue and the fetch re-checks.
 - `src/services/voice_mcp_token_service.py::VoiceMcpTokenService`: mint, verify, revoke.
+- `src/composition/tasks_mcp_setup.py::build_tasks_mcp_app`: the tasks app, its key verifier and `_TaskCaller.run`.

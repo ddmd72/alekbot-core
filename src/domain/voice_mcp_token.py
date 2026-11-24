@@ -36,10 +36,12 @@ _CID_PURPOSE = "voice_mcp"
 
 
 class McpTokenKind(str, Enum):
-    """Which verifier accepted an MCP bearer token. OAUTH is the default: anything not a verified voice token."""
+    """Which verifier accepted an MCP bearer token. OAUTH is the default: anything not a verified voice token or a
+    worker key (the external task queue's `/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4)."""
 
     OAUTH = "oauth"
     VOICE = "voice"
+    WORKER_KEY = "worker_key"
 
 
 def voice_audience(resource_uri: str) -> str:

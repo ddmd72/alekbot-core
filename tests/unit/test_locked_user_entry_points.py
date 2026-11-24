@@ -53,6 +53,9 @@ ENTRY_POINTS: Dict[str, str] = {
     "mcp_drive_tools": "build_drive_mcp_or_none (inactive_users): every drive tool call",
     "external_task_api": "create_external_task_api_blueprint (resolve_key, over the service's account-lock check): "
                          "every worker call of /external-tasks/v1",
+    "mcp_task_tools": "build_tasks_mcp_or_none: TasksTokenVerifier (resolve_key and ExternalWorkerUserGate, each "
+                      "with its account-lock check) refuses the key at the door (401); _TaskCaller.run "
+                      "(inactive_users) refuses a key verified before the lock",
     "cabinet_sessions": "AccountLockService.lock step 2: every device session revoked (the gate then answers 401)",
 }
 
@@ -114,7 +117,7 @@ CABINET_GATE_PREFIX = "/api/"    # every /api/ route sits behind the Cabinet gat
 # The indexer service's routes and the MCP apps' paths (main.py dispatches the latter before the Quart app).
 INDEXER_ROUTES = {("POST", "/worker"): "drive_indexer", ("GET", "/health"): None}
 MCP_PATHS = {"/mcp": "mcp_facts_tool", "/token": "mcp_grants", "/authorize": "cabinet_sessions",
-             "/register": None, "/revoke": None, "/drive-mcp": "mcp_drive_tools"}
+             "/register": None, "/revoke": None, "/drive-mcp": "mcp_drive_tools", "/tasks-mcp": "mcp_task_tools"}
 
 
 # ---------------------------------------------------------------------------------------------- static checks
@@ -131,6 +134,19 @@ def _mcp_literals() -> set:
     return {p.rstrip("/") or "/" for p in found if not p.startswith("/.well-known")}
 
 
+def _mcp_owner_paths() -> set:
+    """The resource paths `mcp_owner` routes to an app of its own (the `*_PATH` names it reads), so a new MCP app is
+    classified the day the dispatcher routes to it. A path written there as a literal fails instead of slipping by."""
+    from src.domain import mcp_resource
+    tree = ast.parse((ROOT / "src/web/mcp_dispatcher.py").read_text())
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "mcp_owner")
+    literals = {n.value for n in ast.walk(fn) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and n.value.startswith("/")}
+    assert literals <= {"/", "/.well-known/oauth-protected-resource"}, literals
+    names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and n.id.endswith("_PATH")}
+    return {getattr(mcp_resource, name) for name in names}
+
+
 def test_every_route_is_an_entry_point_or_says_why_not():
     unclassified = [r for r in _served_routes() if r not in ROUTE_ROWS and r not in NOT_A_USER_ENTRY
                     and not r[1].startswith(CABINET_GATE_PREFIX)]
@@ -141,14 +157,17 @@ def test_every_route_is_an_entry_point_or_says_why_not():
 
 
 def test_the_indexer_and_mcp_paths_are_classified():
-    from src.domain.mcp_resource import DRIVE_PATH
+    from src.domain.mcp_resource import DRIVE_PATH, TASKS_PATH
     from src.web.indexer_worker_app import create_indexer_worker_blueprint
     app = Quart("indexer")
     app.register_blueprint(create_indexer_worker_blueprint(None, None))   # type: ignore[arg-type]
     served = {(m, r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"
               for m in r.methods - {"HEAD", "OPTIONS"}}
     assert served == set(INDEXER_ROUTES)
-    assert _mcp_literals() | {DRIVE_PATH} == set(MCP_PATHS)
+    # reviewer edit, /tasks-mcp: the path set is derived from the dispatcher (`mcp_owner`), not a hand list beside it,
+    # which had gone blind to the tasks app; DRIVE_PATH and TASKS_PATH are both in the derived set.
+    assert {DRIVE_PATH, TASKS_PATH} <= _mcp_owner_paths()
+    assert _mcp_literals() | _mcp_owner_paths() == set(MCP_PATHS)
     assert {v for v in [*INDEXER_ROUTES.values(), *MCP_PATHS.values()] if v} <= set(ENTRY_POINTS)
 
 
@@ -161,6 +180,7 @@ def _calls(path: str, name: str) -> List[ast.Call]:
     ("main.py", "create_main_service_blueprint", "app.inactive_users"),
     ("main.py", "create_voice_control_plane_blueprint", "app.inactive_users"),
     ("main.py", "build_drive_mcp_or_none", "mcp_components.inactive_users"),
+    ("main.py", "build_tasks_mcp_or_none", "mcp_components.inactive_users"),
     ("indexer_main.py", "create_indexer_worker_blueprint", "InactiveUserCheck(users)"),
 ])
 def test_the_entry_modules_hand_every_holder_its_check(path, factory, expected):
@@ -488,6 +508,65 @@ async def _external_task_api(w: World) -> None:
         whitelist_repo=w.app.whitelist_repo))
     response = await app.test_client().post("/external-tasks/v1/claim", headers={"Authorization": f"Bearer {raw}"})
     assert (response.status_code, await response.get_json()) == (403, {"code": "account_locked"})
+
+
+@probe("mcp_task_tools")
+async def _mcp_tasks(w: World) -> None:
+    """A worker with a live key of the locked user (written into the stores directly, as for the REST row), and the
+    tasks app built as main.py builds it over the graph's objects (the texts from the marker tokens: the offline graph
+    holds no prompt tokens). The key is refused at the door with 401; a call on a key verified before the lock answers
+    the lock's text."""
+    from src.adapters.firestore_external_worker_store import FirestoreExternalWorkerStore
+    from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
+    from src.composition.mcp_setup import TASKS_SCOPE
+    from src.composition.tasks_mcp_setup import build_tasks_mcp_or_none
+    from src.config.environment import EnvironmentConfig
+    from src.domain import external_task_mcp_contract as contract
+    from src.domain.external_worker import ExternalWorker
+    from src.domain.external_worker_key import (
+        WORKER_KEY_DIGEST_PURPOSE,
+        WORKER_KEY_PREFIX,
+        ExternalWorkerKey,
+        key_hint,
+    )
+    from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR
+    from src.domain.mcp_resource import TASKS_PATH, tasks_resource_uri
+    from src.domain.secret_digest import keyed_digest
+    from src.domain.voice_mcp_token import McpTokenKind
+    from tests.support.task_mcp_texts import TaskTokenStore
+    assert w.app.external_tasks is not None
+    env, now = EnvironmentConfig(), datetime.now(timezone.utc)
+    await w.db.collection(env.domain_users_collection).document(USER).update({"config.external_tasks_enabled": True})
+    raw = WORKER_KEY_PREFIX + "T" * 43
+    digest = keyed_digest(w.app.digest_key, WORKER_KEY_DIGEST_PURPOSE, raw)
+    store = FirestoreExternalWorkerStore(w.db, env)
+    assert await store.create_worker(ExternalWorker(worker_id="wrk-mcp", user_id=USER, account_id=ACCOUNT,
+                                                    label="mcp-research", created_at=now, updated_at=now), 10) is None
+    assert await store.create_key(ExternalWorkerKey(
+        key_digest=digest, user_id=USER, account_id=ACCOUNT, worker_id="wrk-mcp", hint=key_hint(raw),
+        created_at=now), 3) is None
+    tasks = await build_tasks_mcp_or_none(
+        external_tasks=w.app.external_tasks, db_client=w.db, env_config=env, user_repo=w.app.user_repo,
+        whitelist_repo=w.app.whitelist_repo, token_repo=TaskTokenStore(),  # type: ignore[arg-type]
+        alert_sink=None, inactive_users=w.mcp.inactive_users, auth_config=w.app.auth_config)
+    assert tasks is not None
+    tasks_uri = tasks_resource_uri(w.app.auth_config.mcp_resource_uri)
+
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": contract.CLAIM_TASK, "arguments": {}}}
+    headers = {"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {raw}"}
+    transport = httpx.ASGITransport(app=tasks.streamable_http_app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url=tasks_uri[: -len(TASKS_PATH)]) as http:
+        async with tasks.session_manager.run():
+            resp = await http.post(TASKS_PATH, json=body, headers=headers)
+    assert resp.status_code == 401
+
+    token = AlekAccessToken(token=digest, client_id=McpTokenKind.WORKER_KEY.value, scopes=[TASKS_SCOPE],
+                            expires_at=None, resource=tasks_uri, user_id=USER, account_id=ACCOUNT,
+                            kind=McpTokenKind.WORKER_KEY, worker_id="wrk-mcp")
+    ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(
+        user=SimpleNamespace(access_token=token))))
+    result = await tasks._tool_manager.get_tool(contract.CLAIM_TASK).run({}, context=ctx)
+    assert (result.isError, [c.text for c in result.content]) == (True, [ACCOUNT_LOCKED_TOOL_ERROR])
 
 
 @probe("cabinet_sessions")

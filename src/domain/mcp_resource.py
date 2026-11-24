@@ -1,8 +1,10 @@
 """
-The two protected resources of the remote MCP server and the rule that binds a scope to its resource.
+The protected resources of the remote MCP server and the rule that binds a scope to its resource.
 
-One authorization server fronts two resource servers: the facts connector (`/mcp`) and the drive connector
-(`/drive-mcp`). Each has one OAuth scope; the scope strings live in the composition layer (one of them is also a
+One authorization server fronts the resource servers: the facts connector (`/mcp`), the drive connector (`/drive-mcp`)
+and the external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). The tasks resource takes
+worker keys only until its OAuth step: no scope binds to it yet, so `bind_resource` never selects it. Each has one OAuth
+scope; the scope strings live in the composition layer (one of them is also a
 Firestore collection name, which core layers must not spell) and are injected as a `scope_of` mapping. A token must never carry an audience its scope does not belong
 to (DRIVE_MCP_CONNECTOR_RFC §3.3, E1). Pure: stdlib only.
 """
@@ -15,9 +17,11 @@ from urllib.parse import urlsplit, urlunsplit
 class MCPResource(str, Enum):
     FACTS = "facts"
     DRIVE = "drive"
+    TASKS = "tasks"
 
 
 DRIVE_PATH = "/drive-mcp"
+TASKS_PATH = "/tasks-mcp"     # not under `/mcp/`: the facts app owns that prefix (EXTERNAL_TASK_QUEUE_RFC §5.4)
 
 
 class ResourceRefused(ValueError):
@@ -41,6 +45,12 @@ def drive_resource_uri(facts_resource_uri: str) -> str:
     """Same scheme and host as the facts URI, path DRIVE_PATH (E4: no new deploy key)."""
     parts = urlsplit(facts_resource_uri.strip())
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), DRIVE_PATH, "", ""))
+
+
+def tasks_resource_uri(facts_resource_uri: str) -> str:
+    """Same scheme and host as the facts URI, path TASKS_PATH (no new deploy key, as the drive URI)."""
+    parts = urlsplit(facts_resource_uri.strip())
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), TASKS_PATH, "", ""))
 
 
 def bind_resource(

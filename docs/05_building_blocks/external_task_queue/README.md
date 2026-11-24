@@ -64,8 +64,10 @@ with per-worker keys and limits; the Cabinet "External workers" card (register a
 keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
 wake-up POST behind the outbound-request guard; the operator flag script.
 
-Not built (RFC steps 3-5): the remote MCP resource, its OAuth grants, the primary drive's Inbox as a destination. Code
-that mentions them (`WorkerDestination.DRIVE`) is placeholder for those steps.
+Step 3 is in too: the worker MCP resource `/tasks-mcp` on worker keys (below).
+
+Not built (RFC steps 4-5): OAuth grants for the MCP resource, the primary drive's Inbox as a destination. Code that
+mentions them (`WorkerDestination.DRIVE`, `SubmitVia.OAUTH`) is placeholder for those steps.
 
 ## Owned data
 
@@ -134,6 +136,19 @@ behind the Cabinet cookie. Per request: the `401` limits are checked first, then
 then the stored user (active, whitelisted: `ExternalWorkerUserGate`, `src/services/external_worker_user_gate.py`, the
 one whitelist rule of every worker-key surface; the core leaves it out), then the worker's own limits, then the body. A task of another worker, a
 held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_REFERENCE.md`.
+
+**Worker MCP.** `/tasks-mcp` (`src/composition/tasks_mcp_setup.py`; how it sits beside the facts and drive connectors:
+[`remote_mcp_server`](../remote_mcp_server/README.md)) serves six tools over the same service operations as REST:
+`list_tasks`, `claim_task`, `renew_lease`, `submit_task_result`, `release_task`, `fail_task`. A client sends a worker
+key as its bearer. The key is checked as REST checks it (`resolve_key`, then `ExternalWorkerUserGate`), but every
+refusal at that point is `401` (the SDK's verifier returns a token or nothing), and the `401` address limits of REST
+are not applied. The worker's limits are the REST buckets, shared. Answers are text from two prompt tokens; a claim
+prints the task id, created time, lease and "written by the user's assistant" line before the title and the brief, and
+the brief is plain. A refusal is an `isError` result naming its code; no task is a success.
+
+**Token upload order.** `MCP_TASK_TOOL_TEXTS`, then `MCP_TASK_RESULT_TEXTS`
+(`prompts_snapshot/tokens/system/`, `firestore_utils/snapshot_upload.py`), both before the deploy that builds the app:
+without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
 
 ## Security rules enforced in code
 

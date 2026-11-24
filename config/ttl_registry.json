@@ -273,9 +273,10 @@
    "collection": null,
    "field": "expires_at",
    "deleted_by": "not-stored",
-   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim; the Cabinet access token's `exp` claim",
+   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim; the Cabinet access token's `exp` claim; the tasks MCP resource's verified worker-key token (no expiry, `None`)",
    "writers": [
     "src/adapters/google/google_drive_adapter.py",
+    "src/composition/tasks_mcp_setup.py",
     "src/domain/drive_media_source.py",
     "src/domain/llm.py",
     "src/services/voice_mcp_token_service.py",

@@ -54,7 +54,7 @@ A login starts a device session: a 15-minute access JWT and a rotating refresh s
 | `/d/<link_id>` | `src/web/drive_link_app.py` | capability; one-time drive download link |
 | `/geo/<link_id>` | `src/web/geo_mark_app.py` | one-time link id (`GEO_MARKS_RFC`) |
 | `/mcp/consent` | `src/web/mcp_consent_app.py` | Cabinet cookie; anonymous is sent to `/auth/login` |
-| `/mcp`, `/drive-mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-*` | `src/web/mcp_dispatcher.py` to the `mcp` SDK apps | `/mcp` and `/drive-mcp` take a bearer token; `/authorize`, `/token`, `/register`, `/revoke` are the OAuth protocol endpoints; `/.well-known/oauth-*` is public by design (`MCP_PUBLIC` in the probe); see `docs/05_building_blocks/remote_mcp_server/README.md` |
+| `/mcp`, `/drive-mcp`, `/tasks-mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/oauth-*` | `src/web/mcp_dispatcher.py` to the `mcp` SDK apps | `/mcp` and `/drive-mcp` take a bearer token; `/tasks-mcp` (the external task queue's worker tools, `src/composition/tasks_mcp_setup.py`) takes a worker key as its bearer and answers 401 to anything else; `/authorize`, `/token`, `/register`, `/revoke` are the OAuth protocol endpoints; `/.well-known/oauth-*` is public by design (`MCP_PUBLIC` in the probe); see `docs/05_building_blocks/remote_mcp_server/README.md` |
 
 Sign-in (`src/web/oauth_app.py`): `/auth/login` and `/auth/callback` are public (the callback is protected by its OAuth
 state cookie and applies the whitelist gate, `decisions/cabinet_oauth_whitelist_gate.md`); `/auth/refresh` takes the
@@ -89,8 +89,8 @@ stored server-side (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2).
   stays valid until it expires (`src/web/oauth_app.py::create_oauth_blueprint`).
 - **The landing page is one self-contained file** (`src/web/static/landing.html`): no external requests, numbers
   maintained by hand,.
-- **A hub-path trap in the dispatcher:** drive MCP paths are matched before the facts MCP's prefix match
+- **A hub-path trap in the dispatcher:** tasks and drive MCP paths are matched before the facts MCP's prefix match
   (`src/web/mcp_dispatcher.py::mcp_owner`); with the drive connector not built, `/drive-mcp` falls through to the Quart
-  app and answers 404.
+  app and answers 404, and so does `/tasks-mcp` without a task queue or with its texts not loaded.
 - **Facts are written over HTTP only from the Cabinet:** invalidation and `POST /api/user/facts/review-answers` (`src/services/fact_answer_service.py`); everything else is created and corrected through
   consolidation and `$memory save` (`docs/05_building_blocks/memory/README.md`).
