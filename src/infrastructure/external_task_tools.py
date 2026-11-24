@@ -20,9 +20,9 @@ A label that does not exist, a task of another user and a missing task all get t
 reveals whether a task exists.
 
 Public interface:
-    build_create_external_task_declaration(workers) / build_list_… / build_list_external_workers_… / build_get_… /
+    build_create_external_task_declaration(workers, *, entry=CHAT) / build_list_… / build_list_external_workers_… / build_get_… /
     build_cancel_…() -> declaration
-    make_create_handler(service, user_id, origin, *, commission=None) -> LocalToolHandler
+    make_create_handler(service, user_id, origin, *, commission=None, entry=CHAT) -> LocalToolHandler
     make_list_handler / make_list_workers_handler / make_get_handler / make_cancel_handler(service, user_id)
     recorded(handlers, sink) -> handlers           each call's (ToolCall, ToolResult) appended to `sink`, in call order
 """
@@ -39,7 +39,6 @@ from ..domain.external_task_text import prepare_title
 from ..domain.external_task_texts import (
     CANCEL_DESCRIPTION,
     CANCEL_EXTERNAL_TASK_TOOL,
-    CREATE_DESCRIPTION,
     CREATE_EXTERNAL_TASK_TOOL,
     ERROR_ARGUMENTS,
     ERROR_BRIEF_TOO_LONG,
@@ -70,8 +69,10 @@ from ..domain.external_task_texts import (
     NOTE_LIST_HEADER,
     NOTE_LIST_LINE,
     NOTE_PENDING,
+    NOTE_QUEUED,
     NOTE_WORKERS_HEADER,
     NOTE_WORKERS_NONE,
+    create_description,
     STATUS_PARAMETER_TEXT,
     TASK_ID_PARAMETER_TEXT,
     TEXT_PARAMETER_TEXT,
@@ -127,11 +128,13 @@ def _when(moment: datetime) -> str:
 
 # --- declarations ------------------------------------------------------------------------------------------------
 
-def build_create_external_task_declaration(workers: Sequence[ExternalWorker]) -> Dict[str, Any]:
-    """`workers` is never empty: an empty enum is not a valid schema, so the caller leaves the tool out instead."""
+def build_create_external_task_declaration(workers: Sequence[ExternalWorker], *,
+                                           entry: TaskEntry = TaskEntry.CHAT) -> Dict[str, Any]:
+    """`workers` is never empty: an empty enum is not a valid schema, so the caller leaves the tool out instead. The
+    description follows the run's `entry` (what happens to the task differs by it)."""
     return {
         "name": CREATE_EXTERNAL_TASK_TOOL,
-        "description": CREATE_DESCRIPTION,
+        "description": create_description(entry),
         "parameters": {
             "type": "object",
             "properties": {
@@ -210,8 +213,9 @@ def _too_large(tool_call: ToolCall, title: str) -> ToolResult:
 
 
 def make_create_handler(service: "ExternalTaskService", user_id: str, origin: TaskOrigin, *,
-                        commission: Optional[str] = None) -> LocalToolHandler:
-    """A create in a chat turn always waits for the owner's confirmation, whatever the turn read. With a `commission`
+                        commission: Optional[str] = None, entry: TaskEntry = TaskEntry.CHAT) -> LocalToolHandler:
+    """`entry` is set by the agent from the run's context, never by the model. A create in a chat turn always waits for
+    the owner's confirmation, whatever the turn read; one in a reminder's run is queued at once, with no receipt. With a `commission`
     (the orchestrator's instruction), a text that is not a part of it is refused before the service is asked; None
     checks nothing (the handler tested alone)."""
 
@@ -226,13 +230,17 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
             logger.info("[external_task_tools] create refused: the text is not the brief")
             return _error(tool_call, ERROR_NOT_THE_BRIEF)
         try:
-            created = await service.create(user_id, worker, title, text, origin, entry=TaskEntry.CHAT)
+            created = await service.create(user_id, worker, title, text, origin, entry=entry)
         except ExternalTaskRefused as exc:
             if exc.reason is TaskRefusal.TOO_LARGE:
                 return _too_large(tool_call, title)
             return _refused(tool_call, exc)
         except Exception as exc:
             return _crashed(tool_call, exc)
+        if entry is TaskEntry.REMINDER:
+            return ToolResult(name=tool_call.name,
+                              result_str=NOTE_QUEUED.format(task_id=created.task_id, worker=created.label,
+                                                            title=created.title))
         note = NOTE_PENDING.format(task_id=created.task_id, worker=created.label, hours=HOLD_S // 3600)
         return ToolResult(
             name=tool_call.name, result_str=note,

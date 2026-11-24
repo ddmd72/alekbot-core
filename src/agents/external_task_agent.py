@@ -7,13 +7,16 @@ reached by the orchestrator (Smart) with a natural-language instruction (the wor
 task to read or cancel). It runs its own DelegationEngine loop over the queue's five local tools
 (`infrastructure/external_task_tools.py`) and delegates nothing.
 
-The gate, in code and before any model call: an interactive turn, reached straight from a top-level orchestrator (the
+The gate, in code and before any model call: a run with a task entry (the owner's own chat turn, or one of the owner's
+reminders: `task_entry`), reached straight from a top-level orchestrator (the
 call chain is this agent alone: a Smart reached by delegation, and Lelik's `/voice/delegate`, which may name any
 intent, are refused), a task queue in this deployment, and a service that does not refuse the owner (the flag and the
 account lock, read fresh). A refusal is a success carrying one code-written line per reason (`ANSWER_UNAVAILABLE_*`).
 
-Every task it creates waits for the owner's confirmation (the service's `TaskEntry.CHAT`): the owner is shown its exact
-text and a command only they see, and nothing leaves until they send it. A worker's result or failure reason read by
+A task it creates in a chat turn waits for the owner's confirmation (the service's `TaskEntry.CHAT`): the owner is shown
+its exact text and a command only they see, and nothing leaves until they send it. One it creates while a reminder runs
+(`TaskEntry.REMINDER`) is queued at once, with no receipt: the owner approved that reminder when it was set. The entry
+is computed once per run from the context, never by the model. A worker's result or failure reason read by
 `get_external_task` reaches the orchestrator inside its outside-content wrapper.
 
 The answer is composed by code from the pass-through record of every tool call (`external_task_tools.recorded`): every
@@ -35,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.external_task import TaskOrigin
+from ..domain.external_task_entry import TaskEntry, task_entry
 from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY
 from ..domain.external_task_refusal import ExternalTaskRefused
 from ..domain.external_task_texts import (
@@ -102,10 +106,11 @@ def soft_deadline(started: float, now: float) -> float:
 
 
 def refusal_reason(context: Mapping[str, Any], has_service: bool) -> Optional[str]:
-    """Why this run may not touch the queue (a short log word), or None: the owner's own chat turn (interactive, the
-    call chain is this agent alone), a task queue in this deployment and a user. The service's own checks come after."""
-    if not context.get("interactive_delivery"):
-        return "not_interactive"
+    """Why this run may not touch the queue (a short log word), or None: a run with a task entry (the owner's own chat
+    turn or a reminder's run), the call chain is this agent alone, a task queue in this deployment and a user. The
+    service's own checks come after."""
+    if task_entry(context) is None:
+        return "no_entry"
     if list(context.get(AgentCoordinator.CALL_CHAIN_KEY) or []) != [EXTERNAL_TASKS.agent_id]:
         return "not_top_level"
     if not has_service:
@@ -175,7 +180,8 @@ class ExternalTaskAgent(BaseAgent):
         self._on_agent_start()
         service = self._service
         reason = refusal_reason(context, service is not None)
-        if reason is not None or service is None:
+        entry = task_entry(context)
+        if reason is not None or service is None or entry is None:
             return self._unavailable(message, reason or "no_service")
         if not commission.strip():
             return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=EMPTY_INSTRUCTION)
@@ -201,8 +207,8 @@ class ExternalTaskAgent(BaseAgent):
 
         instruction = Message(role="user", parts=[MessagePart(text=commission)])
         record: Record = []
-        handlers = self._handlers(service, user_id, task_origin(context), commission, workers)
-        declarations = self._declarations(workers)
+        handlers = self._handlers(service, user_id, task_origin(context), commission, workers, entry)
+        declarations = self._declarations(workers, entry)
         boundary = "" if PROMPT_CACHE_BOUNDARY in prompt else f"\n\n{PROMPT_CACHE_BOUNDARY}"
         state = render_queue_state([w.label for w in workers])
         base = LLMRequest(model_name=self.model_name, system_instruction=f"{prompt}{boundary}\n\n{state}",
@@ -232,7 +238,7 @@ class ExternalTaskAgent(BaseAgent):
 
     @staticmethod
     def _handlers(service: "ExternalTaskService", user_id: str, origin: TaskOrigin, commission: str,
-                  workers: Sequence[ExternalWorker]) -> Dict[str, LocalToolHandler]:
+                  workers: Sequence[ExternalWorker], entry: TaskEntry) -> Dict[str, LocalToolHandler]:
         handlers: Dict[str, LocalToolHandler] = {
             LIST_EXTERNAL_TASKS_TOOL: make_list_handler(service, user_id),
             LIST_EXTERNAL_WORKERS_TOOL: make_list_workers_handler(service, user_id),
@@ -240,13 +246,14 @@ class ExternalTaskAgent(BaseAgent):
             CANCEL_EXTERNAL_TASK_TOOL: make_cancel_handler(service, user_id),
         }
         if workers:
-            handlers[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(service, user_id, origin, commission=commission)
+            handlers[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(
+                service, user_id, origin, commission=commission, entry=entry)
         return handlers
 
     @staticmethod
-    def _declarations(workers: Sequence[ExternalWorker]) -> List[Dict[str, Any]]:
+    def _declarations(workers: Sequence[ExternalWorker], entry: TaskEntry) -> List[Dict[str, Any]]:
         """With no worker, `create_external_task` is left out: an empty enum is not a valid schema."""
-        create = [build_create_external_task_declaration(workers)] if workers else []
+        create = [build_create_external_task_declaration(workers, entry=entry)] if workers else []
         return [*create, build_list_external_tasks_declaration(), build_get_external_task_declaration(),
                 build_cancel_external_task_declaration(), build_list_external_workers_declaration()]
 
@@ -282,7 +289,7 @@ class ExternalTaskAgent(BaseAgent):
 
     def _unavailable(self, message: AgentMessage, reason: str) -> AgentResponse:
         logger.info("[ExternalTaskAgent] user=%s refused: %s", str(message.context.get("user_id") or "")[:8], reason)
-        line = {"no_service": ANSWER_UNAVAILABLE_SYSTEM, "not_interactive": ANSWER_UNAVAILABLE_TURN,
+        line = {"no_service": ANSWER_UNAVAILABLE_SYSTEM, "no_entry": ANSWER_UNAVAILABLE_TURN,
                 "not_top_level": ANSWER_UNAVAILABLE_TURN, "no_user": ANSWER_UNAVAILABLE_TURN}.get(
             reason, ANSWER_UNAVAILABLE_OWNER)     # the service's refusals: the flag is off, the account is locked
         return self._reply(message, line, [])

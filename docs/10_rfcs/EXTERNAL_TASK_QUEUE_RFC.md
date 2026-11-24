@@ -478,8 +478,8 @@ data.
 **Where the tools exist.**
 - All four exist only on interactive turns, gated on `interactive_delivery` as `draft_skill` and
   `propose_memory_facts` are, and only for a user with the flag.
-- A background run (a fired reminder, the daily review, a voice errand, `/worker`) therefore cannot enqueue and cannot
-  read status (E2). No task can spawn a task without the owner in the chat.
+- A background run (the daily review, a voice errand, `/worker`) therefore cannot enqueue and cannot read status (E2);
+  a fired reminder's run is the one exception (`task_entry`, `EXTERNAL_TASK_CONFIRMATION_AND_ALERTS`: its create is queued). No task can spawn a task without the owner in the chat.
 - That gate alone does not answer the question of who asked. `interactive_delivery` means the user is present, not that
   the user asked for this call (§3). The taint rule below closes the gap.
 - None of the four tools sets `history_context`. Nothing they return is copied into the persisted turn's metadata

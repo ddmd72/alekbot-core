@@ -10,7 +10,7 @@ not by these words.
 
 Public interface:
     CREATE_EXTERNAL_TASK_TOOL, LIST_EXTERNAL_TASKS_TOOL, GET_EXTERNAL_TASK_TOOL, CANCEL_EXTERNAL_TASK_TOOL, LIST_EXTERNAL_WORKERS_TOOL
-    CREATE_DESCRIPTION, LIST_DESCRIPTION, GET_DESCRIPTION, CANCEL_DESCRIPTION, LIST_WORKERS_DESCRIPTION
+    CREATE_DESCRIPTION_CHAT, CREATE_DESCRIPTION_REMINDER, create_description(entry) -> str, LIST_DESCRIPTION, GET_DESCRIPTION, CANCEL_DESCRIPTION, LIST_WORKERS_DESCRIPTION
     STATUS_DEFINITIONS                              one sentence on every status and failure code
     worker_parameter_text(workers) -> str           the `worker` parameter, one line per registered worker
     TITLE_PARAMETER_TEXT, TEXT_PARAMETER_TEXT, STATUS_PARAMETER_TEXT, WORKER_FILTER_PARAMETER_TEXT, TASK_ID_PARAMETER_TEXT
@@ -27,6 +27,7 @@ from .external_task import (
     TITLE_MAX_CHARS,
     ExternalTaskStatus,
 )
+from .external_task_entry import TaskEntry
 from .external_worker import ExternalWorker
 
 CREATE_EXTERNAL_TASK_TOOL = "create_external_task"
@@ -45,15 +46,32 @@ STATUS_DEFINITIONS = (
     "time, or a task whose deadline passed before a worker finished it."
 )
 
-CREATE_DESCRIPTION = (
+_CREATE_LEAD = (
     "Puts one task on the external task queue for one of the owner's registered workers. The worker receives only the "
-    "title and the text, never the conversation, and acts on them on its own schedule; its result never comes back in "
-    "this turn. A task handed over in a chat turn waits for the owner's confirmation: right after this turn's answer "
-    "the owner is shown its title and its exact text with a command only they are shown, and the task leaves only if "
-    f"they send that command within {_HOLD_HOURS} hours, otherwise it lapses. The owner alone releases it. "
+    "title and the text, never the conversation, and acts on them on its own schedule; its result reaches the system "
+    "later as an alert, never in this turn. "
+)
+_CREATE_RULES = (
     "Rules: the text is the orchestrator's brief exactly as its instruction gives it; one task per call; never the same "
     f"task twice; at most {MAX_OPEN_TASKS_PER_USER} tasks may be open at once."
 )
+CREATE_DESCRIPTION_CHAT = (
+    f"{_CREATE_LEAD}A task handed over in a chat turn waits for the owner's confirmation: right after this turn's answer "
+    "the owner is shown its title and its exact text with a command only they are shown, and the task leaves only if "
+    f"they send that command within {_HOLD_HOURS} hours, otherwise it lapses. The owner alone releases it. "
+    f"{_CREATE_RULES}"
+)
+CREATE_DESCRIPTION_REMINDER = (
+    f"{_CREATE_LEAD}This run is one of the owner's reminders, and the owner approved that reminder when it was set, so "
+    "a task handed over now goes straight to the queue: nothing waits for a confirmation and the owner is shown no "
+    f"receipt. {_CREATE_RULES}"
+)
+
+
+def create_description(entry: TaskEntry) -> str:
+    """The create tool's description for this run's entry: what happens to the task differs, so the text does."""
+    return CREATE_DESCRIPTION_CHAT if entry is TaskEntry.CHAT else CREATE_DESCRIPTION_REMINDER
+
 
 LIST_DESCRIPTION = (
     "Lists the owner's external tasks, newest first: id, worker label, title, status, created and last changed. Use it "
@@ -130,6 +148,13 @@ NOTE_PENDING = (
     "that command within {hours} hours, otherwise it lapses. The owner is to be told it waits for their confirmation; "
     "nobody writes, guesses or repeats a command. It is not to be created again."
 )
+NOTE_QUEUED = (
+    "Tool note: task {task_id}, titled \"{title}\", is queued for {worker}: it is stored, the worker takes it on its own schedule, and its "
+    "result comes back to the system later as an alert, never in this turn. This run is one of the owner's reminders, "
+    "and the owner approved that reminder when it was set, so no confirmation is asked and no receipt is shown: the "
+    "owner is to be told in this answer that the task went to {worker}. There is no command. "
+    "It is not to be created again."
+)
 NOTE_WORKERS_NONE = "Tool note: no worker is registered."
 NOTE_WORKERS_HEADER = "Tool note: registered worker labels:"
 NOTE_LIST_EMPTY = "Tool note: no external tasks match."
@@ -175,6 +200,6 @@ ANSWER_EMPTY = "Tool note: the task specialist ran no tool and wrote no note."
 ANSWER_CUT = "Tool note: the task specialist stopped before it finished; the answers above are everything that ran."
 ANSWER_CUT_BEFORE_ANY_TOOL = "Tool note: the task specialist stopped before any tool ran; nothing was done."
 # A refusal before any model call, one line per reason (the specialist's gate and the service's own check).
-ANSWER_UNAVAILABLE_TURN = "Tool note: the external task queue serves only the owner's own chat turns; nothing was done."
+ANSWER_UNAVAILABLE_TURN = "Tool note: the external task queue serves only the owner's own chat turns and the owner's reminders; nothing was done."
 ANSWER_UNAVAILABLE_OWNER = "Tool note: the external task queue is not available for this owner; nothing was done."
 ANSWER_UNAVAILABLE_SYSTEM = "Tool note: this system has no external task queue; nothing was done."

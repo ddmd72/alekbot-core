@@ -26,6 +26,7 @@ from ...domain.agent import (
     AgentIntent,
     RoutingMetadata,
 )
+from ...domain.external_task_entry import task_entry
 from ...domain.messaging import SmartResponse
 from ...domain.notify_result import EMPTY_ANSWER_ERROR, TURN_CAP_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
@@ -519,11 +520,11 @@ class SmartResponseAgent(BaseAgent):
             clean_history = self._sanitize_tool_history(conversation_history)
 
             # The external task queue (EXTERNAL_TASK_QUEUE_RFC §5.3, E2): offered as the task specialist's intent on the
-            # owner's own chat turn of a flagged user only. Not in a Smart reached through delegation (`ask_alek`,
+            # owner's own chat turn or while one of the owner's reminders runs (`task_entry`), of a flagged user only. Not in a Smart reached through delegation (`ask_alek`,
             # `send_to_chat`): its call chain is in the context, and the model there is not the owner's own turn. The
             # specialist repeats the gate in code and checks the flag fresh.
             offer_external_tasks = bool(
-                prompt_user_id and message.context.get("interactive_delivery")
+                prompt_user_id and task_entry(message.context) is not None
                 and not self._reached_by_delegation(message) and self.user_config.external_tasks_enabled)
             tools = self._get_tool_declarations(offer_external_tasks)
             local_tools = None

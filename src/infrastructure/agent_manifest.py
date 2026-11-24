@@ -89,7 +89,7 @@ class Intent:
     # Smart commissions, DriveAgent works through its own tools (the 8 drive intents it replaced are gone).
     WORK_WITH_DRIVE_FILES  = "work_with_drive_files"
     # The owner's external task queue, through one LLM specialist (EXTERNAL_TASK_QUEUE_RFC §5.3). Internal: Smart adds
-    # it to its own offer only for the owner's own chat turn with the queue switched on; Quick never sees it.
+    # it to its own offer only for the owner's own chat turn or a reminder's run with the queue switched on; Quick never sees it.
     WORK_WITH_EXTERNAL_TASKS = "work_with_external_tasks"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
@@ -680,8 +680,8 @@ DRIVE_SPECIALIST = AgentDescriptor(
 
 
 # The owner's external task queue through one LLM specialist (EXTERNAL_TASK_QUEUE_RFC §5.3). Internal by design: the
-# intent is offered by Smart alone, which adds it to its own list only under its gate (an interactive top-level turn of
-# a user with the queue switched on); the specialist repeats that gate in code. It delegates nothing.
+# intent is offered by Smart alone, which adds it to its own list only under its gate (an interactive top-level turn or a
+# reminder's run, of a user with the queue switched on); the specialist repeats that gate in code. It delegates nothing.
 EXTERNAL_TASKS = AgentDescriptor(
     agent_id="external_task_agent",
     agent_type="external_tasks",

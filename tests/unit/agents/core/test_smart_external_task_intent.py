@@ -7,6 +7,7 @@ specialists answer through a stub coordinator that records each delegation's con
 import pytest
 
 from src.domain.agent import AgentResponse, AgentStatus
+from src.domain.external_task_entry import REMINDER_RUN_ORIGIN
 from src.domain.user import UserBotConfig
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, QUICK_RESPONSE, Intent
@@ -72,6 +73,26 @@ async def test_the_intent_is_offered_only_under_smarts_gate(flag, user_id, conte
     assert (QUEUE in intents) is expected
     assert Intent.SEARCH_MEMORY in intents and Intent.WORK_WITH_DRIVE_FILES in intents      # the rest is unchanged
     assert not QUEUE_TOOLS & {t["name"] for t in llm.requests[0].tools}                      # never a local queue tool
+
+
+@pytest.mark.parametrize("flag,context,expected", [
+    (True, {"interactive": False, "run_origin": REMINDER_RUN_ORIGIN}, True),                 # a reminder's run
+    (False, {"interactive": False, "run_origin": REMINDER_RUN_ORIGIN}, False),               # the flag is still read
+    (True, {"interactive": False, "run_origin": REMINDER_RUN_ORIGIN,
+            "_call_chain": ["smart_response_agent_usr-1"]}, False),                          # reached by delegation
+    (True, {"interactive": False, "run_origin": "background:daily_email_review"}, False),
+    (True, {"interactive": False, "run_origin": "background:external_task_deliver"}, False),  # the delivery alert
+    (True, {"interactive": False, "run_origin": "voice:delegate"}, False),
+])
+async def test_the_intent_is_offered_in_a_reminders_run_and_in_no_other_background_run(flag, context, expected):
+    llm, _, _ = await run([text("ok")], flag=flag, **context)
+    assert (QUEUE in offered(llm)) is expected
+
+
+async def test_a_reminders_run_is_offered_the_queue_but_not_the_interactive_only_tools():
+    llm, _, _ = await run([text("ok")], interactive=False, run_origin=REMINDER_RUN_ORIGIN)
+    names = {t["name"] for t in llm.requests[0].tools}
+    assert QUEUE in offered(llm) and not {"draft_skill", "propose_memory_facts"} & names
 
 
 def test_quick_never_sees_the_intent():
