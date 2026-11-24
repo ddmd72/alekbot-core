@@ -26,6 +26,7 @@ from src.agents.notes_agent import NotesAgent
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentConfig, AgentResponse, AgentStatus
 from src.domain.agent_note import NoteCreate
+from src.domain.literal_notice import TEXT_MARK, render_literal_notice
 from src.domain.task_complexity import TaskComplexity
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import NOTES, Intent
@@ -278,3 +279,29 @@ def test_the_scripted_calls_use_every_declared_field():
     assert unused("notes", "update_self_reminder", [UPDATE_ALL, UPDATE_CLEAR]) == []
     assert unused("notes", "delete_self_reminder", [DELETE]) == []
     assert unused("delegate", Intent.MANAGE_SELF_REMINDERS, [PARAMS_BIND, PARAMS_REMOVE]) == []
+
+
+async def test_the_set_and_updated_notices_show_the_stored_instruction_word_for_word():
+    """Each notice shows the instruction the reminder will run: on create the one given, on an update that changes it the
+    new one, on an update that leaves it alone the stored one."""
+    rig = await Rig([
+        tools(("create_self_reminder", CREATE_ALL)), text("Reminder set."),
+        tools(("update_self_reminder", UPDATE_ALL)), text("Updated."),
+        tools(("update_self_reminder", UPDATE_CLEAR)), text("Now one-time."),
+    ]).start()
+    await rig.delegate(PARAMS_BIND)
+    note_id = next(iter(rig.docs))
+    rig.llm.script[0] = tools(("update_self_reminder", _call(UPDATE_ALL, note_id)))   # the create's two are used
+    rig.llm.script[2] = tools(("update_self_reminder", _call(UPDATE_CLEAR, note_id)))
+
+    await rig.delegate()
+    await rig.delegate()
+
+    stored = rig.docs[note_id]["instruction"]
+    assert stored == UPDATE_ALL["instruction"]
+    assert [r.split("\n")[2] for r in rig.receipts] == [
+        f"{TEXT_MARK} {CREATE_ALL['instruction']}", f"{TEXT_MARK} {stored}", f"{TEXT_MARK} {stored}"]
+    assert rig.receipts[0] == render_literal_notice(
+        f"📌 Reminder set: \"{CREATE_ALL['text']}\"", CREATE_ALL["instruction"],
+        ["13 Mar 2030 08:00 CET (repeats every day at 08:00) · workspace file projects/morning-briefing.md"])
+    assert rig.finished()
