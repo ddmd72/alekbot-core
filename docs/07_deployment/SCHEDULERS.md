@@ -84,7 +84,7 @@ All Scheduler jobs POST to the main service, with OIDC (`/health` keep-alive exc
 | `billing_daily_summary` | Scheduler | `BillingDailySummaryTask` | Daily per-account usage report; 501 without the alert sink or account repo |
 | `deep_research_failed`, `geo_mark_turn` | Cloud Task | `DeepResearchFailedTask`, `GeoMarkTurnTask` | See below |
 | `external_task_timer` | Cloud Task | `ExternalTaskTimerTask` → `ExternalTaskService.on_timer` | Lease, deadline and hold timers of the external task queue; no Scheduler job; 501 without a task queue |
-| `external_task_deliver` | Cloud Task | `ExternalTaskDeliveryTask` | A final external task's workspace copy and notice; 501 without a task queue |
+| `external_task_deliver` | Cloud Task | `ExternalTaskDeliveryTask` | A final external task's workspace file and its system alert to Smart; 501 without a task queue |
 | `external_task_wake` | Cloud Task | `ExternalTaskWakeTask` → `ExternalTaskService.on_wake` | The content-free wake-up POST to a worker's target through the outbound-request guard; no Scheduler job; 501 without a task queue |
 | `agent_execution`, `video_generation_polling`, `telegram_update`, queued Slack event | Cloud Task | agent worker, `VideoGenerationPollingTask`, platform workers | Platform entries answer 503 when the platform is not wired |
 
@@ -101,6 +101,7 @@ A task type whose budget can exceed 10 minutes must pass `deadline_seconds` to `
 | Task | Deadline |
 |---|---|
 | `execute_reminder`, `daily_email_review` | `src/infrastructure/notification_sla.py::dispatch_deadline_s` of the kind (`REMINDER`, `DAILY_DIGEST`) |
+| `external_task_deliver` | `src/domain/external_task_jobs.py::DELIVER_DEADLINE_S`, pinned by a test to `dispatch_deadline_s(EXTERNAL_TASK)` |
 | `drive_sync` (every enqueue) | `src/domain/drive_index_params.py::TICK_DEADLINE_S` |
 | `fact_review` (janitor enqueue, the review's own deferral) | `src/domain/fact_review_task_keys.py::REVIEW_DEADLINE_S`; the `next` send released by an answer sets none (it takes no lease and makes no model call); the review's own deferral is delayed by `LEASE_BUSY_RETRY_DELAY_S` |
 | `consolidation` deferral, `geo_mark_turn` | `src/services/consolidation_service.py::_DEFERRAL_DEADLINE_S`, `src/services/geo_mark_service.py::TURN_DEADLINE_S` |
@@ -319,12 +320,14 @@ takes no memory-write lease.
   dedup key is `lease:<task_id>:<generation>:<renewals>`, `deadline:<task_id>:<epoch s>` or `hold:<task_id>`; the
   delivery's is `deliver:<task_id>`. The timer answers 200 `{"changed": bool}` (a stale timer is a no-op) and 400 on a
   malformed body. The delivery answers 400 on a malformed body, 200 `gone` (no such final task), `already` (delivered
-  before), `no_notice` (a cancelled task) or `delivered`. It writes a done task's result as a flagged workspace file
-  under `references/external_tasks/`, posts one literal notice to the task's origin channel and appends a code-written
-  history pair; no model runs. A refused copy (caps) or no workspace posts the "no copy" notice; no channel records the
-  delivery and logs at error level; a store failure or a failed post answers 5xx and Cloud Tasks retries (the copy of
-  an earlier attempt, found by its mark, is reused).
-- **`external_task_wake`** is enqueued by `ExternalTaskService` when a task becomes queued (an untainted create, a
+  before), `no_notice` (a cancelled task) or `delivered`. It writes a done task's result, or a worker's failure reason,
+  as a workspace file under `references/external_tasks/`, then sends Smart a system alert through `notify` (kind
+  `EXTERNAL_TASK`, the task's origin channel, run origin `background:external_task_deliver`), as `execute_reminder`
+  does (`docs/05_building_blocks/external_task_queue/README.md`). A refused file (caps) or no workspace changes the
+  alert, not the outcome. Every outcome of the alert turn is final and recorded: no channel is logged at error level, an
+  empty answer goes to the empty-answer report, a failed turn or a failed post is not run again. A store failure answers
+  5xx and Cloud Tasks retries (the file of an earlier attempt, found by its origin, is reused).
+- **`external_task_wake`** is enqueued by `ExternalTaskService` when a task becomes queued (a reminder-run create, a
   `$task send`) and is its worker's oldest queued task, or when a lease timer re-queues a task, and only for a worker
   that has a wake-up target and holds no unexpired lease (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.8). Body
   `{user_id, account_id, worker_id, generation}`, never task content; dedup key `external_task_wake:<worker_id>:

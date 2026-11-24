@@ -2,7 +2,7 @@
 Unit tests for ``domain.notification_kind.NotificationKind``.
 
 Covers:
-- All five enum values present
+- All six enum values present
 - Stable string serialization (Cloud Task payloads / log fields rely on
   the literal string values; changing them silently breaks the wire format)
 - Round-trip via ``NotificationKind(value)`` for every value
@@ -27,6 +27,7 @@ _EXPECTED_VALUES = {
     "daily_digest",
     "document_delivery",
     "deep_research",
+    "external_task",
 }
 
 
@@ -40,7 +41,7 @@ class TestEnumShape:
         assert issubclass(NotificationKind, Enum)
 
     def test_member_count(self):
-        assert len(NotificationKind) == 5
+        assert len(NotificationKind) == 6
 
     def test_all_expected_members_present(self):
         actual = {member.value for member in NotificationKind}

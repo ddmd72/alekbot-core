@@ -419,8 +419,7 @@ class BaseAgent(ABC):
                         )
                         for part in msg.parts
                     ]
-                    result.insert(0, Message(role=msg.role, parts=new_parts, created_at=msg.created_at,
-                                             execution_tainted=msg.execution_tainted))
+                    result.insert(0, Message(role=msg.role, parts=new_parts, created_at=msg.created_at))
                 else:
                     result.insert(0, msg)
             else:

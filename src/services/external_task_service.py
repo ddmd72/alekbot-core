@@ -5,7 +5,7 @@ Public interface:
                         cipher=None, webhook=None, own_hosts=())
 
     Owner side (Smart tools, `$task send`), user id closed over by the caller:
-        .create(user_id, worker_label, title, text, origin, *, tainted) -> CreatedTask
+        .create(user_id, worker_label, title, text, origin, *, entry) -> CreatedTask
         .confirm(user_id, code) -> TaskSummary
         .list_tasks(user_id, status=None, worker_label=None) -> List[TaskSummary]
         .get_task(user_id, task_id) -> TaskView
@@ -48,7 +48,7 @@ notices are Cloud Tasks through `TaskQueue.enqueue_worker_task` (payloads: `src/
   there is logged at error level and not raised: the claim's lazy recovery and the deadline bound a lost lease timer,
   and the state change has already happened for the worker.
 
-Wake-up (§5.8). When a task becomes `queued` (an untainted create, a confirm) and it is the oldest queued task of a
+Wake-up (§5.8). When a task becomes `queued` (a reminder create, a confirm) and it is the oldest queued task of a
 worker that has a target and holds no live lease, the worker's `wake_generation` moves on and an `external_task_wake`
 Cloud Task is enqueued for that generation (dedup `external_task_wake:<worker_id>:<generation>`); a lease timer that
 re-queues a task pings the same way, whether or not other tasks are queued. The generation moves on in its own worker
@@ -97,7 +97,9 @@ from ..domain.external_task import (
     TaskResultMeta,
     WorkerDestination,
 )
+from ..domain.external_task_entry import TaskEntry
 from ..domain.external_task_jobs import (
+    DELIVER_DEADLINE_S,
     DeliverPayload,
     TaskNotice,
     TimerKind,
@@ -282,7 +284,7 @@ class ExternalTaskService:
             "external_task_deliver",
             {"user_id": payload.user_id, "account_id": payload.account_id, "task_id": payload.task_id,
              "notice": payload.notice.value},
-            dedup_key=deliver_key(task.task_id))
+            dedup_key=deliver_key(task.task_id), deadline_seconds=DELIVER_DEADLINE_S)
 
     async def _enqueue_notice_logged(self, task: ExternalTask, notice: TaskNotice) -> None:
         try:
@@ -326,10 +328,11 @@ class ExternalTaskService:
     # -- owner side -----------------------------------------------------------------------------------------------
 
     async def create(self, user_id: str, worker_label: str, title: str, text: str, origin: TaskOrigin, *,
-                     tainted: bool) -> CreatedTask:
-        """Untainted: `queued`, with the deadline timer. Tainted (§5.3): `held` with a fresh confirmation code (stored
-        as its keyed digest, returned once) and `hold_until = now + HOLD_S`, with the hold timer only. The account is
-        the worker's (bound at registration)."""
+                     entry: TaskEntry) -> CreatedTask:
+        """`TaskEntry.CHAT`: `held` with a fresh confirmation code (stored as its keyed digest, returned once) and
+        `hold_until = now + HOLD_S`, with the hold timer only; the owner confirms with `$task send`.
+        `TaskEntry.REMINDER`: `queued`, with the deadline timer, and no code. The account is the worker's (bound at
+        registration)."""
         await self._require_enabled(user_id)
         clean_title = prepare_title(title)
         clean_text = prepare_task_text(text)
@@ -343,9 +346,10 @@ class ExternalTaskService:
         task = ExternalTask(task_id=self._new_id(), user_id=user_id, account_id=worker.account_id,
                             worker_id=worker.worker_id, label=worker.label, title=clean_title, text=clean_text,
                             origin=origin, status=_S.QUEUED, created_at=now, updated_at=now,
-                            deadline_at=now + timedelta(seconds=TASK_MAX_AGE_S), created_tainted=tainted)
+                            deadline_at=now + timedelta(seconds=TASK_MAX_AGE_S))
         code: Optional[str] = None
-        if tainted:
+        held = entry is TaskEntry.CHAT
+        if held:
             code = self._random_bytes(HOLD_CODE_BYTES).hex()
             hold = TaskHold(code_digest=self._code_digest(code), hold_until=now + timedelta(seconds=HOLD_S))
             task = task.model_copy(update={"status": _S.HELD, "hold": hold})
@@ -357,7 +361,7 @@ class ExternalTaskService:
         await self._tasks.create(task)
         logger.info(f"[TaskQueue] create user={user_id[:8]} worker={fingerprint(worker.worker_id)} "
                     f"task={task.task_id} status={task.status.value}")
-        if not tainted:
+        if not held:
             await self._wake_if_due(task, oldest_only=True)
         return CreatedTask(task_id=task.task_id, status=task.status, label=task.label, title=task.title,
                            text=task.text, code=code)

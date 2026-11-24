@@ -42,8 +42,6 @@ def _message_metadata(message, *, chat_id, telegram_user_id, update_id) -> dict:
         "origin_message_id": str(message.message_id),
         "event_time": message.date.timestamp() if message.date else None,
         **_reply_to_metadata(message),
-        # A forwarded message is someone else's text: Smart treats the turn as having read outside content.
-        **({"forwarded": True} if getattr(message, "forward_origin", None) else {}),
     }
 
 
