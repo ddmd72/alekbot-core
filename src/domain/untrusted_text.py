@@ -92,6 +92,8 @@ _WRAPPER_TAG = re.compile(
     _TAG_PREFIX + f"(?:{_tag_word(DRIVE_TAG)}|{_tag_word(EXTERNAL_TAG)}|{_tag_word(SYSTEM_TAG)})")
 # The system tag word alone: for text that may legitimately hold live untrusted wrappers (tool results, history).
 _SYSTEM_TAG_LOOKALIKE = re.compile(_TAG_PREFIX + _tag_word(SYSTEM_TAG))
+
+
 def _neutralize(match: "re.Match[str]") -> str:
     """A look-alike loses its opener: whatever `<` form it used becomes `&lt;`."""
     return "&lt;" + match.group(0)[1:]
