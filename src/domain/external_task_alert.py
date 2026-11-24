@@ -31,7 +31,7 @@ class AlertKind(str, Enum):
     DONE = "done"                      # the result is a workspace file
     DONE_NO_COPY = "done_no_copy"      # the copy was refused: the result stays in the task record
     FAILED_FILE = "failed_file"        # the worker failed it; its explanation is a workspace file
-    FAILED_NO_FILE = "failed_no_file"  # the worker failed it; no explanation could be stored
+    FAILED_NO_FILE = "failed_no_file"  # the worker failed it; no reason, or its file was refused (it stays in the record)
     CLAIM_LOOP = "claim_loop"          # taken too many times and never finished
     EXPIRED = "expired"
 
@@ -81,8 +81,9 @@ _BODY = {
         + "Tell the owner the task failed."
     ),
     AlertKind.FAILED_NO_FILE: (
-        "The worker reported that it could not do it (failure code worker_failed) and gave no explanation the system "
-        "could store. Tell the owner the task failed."
+        "The worker reported that it could not do it (failure code worker_failed). No explanation of it is in the "
+        "workspace; any reason the worker gave stays in the task record, which the owner can have read in a chat turn. "
+        "Tell the owner the task failed."
     ),
     AlertKind.CLAIM_LOOP: (
         "The system gave it up (failure code claim_loop): workers took it {claims} times without finishing it, so it "
