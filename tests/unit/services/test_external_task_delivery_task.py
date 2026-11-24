@@ -94,14 +94,14 @@ def path_of(task_id: str) -> str:
     return f"references/external_tasks/{T0.date().isoformat()}-{task_id[:8]}.md"
 
 
-async def test_a_done_task_is_copied_flagged_announced_and_recorded(world):
+async def test_a_done_task_is_copied_announced_and_recorded(world):
     task_id = await world.done()
     answer = await world.runner(world.body(), {})
     path = path_of(task_id)
     assert answer == ({"status": "delivered"}, 200)
 
     blob = await world.store.read("usr-1", path)
-    assert blob.entry.untrusted == f"external_task:{task_id}" and blob.entry.origin == f"background:external_task:{task_id}"
+    assert blob.entry.origin == f"background:external_task:{task_id}"
     text = blob.data.decode()
     assert text.startswith("<!--") and "Outside content from an external worker" in text.split("-->")[0]
     assert task_id in text.split("-->")[0] and "research" in text.split("-->")[0]
@@ -184,7 +184,7 @@ async def test_a_file_of_another_provenance_on_the_short_name_moves_the_copy_to_
     await world.store.put("usr-1", path_of(task_id), b"my own notes", WorkspaceWriteMeta(origin="chat"), 0)
     await world.runner(world.body(), {})
     full = f"references/external_tasks/{T0.date().isoformat()}-{task_id}.md"
-    assert (await world.store.read("usr-1", full)).entry.untrusted == f"external_task:{task_id}"
+    assert (await world.store.read("usr-1", full)).entry.origin == f"background:external_task:{task_id}"
     assert (await world.store.read("usr-1", path_of(task_id))).data == b"my own notes"
     assert world.stored(task_id).delivery.path == full and f"`{full}`" in world.channel.literals[0]
 

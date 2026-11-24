@@ -11,7 +11,7 @@ the path (a label is a validated token, the path is built from the id and a date
 failure reason. A failure or expiry notice never quotes the reason either.
 
 Public interface:
-    EXTERNAL_RESULTS_FOLDER, external_task_mark(task_id), external_task_origin(task_id)
+    EXTERNAL_RESULTS_FOLDER, external_task_origin(task_id)
     result_path(task_id, submitted_at, *, full_id=False) -> str
     copy_text(task, result) -> str                       the outside-content header, then the result
     choose_notice(task, *, copied) -> NoticeKind         raises ValueError for a task that gets no notice
@@ -48,11 +48,6 @@ _MESSAGES = {
     NoticeKind.CLAIM_LOOP: UIMessage.EXTERNAL_TASK_CLAIM_LOOP,
     NoticeKind.EXPIRED: UIMessage.EXTERNAL_TASK_EXPIRED,
 }
-
-
-def external_task_mark(task_id: str) -> str:
-    """The untrusted mark every version of the result file carries."""
-    return f"external_task:{task_id}"
 
 
 def external_task_origin(task_id: str) -> str:
