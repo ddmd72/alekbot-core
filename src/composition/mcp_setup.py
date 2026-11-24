@@ -55,8 +55,8 @@ MCP_DEFAULT_SCOPE = "user_context"
 # one is also a Firestore collection name, which core layers must not spell.
 DRIVE_SCOPE = "drive_read"
 # The external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). In SCOPE_OF, so the
-# authorization service serves the resource (binds it, mints its tokens); never a default scope, so a registration
-# that names no scope never gains it.
+# authorization service serves the resource (binds it, mints its tokens); registrable (`valid_scopes`) but never a
+# default scope, so a registration that names no scope never gains it.
 TASKS_SCOPE = "external_tasks"
 SCOPE_OF = {MCPResource.FACTS: MCP_DEFAULT_SCOPE, MCPResource.DRIVE: DRIVE_SCOPE, MCPResource.TASKS: TASKS_SCOPE}
 
@@ -99,8 +99,9 @@ def build_transport_security(resource_uri: str) -> TransportSecuritySettings:
 
 
 def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
-    """The facts app's OAuth settings: it is the authorization server for both resources, so its registration
-    offers the drive scope too."""
+    """The facts app's OAuth settings: it is the authorization server for every resource, so its registration offers
+    the drive and tasks scopes too. A registration that names no scope gets the defaults, facts and drive: the tasks
+    scope is never a default, so an existing connector never gains the task queue (EXTERNAL_TASK_QUEUE_RFC §5.4)."""
     return AuthSettings(
         issuer_url=AnyHttpUrl(issuer_root),
         resource_server_url=AnyHttpUrl(resource_uri),
@@ -110,7 +111,7 @@ def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
         validate_token_resource=False,
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
-            valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
+            valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE, TASKS_SCOPE],
             default_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
         ),
         # RFC 7009 `/revoke`: the SDK authenticates the client and revokes only that client's own token
