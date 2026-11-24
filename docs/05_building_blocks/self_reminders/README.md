@@ -111,8 +111,7 @@ reads its `text`, and the removed `visible_after` / `expires_after` fields are i
    the workspace.
 3. The alert tells the model the reminder is its own earlier intent, hands it `note_id` and the rule, and invites it to
    act on anything valuable now. The history keeps only a name-only summary line
-   (`build_reminder_alert_summary`) once the turn ages out. When the note is flagged `untrusted` (written after outside
-   content was read), the alert wraps its text and instruction as outside content, so the fired turn reads them as data.
+   (`build_reminder_alert_summary`) once the turn ages out.
 4. Outcome by HTTP status: only "the turn never started" (`is_retryable_failure`) answers 500 and is retried. Every
    outcome once the turn started is final and 200: ok, `empty_answer_final`, `turn_cap_final`, `failed_final`. A retry
    would repeat the actions the turn already took.

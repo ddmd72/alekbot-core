@@ -69,7 +69,6 @@ marker check (`request_taints`, `execution_taint.py:90`; called at `src/agents/c
 - a forwarded Telegram message is someone else's text: the adapter tags it (`src/adapters/telegram/webhook_adapter.py:45`)
   and Smart marks the execution (`smart_response_agent.py:538`);
 - a saved model turn in history that carries `execution_tainted` (next section);
-- an active reminder flagged `untrusted` in the prompt (`smart_response_agent.py:640`);
 - messages the owner's channel got while a long turn ran (the "meanwhile" note) go through the request check before
   the model sees them (`delegation_engine.py:792`, `smart_response_agent.py:654`);
 - a listing that shows a task created in a tainted execution: its title may repeat outside content
@@ -82,8 +81,7 @@ same batch as a read was written before the model saw that read.
 
 ## How taint persists
 
-A single execution is not the whole story. Outside content read in one turn lives on in the answer, the files and the
-reminders that turn wrote.
+A single execution is not the whole story. Outside content read in one turn lives on in the answer and the files that turn wrote.
 
 **Across turns.** Smart's response carries the final flag (`smart_response_agent.py:719`). `ConversationHandler`
 stores it on the saved model message (`src/handlers/conversation_handler.py:1103`), the session store keeps it
@@ -101,13 +99,6 @@ flagged file is wrapped as outside content with a fresh nonce: `view`, a version
 changed lines after `str_replace` or `insert` (`src/services/workspace_service.py:222`, `:336`, `:361`). The read sets
 `ToolResult.untrusted`, so it taints the reading execution. The store's side of the flag:
 `docs/05_building_blocks/agent_skills_workspace/README.md`, "the untrusted flag".
-
-**Reminders.** The tainted bit is copied into the delegation context after each batch
-(`smart_response_agent.py:648`), so the notes agent flags a reminder it creates or updates in a tainted execution
-(`src/agents/notes_agent.py:470`, `:554`, `:615`). An update never clears the flag (`NoteUpdate.untrusted`,
-`src/domain/agent_note.py:82`). A flagged reminder is wrapped wherever its text reaches a model: in Smart's
-`active_reminders` block (`src/services/prompt_v3/prompt_assembly_service.py:595`), and in the alert of a fired
-reminder, which also gets a history label that does not repeat its text (`src/domain/reminder_alert.py:19`, `:44`).
 
 ## The hold and the confirmation
 
