@@ -2,11 +2,11 @@
 The protected resources of the remote MCP server and the rule that binds a scope to its resource.
 
 One authorization server fronts the resource servers: the facts connector (`/mcp`), the drive connector (`/drive-mcp`)
-and the external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). The tasks resource takes
-worker keys only until its OAuth step: no scope binds to it yet, so `bind_resource` never selects it. Each has one OAuth
-scope; the scope strings live in the composition layer (one of them is also a
-Firestore collection name, which core layers must not spell) and are injected as a `scope_of` mapping. A token must never carry an audience its scope does not belong
-to (DRIVE_MCP_CONNECTOR_RFC §3.3, E1). Pure: stdlib only.
+and the external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). Each has one OAuth scope;
+the scope strings live in the composition layer (one of them is also a Firestore collection name, which core layers must
+not spell) and are injected as a `scope_of` mapping. A token must never carry an audience its scope does not belong to
+(DRIVE_MCP_CONNECTOR_RFC §3.3, E1). A resource missing from the served `uris` is never bound: its scope is refused
+(fail closed). Pure: stdlib only.
 """
 
 from enum import Enum
@@ -64,8 +64,9 @@ def bind_resource(
     `scope_of` maps each resource to its one scope.
     `resource` given: it must canonicalise to one of `uris` (else ResourceRefused); every requested scope must be
     that resource's own (else ScopeRefused); none requested -> the resource's own scope.
-    `resource` absent: DRIVE when the scopes are exactly its scope; FACTS when they are empty or exactly its scope;
-    anything else (a mix, an unknown scope) -> ScopeRefused.
+    `resource` absent: DRIVE when the scopes are exactly its scope; TASKS when they are exactly its scope (a
+    `scope_of` without TASKS knows no such scope); FACTS when they are empty or exactly its scope; anything else (a
+    mix, an unknown scope) -> ScopeRefused. A kind selected so that is not in `uris` (not served) -> ScopeRefused.
     """
     requested = list(scopes)
     if resource is not None:
@@ -81,13 +82,22 @@ def bind_resource(
     unique = set(requested)
     if unique == {scope_of[MCPResource.DRIVE]}:
         kind = MCPResource.DRIVE
+    elif unique == {scope_of.get(MCPResource.TASKS)}:
+        kind = MCPResource.TASKS
     elif not unique or unique == {scope_of[MCPResource.FACTS]}:
         kind = MCPResource.FACTS
     else:
         raise ScopeRefused("scope not for resource: unknown or mixed scopes")
+    if kind not in uris:
+        raise ScopeRefused(f"scope not for resource: {kind.value} is not served")
     return kind, canonical_resource(uris[kind]), [scope_of[kind]]
 
 
 def is_drive_grant(resource: Optional[str]) -> bool:
     """The consent page's text choice: the resource bound at authorize is the drive connector's."""
     return resource is not None and urlsplit(resource).path.rstrip("/") == DRIVE_PATH
+
+
+def is_tasks_grant(resource: Optional[str]) -> bool:
+    """The resource bound at authorize is the task queue's worker resource: the consent page asks for a worker."""
+    return resource is not None and urlsplit(resource).path.rstrip("/") == TASKS_PATH

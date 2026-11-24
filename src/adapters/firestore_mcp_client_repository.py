@@ -7,7 +7,9 @@ Three collections, env-prefixed via EnvironmentConfig:
 - {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex (unkeyed: 384 random bits gain nothing from a key);
                                `grant_id` (the grant's stable id, not a secret) is a field, queried by
                                has_active_grant with three equality filters (user_id, grant_id, revoked_at null),
-                               served by the automatic single-field indexes; revoke_user_refresh_tokens
+                               served by the automatic single-field indexes; `worker_id` (a tasks-resource grant's
+                               worker), `granted_at` and `issued_at` are fields too, absent on older documents (read
+                               as None); revoke_user_refresh_tokens
                                filters on (user_id, revoked_at null) the same way, so a token stored without a
                                revoked_at field (none since slice 4, all long expired) is not matched
 
@@ -143,6 +145,7 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             "resource": c.resource,
             "scopes": list(c.scopes),
             "expires_at": c.expires_at,
+            "worker_id": c.worker_id,
         }
 
     @staticmethod
@@ -159,6 +162,7 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             resource=data.get("resource"),
             scopes=list(data.get("scopes", [])),
             expires_at=_to_utc(data["expires_at"]),
+            worker_id=data.get("worker_id"),
         )
 
     async def save_auth_code(self, auth_code: MCPAuthCode) -> None:
@@ -199,11 +203,16 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             "expires_at": t.expires_at,
             "revoked_at": t.revoked_at,
             "grant_id": t.grant_id,
+            "worker_id": t.worker_id,
+            "granted_at": t.granted_at,
+            "issued_at": t.issued_at,
         }
 
     @staticmethod
     def _refresh_from_fs(data: dict) -> MCPRefreshToken:
         revoked_raw = data.get("revoked_at")
+        granted_raw = data.get("granted_at")
+        issued_raw = data.get("issued_at")
         return MCPRefreshToken(
             token_hash=data["token_hash"],
             client_id=data["client_id"],
@@ -214,6 +223,9 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             expires_at=_to_utc(data["expires_at"]),
             revoked_at=_to_utc(revoked_raw) if revoked_raw else None,
             grant_id=data.get("grant_id"),
+            worker_id=data.get("worker_id"),
+            granted_at=_to_utc(granted_raw) if granted_raw else None,
+            issued_at=_to_utc(issued_raw) if issued_raw else None,
         )
 
     async def save_refresh_token(self, token: MCPRefreshToken) -> None:
