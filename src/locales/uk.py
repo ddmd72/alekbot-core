@@ -214,6 +214,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_FAILED.value: "*{label}* повідомив про збій у завданні *{title}* (завдання *{id}*). Попросіть мене відкрити завдання, щоб побачити вказану причину.",
     UIMessage.EXTERNAL_TASK_CLAIM_LOOP.value: "Завдання *{title}* (завдання *{id}*) припинено: *{label}* брав його кілька разів і так і не завершив.",
     UIMessage.EXTERNAL_TASK_EXPIRED.value: "Завдання *{title}* (завдання *{id}*) прострочено: *{label}* не встиг його завершити.",
+    UIMessage.EXTERNAL_TASK_WAKE_REFUSED.value: "Сигнал пробудження для *{label}* відхилено (`{code}`). Його завдання чекають у черзі, доки він сам не перевірить роботу; виправити або прибрати адресу пробудження можна в Кабінеті.",
     UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ Не вдалося обробити твоє останнє повідомлення, бо я надто довго був зайнятий. Надішли його, будь ласка, ще раз.",
     UIMessage.MEMORY_REVIEW_QUESTION.value: "Це досі правда?",
     UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Так",

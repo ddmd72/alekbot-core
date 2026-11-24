@@ -1,7 +1,8 @@
 """ExternalTaskService — the one place where the external task queue's rules are applied (EXTERNAL_TASK_QUEUE_RFC §5.2).
 
 Public interface:
-    ExternalTaskService(tasks, workers, queue, users, inactive_users, *, digest_key, clock, new_id, random_bytes)
+    ExternalTaskService(tasks, workers, queue, users, inactive_users, *, digest_key, clock, new_id, random_bytes,
+                        cipher=None, webhook=None, own_hosts=())
 
     Owner side (Smart tools, `$task send`), user id closed over by the caller:
         .create(user_id, worker_label, title, text, origin, *, tainted) -> CreatedTask
@@ -17,10 +18,11 @@ Public interface:
         .submit(principal, task_id, lease_id, text) -> SubmitReceipt
         .release(principal, task_id, lease_id) -> None
         .fail(principal, task_id, lease_id, reason) -> None
-    `/worker` runners (built by later parts):
+    `/worker` runners:
         .on_timer(payload: TimerPayload) -> bool                         (True: the timer changed the task)
         .load_for_delivery(user_id, task_id) -> Optional[DeliveryLoad]
         .record_delivery(user_id, task_id, delivery) -> bool
+        .on_wake(payload: WakePayload) -> WakeRun
     Worker registry (Cabinet):
         .create_worker(user_id, label, description=None, destination=WORKSPACE) -> ExternalWorker
         .list_workers(user_id) -> List[ExternalWorker]                   (active only)
@@ -28,6 +30,8 @@ Public interface:
         .mint_key(user_id, worker_id) -> MintedKey
         .list_keys(user_id, worker_id) -> List[ExternalWorkerKey]
         .revoke_key(user_id, worker_id, key_digest) -> None
+        .save_wake_target(user_id, worker_id, url, headers) -> ExternalWorker   (WakeTargetRefused: the guard's code)
+        .clear_wake_target(user_id, worker_id) -> ExternalWorker
 
 Every refusal raises `ExternalTaskRefused(reason)` and writes nothing. Checks, all fresh on every call: the account lock
 (`InactiveUserCheck`) then the flag (`UserBotConfig.external_tasks_enabled`, §5.10) for every owner, worker and registry
@@ -44,15 +48,27 @@ notices are Cloud Tasks through `TaskQueue.enqueue_worker_task` (payloads: `src/
   there is logged at error level and not raised: the claim's lazy recovery and the deadline bound a lost lease timer,
   and the state change has already happened for the worker.
 
+Wake-up (§5.8). When a task becomes `queued` (an untainted create, a confirm) and it is the oldest queued task of a
+worker that has a target and holds no live lease, the worker's `wake_generation` moves on and an `external_task_wake`
+Cloud Task is enqueued for that generation (dedup `external_task_wake:<worker_id>:<generation>`); a lease timer that
+re-queues a task pings the same way, whether or not other tasks are queued. The generation moves on in its own worker
+transaction after the task write, not in the task write's transaction (the two records sit behind two stores): a crash
+between the two loses one ping, which the RFC already tolerates for a failed ping (the task stays queued for polling or
+the next ping). A failed check or enqueue is logged at error level and never raised: the task is already written.
+`on_wake` re-reads the worker: a changed generation, a removed target or worker, or no queued work sends nothing. The
+target is decrypted (AAD `external_workers/{user_id}:{worker_id}`) and posted through `OutboundWebhookPort` with the body
+`{"event": "tasks_available", "worker": <worker_id>}`: no task text, title, label or count. A target is stored only
+after the guard's name-level rules pass (`check_target`, no DNS); the sender runs them again with DNS on every ping.
+
 Logs: `[TaskQueue] <op> user=<8> worker=<fingerprint> task=<id>`; never a task text, a title, a result, a reason, a
-key or a code.
+key, a code, a wake-up URL or a header.
 """
 from __future__ import annotations
 
 import base64
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, Collection, List, Optional, Sequence, Tuple
 
 from ..domain.external_task import (
     CLAIM_BATCH,
@@ -86,10 +102,14 @@ from ..domain.external_task_jobs import (
     TaskNotice,
     TimerKind,
     TimerPayload,
+    WakeOutcome,
+    WakePayload,
+    WakeRun,
     deadline_timer_key,
     deliver_key,
     hold_timer_key,
     lease_timer_key,
+    wake_key,
 )
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.external_task_rules import TaskTransition
@@ -124,8 +144,12 @@ from ..domain.external_worker_key import (
 from ..domain.external_worker_principal import WorkerPrincipal
 from ..domain.secret_digest import fingerprint, keyed_digest
 from ..domain.user import UserProfile
+from ..domain.wake_refusal import WakeRefusal, WakeTargetRefused
+from ..domain.wake_target import WakeTarget, check_target, wake_aad
+from ..ports.cipher_port import CipherPort
 from ..ports.external_task_store import ExternalTaskStore
 from ..ports.external_worker_store import ExternalWorkerStore
+from ..ports.outbound_webhook_port import OutboundWebhookPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
@@ -163,7 +187,10 @@ class ExternalTaskService:
     def __init__(self, tasks: ExternalTaskStore, workers: ExternalWorkerStore, queue: TaskQueue,
                  users: UserRepository, inactive_users: "InactiveUserCheck", *, digest_key: bytes,
                  clock: Callable[[], datetime] = _utcnow, new_id: Callable[[], str] = _new_id,
-                 random_bytes: Callable[[int], bytes] = secrets.token_bytes) -> None:
+                 random_bytes: Callable[[int], bytes] = secrets.token_bytes, cipher: Optional[CipherPort] = None,
+                 webhook: Optional[OutboundWebhookPort] = None, own_hosts: Collection[str] = ()) -> None:
+        """`cipher`, `webhook` and `own_hosts` serve the wake-up: without the cipher or the webhook a target cannot be
+        stored (`wake_unavailable`) and no ping is sent; `own_hosts` are the bot's own host names (lowercase)."""
         if not digest_key:
             raise ValueError("the external task queue needs a digest key")
         self._tasks = tasks
@@ -175,6 +202,9 @@ class ExternalTaskService:
         self._clock = clock
         self._new_id = new_id
         self._random_bytes = random_bytes
+        self._cipher = cipher
+        self._webhook = webhook
+        self._own_hosts = frozenset(h.lower() for h in own_hosts)
 
     # -- checks ---------------------------------------------------------------------------------------------------
 
@@ -261,6 +291,38 @@ class ExternalTaskService:
             logger.error(f"[TaskQueue] {notice.value} notice not enqueued task={task.task_id} "
                          f"error={type(exc).__name__}")
 
+    async def _wake_if_due(self, task: ExternalTask, *, oldest_only: bool) -> None:
+        """A ping for a task that just became `queued` (§5.8): none while any task of the worker holds an unexpired
+        lease (the worker is draining), none when the worker has no target; with `oldest_only`, none unless this task
+        is the worker's oldest queued one (an earlier queued task already pinged). Never raises."""
+        user_id, worker_id = task.user_id, task.worker_id
+        try:
+            worker = await self._workers.get_worker(user_id, worker_id)
+            if worker is None or not worker.is_active or not worker.has_wake:
+                return
+            now = self._clock()
+            leased = await self._tasks.list_for_worker(user_id, worker_id, (_S.LEASED,))
+            if any(t.lease.until is not None and t.lease.until > now for t in leased):
+                return
+            if oldest_only:
+                oldest = await self._tasks.queued_candidates(user_id, worker_id, 1)
+                if not oldest or oldest[0].task_id != task.task_id:
+                    return
+            generation = await self._workers.bump_wake_generation(user_id, worker_id)
+            if generation is None:
+                return
+            # EXTERNAL_TASK_WAKE and the body `WakePayload.from_payload` reads, as literals (see `_enqueue_timer`)
+            await self._queue.enqueue_worker_task(
+                "external_task_wake",
+                {"user_id": user_id, "account_id": task.account_id, "worker_id": worker_id,
+                 "generation": generation},
+                dedup_key=wake_key(worker_id, generation))
+            logger.info(f"[TaskQueue] wake enqueued user={user_id[:8]} worker={fingerprint(worker_id)} "
+                        f"generation={generation}")
+        except Exception as exc:
+            logger.error(f"[TaskQueue] wake not started worker={fingerprint(worker_id)} task={task.task_id} "
+                         f"error={type(exc).__name__}; the task stays queued for polling or the next ping")
+
     # -- owner side -----------------------------------------------------------------------------------------------
 
     async def create(self, user_id: str, worker_label: str, title: str, text: str, origin: TaskOrigin, *,
@@ -295,6 +357,8 @@ class ExternalTaskService:
         await self._tasks.create(task)
         logger.info(f"[TaskQueue] create user={user_id[:8]} worker={fingerprint(worker.worker_id)} "
                     f"task={task.task_id} status={task.status.value}")
+        if not tainted:
+            await self._wake_if_due(task, oldest_only=True)
         return CreatedTask(task_id=task.task_id, status=task.status, label=task.label, title=task.title,
                            text=task.text, code=code)
 
@@ -314,6 +378,7 @@ class ExternalTaskService:
             outcome = await self._tasks.confirm(user_id, held.task_id, code_digest=digest, now=now)
             if outcome.written and outcome.task is not None:
                 logger.info(f"[TaskQueue] confirm user={user_id[:8]} task={held.task_id}")
+                await self._wake_if_due(outcome.task, oldest_only=True)
                 return TaskSummary.of(outcome.task)
         raise ExternalTaskRefused(TaskRefusal.HOLD_NOT_FOUND)
 
@@ -452,7 +517,7 @@ class ExternalTaskService:
 
     async def on_timer(self, payload: TimerPayload) -> bool:
         """One `external_task_timer`. Each kind's precondition makes a stale timer a no-op (False):
-        - lease: still leased under the payload's generation and lapsed → `queued`;
+        - lease: still leased under the payload's generation and lapsed → `queued`, then a ping when due (§5.8);
         - deadline: not final and past `deadline_at` → `expired` with a notice; early → re-enqueued; an expired task
           whose notice is not delivered yet gets it again (a retried timer after a failed enqueue);
         - hold: still held and past `hold_until` → `expired`, silently."""
@@ -460,6 +525,8 @@ class ExternalTaskService:
         user_id, task_id = payload.user_id, payload.task_id
         if payload.kind is TimerKind.LEASE:
             outcome = await self._tasks.expire_lease(user_id, task_id, generation=payload.generation, now=now)
+            if outcome.written and outcome.task is not None:
+                await self._wake_if_due(outcome.task, oldest_only=False)
         elif payload.kind is TimerKind.HOLD:
             outcome = await self._tasks.expire_hold(user_id, task_id, now=now)
         else:
@@ -489,6 +556,33 @@ class ExternalTaskService:
         """The delivery fields of a final task; True when written, False when already delivered (or not final)."""
         outcome = await self._tasks.record_delivery(user_id, task_id, delivery=delivery)
         return outcome.written
+
+    async def on_wake(self, payload: WakePayload) -> WakeRun:
+        """One `external_task_wake`. Re-reads the worker: a changed generation, another account, a removed worker or
+        target, or no queued work is `skipped` and sends nothing. Otherwise the target is decrypted and pinged:
+        `sent` (2xx), `retry` (a retryable code) or `refused` (a final code, with the label and the origin of the oldest
+        queued task for the owner's notice). A decrypt or store failure raises (the runner answers 5xx)."""
+        user_id, worker_id = payload.user_id, payload.worker_id
+        worker = await self._workers.get_worker(user_id, worker_id)
+        if (worker is None or not worker.is_active or worker.account_id != payload.account_id
+                or not worker.has_wake or worker.wake_secret is None
+                or worker.wake_generation != payload.generation):
+            return WakeRun(WakeOutcome.SKIPPED)
+        queued = await self._tasks.queued_candidates(user_id, worker_id, 1)
+        if not queued:
+            return WakeRun(WakeOutcome.SKIPPED)
+        if self._cipher is None or self._webhook is None:
+            logger.error(f"[TaskQueue] wake skipped worker={fingerprint(worker_id)}: no cipher or outbound guard wired")
+            return WakeRun(WakeOutcome.SKIPPED)
+        target = WakeTarget.from_json(await self._cipher.decrypt(worker.wake_secret, aad=wake_aad(user_id, worker_id)))
+        refusal = await self._webhook.post(target, {"event": "tasks_available", "worker": worker_id})
+        logger.info(f"[TaskQueue] wake user={user_id[:8]} worker={fingerprint(worker_id)} "
+                    f"generation={payload.generation} outcome={refusal.value if refusal else 'sent'}")
+        if refusal is None:
+            return WakeRun(WakeOutcome.SENT)
+        if not refusal.is_final:
+            return WakeRun(WakeOutcome.RETRY, refusal=refusal)
+        return WakeRun(WakeOutcome.REFUSED, refusal=refusal, label=worker.label, origin=queued[0].origin)
 
     # -- worker registry (Cabinet) ----------------------------------------------------------------------------------
 
@@ -561,3 +655,38 @@ class ExternalTaskService:
         if not await self._workers.revoke_key(user_id, worker_id, key_digest, self._clock()):
             raise ExternalTaskRefused(TaskRefusal.NOT_FOUND)
         logger.info(f"[TaskQueue] key revoked user={user_id[:8]} worker={fingerprint(worker_id)}")
+
+    async def save_wake_target(self, user_id: str, worker_id: str, url: str,
+                              headers: Sequence[Tuple[str, str]]) -> ExternalWorker:
+        """Store an active worker's wake-up target (§5.6, E3), replacing any earlier one whole. The guard's name-level
+        rules run first (no DNS): a refused target raises `WakeTargetRefused` with its code and stores nothing. The URL
+        and headers are stored only as one ciphertext bound to the record; `wake_host` is the plaintext part."""
+        await self._require_enabled(user_id)
+        worker = await self._own_worker(user_id, worker_id)
+        if not worker.is_active:
+            raise ExternalTaskRefused(TaskRefusal.WORKER_REVOKED)
+        if self._cipher is None or self._webhook is None:
+            raise ExternalTaskRefused(TaskRefusal.WAKE_UNAVAILABLE)
+        target = WakeTarget(url=url.strip(), headers=tuple(headers))
+        checked = check_target(target, self._own_hosts)
+        if isinstance(checked, WakeRefusal):
+            logger.info(f"[TaskQueue] wake target refused user={user_id[:8]} worker={fingerprint(worker_id)} "
+                        f"code={checked.value}")
+            raise WakeTargetRefused(checked)
+        secret = await self._cipher.encrypt(target.to_json(), aad=wake_aad(user_id, worker_id))
+        if not await self._workers.set_wake(user_id, worker_id, wake_host=checked.host, wake_secret=secret,
+                                            now=self._clock()):
+            raise ExternalTaskRefused(TaskRefusal.WORKER_REVOKED)
+        logger.info(f"[TaskQueue] wake target set user={user_id[:8]} worker={fingerprint(worker_id)}")
+        return await self._own_worker(user_id, worker_id)
+
+    async def clear_wake_target(self, user_id: str, worker_id: str) -> ExternalWorker:
+        """Remove an active worker's wake-up target; the worker then polls. A pending ping finds no target and sends
+        nothing."""
+        await self._require_enabled(user_id)
+        worker = await self._own_worker(user_id, worker_id)
+        if not worker.is_active or not await self._workers.set_wake(user_id, worker_id, wake_host=None,
+                                                                    wake_secret=None, now=self._clock()):
+            raise ExternalTaskRefused(TaskRefusal.WORKER_REVOKED)
+        logger.info(f"[TaskQueue] wake target cleared user={user_id[:8]} worker={fingerprint(worker_id)}")
+        return await self._own_worker(user_id, worker_id)

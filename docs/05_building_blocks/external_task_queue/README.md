@@ -1,5 +1,5 @@
 <!-- living-doc
-audited: 2026-11-23
+audited: 2026-11-24
 covers:
   src/domain/external_task.py
   src/domain/external_task_delivery.py
@@ -15,9 +15,13 @@ covers:
   src/domain/external_worker_key.py
   src/domain/external_worker_principal.py
   src/domain/execution_taint.py
+  src/domain/wake_refusal.py
+  src/domain/wake_target.py
   src/ports/external_task_store.py
   src/ports/external_worker_store.py
   src/ports/window_counter.py
+  src/ports/outbound_webhook_port.py
+  src/adapters/outbound_webhook/guarded_webhook_adapter.py
   src/adapters/firestore_external_task_store.py
   src/adapters/firestore_external_worker_store.py
   src/adapters/firestore_window_counter.py
@@ -45,21 +49,22 @@ The queue does not know what a task is about. The user's own skills decide when 
 a new kind of hand-off is a new skill, not new code (`agent_skills_workspace`).
 
 What it is not: not a worker runtime (the bot runs nothing of the task), not the voice or MCP surface (not built yet),
-not a way for a worker to talk to the user (the result is stored and announced, never answered in a model turn).
+not a way for a worker to talk to the user (the result is stored and announced, never answered in a model turn), and
+not a push of work: a wake-up tells a worker that work exists, never what it is.
 
 Spec and decisions: `docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`. Examples below use the invented user Alex Doe, the
 label `research` and the task "compare three community-garden irrigation kits for Shelbyville".
 
 ## State of the build
 
-Step 1 of the RFC is in. Built: the queue and `ExternalTaskService`; Smart's five tools (create, list, get, cancel, list
-workers) with taint tracking, held tasks and `$task send`; the REST worker endpoint `/external-tasks/v1/*` with
-per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke keys);
-lease, deadline and hold timers; delivery of a result to the workspace; the operator flag script.
+Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; Smart's five tools (create, list, get,
+cancel, list workers) with taint tracking, held tasks and `$task send`; the REST worker endpoint `/external-tasks/v1/*`
+with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
+keys, set and clear a wake-up target); lease, deadline and hold timers; delivery of a result to the workspace; the
+wake-up POST behind the outbound-request guard; the operator flag script.
 
-Not built (RFC steps 2-5): the wake-up POST and its outbound-request guard, the remote MCP resource, its OAuth grants,
-the primary drive's Inbox as a destination. Code that mentions them (`WAKE_*` limits, `WorkerDestination.DRIVE`) is
-placeholder for those steps.
+Not built (RFC steps 3-5): the remote MCP resource, its OAuth grants, the primary drive's Inbox as a destination. Code
+that mentions them (`WorkerDestination.DRIVE`) is placeholder for those steps.
 
 ## Owned data
 
@@ -71,7 +76,9 @@ Firestore, database `us-production`, names from `EnvironmentConfig` (`external_t
   is a separate document so a listing never reads it.
 - **results**: the submitted text, one per done task.
 - **workers** and **worker keys**: a worker is a label plus a description, bound to the registering account. A key is
-  stored only as a keyed digest; the raw key is shown once, at minting.
+  stored only as a keyed digest; the raw key is shown once, at minting. A worker's wake-up target is one `CipherPort`
+  ciphertext of `{url, headers}` bound to the record (AAD `external_workers/{user_id}:{worker_id}`); only its host is
+  stored in clear (`wake_host`), and `wake_generation` counts the pings started.
 - **rate windows**: per-worker and `401` counters in the `worker_task_dedup` collection through `WindowCounter`.
 
 Two of these carry `purge_after` (tasks, results) and are deleted by a TTL policy 30 days after the final state
@@ -79,9 +86,9 @@ Two of these carry `purge_after` (tasks, results) and are deleted by a TTL polic
 
 ## Flows
 
-**Create to deliver.** Smart's `create_external_task` handler (`src/infrastructure/external_task_tools.py:186`) calls
-`ExternalTaskService.create` (`src/services/external_task_service.py:262`): an untainted task is `queued` with a
-deadline timer; a worker claims it under a lease (`:371`), may renew, then submits (`:414`), releases or fails. The
+**Create to deliver.** Smart's `create_external_task` handler (`src/infrastructure/external_task_tools.py:187`) calls
+`ExternalTaskService.create` (`src/services/external_task_service.py:328`): an untainted task is `queued` with a
+deadline timer; a worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
 final state enqueues an `external_task_deliver` Cloud Task. Delivery writes the result into the workspace as a
 flagged copy, posts one literal notice to the origin channel and appends a code-written pair to that channel's history;
 it reads no model. A failed or expired task gets the notice and no copy. Delivery is idempotent through
@@ -94,8 +101,31 @@ with `$task send CODE` (`ConversationHandler`, the `task` command); the service 
 that is not confirmed expires through its hold timer. A wrong, used or expired code gets one neutral line. A held task
 is invisible to every worker surface.
 
-**Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:449`) applies the
+**Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:518`) applies the
 kind's precondition, so a stale timer changes nothing. A timer further than Cloud Tasks can schedule re-enqueues itself.
+
+**Wake-up.** A worker with a target is pinged when work appears, instead of polling. When a task becomes `queued` (an
+untainted create or `$task send`) and it is the worker's oldest queued task, and no task of the worker holds an
+unexpired lease (the worker is draining), the service moves the worker's `wake_generation` on and enqueues
+`external_task_wake` for that generation; a lease timer that re-queues a task pings the same way. A held task never
+pings. `ExternalTaskWakeTask` calls `on_wake`, which re-reads the worker (a changed generation, a cleared target or no
+queued work sends nothing), decrypts the target and POSTs `{"event": "tasks_available", "worker": <worker id>}` through
+`OutboundWebhookPort`: no task text, title, label or count. A 5xx or a timeout is retried by Cloud Tasks up to
+`WAKE_MAX_ATTEMPTS`; a guard refusal, a 3xx or a 4xx is final and the owner gets one literal notice naming the label and
+the closed `WakeRefusal` code. The task stays queued either way, for polling or the next ping.
+
+**Outbound-request guard** (`src/adapters/outbound_webhook/guarded_webhook_adapter.py`, the rules in
+`src/domain/wake_target.py`). The only code that sends to a user-entered URL. Before any DNS query: `https`, port 443,
+no userinfo, a DNS name of two labels or more (no IP literal, no numeric form), not under `.internal`, `.localhost`,
+`.local` or `.arpa`, not one of the bot's own hosts (built at boot from every deploy unit's configured URL,
+`wake_own_hosts` in `src/composition/external_task_setup.py`) and not under `run.app`; header names are tokens, values
+printable, framing, hop-by-hop and `Accept-Encoding` headers refused, count and size capped. Then every resolved address
+must be public (no private, loopback, link-local or metadata, CGNAT, multicast, reserved, documentation, ULA, IPv6
+site-local, nor any range that embeds IPv4: NAT64, 6to4, Teredo), the connection goes to the vetted address with the
+name as `Host` and SNI (no second resolution, so no rebinding), no redirect is followed, no proxy is taken from the
+environment, and the answer is asked for uncompressed and read as raw bytes up to a small cap, then dropped (a
+compressed body cannot expand past the cap). The Cabinet save runs the name-level rules only; every send runs them all
+again.
 
 **Worker REST.** `create_external_task_api_blueprint` (`src/web/external_task_api.py:73`), not under `/api/`, not
 behind the Cabinet cookie. Per request: the `401` limits are checked first, then the key's shape, then `resolve_key`,
@@ -110,7 +140,7 @@ code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
 - **Taint.** An execution is tainted when outside content entered it. `domain/execution_taint.py` is the pure rule and
   `TaintTracker` (`src/infrastructure/taint_tracker.py:25`) applies it per execution attempt, fed by the delegation
   engine after every tool batch. Sources: a wrapped result or attached-file reminder, any file part, any tool result
-  not on the closed allowlist (`call_is_trusted`, `src/domain/execution_taint.py:60`; web search is not wrapped, which is
+  not on the closed allowlist (`call_is_trusted`, `src/domain/execution_taint.py:61`; web search is not wrapped, which is
   why the list is an allowlist), a forwarded message, an earlier saved model turn that was itself tainted
   (`Message.execution_tainted`), an untrusted agent note, and every read of a result or failure reason
   (`get_external_task` is not on the list).
@@ -129,6 +159,12 @@ code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
   over `WindowCounter`; the per-worker limits count calls, claims and submits. Logs name a worker by
   `fingerprint(worker_id)`, never a key, text, result or header.
 - **Inactive user.** Refused at the Cabinet routes, the REST endpoint and `$task send`.
+- **A worker's description never reaches a model.** It is free text typed in the Cabinet; a tool or parameter
+  description is read with the schema's authority, so Smart's tools carry labels only (the `worker` enum and its
+  lead line, the `list_external_workers` result). The description is shown to the owner in the Cabinet and nowhere else.
+- **Wake-up secrets are never shown back or logged.** The Cabinet gets the host only after a save; logs name the host
+  and a code or an error class, never the URL, a header or the target's answer. httpx's own request log line is dropped
+  while a send runs.
 
 ## Traps
 
@@ -141,10 +177,15 @@ code: `docs/05_building_blocks/untrusted_content_taint/README.md`.
   collection of this block needs its own entry.
 - **Limits are placeholders** set at implementation review (named constants in `domain/external_task.py`); none was
   measured. Change the constant, not a copy.
+- **The guard assumes no VPC egress.** The main service reaches only the public internet; a VPC connector would let a
+  wake-up URL reach a private network the address rules do not know. The deploy trap: `docs/07_deployment/README.md`,
+  "Main service egress".
+- **A worker on the platform's default domain cannot be woken.** Every name under `run.app` is refused (the bot's own
+  services live there); such a worker needs a custom domain, or polls.
 - **Not a place for a worker's secrets.** A task text is plain stored text capped to fit one literal receipt.
 
 ## Links
 
-`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`, `docs/07_deployment/SCHEDULERS.md` (timer and deliver task types),
+`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`, `docs/07_deployment/SCHEDULERS.md` (timer, deliver and wake task types),
 `docs/05_building_blocks/agent_skills_workspace/README.md` (workspace flag), `docs/06_runtime/API_REFERENCE.md`
 (worker routes).

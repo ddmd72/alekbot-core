@@ -186,6 +186,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_FAILED.value: "*{label}* a signalé un échec sur la tâche *{title}* (tâche *{id}*). Demandez-moi d'ouvrir la tâche pour voir la raison indiquée.",
     UIMessage.EXTERNAL_TASK_CLAIM_LOOP.value: "La tâche *{title}* (tâche *{id}*) a été abandonnée : *{label}* l'a prise plusieurs fois sans jamais la terminer.",
     UIMessage.EXTERNAL_TASK_EXPIRED.value: "La tâche *{title}* (tâche *{id}*) a expiré avant que *{label}* ne la termine.",
+    UIMessage.EXTERNAL_TASK_WAKE_REFUSED.value: "Le signal de réveil vers *{label}* a été refusé (`{code}`). Ses tâches restent en file jusqu'à ce qu'il vienne les chercher ; vous pouvez corriger ou effacer l'adresse de réveil dans le Cabinet.",
     UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ Je n'ai pas pu traiter ton dernier message car j'étais occupé trop longtemps. Renvoie-le, s'il te plaît.",
     UIMessage.MEMORY_REVIEW_QUESTION.value: "Est-ce toujours vrai ?",
     UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Oui",

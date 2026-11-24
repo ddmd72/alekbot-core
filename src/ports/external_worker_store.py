@@ -48,6 +48,18 @@ class ExternalWorkerStore(ABC):
         already revoked (nothing written)."""
 
     @abstractmethod
+    async def set_wake(self, user_id: str, worker_id: str, *, wake_host: Optional[str], wake_secret: Optional[str],
+                       now: datetime) -> bool:
+        """Replace an active worker's wake-up target in one transaction: `wake_host`, `wake_secret` (the ciphertext,
+        stored as given), `has_wake = wake_secret is not None`, `updated_at = now`; both None clears the target.
+        `wake_generation` is left alone. False when absent, foreign or revoked (nothing written)."""
+
+    @abstractmethod
+    async def bump_wake_generation(self, user_id: str, worker_id: str) -> Optional[int]:
+        """Add one to an active worker's `wake_generation` in one transaction, when it has a target; the new value.
+        None when absent, foreign, revoked or without a target (nothing written)."""
+
+    @abstractmethod
     async def create_key(self, key: ExternalWorkerKey, max_active: int) -> Optional[TaskRefusal]:
         """Store a new key in one transaction with its check: `keys_cap` when the worker already has `max_active`
         unrevoked keys; None when stored. Never overwrites (an existing digest raises the backend's conflict)."""

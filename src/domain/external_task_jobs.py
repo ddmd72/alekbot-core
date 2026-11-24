@@ -1,9 +1,9 @@
 """The `/worker` task types the external task queue enqueues, and their payloads (EXTERNAL_TASK_QUEUE_RFC §5.8, §5.9).
 
-One module on purpose: the two task types, their payload shapes and their dedup keys are one contract between the
-service that enqueues them and the `/worker` runners that consume them (built by later parts). The service writes each
-body as a dict literal at its enqueue site (the `/worker` payload walk reads literals); the runner parses it with
-`from_payload`.
+One module on purpose: the three task types, their payload shapes, their dedup keys and what a wake run tells its
+runner are one contract between the service that enqueues them and the `/worker` runners that consume them. The service
+writes each body as a dict literal at its enqueue site (the `/worker` payload walk reads literals); the runner parses it
+with `from_payload`.
 
 `external_task_timer` body: `{"task_type", "user_id", "account_id", "task_id", "kind", "generation", "renewals"}`;
 `kind` is `lease`, `deadline` or `hold`; `generation` and `renewals` are the lease's at enqueue time for a lease timer
@@ -17,14 +17,23 @@ one task is harmless, its rule finds the task final), `hold:<task_id>`.
 The runner reads the task and its result through `ExternalTaskService.load_for_delivery` and records the outcome with
 `ExternalTaskService.record_delivery`.
 
-Both bodies name the user, so `/worker` refuses a locked user's timer and notice (§6.4).
+`external_task_wake` body: `{"task_type", "user_id", "account_id", "worker_id", "generation"}`, never task content.
+`generation` is the worker's `wake_generation` the enqueue moved it to; dedup key `external_task_wake:<worker_id>:
+<generation>` (RFC §5.8): rhythm comes from the stored generation, a stale generation makes the run a no-op. The runner
+calls `ExternalTaskService.on_wake(WakePayload.from_payload(body))` and answers by the `WakeRun` it gets back.
+
+Every body names the user, so `/worker` refuses a locked user's timer, notice and wake-up (§6.4).
 """
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
+
+from .external_task import TaskOrigin
+from .wake_refusal import WakeRefusal
 
 EXTERNAL_TASK_TIMER = "external_task_timer"
 EXTERNAL_TASK_DELIVER = "external_task_deliver"
+EXTERNAL_TASK_WAKE = "external_task_wake"
 
 
 class TimerKind(str, Enum):
@@ -70,6 +79,37 @@ class DeliverPayload:
                    notice=TaskNotice(body["notice"]))
 
 
+@dataclass(frozen=True)
+class WakePayload:
+    user_id: str
+    account_id: str
+    worker_id: str
+    generation: int
+
+    @classmethod
+    def from_payload(cls, body: Mapping[str, Any]) -> "WakePayload":
+        """Raises KeyError, ValueError or TypeError on a body that is not a wake payload."""
+        return cls(user_id=str(body["user_id"]), account_id=str(body["account_id"]),
+                   worker_id=str(body["worker_id"]), generation=int(body["generation"]))
+
+
+class WakeOutcome(str, Enum):
+    SKIPPED = "skipped"     # stale generation, no target, no queued work, a removed worker: nothing sent
+    SENT = "sent"           # the target answered 2xx
+    RETRY = "retry"         # the target is down or slow: Cloud Tasks retries
+    REFUSED = "refused"     # final: the guard refused the target, or it answered 3xx/4xx
+
+
+@dataclass(frozen=True)
+class WakeRun:
+    """What one wake run did. For `refused`, the worker's label and the origin channel of its oldest queued task, so
+    the runner can post the owner's notice; for `retry` and `refused`, the closed code."""
+    outcome: WakeOutcome
+    refusal: Optional[WakeRefusal] = None
+    label: Optional[str] = None
+    origin: Optional[TaskOrigin] = None
+
+
 def lease_timer_key(task_id: str, generation: int, renewals: int) -> str:
     return f"lease:{task_id}:{generation}:{renewals}"
 
@@ -84,3 +124,7 @@ def hold_timer_key(task_id: str) -> str:
 
 def deliver_key(task_id: str) -> str:
     return f"deliver:{task_id}"
+
+
+def wake_key(worker_id: str, generation: int) -> str:
+    return f"external_task_wake:{worker_id}:{generation}"

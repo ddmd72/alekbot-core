@@ -1,4 +1,4 @@
-"""Smart's four external task tools — served locally by the DelegationEngine, never via the coordinator
+"""Smart's five external task tools — served locally by the DelegationEngine, never via the coordinator
 (EXTERNAL_TASK_QUEUE_RFC §5.3).
 
 Each tool is a declaration builder plus a per-execution handler factory, shaped like `skill_tools.py`. The user id and
@@ -15,7 +15,8 @@ A label that does not exist, a task of another user and a missing task all get t
 reveals whether a task exists.
 
 Public interface:
-    build_create_external_task_declaration(workers) / build_list_… / build_get_… / build_cancel_…() -> declaration
+    build_create_external_task_declaration(workers) / build_list_… / build_list_external_workers_… / build_get_… /
+    build_cancel_…() -> declaration
     make_create_handler(service, user_id, origin, tracker) -> LocalToolHandler
     make_list_handler(service, user_id, tracker) / make_list_workers_handler(service, user_id) / make_get_handler(service, user_id, tracker) / make_cancel_handler(service, user_id)
 """
@@ -250,7 +251,9 @@ def make_list_workers_handler(service: "ExternalTaskService", user_id: str) -> L
             return _crashed(tool_call, exc)
         if not workers:
             return ToolResult(name=tool_call.name, result_str=NOTE_WORKERS_NONE)
-        lines = [f"{w.label}: {w.description or 'no description'}" for w in workers]
+        # Labels only (charset-restricted): a description is free text typed in the Cabinet and stays out of every
+        # model-facing text, so this tool stays on the clean allowlist (src/domain/execution_taint.py).
+        lines = [w.label for w in workers]
         return ToolResult(name=tool_call.name, result_str="\n".join([NOTE_WORKERS_HEADER, *lines]))
 
     return handle

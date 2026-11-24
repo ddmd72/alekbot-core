@@ -10,7 +10,7 @@ handler can post it as its own message, the easiest thing to copy back.
 
 Public interface:
     EXTERNAL_TASK_RECEIPT_DELIVERY                                   the `DeliveryItem.type`
-    receipt_data(created, command) -> dict                           the item's `data` from a `CreatedTask`
+    receipt_data(created) -> dict                                    the item's `data` from a `CreatedTask`
     render(data, strings) -> (literal_post, command or None)
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ Strings = Callable[[UIMessage], str]
 
 
 def receipt_data(created: CreatedTask) -> Dict[str, Any]:
-    """`command` is set for a held task only; the raw code appears nowhere else the model can read."""
+    """The data's `command` is set for a held task only; the raw code appears nowhere else the model can read."""
     held = created.status is ExternalTaskStatus.HELD
     return {
         "status": created.status.value, "worker": created.label, "title": created.title, "text": created.text,

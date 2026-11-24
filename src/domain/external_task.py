@@ -41,9 +41,9 @@ CALLS_PER_WINDOW = 600                  # set at implementation review
 RATE_WINDOW_S = 3_600                   # set at implementation review
 UNAUTHORIZED_PER_ADDRESS_PER_WINDOW = 20    # set at implementation review
 UNAUTHORIZED_GLOBAL_PER_WINDOW = 500        # set at implementation review
-WAKE_TIMEOUT_S = 10                     # set at implementation review; wake-up (RFC step 2), DNS included
+WAKE_TIMEOUT_S = 10                     # set at implementation review; one wake-up send, DNS included
 WAKE_HEADERS_MAX = 8                    # set at implementation review
-WAKE_HEADER_BYTES_MAX = 1_024           # set at implementation review
+WAKE_HEADER_BYTES_MAX = 1_024           # set at implementation review; names and values of all headers together
 
 # Engineering constants of this implementation (not in the RFC's table).
 TIMER_MARGIN_S = 30                     # set at implementation review; a timer fires this long after its instant
@@ -53,6 +53,9 @@ LIST_MAX = 50                           # set at implementation review; the newe
 CLAIM_BATCH = 10                        # set at implementation review; candidates one claim query reads
 CLAIM_ROUNDS = 3                        # set at implementation review; candidate queries one claim may run
 HOLD_CODE_BYTES = 4                     # set at implementation review; the code is 2 × this many hex characters
+WAKE_URL_MAX_CHARS = 2_048              # set at implementation review; a wake-up URL
+WAKE_RESPONSE_READ_MAX = 4_096          # set at implementation review; bytes of a wake-up answer read, then discarded
+WAKE_MAX_ATTEMPTS = 5                   # set at implementation review; deliveries of one wake task, retries included
 
 HOLD_CODE_DIGEST_PURPOSE = "external_task_hold"
 

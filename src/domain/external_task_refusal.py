@@ -10,7 +10,9 @@ The surfaces map a code to their answer; this module states the mapping the RFC 
 - 413: `too_large`; 400: `invalid_text`;
 - owner side: `unknown_worker` (Smart gives it the same line as `not_found`), `hold_not_found` (one neutral line for a
   wrong and an expired code), `open_tasks_cap`;
-- registry: `label_invalid`, `label_taken`, `workers_cap`, `keys_cap`, `destination_unavailable`.
+- registry: `label_invalid`, `label_taken`, `workers_cap`, `keys_cap`, `destination_unavailable`, `wake_unavailable`
+  (a server built without the cipher or the outbound guard cannot store a wake-up target). A target the guard refuses
+  is not a `TaskRefusal`: it raises `WakeTargetRefused` with its `WakeRefusal` code (`src/domain/wake_refusal.py`).
 
 `contended` and `not_due` never leave the service: a claim candidate another claim took, a timer that fired early.
 """
@@ -38,6 +40,7 @@ class TaskRefusal(str, Enum):
     WORKERS_CAP = "workers_cap"
     KEYS_CAP = "keys_cap"
     DESTINATION_UNAVAILABLE = "destination_unavailable"
+    WAKE_UNAVAILABLE = "wake_unavailable"
     CONTENDED = "contended"
     NOT_DUE = "not_due"
 

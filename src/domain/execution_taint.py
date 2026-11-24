@@ -52,7 +52,8 @@ MEMORY_SEARCH_INTENT = "search_memory"
 
 TRUSTED_LOCAL_TOOLS = frozenset({
     USE_SKILL_TOOL, LIST_EXTERNAL_TASKS_TOOL, CANCEL_EXTERNAL_TASK_TOOL, CREATE_EXTERNAL_TASK_TOOL, WORKSPACE_TOOL,
-    LIST_EXTERNAL_WORKERS_TOOL,     # labels and descriptions are the owner's own words, written in the Cabinet
+    LIST_EXTERNAL_WORKERS_TOOL,     # labels only: charset-restricted names; a worker's free-text description never
+                                    # reaches a model (external_task_tools.make_list_workers_handler)
 })
 TRUSTED_DELEGATE_INTENTS = frozenset({MEMORY_SEARCH_INTENT})
 

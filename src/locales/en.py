@@ -209,6 +209,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EXTERNAL_TASK_FAILED.value: "*{label}* reported a failure on task *{title}* (task *{id}*). Ask me to open the task to see the reason it gave.",
     UIMessage.EXTERNAL_TASK_CLAIM_LOOP.value: "Task *{title}* (task *{id}*) was given up: *{label}* took it several times and never finished it.",
     UIMessage.EXTERNAL_TASK_EXPIRED.value: "Task *{title}* (task *{id}*) expired before *{label}* finished it.",
+    UIMessage.EXTERNAL_TASK_WAKE_REFUSED.value: "The wake-up call to *{label}* was refused (`{code}`). Its tasks stay queued until it checks for work; you can fix or clear the wake-up URL in the Cabinet.",
     UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ I could not process your last message because I was busy for too long. Please send it again.",
     UIMessage.MEMORY_REVIEW_QUESTION.value: "Is this still true?",
     UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Yes",

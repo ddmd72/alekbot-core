@@ -33,7 +33,7 @@ from src.agents.infrastructure.billing_agent import BillingAgent
 from src.composition.agents_setup import Agents, build_agents
 from src.composition.background_jobs_setup import BackgroundJobs, build_background_jobs
 from src.composition.boot_setup import BootChecks, build_boot_checks
-from src.composition.external_task_setup import build_external_task_service
+from src.composition.external_task_setup import build_external_task_service, wake_own_hosts
 from src.composition.companion_setup import Companions, build_companions
 from src.composition.file_delivery_setup import FileDelivery, build_file_delivery
 from src.composition.identity_setup import Identity, build_device_auth, build_identity
@@ -228,7 +228,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                                   fact_search=memory_search.fact_search)
     external_tasks = build_external_task_service(
         db_client, env_config, task_queue=ops.task_queue, user_repo=identity.user_repo,
-        inactive_users=identity.inactive_users, digest_key=boot.digest_key)
+        inactive_users=identity.inactive_users, digest_key=boot.digest_key, cipher=boot.cipher,
+        own_hosts=wake_own_hosts(config, boot.auth_config, boot.deploy_topology.service_url))
     agents = build_agents(config, db_client, env_config, container=container, coordinator=coordinator, boot=boot,
                           identity=identity, ops=ops, job_registry=job_registry, image_registry=image_registry,
                           video_registry=video_registry, companions=companions,

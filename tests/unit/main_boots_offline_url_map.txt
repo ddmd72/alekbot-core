@@ -2,6 +2,7 @@
 DELETE /api/drive/connections/<connection_id>
 DELETE /api/external-workers/<worker_id>
 DELETE /api/external-workers/<worker_id>/keys/<key_id>
+DELETE /api/external-workers/<worker_id>/wake
 DELETE /api/gmail/data
 DELETE /api/gmail/disconnect
 DELETE /api/tasks/disconnect
@@ -151,6 +152,7 @@ PUT /api/drive/connections/<connection_id>/searched-by-default
 PUT /api/drive/connections/<connection_id>/write-folder
 PUT /api/drive/deep-research-copy
 PUT /api/drive/primary
+PUT /api/external-workers/<worker_id>/wake
 PUT /api/gmail/auto-index
 PUT /api/gmail/daily-review
 PUT /api/user/deep-research
