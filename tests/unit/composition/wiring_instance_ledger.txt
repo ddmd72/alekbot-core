@@ -82,6 +82,7 @@ src.adapters.microsoft.todo_adapter.MicrosoftToDoAdapter 1  # by-design single i
 src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-design single instance
 src.adapters.openai_adapter.OpenAIAdapter 1  # by-design single instance
 src.adapters.openai_transcription_adapter.OpenAITranscriptionAdapter 1  # by-design single instance
+src.adapters.outbound_webhook.guarded_webhook_adapter.GuardedWebhookAdapter 1  # by-design the one outbound-request guard, the only sender to a user-entered URL, built by build_external_task_service and held by ExternalTaskService (external_task_setup.py:50, EXTERNAL_TASK_QUEUE_RFC §5.8)
 src.adapters.plain_text_interactive_message_adapter.PlainTextInteractiveMessageAdapter 1  # by-design the telegram entry of the one InteractiveMessageRouter (memory_setup.py, Facts S4 T10a)
 src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design single instance
 src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
@@ -166,8 +167,9 @@ src.services.email_review_service.EmailReviewService 1  # by-design single insta
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
 src.services.execute_reminder_task.ExecuteReminderTask 1  # by-design the one execute_reminder runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.external_task_delivery_task.ExternalTaskDeliveryTask 1  # by-design the one external_task_deliver runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
-src.services.external_task_service.ExternalTaskService 1  # by-design the one external task service, hoisted in build_application_graph and held by the two runners (EXTERNAL_TASK_QUEUE_RFC §5.2)
+src.services.external_task_service.ExternalTaskService 1  # by-design the one external task service, hoisted in build_application_graph and held by the three runners (EXTERNAL_TASK_QUEUE_RFC §5.2)
 src.services.external_task_timer_task.ExternalTaskTimerTask 1  # by-design the one external_task_timer runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.external_task_wake_task.ExternalTaskWakeTask 1  # by-design the one external_task_wake runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (memory_setup.py, Facts S4 T8e, T10a, T8g)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: memory_setup.py build_memory builds it once and the graph hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as profile_step in memory_setup.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (memory_setup.py:65,78,177, FACT_PROFILE_RFC 4.4)

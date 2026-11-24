@@ -112,6 +112,7 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "external_task_timer": {"user_id": "u1", "account_id": "a1", "task_id": "t1", "kind": "lease", "generation": 1,
                            "renewals": 0},
     "external_task_deliver": {"user_id": "u1", "account_id": "a1", "task_id": "t1", "notice": "done"},
+    "external_task_wake": {"user_id": "u1", "account_id": "a1", "worker_id": "w1", "generation": 1},
 }
 
 # The pinned answer of every task type, from the boot with the deploy's environment, an empty database and the rows' seed
@@ -171,9 +172,11 @@ MATRIX: Dict[str, Expect] = {
     # No platform user is seeded: the queued $geo question is dropped at the identity check, no turn runs (never a 501).
     "geo_mark_turn": Expect(200, {"ok": True, "dropped": "unauthorized"},
                             log="geo_mark_turn: Slack user not authorized, no turn"),
-    # The external task queue's runners on an empty database: no task to move and none to deliver.
+    # The external task queue's runners on an empty database: no task to move, none to deliver, no worker to wake.
     "external_task_timer": Expect(200, {"changed": False}),
     "external_task_deliver": Expect(200, {"status": "gone"}),
+    # No worker is stored: the wake is skipped before any target is read, so nothing is sent.
+    "external_task_wake": Expect(200, {"status": "skipped"}),
 }
 
 

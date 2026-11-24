@@ -57,12 +57,15 @@ async def finish(world, task_id, text="Kit A is cheapest. Kit B is sturdiest."):
 
 # --- declarations ------------------------------------------------------------------------------------------------
 
-async def test_the_create_declaration_lists_each_label_with_its_description(world):
+async def test_the_create_declaration_lists_each_label_and_no_description(world):
+    # Step 2's security decision (EXTERNAL_TASK_QUEUE_RFC, implementation notes): a description is never shown to Smart.
     workers = await world.service.list_workers(USER_ID)
     decl = build_create_external_task_declaration(workers)
     worker = decl["parameters"]["properties"]["worker"]
     assert sorted(worker["enum"]) == ["calendar-watch", "research"]
-    assert "- research: research worker" in worker["description"]
+    assert sorted(worker["description"].splitlines()[1:]) == ["- calendar-watch", "- research"]
+    assert {w.description for w in workers} == {"research worker", "calendar-watch worker"}
+    assert all(w.description not in worker["description"] for w in workers)
     assert decl["parameters"]["required"] == ["worker", "title", "text"]
 
 
@@ -247,10 +250,13 @@ async def test_cancel_cancels_once_and_then_says_already_finished(world):
 
 # --- review round: the workers tool and the title taint -----------------------------------------------------------
 
-async def test_the_workers_tool_lists_labels_with_descriptions_or_says_none(world):
+async def test_the_workers_tool_lists_labels_without_descriptions_or_says_none(world):
+    # Step 2's security decision (EXTERNAL_TASK_QUEUE_RFC, implementation notes): a description is never shown to Smart.
     from src.infrastructure.external_task_tools import make_list_workers_handler
     out = await make_list_workers_handler(world.service, USER_ID)(call("list_external_workers"))
-    assert "research: research worker" in out.result_str and "calendar-watch: calendar-watch worker" in out.result_str
+    assert out.result_str.splitlines()[0] == "Tool note: registered worker labels:"
+    assert sorted(out.result_str.splitlines()[1:]) == ["calendar-watch", "research"]
+    assert "research worker" not in out.result_str and "calendar-watch worker" not in out.result_str
     empty = await ExternalTaskWorld().seed(())
     none = await make_list_workers_handler(empty.service, USER_ID)(call("list_external_workers"))
     assert none.result_str == "Tool note: no worker is registered."
