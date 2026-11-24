@@ -262,21 +262,6 @@ async def test_the_workers_tool_lists_labels_without_descriptions_or_says_none(w
     assert none.result_str == "Tool note: no worker is registered."
 
 
-async def test_a_listing_that_shows_a_task_created_tainted_marks_the_execution(world):
-    handler_for = lambda tracker: make_list_handler(world.service, USER_ID, tracker)    # noqa: E731
-    clean = TaintTracker()
-    await create(world)
-    await handler_for(clean)(call("list_external_tasks"))
-    assert clean.tainted is False
-    held = TaintTracker()
-    held.mark()
-    await create(world, held, title="from a web page")
-    reader = TaintTracker()
-    await handler_for(reader)(call("list_external_tasks"))
-    assert reader.tainted is True and next(
-        t for t in world.tasks.tasks.values() if t.title == "from a web page").created_tainted is True
-
-
 def test_the_declarations_carry_the_status_definitions_and_the_new_workers_tool():
     from src.domain.external_task_texts import STATUS_DEFINITIONS
     from src.infrastructure.external_task_tools import build_list_external_workers_declaration

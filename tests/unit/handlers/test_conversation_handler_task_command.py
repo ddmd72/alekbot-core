@@ -71,18 +71,6 @@ async def _held(world):
 
 class TestReceiptDelivery:
 
-    async def test_a_queued_receipt_is_one_literal_post_with_the_full_text(self, world):
-        created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER)
-        ch = _channel()
-        item = DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
-
-        await _handler(world.service)._deliver_item(item, ch, "T1", USER_ID)
-
-        [post] = _literal(ch)
-        assert TEXT in post and TITLE in post and "research" in post and created.task_id in post
-        assert _sent(ch) == []
-        assert ch.send_literal.await_args.args[1] == "T1"
-
     async def test_a_held_receipt_posts_the_text_literally_then_the_command_alone(self, world):
         created = await _held(world)
         ch = _channel()
