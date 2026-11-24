@@ -241,6 +241,15 @@ async def test_legacy_unknown_part_keys_are_ignored(store):
     assert got == [Message(role="user", parts=[MessagePart(text=TEXTS[0])], created_at=5.0)]
 
 
+async def test_a_stored_message_that_still_carries_execution_tainted_loads_and_the_field_is_dropped_at_the_next_write(store):
+    docs(store)[SID] = {"history": [{"role": "model", "parts": [{"text": TEXTS[1]}], "created_at": 5.0,
+                                     "execution_tainted": True}], "owner_id": "u1", "created_at": 1.0,
+                        "last_activity": time.time()}
+    got = (await store.load_session(SID)).history
+    assert got == [Message(role="model", parts=[MessagePart(text=TEXTS[1])], created_at=5.0)]
+    await store.save_session(SID, SessionState(session_id=SID, history=got, owner_id="u1"))
+    assert all("execution_tainted" not in m for m in docs(store)[SID]["history"])
+
 # --------------------------------------------------------------------------------------------------- expiry, errors
 
 async def test_a_session_idle_over_90_days_is_deleted_and_read_empty(store):

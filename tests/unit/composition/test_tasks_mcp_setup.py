@@ -15,6 +15,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 from quart import Quart
 
+from src.domain.external_task_entry import TaskEntry
 from src.composition import tasks_mcp_setup as tms
 from src.composition.mcp_setup import SCOPE_OF, TASKS_SCOPE
 from src.domain import external_task_mcp_contract as c
@@ -161,7 +162,7 @@ class TestTools:
     async def test_list_shows_this_workers_queued_and_leased_tasks_and_never_a_held_one(self, world):
         first = await world.create()
         second = await world.create()
-        held = await world.create(tainted=True)
+        held = await world.create(entry=TaskEntry.CHAT)
         await world.create(label="calendar-watch")
         await world.create(user_id="usr-2")
         await world.claim()
@@ -185,7 +186,7 @@ class TestTools:
         assert task.status is ExternalTaskStatus.LEASED and task.worker_id == world.research.worker_id
 
     async def test_claim_with_nothing_waiting_is_a_success_never_an_error(self, world):
-        await world.create(tainted=True)       # a held task is not claimable
+        await world.create(entry=TaskEntry.CHAT)       # a held task is not claimable
         await world.create(label="calendar-watch")
         assert ok(await world.call("claim_task")) == "<NO_TASK>"
 
@@ -289,7 +290,7 @@ class TestTenancy:
         assert (await world.tasks.get("usr-1", watch["task_id"])).status is ExternalTaskStatus.LEASED
 
     async def test_a_held_task_is_not_found_by_every_worker_tool(self, world):
-        held = await world.create(tainted=True)
+        held = await world.create(entry=TaskEntry.CHAT)
         for tool in ("renew_lease", "release_task", "fail_task", "submit_task_result"):
             extra = {"result": RESULT} if tool == "submit_task_result" else {}
             assert err(await world.call(tool, task_id=held.task_id, lease_id="L", **extra)) == \
