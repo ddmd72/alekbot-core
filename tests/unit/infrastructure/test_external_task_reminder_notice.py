@@ -107,10 +107,12 @@ async def test_a_reminder_runs_task_is_shown_after_the_answer_as_a_notice_with_n
     [(said, answer_text), (filed, filename, title, content), (lit, message)] = channel.posts
     assert (said, answer_text) == ("text", ANSWER)                                     # the answer first
     assert (filed, filename, title) == ("file", f"task-{task.task_id}.txt", TITLE)
+    assert content.startswith(b"---\n")
     head, _, body = content.decode("utf-8")[len("---\n"):].partition("\n---\n")
     assert yaml.safe_load(head) == {"title": TITLE, "worker": "research", "note": NOTE} and body == TEXT
     assert (lit, message) == ("literal", f"{header}\nTask id: `{task.task_id}`")
     assert "$task send" not in message                                                 # nothing to confirm, no button
 
     [(_, history)] = sessions.appended
+    assert [m.role for m in history] == ["user", "model"]                              # the alert and the answer only
     assert all(NOTE not in (part.text or "") + (part.full_text or "") for m in history for part in m.parts)

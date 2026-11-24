@@ -58,5 +58,6 @@ async def test_no_worker_operation_hands_the_note_over(world):
     listed = await world.service.list_for_worker(principal)
     claimed = await world.service.claim(principal)
     assert claimed is not None and claimed.task_id == created.task_id and claimed.text == TEXT
+    assert [t.task_id for t in listed] == [created.task_id]
     for handed in (listed, claimed):
         assert NOTE not in repr(handed) and "note" not in repr(handed)
