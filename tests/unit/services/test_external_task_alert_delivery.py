@@ -165,9 +165,13 @@ async def test_a_done_task_becomes_a_system_alert_to_smart_in_its_origin_channel
 
     blob = await world.store.read("usr-1", path)
     assert blob.entry.origin == f"background:external_task:{task_id}"
-    assert blob.data.decode().split(" -->\n\n", 1)[1] == RESULT
+    header, body = blob.data.decode().split(" -->\n\n", 1)
+    assert body == RESULT
+    assert header.startswith("<!-- Outside content from an external worker.")
+    assert task_id in header and "research" in header
     delivery = task.delivery
     assert (delivery.state, delivery.path, delivery.destination.value) == (DeliveryState.DELIVERED, path, "workspace")
+    assert delivery.delivered_at == T0
 
 
 async def test_the_alert_turn_carries_no_title_brief_or_result(world):
@@ -180,13 +184,15 @@ async def test_the_alert_turn_carries_no_title_brief_or_result(world):
 
 async def test_a_worker_failure_with_a_reason_is_written_as_a_file_the_alert_names(world):
     task_id = await world.failed()
-    await world.deliver()
+    assert await world.deliver() == ({"status": "delivered"}, 200)
     path, task = path_of(task_id), world.stored(task_id)
-    text = (await world.store.read("usr-1", path)).data.decode()
-    header, body = text.split(" -->\n\n", 1)
+    blob = await world.store.read("usr-1", path)
+    assert blob.entry.origin == f"background:external_task:{task_id}"
+    header, body = blob.data.decode().split(" -->\n\n", 1)
     assert body == REASON and TITLE in header and task.updated_at.isoformat() in header
     assert world.turn() == f"[System: {render_alert(AlertKind.FAILED_FILE, task, path)}{SUFFIX}]"
     assert "password" not in world.turn() and "password" not in str(world.sessions.appended)
+    assert task.delivery.state is DeliveryState.DELIVERED
     assert task.delivery.path == path and task.delivery.destination.value == "workspace"
 
 
@@ -201,18 +207,22 @@ async def test_a_worker_failure_without_a_reason_gets_no_file(world):
 @pytest.mark.parametrize("make", ["done", "failed"])
 async def test_without_a_workspace_or_with_a_full_one_no_file_is_named(world, make):
     task_id = await getattr(world, make)()
-    await world.deliver(world.deliverer(None))
+    assert await world.deliver(world.deliverer(None)) == ({"status": "delivered"}, 200)
     expected = AlertKind.DONE_NO_COPY if make == "done" else AlertKind.FAILED_NO_FILE
     assert world.turn() == f"[System: {render_alert(expected, world.stored(task_id), None)}{SUFFIX}]"
     assert world.stored(task_id).delivery.destination is None
 
 
-async def test_a_refused_file_is_no_loss_the_alert_says_where_the_text_waits(world):
+@pytest.mark.parametrize("make", ["done", "failed"])
+async def test_a_refused_file_is_no_loss_the_alert_says_where_the_text_waits(world, make):
     for n in range(MAX_FILES_PER_USER):
         await world.store.put("usr-1", f"scratch/f{n}.md", b"x", WorkspaceWriteMeta(origin="chat"), 0)
-    task_id = await world.failed()
+    task_id = await getattr(world, make)()
     assert await world.deliver() == ({"status": "delivered"}, 200)
-    assert world.turn() == f"[System: {render_alert(AlertKind.FAILED_NO_FILE, world.stored(task_id), None)}{SUFFIX}]"
+    expected = AlertKind.DONE_NO_COPY if make == "done" else AlertKind.FAILED_NO_FILE
+    assert world.turn() == f"[System: {render_alert(expected, world.stored(task_id), None)}{SUFFIX}]"
+    delivery = world.stored(task_id).delivery
+    assert delivery.state is DeliveryState.DELIVERED and delivery.path is None and delivery.destination is None
     assert await world.store.list("usr-1", "references/") == []
 
 
@@ -244,10 +254,11 @@ async def test_a_cancelled_task_wakes_no_bot(world):
 
 
 async def test_a_redelivery_runs_no_second_turn(world):
-    await world.done()
+    task_id = await world.done()
     await world.deliver()
     assert await world.deliver() == ({"status": "already"}, 200)
-    assert len(world.bot.messages) == 1 and world.channel.posts == [ANSWER]
+    assert len(world.bot.messages) == 1 and world.channel.posts == [ANSWER] and len(world.sessions.appended) == 1
+    assert len(await world.store.list("usr-1", path_of(task_id), include_versions=True)) == 1
 
 
 @pytest.mark.parametrize("error,reported", [(EMPTY_ANSWER_ERROR, True), (TURN_CAP_ERROR, False), ("boom", False)])
@@ -300,14 +311,17 @@ def test_the_external_task_kind_has_the_reminder_default_budget():
     assert not NOTIFICATION_SLA[NotificationKind.EXTERNAL_TASK].tier_overrides
 
 
-async def test_a_file_of_another_provenance_moves_the_failure_file_to_the_full_id(world):
-    task_id = await world.failed()
+@pytest.mark.parametrize("make", ["done", "failed"])
+async def test_a_file_of_another_provenance_moves_the_file_to_the_full_id(world, make):
+    task_id = await getattr(world, make)()
     await world.store.put("usr-1", path_of(task_id), b"my own notes", WorkspaceWriteMeta(origin="chat"), 0)
     await world.deliver()
     full = f"references/external_tasks/{T0.date().isoformat()}-{task_id}.md"
     assert (await world.store.read("usr-1", full)).entry.origin == f"background:external_task:{task_id}"
     assert (await world.store.read("usr-1", path_of(task_id))).data == b"my own notes"
-    assert world.turn() == f"[System: {render_alert(AlertKind.FAILED_FILE, world.stored(task_id), full)}{SUFFIX}]"
+    expected = AlertKind.DONE if make == "done" else AlertKind.FAILED_FILE
+    assert world.turn() == f"[System: {render_alert(expected, world.stored(task_id), full)}{SUFFIX}]"
+    assert world.stored(task_id).delivery.path == full
 
 
 async def test_when_both_names_hold_other_files_the_alert_names_none(world):
