@@ -276,3 +276,48 @@ def test_the_declarations_carry_the_status_definitions_and_the_new_workers_tool(
     assert all(status.value in STATUS_DEFINITIONS for status in ExternalTaskStatus)
     assert "claim_loop" in STATUS_DEFINITIONS
     assert build_list_external_workers_declaration()["parameters"] == {"type": "object", "properties": {}}
+
+
+# --- the brief, word for word (the task specialist passes the orchestrator's instruction) -------------------------
+
+INSTRUCTION = f"[Mon 23 Nov 2026, 09:00 UTC] Hand this to research, word for word:\n\n{TEXT}"
+
+
+@pytest.mark.parametrize("text,created", [
+    (TEXT, True),
+    ("  " + TEXT.replace(" ", "\n\t "), True),                         # whitespace aside, it is the instruction's text
+    (TEXT.replace("three", "3"), False),                               # reworded
+    (TEXT + " and order the cheapest", False),                         # added to
+    ("Comparer trois kits d'irrigation", False),                       # translated
+])
+async def test_with_an_instruction_only_its_own_text_is_created(world, text, created):
+    from src.domain.external_task_texts import ERROR_NOT_THE_BRIEF
+    handler = make_create_handler(world.service, USER_ID, ORIGIN, commission=INSTRUCTION)
+    result = await handler(call("create_external_task", **create_args(text=text)))
+    assert (len(world.tasks.tasks) == 1) is created
+    if not created:
+        assert result.failed and result.result_str == ERROR_NOT_THE_BRIEF and result.delivery_items == []
+
+
+async def test_a_title_too_long_and_a_brief_too_long_get_their_own_lines(world):
+    from src.domain.external_task_texts import ERROR_BRIEF_TOO_LONG, ERROR_TITLE_TOO_LONG
+    assert (await create(world, title="t" * 500)).result_str == ERROR_TITLE_TOO_LONG
+    assert (await create(world, text="x" * 10_000)).result_str == ERROR_BRIEF_TOO_LONG
+    assert world.tasks.tasks == {}
+
+
+async def test_recorded_handlers_keep_every_call_and_result_in_call_order(world):
+    from src.infrastructure.external_task_tools import recorded
+    sink = []
+    handlers = recorded({"create_external_task": make_create_handler(world.service, USER_ID, ORIGIN),
+                         "list_external_tasks": make_list_handler(world.service, USER_ID)}, sink)
+    first = await handlers["create_external_task"](call("create_external_task", **create_args()))
+    second = await handlers["list_external_tasks"](call("list_external_tasks"))
+    assert [(c.name, r) for c, r in sink] == [("create_external_task", first), ("list_external_tasks", second)]
+
+
+async def test_with_one_worker_the_worker_parameter_names_it_without_asking_for_a_choice():
+    one = await ExternalTaskWorld().seed(("research",))
+    description = build_create_external_task_declaration(await one.service.list_workers(USER_ID))[
+        "parameters"]["properties"]["worker"]["description"]
+    assert description.splitlines()[1:] == ["- research"] and "the instruction names" not in description

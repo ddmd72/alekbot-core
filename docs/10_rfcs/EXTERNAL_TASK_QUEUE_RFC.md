@@ -14,6 +14,12 @@ alert, and task creation moves to a specialist agent. Record:
 (§5.3 taint and the tainted create, §5.9's taint of reads, §6.1's taint mitigations, D9's "outside content" hold) stay
 as the history of the first design until the code that implements them is removed.
 
+**Implementation note (the task specialist, D14, 2026-11-24).** §5.3's tools are built as a specialist's: Smart has no
+queue tool and offers one internal intent, `work_with_external_tasks`, on the owner's own chat turn of a flagged user.
+`ExternalTaskAgent` (`src/agents/external_task_agent.py`) serves the five tools, repeats the gate in code, forwards the
+brief word for word (enforced in code) and composes its answer from every tool result. Record:
+`docs/04_solution_strategy/decisions/external_task_specialist.md`; the built flow: the owner's map.
+
 **Implementation notes (step 1).** The build differs from the body below in two ways; the body is kept as specified.
 Smart has five tools, not four: `list_external_workers` (the owner's registered labels) was added and
 is on the taint allowlist. The taint rule has more sources and markers than §5.3 lists: the final flag is saved on the
@@ -114,6 +120,11 @@ Owner decisions. This RFC specifies them; it does not argue them again.
 - **D12 The flag is set only by an operator**, by a direct database write (a script or the console). It is never a
   Cabinet switch and never self-service (§5.10).
 - **D13 The drive destination is the primary drive's Inbox only.** No other drive and no other folder (§5.9).
+- **D14 The task specialist (2026-11-24).** Smart has no queue tool. The five tools belong to one LLM specialist,
+  `ExternalTaskAgent` (intent `work_with_external_tasks`, internal), which Smart reaches with a natural-language
+  instruction: the worker's name and the whole brief, or which task to read or cancel. The brief reaches the worker
+  word for word, enforced in code. Smart's own surface is one short intent line. Why, and the alternatives:
+  `docs/04_solution_strategy/decisions/external_task_specialist.md`.
 
 **Engineering decisions of the review round (2026-11-23).** These close the questions the first draft left open.
 
@@ -448,6 +459,9 @@ The service imports no adapter and no other service (REQ-ARCH-22). Delivery coll
 drive) are injected by composition.
 
 ### 5.3 Smart tools
+
+*Built as the task specialist's tools (D14): Smart offers the intent `work_with_external_tasks`, the specialist holds
+the tools below.*
 
 There are four local tools, served by the `DelegationEngine` like `workspace`. Each is a declaration builder plus a
 per-execution handler factory in `src/infrastructure/external_task_tools.py`, wired in `SmartResponseAgent` next to the

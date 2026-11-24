@@ -1,0 +1,5 @@
+blueprint_id: external_task_agent_v1
+class_order:
+- cognitive_process
+- output_format
+outer_class: ExternalTaskAgent extends Agent

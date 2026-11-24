@@ -31,6 +31,7 @@ covers:
   src/services/external_task_rate_limiter.py
   src/services/external_worker_user_gate.py
   src/infrastructure/external_task_tools.py
+  src/agents/external_task_agent.py
   src/composition/external_task_setup.py
   src/composition/external_task_api_setup.py
   src/web/external_task_api.py
@@ -42,12 +43,13 @@ covers:
 ## Purpose
 
 Some work is better done by an agent or a service the user already runs elsewhere: a long piece of research, or a job
-that needs tools or models the bot does not have. This block is the hand-off. In a chat turn the bot (Smart) puts a
-free-text task into a per-user queue; a worker the user registered claims it, does it elsewhere and submits a text
+that needs tools or models the bot does not have. This block is the hand-off. In a chat turn the bot (Smart, through
+the task specialist) puts a free-text task into a per-user queue; a worker the user registered claims it, does it elsewhere and submits a text
 result; the bot stores that result as untrusted content and tells the user where it is. A worker is anything outside
 the bot: a script, a scheduled agent, an automation service.
 
-The queue does not know what a task is about. The user's own skills decide when Smart enqueues and for which worker;
+The queue does not know what a task is about. The user's own skills decide when Smart hands work over and to which
+worker;
 a new kind of hand-off is a new skill, not new code (`agent_skills_workspace`).
 
 What it is not: not a worker runtime (the bot runs nothing of the task), not the voice or MCP surface (not built yet),
@@ -59,8 +61,10 @@ label `research` and the task "compare three community-garden irrigation kits fo
 
 ## State of the build
 
-Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; Smart's five tools (create, list, get,
-cancel, list workers) where every task created in a chat turn is held until the owner confirms it with `$task send`; the REST worker endpoint `/external-tasks/v1/*`
+Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; the task specialist
+(`ExternalTaskAgent`, intent `work_with_external_tasks`) with the five queue tools (create, list, get, cancel, list
+workers), where every task created in a chat turn is held until the owner confirms it with `$task send`; the REST
+worker endpoint `/external-tasks/v1/*`
 with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
 keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
 wake-up POST behind the outbound-request guard; the operator flag script.
@@ -90,9 +94,27 @@ Two of these carry `purge_after` (tasks, results) and are deleted by a TTL polic
 
 ## Flows
 
-**Create to deliver.** Smart's `create_external_task` handler (`src/infrastructure/external_task_tools.py:187`) calls
-`ExternalTaskService.create` (`src/services/external_task_service.py:328`): the `entry` decides: a chat create is `held` (below), a reminder create is `queued` with a
-deadline timer (Smart's local tool always passes `TaskEntry.CHAT`); a worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
+**Hand-off** (`decisions/external_task_specialist.md`). Smart has no queue tool. On the owner's own chat turn of a
+flagged user (interactive, not reached by delegation) it is offered one internal intent, `work_with_external_tasks`,
+and writes the task specialist a natural-language instruction: the worker's name and the whole brief, or which task to
+read or cancel. `ExternalTaskAgent` (`src/agents/external_task_agent.py`) repeats that gate in code before any model
+call (an interactive turn, a call chain of itself alone, a service, a user, then the service's fresh flag and lock
+check) and answers a refusal with one code-written line. It runs its own engine loop over the five tools, delegating
+nothing; its system prompt ends, after the cache boundary, with a `queue_state` block of worker labels. Its answer is
+composed by code from a pass-through record of every tool call: each result word for word, then the model's short note,
+then a line when the run was cut. The receipts come from that record, so a run cut by its soft deadline, the turn cap or
+an engine exception after a create still posts the owner's receipt; it answers success whenever a tool ran (a failure
+would drop the delivery items).
+
+**The brief, word for word.** The create handler refuses a text that is not a part of the instruction after whitespace
+is normalised (`ERROR_NOT_THE_BRIEF`), so what leaves the system is Smart's brief; the specialist chooses the title and
+the worker label only. The brief's language follows the owner's skill or words, not "Always English"
+(`PROTOCOL_AGENT_SELECTION`, `query_language`).
+
+**Create to deliver.** The specialist's `create_external_task` handler (`src/infrastructure/external_task_tools.py`)
+calls `ExternalTaskService.create` (`src/services/external_task_service.py:328`): the `entry` decides: a chat create is
+`held` (below), a reminder create is `queued` with a deadline timer (the specialist always passes `TaskEntry.CHAT`); a
+worker claims it under a lease (`:440`), may renew, then submits (`:483`), releases or fails. The
 final state enqueues an `external_task_deliver` Cloud Task (dispatch deadline `DELIVER_DEADLINE_S`, the
 `EXTERNAL_TASK` notification budget plus headroom).
 
@@ -115,7 +137,8 @@ again. Delivery is idempotent through `delivery.state` (Cloud Tasks may run it t
 **Held to sent.** Every task created in a chat turn waits for the owner's confirmation: it is `held`, not queued, whatever the turn read
 (`decisions/external_task_confirmation_and_alerts.md`). The service returns a
 confirmation code once (stored as a keyed digest). The owner's channel gets the task's full text and the command from
-the tool's own delivery item, never through the model; the model's result holds the task id only. The owner confirms
+the tool's own delivery item, never through a model; the result the specialist's model and Smart read holds the task id
+only. The owner confirms
 with `$task send CODE` (`ConversationHandler`, the `task` command); the service moves it to `queued`. A held task
 that is not confirmed expires through its hold timer. A wrong, used or expired code gets one neutral line. A held task
 is invisible to every worker surface.
@@ -170,8 +193,11 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
 - **A chat create always waits.** Every task a chat turn creates is held for the owner's `$task send`, whatever the
   turn read; a reminder run's create is queued. There is no per-execution taint tracking (decision record
   `external_task_confirmation_and_alerts.md`).
-- **Nested Smart gets no tools.** The five tools are added only to an interactive-delivery turn that was not reached by
-  delegation and whose user has the flag; the service re-checks flag and lock, so a stale cached profile gains nothing.
+- **Only the owner's own chat turn reaches the queue.** Smart offers the specialist's intent only on an
+  interactive-delivery turn that was not reached by delegation and whose user has the flag; Quick never sees it (the
+  intent is internal). The specialist repeats the gate in code: the coordinator checks no allowlist, so a nested Smart
+  or Lelik's `/voice/delegate` naming the intent gets a code-written refusal, no model call. The service re-checks flag
+  and lock, so a stale cached profile gains nothing.
   The delivery's alert turn is a background run (`background:external_task_deliver`, no `interactive_delivery`), so a
   worker's result never starts new work.
 - **A worker's text is wrapped where a model reads it through the queue.** `get_external_task` returns a result or a
@@ -186,8 +212,8 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
   `fingerprint(worker_id)`, never a key, text, result or header.
 - **Inactive user.** Refused at the Cabinet routes, the REST endpoint and `$task send`.
 - **A worker's description never reaches a model.** It is free text typed in the Cabinet; a tool or parameter
-  description is read with the schema's authority, so Smart's tools carry labels only (the `worker` enum and its
-  lead line, the `list_external_workers` result). The description is shown to the owner in the Cabinet and nowhere else.
+  description is read with the schema's authority, so the specialist's tools carry labels only (the `worker` enum and
+  its lead line, the `list_external_workers` result, the `queue_state` block). The description is shown to the owner in the Cabinet and nowhere else.
 - **Wake-up secrets are never shown back or logged.** The Cabinet gets the host only after a save; logs name the host
   and a code or an error class, never the URL, a header or the target's answer. httpx's own request log line is dropped
   while a send runs.
@@ -197,8 +223,14 @@ without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
 - **Indexes first.** The queue's composite indexes in `config/firestore.indexes.json` must be `READY` before the code
   deploys (`make deploy-indexes`); a missing one fails at claim or list time, not at deploy.
 - **The flag is operator-only.** `config.external_tasks_enabled` is set by `scripts/set_external_tasks_flag.py` (dry run
-  unless `--apply`) or the console. No Cabinet route, command or API writes it. Smart's tools follow the flag within
-  about an hour (the factory caches a profile); the service reads it fresh. Switching off deletes nothing.
+  unless `--apply`) or the console. No Cabinet route, command or API writes it. Smart's offer follows the flag within
+  about an hour (the factory caches a profile); the specialist's gate and the service read it fresh. Switching off
+  deletes nothing.
+- **Upload the specialist's prompt before the deploy.** Profile `external_tasks`, blueprint `external_task_agent_v1`,
+  `COGNITIVE_PROCESS_EXTERNAL_TASKS`, `OUTPUT_FORMAT_EXTERNAL_TASKS` and the `PROTOCOL_AGENT_SELECTION` clause ship by
+  token upload; a deploy before them runs the specialist on an empty profile (`docs/how_to/NEW_AGENT_PLAYBOOK.md`).
+- **A skill names the hand-off, not a tool.** Smart has no `create_external_task`; a skill that names a queue tool
+  points at nothing Smart can call.
 - **Two `purge_after` collections**: tasks and results; both are in the TTL registry and a test scans for it. A new
   collection of this block needs its own entry.
 - **Limits are placeholders** set at implementation review (named constants in `domain/external_task.py`); none was
