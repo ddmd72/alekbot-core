@@ -15,7 +15,9 @@ from src.domain.external_task import DeliveryState, ExternalTaskStatus, MAX_CLAI
 from src.domain.external_task_jobs import EXTERNAL_TASK_DELIVER, EXTERNAL_TASK_TIMER, TimerPayload
 from src.domain.language import LanguageCode
 from src.domain.workspace import MAX_FILES_PER_USER, WorkspaceWriteMeta
+from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from src.ports.language_service_port import LanguageServicePort
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.external_task_delivery_task import ExternalTaskDeliveryTask
 from src.services.inactive_user_check import InactiveUserCheck
 from src.services.localization_service import LocalizationService
@@ -63,7 +65,7 @@ class World(TaskWorld):
         language = AsyncMock(spec=LanguageServicePort)
         language.resolve_ui_language.return_value = LanguageCode.EN
         self.notifications = UserNotificationService(
-            state_repo=AsyncMock(), channel_factory=self.factory, coordinator=MagicMock(), notification_sla={},
+            state_repo=AsyncMock(), channel_factory=self.factory, coordinator=MagicMock(), notification_sla=NOTIFICATION_SLA,
             session_store=self.sessions, localization=LocalizationService(FileLocalizationAdapter()),
             language=language, inactive_users=InactiveUserCheck(self.users))
         self.runner = self.deliverer(self.workspace)
@@ -71,7 +73,9 @@ class World(TaskWorld):
 
     def deliverer(self, workspace: Optional[WorkspaceService]) -> ExternalTaskDeliveryTask:
         return ExternalTaskDeliveryTask(external_tasks=self.service, workspace=workspace,
-                                        notification_service=self.notifications, clock=lambda: self.now)
+                                        notification_service=self.notifications, ensure_agents=AsyncMock(),
+                                        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None),
+                                        clock=lambda: self.now)
 
     async def done(self) -> str:
         claim = await self.claimed()
