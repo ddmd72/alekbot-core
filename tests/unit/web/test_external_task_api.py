@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from quart import Quart
 
+from src.domain.external_task_entry import TaskEntry
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_window_counter import FirestoreWindowCounter
@@ -109,8 +110,8 @@ class World:
         self.their_key = (await self.service.mint_key("usr-2", self.theirs.worker_id)).key
         return self
 
-    async def create(self, user_id: str = "usr-1", label: str = "research", tainted: bool = False):
-        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, tainted=tainted)
+    async def create(self, user_id: str = "usr-1", label: str = "research", entry: TaskEntry = TaskEntry.REMINDER):
+        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry)
 
     async def call(self, method: str, path: str, key: Optional[str] = None, *, headers: Optional[dict] = None,
                    **kwargs: Any):
@@ -153,7 +154,7 @@ async def body(response) -> Dict[str, Any]:
 async def test_a_worker_lists_its_queued_and_leased_tasks_and_nothing_else(world):
     queued = await world.create()
     leased = await world.create()
-    held = await world.create(tainted=True)
+    held = await world.create(entry=TaskEntry.CHAT)
     await world.create(label="calendar-watch")
     await world.create(user_id="usr-2")
     await world.claim()          # the oldest of this worker's tasks is leased
@@ -171,7 +172,7 @@ async def test_claim_is_204_when_there_is_no_task(world):
 
 
 async def test_a_held_task_is_invisible_to_a_claim(world):
-    await world.create(tainted=True)
+    await world.create(entry=TaskEntry.CHAT)
     assert (await world.call("POST", "/claim", world.key)).status_code == 204
 
 
@@ -328,7 +329,7 @@ async def test_a_blank_result_is_400_from_the_service_and_the_lease_stays(world)
 # ----------------------------------------------------------------------------------------------------- tenancy
 
 async def test_another_workers_another_users_and_a_missing_task_are_one_identical_404(world):
-    theirs = await world.service.create("usr-2", "research", TITLE, TEXT, ORIGIN, tainted=False)
+    theirs = await world.service.create("usr-2", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER)
     watch_task = await world.create(label="calendar-watch")
     mine = await world.claimed()
     answers = []
@@ -345,7 +346,7 @@ async def test_another_workers_another_users_and_a_missing_task_are_one_identica
 
 
 async def test_a_held_task_is_a_404_to_every_worker_call(world):
-    held = await world.create(tainted=True)
+    held = await world.create(entry=TaskEntry.CHAT)
     mine = await world.claimed()
     response = await world.call("POST", f"/tasks/{held.task_id}/renew", world.key, json={"lease_id": mine["lease_id"]})
     assert (response.status_code, await body(response)) == (404, {"code": "not_found"})

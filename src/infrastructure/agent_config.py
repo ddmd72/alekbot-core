@@ -500,6 +500,30 @@ DRIVE = DriveAgentConfig()
 
 
 # ---------------------------------------------------------------------------
+# ExternalTaskAgent (src/agents/external_task_agent.py) — the task specialist (EXTERNAL_TASK_QUEUE_RFC §5.3)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ExternalTaskAgentConfig:
+    max_tokens: int = 4096            # tool calls and a short note
+    max_turns: int = 6                # find, read up to three, act, note
+    # The hard timeout around execute() is a backstop only: the soft deadline ends every run first and the answer is
+    # built from what ran, so a create's receipt is never lost to a slow last turn.
+    timeout_ms: int = 90_000
+    soft_deadline_s: float = 60.0
+    # Earlier under the caller's turn clock or its own timeout (CURRENT_RUN_DEADLINE), by this much: the answer must
+    # reach the orchestrator before the orchestrator gives up on it.
+    caller_margin_s: float = 10.0
+    call_timeout_s: int = 45          # one LLM call at most; clamped to the time left
+    # A mid model with low effort: the risky part (the brief, word for word) is enforced in code. A user's
+    # agent_thinking["external_tasks"] wins.
+    thinking_effort: str = "low"
+
+
+EXTERNAL_TASKS = ExternalTaskAgentConfig()
+
+
+# ---------------------------------------------------------------------------
 # DocPlannerAgent (src/agents/doc_planner_agent.py)
 # ---------------------------------------------------------------------------
 

@@ -42,3 +42,7 @@ class NotificationKind(str, Enum):
     # Deep research result delivery (long-running Cloud Run Job → callback).
     # The agent call itself is short — it just renders the prepared report.
     DEEP_RESEARCH = "deep_research"
+
+    # A final external task reaches the bot (EXTERNAL_TASK_QUEUE_RFC §5.9): Smart reads the alert, may open the
+    # result file in the workspace, and tells the owner. A reminder-sized run.
+    EXTERNAL_TASK = "external_task"

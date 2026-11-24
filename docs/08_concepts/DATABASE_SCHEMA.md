@@ -125,12 +125,6 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is in `../05
 | `{p}external_tasks` (expires on `purge_after`, set only once final) | `task_id` | `ExternalTask`, `src/domain/external_task.py`; `FirestoreExternalTaskStore` |
 | `{p}external_task_results` (expires on `purge_after`) | `task_id` | the submitted result text; same adapter |
 
-**Optional flags on stored records.** A saved model message in `{p}sessions` carries `execution_tainted: true` when
-outside content entered the execution that wrote it (`Message.execution_tainted`, `src/domain/llm.py`); it is written
-only when true and a record without it reads as false. An `{p}orchestrator_notes` document carries `untrusted: true`
-the same way (`AgentNote.untrusted`, `src/domain/agent_note.py`). A workspace object carries the `untrusted` metadata
-value `external_task:<task_id>` (see `../05_building_blocks/agent_skills_workspace/README.md`).
-
 **Sessions per channel.** `session_id = f"{user_id}:{channel_id}"` (`src/domain/messaging.py::session_id_for`) is
 deterministic: each channel (a Slack channel or DM, a Telegram chat) has its own session, history and consolidation
 stream. History is a sliding window; batches past it are handed to `{p}consolidation_queue`

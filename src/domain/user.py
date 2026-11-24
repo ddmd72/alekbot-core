@@ -145,6 +145,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "tasks": PerformanceTier.BALANCED,   # Multi-turn CRUD over TasksProviderPort — real reasoning, not mechanical
     # The drive specialist (DRIVE_SPECIALIST_RFC §5.1): BALANCED → claude-sonnet-5-5 (owner decision 2026-10-22).
     "drive": PerformanceTier.BALANCED,
+    # The task specialist (EXTERNAL_TASK_QUEUE_RFC §5.3): rare calls, the brief is copied verbatim and checked in code,
+    # so a mid model is enough.
+    "external_tasks": PerformanceTier.BALANCED,
     # Single LLM call crafts the Aurora prompt (RFC decision #1: full LLM agent
     # specifically because ECO-quality crafting degrades the technique clusters
     # — text-heavy layouts, asset-set style-locking — the RFC identified as

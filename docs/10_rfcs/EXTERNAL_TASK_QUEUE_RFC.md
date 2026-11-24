@@ -6,6 +6,20 @@ The decisions are in §2. Every example below is invented: the user is Alex Doe,
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
 changed in the Example School term calendar".
 
+**Decision of 2026-11-24 (supersedes the taint and hold rules).** The owner dropped taint tracking for the queue: every
+task created in a chat turn waits for the owner's confirmation with its exact frozen text (the `$memory save` shape), a
+task created while one of the owner's reminders runs goes straight to the queue, completion reaches the bot as a system
+alert, and task creation moves to a specialist agent. Record:
+`docs/04_solution_strategy/decisions/external_task_confirmation_and_alerts.md`. Sections marked "superseded" below
+(§5.3 taint and the tainted create, §5.9's taint of reads, §6.1's taint mitigations, D9's "outside content" hold) stay
+as the history of the first design until the code that implements them is removed.
+
+**Implementation note (the task specialist, D14, 2026-11-24).** §5.3's tools are built as a specialist's: Smart has no
+queue tool and offers one internal intent, `work_with_external_tasks`, on the owner's own chat turn of a flagged user.
+`ExternalTaskAgent` (`src/agents/external_task_agent.py`) serves the five tools, repeats the gate in code, forwards the
+brief word for word (enforced in code) and composes its answer from every tool result. Record:
+`docs/04_solution_strategy/decisions/external_task_specialist.md`; the built flow: the owner's map.
+
 **Implementation notes (step 1).** The build differs from the body below in two ways; the body is kept as specified.
 Smart has five tools, not four: `list_external_workers` (the owner's registered labels) was added and
 is on the taint allowlist. The taint rule has more sources and markers than §5.3 lists: the final flag is saved on the
@@ -123,6 +137,11 @@ Owner decisions. This RFC specifies them; it does not argue them again.
 - **D12 The flag is set only by an operator**, by a direct database write (a script or the console). It is never a
   Cabinet switch and never self-service (§5.10).
 - **D13 The drive destination is the primary drive's Inbox only.** No other drive and no other folder (§5.9).
+- **D14 The task specialist (2026-11-24).** Smart has no queue tool. The five tools belong to one LLM specialist,
+  `ExternalTaskAgent` (intent `work_with_external_tasks`, internal), which Smart reaches with a natural-language
+  instruction: the worker's name and the whole brief, or which task to read or cancel. The brief reaches the worker
+  word for word, enforced in code. Smart's own surface is one short intent line. Why, and the alternatives:
+  `docs/04_solution_strategy/decisions/external_task_specialist.md`.
 
 **Engineering decisions of the review round (2026-11-23).** These close the questions the first draft left open.
 
@@ -458,6 +477,9 @@ drive) are injected by composition.
 
 ### 5.3 Smart tools
 
+*Built as the task specialist's tools (D14): Smart offers the intent `work_with_external_tasks`, the specialist holds
+the tools below.*
+
 There are four local tools, served by the `DelegationEngine` like `workspace`. Each is a declaration builder plus a
 per-execution handler factory in `src/infrastructure/external_task_tools.py`, wired in `SmartResponseAgent` next to the
 existing ones. They are CRUD-shaped: one operation per tool, a read operation exists, and no omitted field destroys
@@ -473,14 +495,14 @@ data.
 **Where the tools exist.**
 - All four exist only on interactive turns, gated on `interactive_delivery` as `draft_skill` and
   `propose_memory_facts` are, and only for a user with the flag.
-- A background run (a fired reminder, the daily review, a voice errand, `/worker`) therefore cannot enqueue and cannot
-  read status (E2). No task can spawn a task without the owner in the chat.
+- A background run (the daily review, a voice errand, `/worker`) therefore cannot enqueue and cannot read status (E2);
+  a fired reminder's run is the one exception (`task_entry`, `EXTERNAL_TASK_CONFIRMATION_AND_ALERTS`: its create is queued). No task can spawn a task without the owner in the chat.
 - That gate alone does not answer the question of who asked. `interactive_delivery` means the user is present, not that
   the user asked for this call (§3). The taint rule below closes the gap.
 - None of the four tools sets `history_context`. Nothing they return is copied into the persisted turn's metadata
   (`smart_response_agent.py:660-661`), so a result read in one turn is not carried into later turns by the tool layer.
 
-**Taint and the held task.** An injected instruction in outside content that Smart read during the turn could make
+**Taint and the held task. (Superseded 2026-11-24: every chat create is held; see the decision record.)** An injected instruction in outside content that Smart read during the turn could make
 Smart call `create` in that same turn. The wake-up would then leave at once.
 
 The defence is per-execution taint:
@@ -500,7 +522,7 @@ The defence is per-execution taint:
 - The check fails safe. A false positive (the user pasted a tag) only makes a task wait for a confirmation.
 - `get_external_task` returning a result or a reason taints the execution itself.
 
-**What a tainted create does.**
+**What a tainted create does. (Superseded 2026-11-24: this is now what every chat create does.)**
 - It does not queue. The service stores the task as `held`, and no wake-up leaves.
 - The handler returns a delivery item that the turn's handler posts literally after the answer. It quotes the worker,
   the title, the **full task text** and the command `$task send <code>`.
@@ -771,6 +793,8 @@ SCHEDULERS.md task-type map):
 
 ### 5.9 Result delivery
 
+*Superseded in part (2026-11-24): the taint of reads below is dropped, and a literal notice is replaced by a system alert to the bot (decision record `external_task_confirmation_and_alerts.md`).*
+
 **Result format, v1** (D9):
 - Text only: `text/plain` or `text/markdown`, UTF-8. An invalid sequence is refused, not repaired.
 - Capped at `RESULT_MAX_BYTES`.
@@ -915,12 +939,14 @@ Coercion of the user and a compromised runtime identity are out of scope, as in 
 
 ### 6.1 Prompt injection, both ways
 
+*Superseded in part (2026-11-24): the taint mitigations below are replaced by the owner's confirmation of every chat-created task (decision record `external_task_confirmation_and_alerts.md`). The wrapping of a worker's result stays.*
+
 **Bot → worker.**
 - Smart writes the task text in a turn that may also hold outside content. An injected instruction could try to make
   Smart create a task that carries private data out to a worker.
 - `interactive_delivery` does not stop this. The user is present, but the user did not ask for that call (§3).
 - Mitigations:
-  - **Taint.** A create in an execution that saw outside content is held. Only the owner's `$task send <code>` queues
+  - **Taint (superseded 2026-11-24: every chat create is held).** A create in an execution that saw outside content is held. Only the owner's `$task send <code>` queues
     it and sends the wake-up (§5.3).
   - Every create, held or not, is posted to the owner literally with its full text.
   - Workers are only those the owner registered, and a label must exist.
@@ -1060,7 +1086,9 @@ Each step is one or more PRs and is usable on its own.
      quoting the full text.
    - The worker registry with keys in the Cabinet (Settings → Connections; no wake-up yet).
    - The REST endpoint, renew included, with the shape check and the `401` limits.
-   - `external_task_deliver` to the workspace, with the literal notice and history pair.
+   - `external_task_deliver` to the workspace, with the literal notice and history pair. Delivery is a system alert
+     since 2026-11-24: the result (or a worker's failure reason) is a workspace file and `notify` runs Smart on a
+     code-made alert naming it (`docs/05_building_blocks/external_task_queue/README.md`); no literal notice, no pair.
    - The workspace untrusted flag: set on delivery, carried by every new version, `rename` and `copy`, and wrapped on
      every read.
    - `external_task_timer` (lease, deadline, hold).

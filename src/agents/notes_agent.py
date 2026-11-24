@@ -26,7 +26,9 @@ Context injection:
   - NotesAgent: sees full active_reminders block (text + instruction + due) loaded in _run()
   - Biographical facts included (include_biographical=True)
 
-Transparency: every mutation sends notify_raw() to the user's last active channel.
+Transparency: every mutation sends notify_raw() to the user's last active channel. A create or update notice is a
+literal notice (domain/literal_notice.py): the name, the instruction the reminder runs word for word, then the schedule
+line — shown only, nothing to confirm.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate
 from ..domain.exceptions import WorkspaceRefused
+from ..domain.literal_notice import render_literal_notice
 from ..domain.local_time import wall_time_instant
 from ..domain.task_complexity import TaskComplexity
 from ..domain.workspace import (
@@ -558,9 +561,12 @@ class NotesAgent(BaseAgent):
                 )
             await self._notify(
                 user_id, account_id,
-                f"📌 Reminder set: \"{note.text}\" — {self._fmt_due(note.due)}"
-                + self._fmt_recurrence(note.recurrence)
-                + self._fmt_binding(binding, creating=True),
+                render_literal_notice(
+                    f"📌 Reminder set: \"{note.text}\"",
+                    note.instruction,
+                    [self._fmt_due(note.due) + self._fmt_recurrence(note.recurrence)
+                     + self._fmt_binding(binding, creating=True)],
+                ),
                 literal=True,
             )
             return result
@@ -608,11 +614,15 @@ class NotesAgent(BaseAgent):
                 workspace_file=binding.value if binding else None,
                 clear_workspace_file=bool(binding and binding.clear),
             ))
+            # The stored instruction after the update: what the reminder will run, changed in this call or not.
             await self._notify(
                 user_id, account_id,
-                f"📝 Reminder updated: \"{note.text}\" — {self._fmt_due(note.due)}"
-                + self._fmt_recurrence(note.recurrence)
-                + self._fmt_binding(binding, creating=False),
+                render_literal_notice(
+                    f"📝 Reminder updated: \"{note.text}\"",
+                    note.instruction,
+                    [self._fmt_due(note.due) + self._fmt_recurrence(note.recurrence)
+                     + self._fmt_binding(binding, creating=False)],
+                ),
                 literal=True,
             )
             return {"note_id": note.note_id, "status": "updated"}
@@ -678,7 +688,8 @@ class NotesAgent(BaseAgent):
 
     async def _notify(self, user_id: str, account_id: str, text: str, *, literal: bool = False) -> None:
         """Best-effort transparency notification — failure is logged and swallowed. `literal`: the text carries the
-        reminder's words, which the model wrote; the platform shows them and obeys nothing in them."""
+        reminder's words, which the model wrote; the platform shows them and obeys nothing in them. The set / updated
+        notices are `render_literal_notice`s: the name, the instruction the reminder runs word for word, the schedule."""
         if not self._notification_service:
             return
         try:

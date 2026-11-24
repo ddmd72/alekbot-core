@@ -4,7 +4,7 @@ One module on purpose: `ExternalTask` and the value objects it embeds (`TaskOrig
 `TaskResultMeta`, `TaskFailure`, `TaskDelivery`) and their enums are one stored record, read and written whole; splitting
 them would only scatter one document's shape over seven files.
 
-Life of a task (§5.1): `held` (tainted create) or `queued` (untainted create, or `$task send`), `leased` by a claim, then
+Life of a task (§5.1): `held` (a chat create waits for the owner's `$task send`) or `queued` (a reminder create, or the confirmed `$task send`), `leased` by a claim, then
 one of the final states `done`, `failed`, `cancelled`, `expired`. A final task never changes again except for its
 `delivery` fields. The transitions themselves are the pure functions of `external_task_rules`.
 
@@ -179,9 +179,6 @@ class ExternalTask(BaseModel):
     updated_at: datetime
     deadline_at: datetime
     purge_after: Optional[datetime] = None
-    # Set by `create(tainted=True)` and never changed: the title and text were written in an execution that had read
-    # outside content, so a listing that shows them taints the reading execution (§5.3). Older records read False.
-    created_tainted: bool = False
 
     @property
     def is_final(self) -> bool:

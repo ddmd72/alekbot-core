@@ -46,7 +46,6 @@ from ..domain.facts_pin_chat import is_code_command, reply_for
 from ..domain.facts_pin_policy import PinSurface
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
 from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, render as render_external_task_receipt
-from ..domain.execution_taint import EXECUTION_TAINTED_KEY
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
@@ -479,9 +478,10 @@ class ConversationHandler(ConversationHandlerPort):
         thread_id: Optional[str],
     ) -> None:
         """Deliver an external task's receipt (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible"): the worker, the
-        title, the FULL task text and the id, posted literally (the text is the model's, never reformatted). A held task
-        then gets its `$task send` command alone as a second message. When the receipt fails the command is not sent:
-        the owner never confirms text they were not shown. A failed post never fails the turn: the task is stored."""
+        title, the FULL task text and the id, posted literally (the text is the model's, shown word for word, each line
+        behind the literal notice's mark). A held task then gets its `$task send` command alone as a second message.
+        When the receipt fails the command is not sent: the owner never confirms text they were not shown. A failed post
+        never fails the turn: the task is stored."""
         language = getattr(response_channel, "language", None)
 
         def strings(message: UIMessage) -> str:
@@ -1100,7 +1100,6 @@ class ConversationHandler(ConversationHandlerPort):
                         history_text=history_text,
                         response_text=response_text,
                         owner_id=context.user_id,
-                        execution_tainted=bool((response.metadata or {}).get(EXECUTION_TAINTED_KEY)),
                     )
                 except Exception as e:
                     # The answer is already delivered: a lost history pair is logged, never an error reply.
@@ -1484,14 +1483,11 @@ class ConversationHandler(ConversationHandlerPort):
         response_text: str,
         owner_id: str,
         max_attempts: int = 3,
-        execution_tainted: bool = False,
     ) -> None:
-        """Append conversation turn to history with retry for transient gRPC errors. `execution_tainted` marks the
-        model message: the turn read outside content, and so is every later turn that loads it (taint rule)."""
+        """Append conversation turn to history with retry for transient gRPC errors."""
         messages = [
             Message(role="user", parts=user_parts),
-            Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)],
-                    execution_tainted=execution_tainted),
+            Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
         ]
         await retry_store_write(
             lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id, raise_on_error=True),

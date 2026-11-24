@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from quart import Quart
 
+from src.domain.external_task_entry import TaskEntry
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.external_task import MAX_KEYS_PER_WORKER, MAX_WORKERS_PER_USER, TaskOrigin
@@ -160,7 +161,7 @@ async def test_removing_a_worker_cancels_its_queued_task_and_its_keys(site):
     worker = await _add(site)
     _, minted = await site.call(site.alex, "POST", f"/api/external-workers/{worker['worker_id']}/keys")
     created = await site.service.create("usr-1", "research", "Irrigation kits", "compare three kits", ORIGIN,
-                                        tainted=False)
+                                        entry=TaskEntry.REMINDER)
     status, data = await site.call(site.alex, "DELETE", f"/api/external-workers/{worker['worker_id']}")
     assert (status, data) == (200, {"cancelled": 1})
     assert (await site.service.get_task("usr-1", created.task_id)).summary.status.value == "cancelled"
