@@ -14,9 +14,11 @@ intent, are refused), a task queue in this deployment, and a service that does n
 account lock, read fresh). A refusal is a success carrying one code-written line per reason (`ANSWER_UNAVAILABLE_*`).
 
 A task it creates in a chat turn waits for the owner's confirmation (the service's `TaskEntry.CHAT`): the owner is shown
-its exact text and a command only they see, and nothing leaves until they send it. One it creates while a reminder runs
-(`TaskEntry.REMINDER`) is queued at once, with no receipt: the owner approved that reminder when it was set. The entry
-is computed once per run from the context, never by the model. A worker's result or failure reason read by
+its exact text and note and a command only they see, and nothing leaves until they send it. One it creates while a
+reminder runs (`TaskEntry.REMINDER`) is queued at once: the owner approved that reminder when it was set, and is shown
+the task as a show-only notice (no command) after the reminder run's answer. Every task carries a note the model writes
+from the instruction: the bot's own return instructions, quoted by the completion alert and never shown to a worker.
+The entry is computed once per run from the context, never by the model. A worker's result or failure reason read by
 `get_external_task` reaches the orchestrator inside its outside-content wrapper.
 
 The answer is composed by code from the pass-through record of every tool call (`external_task_tools.recorded`): every
@@ -302,6 +304,7 @@ class ExternalTaskAgent(BaseAgent):
 
 
 def _receipts(record: Record) -> List[DeliveryItem]:
-    """The receipts of every create that ran, in call order: the owner's literal record of what left the system."""
+    """The receipts of every create that ran, in call order: the owner's literal record of what left the system, or
+    of what waits for their confirmation."""
     return [item for _, result in record for item in result.delivery_items
             if item.type == EXTERNAL_TASK_RECEIPT_DELIVERY]

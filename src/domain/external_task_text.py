@@ -11,15 +11,16 @@ are stored:
 - the system tag word neutralised (`neutralize_system_tag`), so stored text can never forge a system note.
 
 A result is refused, never repaired: invalid UTF-8, nothing left after normalisation, or more than `RESULT_MAX_BYTES`.
-A failure reason is stored capped (truncated to `FAIL_REASON_MAX_CHARS`). A title or a task text over its cap is
-refused, so the owner's receipt never cuts what leaves the system.
+A failure reason is stored capped (truncated to `FAIL_REASON_MAX_CHARS`). A title, a task text or a task's note over
+its cap is refused, so the owner's receipt never cuts what leaves the system or what the bot will act on.
 
 Public interface:
     normalise_text(text) -> str
     decode_result(raw) -> str                        raises ExternalTaskRefused(invalid_text)
     prepare_result(text) -> PreparedResult           raises ExternalTaskRefused(too_large | invalid_text)
     prepare_reason(text) -> Optional[str]
-    prepare_title(text) -> str;  prepare_task_text(text) -> str;  prepare_description(text) -> Optional[str]
+    prepare_title(text) -> str;  prepare_task_text(text) -> str;  prepare_note(text) -> str
+    prepare_description(text) -> Optional[str]
     is_valid_label(label) -> bool
 """
 import hashlib
@@ -33,6 +34,7 @@ from .external_task import (
     FAIL_REASON_MAX_CHARS,
     LABEL_MAX_CHARS,
     LABEL_PATTERN,
+    NOTE_MAX_CHARS,
     RESULT_MAX_BYTES,
     TASK_TEXT_MAX_CHARS,
     TITLE_MAX_CHARS,
@@ -114,6 +116,17 @@ def prepare_task_text(text: str) -> str:
     if len(brief) > TASK_TEXT_MAX_CHARS:
         raise ExternalTaskRefused(TaskRefusal.TOO_LARGE)
     return brief
+
+
+def prepare_note(text: str) -> str:
+    """A task's note (the bot's return instructions), at most `NOTE_MAX_CHARS`; empty or over the cap is refused, never
+    cut."""
+    note = normalise_text(text).strip()
+    if not note:
+        raise ExternalTaskRefused(TaskRefusal.INVALID_TEXT)
+    if len(note) > NOTE_MAX_CHARS:
+        raise ExternalTaskRefused(TaskRefusal.TOO_LARGE)
+    return note
 
 
 def prepare_description(text: Optional[str]) -> Optional[str]:

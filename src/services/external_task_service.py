@@ -5,7 +5,7 @@ Public interface:
                         cipher=None, webhook=None, own_hosts=())
 
     Owner side (Smart tools, `$task send`), user id closed over by the caller:
-        .create(user_id, worker_label, title, text, origin, *, entry) -> CreatedTask
+        .create(user_id, worker_label, title, text, origin, *, entry, note) -> CreatedTask
         .confirm(user_id, code) -> TaskSummary
         .is_owner(user_id, task_id) -> bool                              (the Slack Send button's owner check)
         .list_tasks(user_id, status=None, worker_label=None) -> List[TaskSummary]
@@ -62,8 +62,10 @@ target is decrypted (AAD `external_workers/{user_id}:{worker_id}`) and posted th
 `{"event": "tasks_available", "worker": <worker_id>}`: no task text, title, label or count. A target is stored only
 after the guard's name-level rules pass (`check_target`, no DNS); the sender runs them again with DNS on every ping.
 
-Logs: `[TaskQueue] <op> user=<8> worker=<fingerprint> task=<id>`; never a task text, a title, a result, a reason, a
-key, a code, a wake-up URL or a header.
+Logs: `[TaskQueue] <op> user=<8> worker=<fingerprint> task=<id>`; never a task text, a title, a note, a result, a
+reason, a key, a code, a wake-up URL or a header.
+
+A task's note is the owner's side only: no worker operation returns it (`ClaimedTask`, `WorkerTaskSummary`).
 """
 from __future__ import annotations
 
@@ -120,6 +122,7 @@ from ..domain.external_task_rules import TaskTransition
 from ..domain.external_task_text import (
     is_valid_label,
     prepare_description,
+    prepare_note,
     prepare_reason,
     prepare_result,
     prepare_task_text,
@@ -330,14 +333,16 @@ class ExternalTaskService:
     # -- owner side -----------------------------------------------------------------------------------------------
 
     async def create(self, user_id: str, worker_label: str, title: str, text: str, origin: TaskOrigin, *,
-                     entry: TaskEntry) -> CreatedTask:
+                     entry: TaskEntry, note: str) -> CreatedTask:
         """`TaskEntry.CHAT`: `held` with a fresh confirmation code (stored as its keyed digest, returned once) and
         `hold_until = now + HOLD_S`, with the hold timer only; the owner confirms with `$task send`.
         `TaskEntry.REMINDER`: `queued`, with the deadline timer, and no code. The account is the worker's (bound at
-        registration)."""
+        registration). `note` (the bot's return instructions) is required and stored with the entry; checked after the
+        title and the text."""
         await self._require_enabled(user_id)
         clean_title = prepare_title(title)
         clean_text = prepare_task_text(text)
+        clean_note = prepare_note(note)
         worker = (await self._workers.find_active_by_label(user_id, worker_label)
                   if is_valid_label(worker_label) else None)
         if worker is None:
@@ -347,7 +352,8 @@ class ExternalTaskService:
         now = self._clock()
         task = ExternalTask(task_id=self._new_id(), user_id=user_id, account_id=worker.account_id,
                             worker_id=worker.worker_id, label=worker.label, title=clean_title, text=clean_text,
-                            origin=origin, status=_S.QUEUED, created_at=now, updated_at=now,
+                            origin=origin, status=_S.QUEUED, note=clean_note, entry=entry, created_at=now,
+                            updated_at=now,
                             deadline_at=now + timedelta(seconds=TASK_MAX_AGE_S))
         code: Optional[str] = None
         held = entry is TaskEntry.CHAT
@@ -366,7 +372,7 @@ class ExternalTaskService:
         if not held:
             await self._wake_if_due(task, oldest_only=True)
         return CreatedTask(task_id=task.task_id, status=task.status, label=task.label, title=task.title,
-                           text=task.text, code=code)
+                           text=task.text, note=clean_note, code=code)
 
     async def confirm(self, user_id: str, code: str) -> TaskSummary:
         """`$task send <code>`: the user's held task with that code, hold not run out, becomes `queued` and gets its

@@ -1,14 +1,19 @@
 """The literal receipt of an external task create (EXTERNAL_TASK_QUEUE_RFC §5.3, "Every create is visible").
 
-One pure renderer for the delivery item `create_external_task` returns and `ConversationHandler` posts after the
-answer. The receipt is a literal notice (`domain.literal_notice`, shared with the memory-fact draft and the reminder
-notices): the task text goes byte for byte as it was stored in a file `task-<id>.txt`, never passed through a template
-and never cut, and the message after it carries the header and the task id. The owner must see exactly what leaves the
-system, or what waits for their command, whatever the model said in its answer.
+One pure renderer for the delivery item `create_external_task` returns. The receipt is a literal notice
+(`domain.literal_notice`, shared with the memory-fact draft and the reminder notices) in a file `task-<id>.txt`: YAML
+front matter with the title, the worker's label and the task's note (`domain.front_matter`: one quoted line per value,
+so any note text reads back exactly), a `---` line, then the task text byte for byte as it was stored, never passed
+through a template and never cut. The message after the file carries the header and the task id. The owner must see
+exactly what leaves the system, and the note the bot will act on when the result returns, whatever the model said in
+its answer. The worker receives the title and the text only, never this file.
 
-Every task created in a chat turn waits for the owner's confirmation, so the receipt is always the confirmation
-prompt: the receipt, and the command to paste, returned apart so the handler can post it as its own message, the
-easiest thing to copy back.
+The header follows the task's status. A task created in a chat turn is `held`: the receipt is the confirmation prompt,
+`ConversationHandler` posts it after the answer, and the command to paste is returned apart so the handler can post it
+as its own message, the easiest thing to copy back. A task created while one of the owner's reminders runs is `queued`
+at once: the receipt is a show-only notice that it was handed over from a reminder (so the owner sees at once when
+results keep spawning reminders that spawn tasks), posted after the reminder run's answer by
+`UserNotificationService.notify`; it has no command and no button.
 
 On a platform with buttons (`SEND_BUTTON_PLATFORMS`, Slack) the command message carries one more way to confirm: a
 «Send» button (`send_button`). It is an interactive message of the shared mechanism (`InteractiveMessage`): its prompt
@@ -22,7 +27,8 @@ Public interface:
     EXTERNAL_TASK_SEND_KIND                                          the binding kind of the Send button
     SEND_BUTTON_PLATFORMS                                            where the command message carries the button
     receipt_data(created) -> dict                                    the item's `data` from a `CreatedTask`
-    render(data, strings) -> (LiteralNotice, command)
+    receipt_file(data) -> str                                        the file's text: front matter, then the brief
+    render(data, strings) -> (LiteralNotice, command)                command None for a queued task
     send_button(data, label) -> Optional[InteractiveMessage]         the command message with the button, from the data
     send_button_message(task_id, code, label) -> InteractiveMessage  the same message, from its parts (the click side)
     send_refusal_reply(reason) -> UIMessage                          the line of a refused confirmation, command or button
@@ -32,12 +38,13 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, Final, FrozenSet, Mapping, Optional, Tuple
 
-from .external_task import HOLD_S
+from .external_task import HOLD_S, ExternalTaskStatus
 from .external_task_refusal import TaskRefusal
 from .external_task_views import CreatedTask
 from .interactive_binding import InteractiveBinding
 from .interactive_message import InteractiveMessage
 from .interactive_option import InteractiveOption
+from .front_matter import front_matter
 from .literal_notice import LiteralNotice, render_literal_notice
 from .ui_messages import UIMessage
 
@@ -53,24 +60,36 @@ def receipt_data(created: CreatedTask) -> Dict[str, Any]:
     """The data's `command` is the confirmation command; the raw code appears nowhere else the model can read."""
     return {
         "status": created.status.value, "worker": created.label, "title": created.title, "text": created.text,
-        "task_id": created.task_id,
+        "note": created.note, "task_id": created.task_id,
         "command": f"{_SEND_COMMAND} {created.code}" if created.code else None,
     }
 
 
+def receipt_file(data: Mapping[str, Any]) -> str:
+    """The file's text: the front matter (title, worker, note), then the task text exactly as stored."""
+    head = front_matter([("title", str(data.get("title") or "")), ("worker", str(data.get("worker") or "")),
+                         ("note", str(data.get("note") or ""))])
+    return head + str(data.get("text") or "")
+
+
 def render(data: Mapping[str, Any], strings: Strings) -> Tuple[LiteralNotice, Optional[str]]:
-    """The notice (the task text as a file, then the header and the id line), and the command alone. A receipt without
-    a command is never produced; if the data carries none, the message still says the task was not sent. The file is
-    named by the task id (characters outside `[A-Za-z0-9_-]` dropped) and shown under the task's title."""
+    """The notice (the receipt file, then the header and the id line), and the command alone. A queued task (a
+    reminder's) gets the handed-over header and no command; any other status the held header, which says the task is
+    not sent even when the data carries no command. The file is named by the task id (characters outside
+    `[A-Za-z0-9_-]` dropped) and shown under the task's title."""
     task_id = str(data.get("task_id") or "")
     title = str(data.get("title") or "")
-    header = strings(UIMessage.EXTERNAL_TASK_HELD).format(
-        worker=data.get("worker") or "?", title=title, hours=HOLD_S // 3600)
+    worker = data.get("worker") or "?"
+    if data.get("status") == ExternalTaskStatus.QUEUED.value:
+        header = strings(UIMessage.EXTERNAL_TASK_QUEUED_FROM_REMINDER).format(worker=worker, title=title)
+        command = None
+    else:
+        header = strings(UIMessage.EXTERNAL_TASK_HELD).format(worker=worker, title=title, hours=HOLD_S // 3600)
+        command = data.get("command")
     id_line = strings(UIMessage.EXTERNAL_TASK_ID_LINE).format(task_id=task_id or "?")
     filename = f"task-{re.sub(r'[^A-Za-z0-9_-]', '', task_id) or 'text'}.txt"
-    notice = render_literal_notice(header, str(data.get("text") or ""), filename=filename, title=title or filename,
+    notice = render_literal_notice(header, receipt_file(data), filename=filename, title=title or filename,
                                    lines=[id_line])
-    command = data.get("command")
     return notice, (f"`{command}`" if command else None)
 
 

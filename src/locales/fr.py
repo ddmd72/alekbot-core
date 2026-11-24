@@ -130,6 +130,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_DRAFT_NOT_FOUND.value: "❌ Aucune proposition avec le code `{code}`. Demandez-moi de proposer les faits à nouveau.",
     UIMessage.MEMORY_UNAVAILABLE.value: "L'enregistrement des faits n'est pas disponible pour le moment.",
     UIMessage.EXTERNAL_TASK_HELD.value: "En attente de ta confirmation : une tâche pour *{worker}* : *{title}*. Son texte complet est dans le fichier ci-dessus. Elle n'est envoyée que si tu colles la commande qui suit, dans les {hours} heures.",
+    UIMessage.EXTERNAL_TASK_QUEUED_FROM_REMINDER.value: "Confiée à *{worker}* depuis un rappel : *{title}*. Son texte complet et la note pour son résultat sont dans le fichier ci-dessus. Aucune confirmation n'est nécessaire : elle est déjà dans la file.",
     UIMessage.EXTERNAL_TASK_ID_LINE.value: 'Identifiant de la tâche : `{task_id}`',
     UIMessage.EXTERNAL_TASK_USAGE.value: '`$task send CODE` — envoyer une tâche qui attend ta confirmation.',
     UIMessage.EXTERNAL_TASK_SENT.value: '✅ Envoyée : *{title}* pour *{worker}*.',
