@@ -22,6 +22,7 @@ from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY
 from ..domain.drive_note_receipt import (
     drive_note_call_event, drive_note_call_posted, drive_note_late_event, render_drive_note_erase, render_drive_note_receipt,
 )
+from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, render as render_external_task_receipt
 from ..domain.language import LanguageCode
 from ..domain.literal_notice import LiteralNotice
 from ..domain.llm import Message, MessagePart
@@ -492,6 +493,7 @@ class UserNotificationService:
         session_id: Optional[str] = None,
         save_history: bool = True,
         system_alert_summary: Optional[str] = None,
+        system_alert_history: Optional[str] = None,
         framing_suffix: str = " Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.",
         thinking_effort: Optional[str] = None,
         task_complexity: Optional[str] = None,
@@ -521,6 +523,9 @@ class UserNotificationService:
                 selects the matching budget; otherwise ignored.
                 Callers that know the tier (e.g. reminder worker reading
                 ``note.complexity``) should pass it; others may omit.
+            system_alert_history: the alert as history keeps it, when that must differ from the alert the turn reads
+                (the external task alert leaves out the bot-written note it quotes, so the note never enters saved
+                history); None keeps the alert itself.
             session_id: if provided, reuses the original conversation
                 session (e.g. deep research delivering back to the
                 user's thread). Defaults to a session keyed on the
@@ -652,6 +657,7 @@ class UserNotificationService:
                     try:
                         meta = getattr(response, "metadata", None) or {}
                         history_summary = meta.get("response_summary") or text
+                        stored_alert = system_alert if system_alert_history is None else system_alert_history
                         await self._session_store.append_messages_batch(
                             session_id=effective_session_id,
                             owner_id=user_id,
@@ -662,8 +668,8 @@ class UserNotificationService:
                                 # label (see BaseAgent._apply_history_tiering). Without a summary,
                                 # full_text stays None → no tiering (unchanged behaviour).
                                 Message(role="user", parts=[MessagePart(
-                                    text=system_alert_summary or system_alert,
-                                    full_text=system_alert if system_alert_summary else None,
+                                    text=system_alert_summary or stored_alert,
+                                    full_text=stored_alert if system_alert_summary else None,
                                 )]),
                                 Message(role="model", parts=[MessagePart(text=history_summary, full_text=text)]),
                             ],
@@ -674,6 +680,10 @@ class UserNotificationService:
             if rich_content:
                 sent = True
                 await self._send_rich_content(response_channel, channel_info.platform, rich_content, user_id)
+
+            for item in getattr(response, "delivery_items", None) or []:
+                if item.type == EXTERNAL_TASK_RECEIPT_DELIVERY:
+                    sent = await self._post_task_notice(response_channel, user_id, item) or sent
 
             return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent, turn_started=True)
 
@@ -691,6 +701,25 @@ class UserNotificationService:
                 sent=sent,
                 turn_started=turn_started,
             )
+
+    async def _post_task_notice(self, response_channel, user_id: str, item: DeliveryItem) -> bool:
+        """The show-only notice of an external task a background run created (a reminder's run queues its task at once,
+        EXTERNAL_TASK_CONFIRMATION_AND_ALERTS): the receipt file, then its message literally, after the run's answer,
+        so the owner sees at once what their reminder handed over. A background run never holds a task, so no command
+        is ever posted here. Not written to history. Returns whether it was posted; a failure is logged."""
+        strings = await self.ui_strings(user_id)
+        if strings is None:
+            logger.error(f"[Notification] No localization wired: task notice not posted for {user_id[:8]}")
+            return False
+        try:
+            notice, _ = render_external_task_receipt(item.data, strings)
+            await response_channel.send_file(content=notice.content, filename=notice.filename, title=notice.title)
+            await response_channel.send_literal(notice.message)
+        except Exception as exc:
+            logger.error(f"[Notification] Task notice failed for {user_id[:8]}: {exc}", exc_info=True)
+            return False
+        logger.info(f"📬 [Notification] Task notice posted for {user_id[:8]}")
+        return True
 
     async def notify_document_link(
         self,

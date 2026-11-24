@@ -58,6 +58,7 @@ from tests.support.clock_instants import UTC_MIDNIGHT
 from tests.support.external_task_stores import FakeExternalTaskStore, FakeExternalWorkerStore
 from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.external_task_world import NOTE
 
 T0 = UTC_MIDNIGHT.utc
 S = ExternalTaskStatus
@@ -140,7 +141,7 @@ class World:
 
     async def create(self, entry: TaskEntry = TaskEntry.REMINDER, label: str = "research", **kw: Any):
         return await self.service.create("usr-1", label, kw.get("title", TITLE), kw.get("text", TEXT), ORIGIN,
-                                         entry=entry)
+                                         entry=entry, note=NOTE)
 
     async def claimed(self, principal: Optional[WorkerPrincipal] = None):
         created = await self.create()
@@ -216,7 +217,7 @@ async def test_a_chat_entry_waits_for_confirmation_and_a_reminder_entry_is_queue
     ("research", TITLE, " ​ ", R.INVALID_TEXT),
 ])
 async def test_a_refused_create_stores_and_enqueues_nothing(world, label, title, text, reason):
-    assert await refused(world.service.create("usr-1", label, title, text, ORIGIN, entry=TaskEntry.REMINDER)) is reason
+    assert await refused(world.service.create("usr-1", label, title, text, ORIGIN, entry=TaskEntry.REMINDER, note=NOTE)) is reason
     assert world.tasks.tasks == {} and world.jobs(EXTERNAL_TASK_TIMER) == []
 
 

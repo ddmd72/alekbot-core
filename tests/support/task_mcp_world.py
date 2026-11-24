@@ -35,6 +35,7 @@ from tests.support.firestore_eval import EvalDb
 from tests.support.mcp_gate_fakes import FakeWhitelistRepo
 from tests.support.recording_task_queue import make_task_queue
 from tests.support.task_mcp_texts import RESULT_TOKEN, TOOL_TOKEN, TaskTokenStore
+from tests.support.external_task_world import NOTE
 
 T0 = UTC_MIDNIGHT.utc
 DIGEST_KEY = bytes(range(32))
@@ -101,7 +102,7 @@ class World:
         await self.db.collection(USERS).document(user_id).update({"config.external_tasks_enabled": on})
 
     async def create(self, user_id: str = "usr-1", label: str = "research", entry: TaskEntry = TaskEntry.REMINDER):
-        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry)
+        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry, note=NOTE)
 
     def app(self, inactive_users: Any = None):
         """A fresh app per request: a stateless app's session manager starts once per instance."""

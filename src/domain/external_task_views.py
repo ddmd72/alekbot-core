@@ -20,12 +20,13 @@ from .external_task import ExternalTask, ExternalTaskStatus, TaskFailureCode
 @dataclass(frozen=True)
 class CreatedTask:
     """`code` is set for a held task only: the raw confirmation code for `$task send <code>`, returned this once.
-    `title` and `text` are the stored (normalised) forms the receipt quotes in full."""
+    `title`, `text` and `note` are the stored (normalised) forms the receipt quotes in full."""
     task_id: str
     status: ExternalTaskStatus
     label: str
     title: str
     text: str
+    note: str
     code: Optional[str] = None
 
 

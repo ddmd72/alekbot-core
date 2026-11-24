@@ -32,8 +32,8 @@ system. This record fixes how a task gets out, and how its outcome comes back.
 5. **The specialist move.** Task creation moves from Smart's local tools to a specialist agent; the entry mode is
    passed to it from the context the code sets.
 
-The entry is a code-side enum, `TaskEntry` (`CHAT`, `REMINDER`), passed to `ExternalTaskService.create`. It is not
-stored on the task.
+The entry is a code-side enum, `TaskEntry` (`CHAT`, `REMINDER`), passed to `ExternalTaskService.create`. It was not
+stored on the task until the amendment below.
 
 ## Why
 
@@ -71,6 +71,39 @@ A privacy gate on what a task text may contain is future work; it is not part of
 3. Delivery as a system alert.
 4. The specialist move.
 5. Reminder-created tasks.
+
+## Amendment (2026-11-24): the task's note
+
+**Decision.** Every task carries a note: the bot's own return instructions, written by the task specialist from the
+orchestrator's instruction when it hands the task over (what the owner asked and why, how to present the result, what to
+do after it), required and capped (`NOTE_MAX_CHARS`). It is stored on the task together with its entry, which is now
+stored too. No worker surface ever carries it.
+
+1. **Chat task.** The receipt file becomes YAML front matter (title, worker label, note; each value one double-quoted
+   line, so any text reads back exactly), a `---` line, then the brief byte for byte. The owner confirms the note
+   together with the brief. The chat message and the command are unchanged; the worker still receives title and brief
+   only.
+2. **Reminder task.** Still queued at once with no confirmation, and now shown: after the reminder run's answer, the
+   same file and a short literal message that it was handed to the worker from a reminder, with no command and no
+   button. `UserNotificationService.notify` posts it from the receipt item the create returns (the run is a notify
+   turn; the specialist's delivery item reaches notify through Smart's response, as in a chat turn it reaches
+   `ConversationHandler`).
+3. **Completion alert.** A task with a note gets its alert in the form of a fired reminder's alert: the bot handed
+   this task over earlier and wrote the note then as its own instructions for this moment (confirmed by the owner with
+   the brief, or written in the owner's reminder run and shown in the chat), so it acts on it now; the note as plain
+   lines; then what happened, the worker's file marked as data only, and what the note may drive for that outcome. The
+   alert of a task without a note is unchanged. The note never enters saved history: the history pair keeps the
+   code-made label and the alert without the note.
+
+**Why (owner).** A result arrives hours later in a turn that has none of the conversation; without the bot's own return
+instructions it can only announce the result, not present it or act on it as the owner asked. The note is the bot's
+text, shown to the owner before it acts on it, so it can be framed as the bot's own instruction, the way a reminder's
+instruction is; the worker's text stays data. A reminder-run task gets a show-only notice so the owner sees at once if
+the bot loops "result → new reminder → new task".
+
+**Alternatives rejected.** Quoting the note as a delimited block in the alert: a quotation reads as content to report,
+the opposite of what it is for. Carrying the note in history for later turns: the consolidator reads a user-role line as
+the owner's words, and the note is the bot's. Confirming reminder-run tasks: unchanged, for the reason given under "Alternatives rejected" above.
 
 ## Revise when
 

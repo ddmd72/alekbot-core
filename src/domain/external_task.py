@@ -17,10 +17,13 @@ from typing import FrozenSet, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from .external_task_entry import TaskEntry
+
 # ---------------------------------------------------------------------------------------------------- limits (§5.11)
 
 TITLE_MAX_CHARS = 120                   # set at implementation review
 TASK_TEXT_MAX_CHARS = 3_000             # set at implementation review; the whole text must fit one literal receipt
+NOTE_MAX_CHARS = 1_000                  # owner's decision 2026-11-24; the bot's return instructions on a task
 RESULT_MAX_BYTES = 512_000              # set at implementation review; below the 1 MiB Firestore document limit
 FAIL_REASON_MAX_CHARS = 1_000           # set at implementation review
 DESCRIPTION_MAX_CHARS = 200             # set at implementation review; a worker's one-line description
@@ -157,7 +160,13 @@ class TaskDelivery(BaseModel):
 
 
 class ExternalTask(BaseModel):
-    """One task (`{prefix}external_tasks`, doc id `task_id`). The result body lives apart, in the result record."""
+    """One task (`{prefix}external_tasks`, doc id `task_id`). The result body lives apart, in the result record.
+
+    `note` is the bot's own return instructions, written by the task specialist when it handed the task over: what the
+    owner asked and why, how to present the result, what to do after it. The owner is shown it with the brief; the
+    completion alert hands it back to the bot; no worker surface ever carries it. `entry` is where the task was created
+    from (a chat turn or a reminder's run), which the alert names when it gives the note back. A task stored before the note existed
+    has neither (None)."""
     model_config = ConfigDict(frozen=True)
 
     task_id: str
@@ -169,6 +178,8 @@ class ExternalTask(BaseModel):
     text: str
     origin: TaskOrigin
     status: ExternalTaskStatus
+    note: Optional[str] = None
+    entry: Optional[TaskEntry] = None
     hold: Optional[TaskHold] = None
     lease: TaskLease = TaskLease()
     claims: int = 0

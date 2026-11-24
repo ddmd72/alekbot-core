@@ -29,6 +29,8 @@ ACCOUNT_ID = "acc-1"
 ORIGIN = TaskOrigin(platform="slack", channel_id="C-garden", session_id="usr-1:C-garden")
 TITLE = "Irrigation kits"
 TEXT = "compare three community-garden irrigation kits for Shelbyville"
+NOTE = ("Alex Doe asked for this to choose a kit for the Shelbyville community garden; present the three kits side by "
+        "side with price and sturdiness, then make a document from it.")
 
 
 class ExternalTaskWorld:

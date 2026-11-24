@@ -5,7 +5,9 @@ Delivery is the asynchronous end of a task the bot handed out, so it comes back 
 does: through `UserNotificationService.notify`, as the user turn of a background Smart run in the task's origin channel,
 and Smart tells the owner. First, a done task's result is written to the workspace as an ordinary file under a
 code-written header; a task the worker failed with a reason gets that reason written the same way. The alert names the
-file and carries only code-made values (`domain/external_task_alert.py`). The run's origin is
+file and carries only code-made values, plus the task's note: the bot's own return instructions, given back to it as
+its own instructions for this turn (`domain/external_task_alert.py`). History keeps the alert without the note and a code-made label, so the note never
+reaches saved history (the consolidator reads a user-role line as the owner's words). The run's origin is
 `background:external_task_deliver`, which is neither a chat turn nor a reminder fire, so Smart offers no queue tool in
 it: a worker's result never starts new work.
 
@@ -82,6 +84,8 @@ class ExternalTaskDeliveryTask:
         result = await self._notification.notify(
             user_id, account_id, render_alert(kind, task, path),
             system_alert_summary=alert_summary(kind, task, path),
+            # The bot-written note the alert carries never enters saved history: history keeps the alert without it.
+            system_alert_history=render_alert(kind, task, path, note=False),
             kind=NotificationKind.EXTERNAL_TASK,
             agent_id_override=f"smart_response_agent_{user_id}",
             channel_id_override=task.origin.channel_id, platform_override=task.origin.platform,

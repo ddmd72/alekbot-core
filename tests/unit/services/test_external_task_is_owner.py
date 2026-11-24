@@ -8,7 +8,7 @@ import pytest
 
 from src.domain.external_task_entry import TaskEntry
 from src.domain.user import InactiveReason
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld
+from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ async def world():
 
 
 async def test_a_task_is_its_owners_held_and_after_it_was_sent(world):
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
     assert await world.service.is_owner(USER_ID, created.task_id) is True
 
     await world.service.confirm(USER_ID, created.code)
@@ -26,14 +26,14 @@ async def test_a_task_is_its_owners_held_and_after_it_was_sent(world):
 
 
 async def test_another_users_task_and_a_missing_task_are_not(world):
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
 
     assert await world.service.is_owner("usr-2", created.task_id) is False
     assert await world.service.is_owner(USER_ID, "t1") is False
 
 
 async def test_it_reads_neither_the_flag_nor_the_lock(world):
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
     await world.flag(USER_ID, False)
     await world.db.collection(USERS).document(USER_ID).update(
         {"is_active": False, "inactive_reason": InactiveReason.DURESS.value})

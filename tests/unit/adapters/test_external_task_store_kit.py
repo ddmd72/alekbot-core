@@ -28,10 +28,12 @@ from src.domain.external_task import (
     TaskResultMeta,
     WorkerDestination,
 )
+from src.domain.external_task_entry import TaskEntry
 from src.domain.external_task_refusal import TaskRefusal
 from src.ports.external_task_store import ExternalTaskStore
 from tests.support.clock_instants import UTC_MIDNIGHT
 from tests.support.external_task_stores import FakeExternalTaskStore
+from tests.support.external_task_world import NOTE
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 TASKS = "eval_external_tasks"
@@ -276,7 +278,7 @@ async def test_the_stored_documents(kit_db):
         "user_id": "usr-1", "account_id": "acc-1", "worker_id": "wrk-1", "label": "research",
         "title": "Irrigation kits", "text": TEXT,
         "origin": {"platform": "slack", "channel_id": "C-garden", "session_id": "usr-1:C-garden"},
-        "status": "done", "hold": None,
+        "status": "done", "note": None, "entry": None, "hold": None,
         "lease": {"lease_id": "lease-a", "until": T0 + timedelta(seconds=1 + LEASE_S), "generation": 1, "renewals": 0},
         "claims": 1,
         "result_meta": {"bytes": 12, "sha256": "a" * 64, "submitted_at": T0 + timedelta(seconds=5),
@@ -295,3 +297,37 @@ async def test_a_stored_task_that_still_carries_created_tainted_loads_and_the_fi
     out = await fs.store.claim("usr-1", "tsk-1", worker_id="wrk-1", expected_status=S.QUEUED, expected_generation=0,
                                lease_id="lease-a", now=T0 + timedelta(seconds=1))
     assert out.written and "created_tainted" not in fs.docs()["tsk-1"]
+
+
+# --- the task's note (owner's decision 2026-11-24) ------------------------------------------------------------------
+
+@pytest.mark.parametrize("entry", list(TaskEntry))
+async def test_a_note_and_its_entry_are_stored_and_read_back_through_a_transition(backend, entry):
+    await backend.store.create(task(note=NOTE, entry=entry))
+    assert await backend.store.get("usr-1", "tsk-1") == task(note=NOTE, entry=entry)
+    leased = await _leased_again(backend)
+    assert (leased.note, leased.entry) == (NOTE, entry)
+    assert [(t.note, t.entry) for t in await backend.store.list_for_user("usr-1", 10)] == [(NOTE, entry)]
+
+
+async def _leased_again(backend) -> ExternalTask:
+    out = await backend.store.claim("usr-1", "tsk-1", worker_id="wrk-1", expected_status=S.QUEUED,
+                                    expected_generation=0, lease_id="lease-a", now=T0 + timedelta(seconds=1))
+    assert out.written
+    return await backend.store.get("usr-1", "tsk-1")
+
+
+async def test_the_note_and_the_entry_are_stored_as_plain_fields(kit_db):
+    fs = Firestore(kit_db)
+    await fs.store.create(task(note=NOTE, entry=TaskEntry.REMINDER))
+    stored = fs.docs()["tsk-1"]
+    assert (stored["note"], stored["entry"]) == (NOTE, "reminder")
+
+
+async def test_a_task_stored_before_the_note_existed_reads_with_none(kit_db):
+    fs = Firestore(kit_db)
+    await fs.store.create(task())
+    for key in ("note", "entry"):
+        del fs.docs()["tsk-1"][key]
+    loaded = await fs.store.get("usr-1", "tsk-1")
+    assert (loaded.note, loaded.entry) == (None, None) and loaded == task()

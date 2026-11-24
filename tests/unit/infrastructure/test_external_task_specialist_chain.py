@@ -23,14 +23,14 @@ from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, Intent
 from src.infrastructure.agent_registry import AgentRegistry
 from src.ports.agent_factory_port import AgentFactoryPort
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld
+from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld, NOTE
 from tests.support.scripted_llm import ScriptedLLM, execution_context, text, tool_results, tools
 from tests.support.tool_e2e import StubPromptBuilder, smart_message, smart_rig
 
 S = ExternalTaskStatus
 HAND_OFF = ("delegate_to_specialist", {"intent": Intent.WORK_WITH_EXTERNAL_TASKS,
                                        "query": f"Hand this to research, word for word: {TEXT}"})
-CREATE = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT})
+CREATE = ("create_external_task", {"worker": "research", "title": TITLE, "text": TEXT, "note": NOTE})
 WEB = ("delegate_to_specialist", {"intent": "search_web", "query": "irrigation kits"})
 
 
@@ -119,7 +119,7 @@ async def test_the_next_turns_hand_off_waits_for_the_owner_too():
 
 async def test_reading_a_result_through_the_specialist_reaches_smart_wrapped():
     world = await ExternalTaskWorld().seed()
-    task = await world.service.create(USER_ID, "research", "earlier", "an earlier brief", ORIGIN, entry=TaskEntry.CHAT)
+    task = await world.service.create(USER_ID, "research", "earlier", "an earlier brief", ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
     await world.service.confirm(USER_ID, task.code)
     worker = next(iter(world.workers.workers.values()))
     principal = await world.service.resolve_key((await world.service.mint_key(USER_ID, worker.worker_id)).key)

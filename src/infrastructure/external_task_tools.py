@@ -7,14 +7,17 @@ creating turn's origin and the orchestrator's instruction are closed over, never
 the persisted turn's metadata.
 
 What the models read and what the owner reads are different channels:
-- the result for a create is a note with the task id and that the task waits for the owner's confirmation; the raw
-  confirmation code is NEVER in it. The specialist's model reads it, and so does the orchestrator, which gets every
-  result word for word in the specialist's answer;
-- the owner's channel is the returned `DeliveryItem`, posted literally after the answer with the task's full text
-  and the command that confirms it.
+- the result for a create is a tool note with the task id and what happens next (in a chat turn: the task waits for
+  the owner's confirmation); the raw confirmation code is NEVER in it. The specialist's model reads it, and so does
+  the orchestrator, which gets every result word for word in the specialist's answer;
+- the owner's channel is the returned `DeliveryItem`, posted literally after the answer: the receipt file (the title,
+  the worker, the task's note, then the task's full text) and, for a chat create, the command that confirms it. A
+  reminder's create returns the same item with no command; `UserNotificationService.notify` posts it after the reminder
+  run's answer, as a show-only notice.
 
 The brief is the orchestrator's: given the instruction (`commission`), a create whose text is not a part of it, after
-whitespace is normalised on both sides, is refused with `ERROR_NOT_THE_BRIEF` and creates nothing.
+whitespace is normalised on both sides, is refused with `ERROR_NOT_THE_BRIEF` and creates nothing. The task's note is
+the specialist's own text, written from the instruction, so it is not checked against it.
 
 A label that does not exist, a task of another user and a missing task all get the same `Tool error:` line, so nothing
 reveals whether a task exists.
@@ -35,7 +38,7 @@ from ..domain.external_task import HOLD_S, ExternalTaskStatus, TaskFailureCode, 
 from ..domain.external_task_entry import TaskEntry
 from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, receipt_data
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
-from ..domain.external_task_text import prepare_title
+from ..domain.external_task_text import prepare_task_text, prepare_title
 from ..domain.external_task_texts import (
     CANCEL_DESCRIPTION,
     CANCEL_EXTERNAL_TASK_TOOL,
@@ -46,6 +49,7 @@ from ..domain.external_task_texts import (
     ERROR_INVALID_TEXT,
     ERROR_NOT_FOUND,
     ERROR_NOT_THE_BRIEF,
+    ERROR_NOTE_TOO_LONG,
     ERROR_OPEN_CAP,
     ERROR_REFUSED,
     ERROR_STATUS,
@@ -73,6 +77,7 @@ from ..domain.external_task_texts import (
     NOTE_WORKERS_HEADER,
     NOTE_WORKERS_NONE,
     create_description,
+    NOTE_PARAMETER_TEXT,
     STATUS_PARAMETER_TEXT,
     TASK_ID_PARAMETER_TEXT,
     TEXT_PARAMETER_TEXT,
@@ -142,8 +147,9 @@ def build_create_external_task_declaration(workers: Sequence[ExternalWorker], *,
                            "description": worker_parameter_text(workers)},
                 "title": {"type": "string", "description": TITLE_PARAMETER_TEXT},
                 "text": {"type": "string", "description": TEXT_PARAMETER_TEXT},
+                "note": {"type": "string", "description": NOTE_PARAMETER_TEXT},
             },
-            "required": ["worker", "title", "text"],
+            "required": ["worker", "title", "text", "note"],
         },
     }
 
@@ -203,47 +209,49 @@ def _is_the_brief(text: str, commission: str) -> bool:
     return _normalised(text) in _normalised(commission)
 
 
-def _too_large(tool_call: ToolCall, title: str) -> ToolResult:
-    """The service checks the title first: a title it accepts means the brief is the long one."""
-    try:
-        prepare_title(title)
-    except ExternalTaskRefused:
-        return _error(tool_call, ERROR_TITLE_TOO_LONG)
-    return _error(tool_call, ERROR_BRIEF_TOO_LONG)
+def _too_large(tool_call: ToolCall, title: str, text: str) -> ToolResult:
+    """The service checks the title, then the brief, then the note: the first one it would refuse is the long one."""
+    for value, prepare, line in ((title, prepare_title, ERROR_TITLE_TOO_LONG),
+                                 (text, prepare_task_text, ERROR_BRIEF_TOO_LONG)):
+        try:
+            prepare(value)
+        except ExternalTaskRefused:
+            return _error(tool_call, line)
+    return _error(tool_call, ERROR_NOTE_TOO_LONG)
 
 
 def make_create_handler(service: "ExternalTaskService", user_id: str, origin: TaskOrigin, *,
                         commission: Optional[str] = None, entry: TaskEntry = TaskEntry.CHAT) -> LocalToolHandler:
     """`entry` is set by the agent from the run's context, never by the model. A create in a chat turn always waits for
-    the owner's confirmation, whatever the turn read; one in a reminder's run is queued at once, with no receipt. With a `commission`
-    (the orchestrator's instruction), a text that is not a part of it is refused before the service is asked; None
-    checks nothing (the handler tested alone)."""
+    the owner's confirmation, whatever the turn read; one in a reminder's run is queued at once, and its receipt is a
+    show-only notice with no command. Both return the receipt item. With a `commission` (the orchestrator's
+    instruction), a text that is not a part of it is refused before the service is asked; None checks nothing (the
+    handler tested alone). The note is required, like the worker, the title and the text."""
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         args = _args(tool_call)
         if args.get("_parse_error") == "truncated_json":
             return _error(tool_call, ERROR_TRUNCATED)
-        worker, title, text = (_text_arg(args, k) for k in ("worker", "title", "text"))
-        if worker is None or title is None or text is None:
+        worker, title, text, note = (_text_arg(args, k) for k in ("worker", "title", "text", "note"))
+        if worker is None or title is None or text is None or note is None:
             return _error(tool_call, ERROR_ARGUMENTS)
         if commission is not None and not _is_the_brief(text, commission):
             logger.info("[external_task_tools] create refused: the text is not the brief")
             return _error(tool_call, ERROR_NOT_THE_BRIEF)
         try:
-            created = await service.create(user_id, worker, title, text, origin, entry=entry)
+            created = await service.create(user_id, worker, title, text, origin, entry=entry, note=note)
         except ExternalTaskRefused as exc:
             if exc.reason is TaskRefusal.TOO_LARGE:
-                return _too_large(tool_call, title)
+                return _too_large(tool_call, title, text)
             return _refused(tool_call, exc)
         except Exception as exc:
             return _crashed(tool_call, exc)
         if entry is TaskEntry.REMINDER:
-            return ToolResult(name=tool_call.name,
-                              result_str=NOTE_QUEUED.format(task_id=created.task_id, worker=created.label,
-                                                            title=created.title))
-        note = NOTE_PENDING.format(task_id=created.task_id, worker=created.label, hours=HOLD_S // 3600)
+            result = NOTE_QUEUED.format(task_id=created.task_id, worker=created.label, title=created.title)
+        else:
+            result = NOTE_PENDING.format(task_id=created.task_id, worker=created.label, hours=HOLD_S // 3600)
         return ToolResult(
-            name=tool_call.name, result_str=note,
+            name=tool_call.name, result_str=result,
             delivery_items=[DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))],
         )
 

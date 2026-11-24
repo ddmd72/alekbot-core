@@ -14,6 +14,12 @@ alert, and task creation moves to a specialist agent. Record:
 (§5.3 taint and the tainted create, §5.9's taint of reads, §6.1's taint mitigations, D9's "outside content" hold) stay
 as the history of the first design until the code that implements them is removed.
 
+**Amendment of 2026-11-24 (the task's note).** Every task carries the bot's own return instructions, shown to the owner
+in the receipt (and, for a reminder-run task, in a show-only notice) and handed back to Smart by the completion alert as
+its own instructions; no worker surface carries it, and it never enters saved history. Where §5.9 and §6.1 describe the
+alert as carrying only code-made values, the alert of a task with a note also carries that note. Record: the
+amendment in `docs/04_solution_strategy/decisions/external_task_confirmation_and_alerts.md`.
+
 **Implementation note (the task specialist, D14, 2026-11-24).** §5.3's tools are built as a specialist's: Smart has no
 queue tool and offers one internal intent, `work_with_external_tasks`, on the owner's own chat turn of a flagged user.
 `ExternalTaskAgent` (`src/agents/external_task_agent.py`) serves the five tools, repeats the gate in code, forwards the
@@ -1091,6 +1097,9 @@ Each step is one or more PRs and is usable on its own.
    - `external_task_deliver` to the workspace, with the literal notice and history pair. Delivery is a system alert
      since 2026-11-24: the result (or a worker's failure reason) is a workspace file and `notify` runs Smart on a
      code-made alert naming it (`docs/05_building_blocks/external_task_queue/README.md`); no literal notice, no pair.
+     The same day's amendment adds the task's note, the bot's own return instructions, to the alert of a task that
+     has one: no longer code-made values only (decision record `external_task_confirmation_and_alerts.md`,
+     "Amendment").
    - The workspace untrusted flag: set on delivery, carried by every new version, `rename` and `copy`, and wrapped on
      every read.
    - `external_task_timer` (lease, deadline, hold).

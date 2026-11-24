@@ -64,6 +64,7 @@ class UIMessage(Enum):
     # External tasks (EXTERNAL_TASK_QUEUE_RFC §5.3): the literal receipt, `$task send` and its replies; the Slack Send
     # button on the command message, whose press gets the same replies.
     EXTERNAL_TASK_HELD = "external_task_held"
+    EXTERNAL_TASK_QUEUED_FROM_REMINDER = "external_task_queued_from_reminder"
     EXTERNAL_TASK_ID_LINE = "external_task_id_line"
     EXTERNAL_TASK_USAGE = "external_task_usage"
     EXTERNAL_TASK_SENT = "external_task_sent"

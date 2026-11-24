@@ -13,7 +13,8 @@ Public interface:
     CREATE_DESCRIPTION_CHAT, CREATE_DESCRIPTION_REMINDER, create_description(entry) -> str, LIST_DESCRIPTION, GET_DESCRIPTION, CANCEL_DESCRIPTION, LIST_WORKERS_DESCRIPTION
     STATUS_DEFINITIONS                              one sentence on every status and failure code
     worker_parameter_text(workers) -> str           the `worker` parameter, one line per registered worker
-    TITLE_PARAMETER_TEXT, TEXT_PARAMETER_TEXT, STATUS_PARAMETER_TEXT, WORKER_FILTER_PARAMETER_TEXT, TASK_ID_PARAMETER_TEXT
+    TITLE_PARAMETER_TEXT, TEXT_PARAMETER_TEXT, NOTE_PARAMETER_TEXT, STATUS_PARAMETER_TEXT, WORKER_FILTER_PARAMETER_TEXT,
+    TASK_ID_PARAMETER_TEXT
     the tool-note templates and tool-error lines, `NOTE_*` and `ERROR_*`
     ANSWER_*                                       the specialist's answer lines, composed by code
     render_queue_state(labels) -> str              the state block after the cache boundary, labels only
@@ -23,6 +24,7 @@ from typing import Sequence
 from .external_task import (
     HOLD_S,
     MAX_OPEN_TASKS_PER_USER,
+    NOTE_MAX_CHARS,
     TASK_TEXT_MAX_CHARS,
     TITLE_MAX_CHARS,
     ExternalTaskStatus,
@@ -49,22 +51,27 @@ STATUS_DEFINITIONS = (
 _CREATE_LEAD = (
     "Puts one task on the external task queue for one of the owner's registered workers. The worker receives only the "
     "title and the text, never the conversation, and acts on them on its own schedule; its result reaches the system "
-    "later as an alert, never in this turn. "
+    "later as an alert, never in this turn. That alert starts a new turn of the orchestrator, possibly hours later, "
+    "with none of this conversation, so every task also carries a note: the system's own return instructions for that "
+    "moment, written here from the orchestrator's instruction, which the alert hands back as the system's own "
+    "instructions for that turn. The worker never sees the note. "
 )
 _CREATE_RULES = (
-    "Rules: the text is the orchestrator's brief exactly as its instruction gives it; one task per call; never the same "
-    f"task twice; at most {MAX_OPEN_TASKS_PER_USER} tasks may be open at once."
+    "Rules: the text is the orchestrator's brief exactly as its instruction gives it; the note is yours, written from "
+    f"the instruction; one task per call; never the same task twice; at most {MAX_OPEN_TASKS_PER_USER} tasks may be "
+    "open at once."
 )
 CREATE_DESCRIPTION_CHAT = (
     f"{_CREATE_LEAD}A task handed over in a chat turn waits for the owner's confirmation: right after this turn's answer "
-    "the owner is shown its title and its exact text with a command only they are shown, and the task leaves only if "
-    f"they send that command within {_HOLD_HOURS} hours, otherwise it lapses. The owner alone releases it. "
+    "the owner is shown its title, its note and its exact text with a command only they are shown, and the task leaves "
+    f"only if they send that command within {_HOLD_HOURS} hours, otherwise it lapses. The owner alone releases it. "
     f"{_CREATE_RULES}"
 )
 CREATE_DESCRIPTION_REMINDER = (
     f"{_CREATE_LEAD}This run is one of the owner's reminders, and the owner approved that reminder when it was set, so "
-    "a task handed over now goes straight to the queue: nothing waits for a confirmation and the owner is shown no "
-    f"receipt. {_CREATE_RULES}"
+    "a task handed over now goes straight to the queue: nothing waits for a confirmation. After this run's answer the "
+    "owner is shown its title, its note and its exact text in the chat, as a notice with no command, so they see what "
+    f"their reminder handed over. {_CREATE_RULES}"
 )
 
 
@@ -108,6 +115,17 @@ TEXT_PARAMETER_TEXT = (
     f"{TASK_TEXT_MAX_CHARS} characters. The worker acts on this text alone."
 )
 
+NOTE_PARAMETER_TEXT = (
+    "The task's note: the return instructions the system itself reads when the worker's result comes back. That "
+    "happens later, possibly hours later, in a new turn of the orchestrator that has none of this conversation; the "
+    "alert that starts it gives this note back as the system's own instructions for that turn, and it is then the "
+    "only account of why the task exists and what the owner wants done with its outcome. The owner is shown the note next to the brief; the worker never sees it. Write it "
+    "from the orchestrator's instruction: what the owner asked for and why, how the result is to be presented to them, "
+    "and what is to be done with it afterwards, as far as the instruction says. It stands on its own: name things "
+    "instead of pointing back at the conversation, which will not be there. It never repeats the brief, which stays the "
+    f"worker's text in `text`. At most {NOTE_MAX_CHARS} characters."
+)
+
 STATUS_PARAMETER_TEXT = "Only tasks with this status. " + STATUS_DEFINITIONS
 
 WORKER_FILTER_PARAMETER_TEXT = "Only tasks of the worker with this label."
@@ -149,10 +167,11 @@ NOTE_PENDING = (
     "nobody writes, guesses or repeats a command. It is not to be created again."
 )
 NOTE_QUEUED = (
-    "Tool note: task {task_id}, titled \"{title}\", is queued for {worker}: it is stored, the worker takes it on its own schedule, and its "
-    "result comes back to the system later as an alert, never in this turn. This run is one of the owner's reminders, "
-    "and the owner approved that reminder when it was set, so no confirmation is asked and no receipt is shown: the "
-    "owner is to be told in this answer that the task went to {worker}. There is no command. "
+    "Tool note: task {task_id}, titled \"{title}\", is queued for {worker}: it is stored, the worker takes it on its own "
+    "schedule, and its result comes back to the system later as an alert, never in this turn. This run is one of the "
+    "owner's reminders, and the owner approved that reminder when it was set, so no confirmation is asked: after this "
+    "run's answer the owner is shown the task in the chat (its title, its note and its exact text), as a notice with "
+    "no command. The owner is to be told in this answer that the task went to {worker}. There is no command. "
     "It is not to be created again."
 )
 NOTE_WORKERS_NONE = "Tool note: no worker is registered."
@@ -181,7 +200,11 @@ ERROR_BRIEF_TOO_LONG = (
     f"Tool error: the brief is too long for the queue (at most {TASK_TEXT_MAX_CHARS} characters) and a brief is never "
     "cut, so nothing was created; the orchestrator is to write a shorter brief."
 )
-ERROR_INVALID_TEXT = "Tool error: the title and the text must both be non-empty plain text."
+ERROR_INVALID_TEXT = "Tool error: the title, the text and the note must each be non-empty plain text."
+ERROR_NOTE_TOO_LONG = (
+    f"Tool error: the note is too long (at most {NOTE_MAX_CHARS} characters) and a note is never cut, so nothing was "
+    "created; write a shorter note and call again."
+)
 ERROR_ARGUMENTS = "Tool error: a required argument is missing or is not text."
 ERROR_TRUNCATED = "Tool error: the call was cut off before it ended, so nothing was created."
 ERROR_STATUS = "Tool error: status is not one of: " + ", ".join(s.value for s in ExternalTaskStatus) + "."

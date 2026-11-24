@@ -23,7 +23,8 @@ from src.handlers.command_services import CommandServices
 from src.handlers.conversation_handler import ConversationHandler
 from src.infrastructure.interactive_message_router import InteractiveMessageRouter
 from src.locales import uk as uk_locale
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld
+from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld, NOTE
+from tests.support.task_receipt_file import receipt_parts
 
 SEND = uk_locale.UI_STRINGS[UIMessage.EXTERNAL_TASK_SEND_BUTTON.value]
 
@@ -58,7 +59,7 @@ async def world():
 
 
 async def _item(world) -> tuple:
-    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT)
+    created = await world.service.create(USER_ID, "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.CHAT, note=NOTE)
     return created, DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))
 
 
@@ -69,7 +70,9 @@ async def test_on_slack_the_command_message_carries_the_send_button_after_the_li
     await _handler(world.service, client)._deliver_item(item, ch, None, USER_ID)
 
     [file] = [c.kwargs for c in ch.send_file.await_args_list]
-    assert file["content"] == TEXT.encode("utf-8") and created.code.encode() not in file["content"]
+    front, body = receipt_parts(file["content"])
+    assert body == TEXT.encode("utf-8") and created.code.encode() not in file["content"]
+    assert front == {"title": TITLE, "worker": "research", "note": NOTE}
     [post] = [c.args[0] for c in ch.send_literal.await_args_list]
     assert TITLE in post and created.code not in post
     ch.send_message.assert_not_awaited()
