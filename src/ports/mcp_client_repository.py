@@ -56,7 +56,10 @@ class MCPClientRepository(ABC):
 
     @abstractmethod
     async def get_auth_code(self, code: str) -> Optional[MCPAuthCode]:
-        """Return the code without consuming it; None when absent or already consumed."""
+        """Return the code without consuming it; None when absent or already consumed.
+
+        Legacy: a missing worker_id reads as None (a code stored before the task queue's grants).
+        """
 
     @abstractmethod
     async def consume_auth_code(self, code: str) -> Optional[MCPAuthCode]:
@@ -77,7 +80,8 @@ class MCPClientRepository(ABC):
         """Return the token, revoked ones included (revoked_at set); None when absent.
 
         The caller refuses a revoked token (mcp_authorization_service.py:314).
-        Legacy: a missing revoked_at reads as None, i.e. active (observed).
+        Legacy: a missing revoked_at reads as None, i.e. active (observed); a missing grant_id, worker_id,
+        granted_at or issued_at reads as None.
         """
 
     @abstractmethod
