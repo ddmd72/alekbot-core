@@ -285,3 +285,13 @@ async def test_the_stored_documents(kit_db):
         "deadline_at": T0 + timedelta(days=7), "purge_after": purge,
     }}
     assert fs.results() == {"tsk-1": {"text": "Kit B waters evenly.", "purge_after": purge}}
+
+
+async def test_a_stored_task_that_still_carries_created_tainted_loads_and_the_field_is_dropped_at_the_next_write(kit_db):
+    fs = Firestore(kit_db)
+    await fs.store.create(task())
+    fs.docs()["tsk-1"]["created_tainted"] = True
+    assert await fs.store.get("usr-1", "tsk-1") == task()
+    out = await fs.store.claim("usr-1", "tsk-1", worker_id="wrk-1", expected_status=S.QUEUED, expected_generation=0,
+                               lease_id="lease-a", now=T0 + timedelta(seconds=1))
+    assert out.written and "created_tainted" not in fs.docs()["tsk-1"]

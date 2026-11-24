@@ -197,6 +197,18 @@ async def test_a_tainted_create_is_held_with_a_code_stored_as_its_digest_only(wo
     assert await world.service.list_for_worker(world.alex) == []
 
 
+async def test_a_chat_entry_waits_for_confirmation_and_a_reminder_entry_is_queued_at_once(world):
+    chat = await world.create(entry=TaskEntry.CHAT)
+    reminder = await world.create(entry=TaskEntry.REMINDER)
+    assert (chat.status, reminder.status) == (S.HELD, S.QUEUED)
+    assert chat.code is not None and reminder.code is None
+    assert [b["kind"] for b in world.jobs(EXTERNAL_TASK_TIMER)] == ["hold", "deadline"]
+    assert world.tasks.tasks[chat.task_id].hold is not None and world.tasks.tasks[reminder.task_id].hold is None
+    assert "created_tainted" not in world.tasks.tasks[reminder.task_id].model_dump()
+    claim = await world.service.claim(world.alex)
+    assert claim is not None and claim.task_id == reminder.task_id     # the held task is offered to no worker
+
+
 @pytest.mark.parametrize("label, title, text, reason", [
     ("export", TITLE, TEXT, R.UNKNOWN_WORKER),
     ("Research", TITLE, TEXT, R.UNKNOWN_WORKER),

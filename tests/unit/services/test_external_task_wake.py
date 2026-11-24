@@ -318,3 +318,12 @@ async def test_the_enqueued_body_is_the_payload_the_runner_reads(world):
     await world.target()
     await world.create()
     assert WakePayload.from_payload(world.wakes()[-1]) == world.payload(1)
+
+
+async def test_a_reminder_entry_pings_the_worker_and_a_chat_entry_does_not_until_it_is_confirmed(world):
+    await world.target()
+    held = await world.create(entry=TaskEntry.CHAT)
+    assert world.wakes() == [] and world.worker().wake_generation == 0
+    await world.create(entry=TaskEntry.REMINDER)
+    assert len(world.wakes()) == 1 and world.worker().wake_generation == 1
+    assert world.tasks.tasks[held.task_id].status.value == "held"
