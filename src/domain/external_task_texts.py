@@ -68,9 +68,10 @@ LIST_DESCRIPTION = (
 )
 
 LIST_WORKERS_DESCRIPTION = (
-    "Lists the workers the owner registered, each as its label and the owner's description of what it does. Use it "
-    "when the owner asks which workers exist, or to pick the label a skill names. It lists workers only, never "
-    "tasks; list_external_tasks does that."
+    "Lists the labels of the workers the owner registered: the short names a task is handed to. Use it when the owner "
+    "asks which workers exist, or to check the label a skill names. Which worker suits a task is the owner's choice, "
+    "stated in their skill or their words; a label is only a name. It lists workers only, never tasks; "
+    "list_external_tasks does that."
 )
 
 GET_DESCRIPTION = (
@@ -106,13 +107,17 @@ WORKER_FILTER_PARAMETER_TEXT = "Only tasks of the worker with this label."
 TASK_ID_PARAMETER_TEXT = "The task id exactly as list_external_tasks gave it, or as the owner quotes it."
 
 _WORKER_PARAMETER_LEAD = (
-    "The label of the worker that takes this task. Only the owner's own registered workers exist; each is listed "
-    "here as its label and the owner's description of what it does."
+    "The label of the worker that takes this task, one of the owner's own registered workers listed below. A label is "
+    "a short name the owner chose; which worker suits a task is the owner's choice, stated in their skill or their "
+    "words, not something to guess from the name."
 )
 
 
 def worker_parameter_text(workers: Iterable[ExternalWorker]) -> str:
-    lines = [f"- {w.label}: {w.description or 'no description'}" for w in workers]
+    """The lead, then one line per label. Labels only: a worker's description is free text the owner typed in the
+    Cabinet and is never placed in a tool or parameter description, where a model reads it with the schema's
+    authority (a typed instruction would read as a rule of the tool)."""
+    lines = [f"- {w.label}" for w in workers]
     return "\n".join([_WORKER_PARAMETER_LEAD, *lines])
 
 
@@ -128,7 +133,7 @@ NOTE_HELD = (
     "repeat or invent the command."
 )
 NOTE_WORKERS_NONE = "Tool note: no worker is registered."
-NOTE_WORKERS_HEADER = "Tool note: registered workers (label: description):"
+NOTE_WORKERS_HEADER = "Tool note: registered worker labels:"
 NOTE_LIST_EMPTY = "Tool note: no external tasks match."
 NOTE_LIST_HEADER = "Tool note: external tasks, newest first (id | worker | title | status | created | updated):"
 NOTE_LIST_LINE = "{task_id} | {worker} | {title} | {status} | {created} | {updated}"

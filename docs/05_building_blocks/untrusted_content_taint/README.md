@@ -40,18 +40,19 @@ The rule is pure (`src/domain/execution_taint.py`); `TaintTracker` applies it to
 
 **Tool results: a closed allowlist.** A tool result is clean only when its source is on a short list of sources that
 return the owner's own data or the queue's own answers (`TRUSTED_LOCAL_TOOLS`, `TRUSTED_DELEGATE_INTENTS`,
-`src/domain/execution_taint.py:53`; `call_is_trusted`, `:60`):
+`src/domain/execution_taint.py:53`; `call_is_trusted`, `:61`):
 - `use_skill`: a skill's text, which the owner confirmed with `$skill save`;
 - a delegation to the memory search intent: the owner's facts;
 - the `workspace` tool: Smart's own files. A file that holds outside content is flagged and its read taints anyway
   (next section);
-- the queue's create, list and cancel results and the worker list. Worker labels and descriptions are written by the
-  owner in the Cabinet.
+- the queue's create, list and cancel results and the worker list. The worker list holds labels only (a restricted
+  character set); a worker's free-text description, typed in the Cabinet, never reaches a model: not in a tool result
+  and not in a tool or parameter description, where it would be read with the schema's authority.
 
 Every other tool result taints: web search, URL fetches, email, the drive, every delegation except memory search.
 The allowlist is the load-bearing part. Web search output carries no untrusted wrapper, so a rule that only looked for
 wrappers would miss a web page. `get_external_task` is left off the list on purpose: every read of a worker's result or
-failure reason taints, and the handler also marks it itself (`src/infrastructure/external_task_tools.py:276`).
+failure reason taints, and the handler also marks it itself (`src/infrastructure/external_task_tools.py:280`).
 
 **Markers in text.** Even an allowlisted result taints when its text holds an untrusted wrapper (`drive_document` or
 `external_content`, in any look-alike spelling the escaper knows) or one of the two attached-file reminders
@@ -61,7 +62,7 @@ and the rule accepts it. A file part taints wherever it appears. A tool can also
 flagged file. A batch whose calls and results do not pair up taints (`taint_tracker.py:40`).
 
 **The request before the first model call.** History, the current message's parts and the static blocks get the same
-marker check (`request_taints`, `execution_taint.py:89`; called at `src/agents/core/smart_response_agent.py:537`,
+marker check (`request_taints`, `execution_taint.py:90`; called at `src/agents/core/smart_response_agent.py:537`,
 `:577`). So a chat upload, a wrapper still in history or the daily review's wrapped email taints from the start.
 
 **Other sources, each marked where it enters:**
@@ -72,7 +73,7 @@ marker check (`request_taints`, `execution_taint.py:89`; called at `src/agents/c
 - messages the owner's channel got while a long turn ran (the "meanwhile" note) go through the request check before
   the model sees them (`delegation_engine.py:792`, `smart_response_agent.py:654`);
 - a listing that shows a task created in a tainted execution: its title may repeat outside content
-  (`created_tainted`, `external_task_tools.py:232`);
+  (`created_tainted`, `external_task_tools.py:233`);
 - any `get_external_task` call (above).
 
 **When it is checked.** The engine calls the observer after each tool batch has run and before the model reads its
@@ -87,7 +88,7 @@ reminders that turn wrote.
 **Across turns.** Smart's response carries the final flag (`smart_response_agent.py:719`). `ConversationHandler`
 stores it on the saved model message (`src/handlers/conversation_handler.py:1103`), the session store keeps it
 (`src/adapters/firestore_session_store.py:498`, `:562`), and a later turn that loads that message is tainted
-(`execution_taint.py:93`). A record without the field reads as clean.
+(`execution_taint.py:94`). A record without the field reads as clean.
 
 **This is deliberate.** After a web search or an email read, every hand-off in that channel needs `$task send` until
 that turn falls out of Smart's history window (`SmartResponseAgent.CONTEXT_WINDOW`). The next turn builds on an answer
@@ -111,8 +112,8 @@ reminder, which also gets a history label that does not repeat its text (`src/do
 ## The hold and the confirmation
 
 **Held, not queued.** The create handler reads the tracker when the model calls it
-(`external_task_tools.py:186`). In a tainted execution `ExternalTaskService.create` stores the task as `held` with a
-fresh confirmation code and a hold timer (`src/services/external_task_service.py:266`, `:286`). The code is stored as a
+(`external_task_tools.py:187`). In a tainted execution `ExternalTaskService.create` stores the task as `held` with a
+fresh confirmation code and a hold timer (`src/services/external_task_service.py:328`, `:348`). The code is stored as a
 keyed digest, not as plain text (`_code_digest`, `:204`). A held task is invisible to every worker surface. If the owner
 does not confirm it, the hold expires silently.
 
