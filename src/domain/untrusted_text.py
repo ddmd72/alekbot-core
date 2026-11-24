@@ -34,17 +34,12 @@ EXTERNAL_TAG = "external_content"
 # look-alike pattern below can cover it without an import cycle; `system_fingerprint` re-exports it.
 SYSTEM_TAG = "system_note"
 
-# A reminder written by an execution that had read outside content (`AgentNote.untrusted`): not a file store, but it
-# travels in the same neutral wrapper.
-AGENT_NOTE_STORE = "agent_note"
-
 _TAGS: Mapping[str, str] = {
     FileRefKind.DRIVE.value: DRIVE_TAG,
     FileRefKind.CHAT.value: EXTERNAL_TAG,
     FileRefKind.EMAIL.value: EXTERNAL_TAG,
     FileRefKind.WORKSPACE.value: EXTERNAL_TAG,
     FileRefKind.DELIVERED.value: EXTERNAL_TAG,
-    AGENT_NOTE_STORE: EXTERNAL_TAG,
 }
 # The attribute the label goes in: a drive label is a path; a chat or email label is a file name (open item U1-4).
 _LABEL_ATTRIBUTES: Mapping[str, str] = {DRIVE_TAG: "path", EXTERNAL_TAG: "name"}
