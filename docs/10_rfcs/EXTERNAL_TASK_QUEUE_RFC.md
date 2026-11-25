@@ -116,7 +116,8 @@ Owner decisions. This RFC specifies them; it does not argue them again.
 - **D4 Wake-up.** When a task is enqueued for a label whose worker has a wake-up URL, the bot POSTs to that URL. The
   POST carries no task content: at most an opaque id. It is sent by a Cloud Task with retries, never from inside the
   chat turn. There is no ping while that worker holds a live lease, because the worker drains the queue in one session.
-  When a lease expires and work is left, the bot pings again. Workers without a URL poll.
+  When a lease expires and work is left, the bot pings again; so does a worker's submit, fail or release while others
+  of its tasks are queued (amended 2026-11-25: a worker may take one task per run). Workers without a URL poll.
 - **D5 Lease semantics.** A claim returns one task with a lease expiry. When a lease expires, the task goes back to the
   queue. Submit is idempotent by task id. A worker can also release a task, or fail it, explicitly.
 - **D6 The result reaches the user as a bot notification and is untrusted content.** It never enters the session as a
