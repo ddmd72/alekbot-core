@@ -330,6 +330,18 @@ class ExternalTaskService:
             logger.error(f"[TaskQueue] wake not started worker={fingerprint(worker_id)} task={task.task_id} "
                          f"error={type(exc).__name__}; the task stays queued for polling or the next ping")
 
+    async def _wake_for_next(self, user_id: str, worker_id: str) -> None:
+        """A worker just ended or released a task (§5.8): when it still has queued tasks, ping for the oldest. The
+        lease check of `_wake_if_due` blocks it only while another task of the worker is leased (another run is
+        draining). A released task is queued again and may be that oldest one. Never raises."""
+        try:
+            oldest = await self._tasks.queued_candidates(user_id, worker_id, 1)
+            if oldest:
+                await self._wake_if_due(oldest[0], oldest_only=False)
+        except Exception as exc:
+            logger.error(f"[TaskQueue] wake after finish not started worker={fingerprint(worker_id)} "
+                         f"error={type(exc).__name__}; the tasks stay queued for polling or the next ping")
+
     # -- owner side -----------------------------------------------------------------------------------------------
 
     async def create(self, user_id: str, worker_label: str, title: str, text: str, origin: TaskOrigin, *,
@@ -513,6 +525,8 @@ class ExternalTaskService:
                                            lease_id=lease_id, meta=meta, result_text=prepared.text, now=now)
         task = _raise_on(outcome)
         await self._enqueue_notice(task, TaskNotice.DONE)
+        if outcome.written:
+            await self._wake_for_next(principal.user_id, principal.worker_id)
         logger.info(f"[TaskQueue] submit user={principal.user_id[:8]} worker={fingerprint(principal.worker_id)} "
                     f"task={task_id} bytes={prepared.bytes} replay={not outcome.written}")
         return SubmitReceipt(task_id=task_id, bytes=prepared.bytes, sha256=prepared.sha256,
@@ -524,6 +538,7 @@ class ExternalTaskService:
         _raise_on(await self._tasks.release(principal.user_id, task_id, worker_id=principal.worker_id,
                                             lease_id=lease_id, now=self._clock()))
         logger.info(f"[TaskQueue] release worker={fingerprint(principal.worker_id)} task={task_id}")
+        await self._wake_for_next(principal.user_id, principal.worker_id)
 
     async def fail(self, principal: WorkerPrincipal, task_id: str, lease_id: str, reason: Optional[str]) -> None:
         """Under the lease precondition, `failed` with the reason stored capped and untrusted; a notice follows."""
@@ -532,6 +547,7 @@ class ExternalTaskService:
                                                 lease_id=lease_id, reason=prepare_reason(reason), now=self._clock()))
         logger.info(f"[TaskQueue] fail worker={fingerprint(principal.worker_id)} task={task_id}")
         await self._enqueue_notice_logged(task, TaskNotice.FAILED)
+        await self._wake_for_next(principal.user_id, principal.worker_id)
 
     # -- timers and delivery (/worker) ------------------------------------------------------------------------------
 

@@ -39,7 +39,8 @@ flagged and wrapped wherever they reach a model; and every workspace write in a 
   the worker sit behind two stores. A crash between the two loses one ping, which §7 already tolerates.
 - "The first `queued` task" is read as "the worker's oldest queued task": of two concurrent creates the older pings,
   and a confirmed held task that is older than waiting ones pings once more (harmless). A lease timer that re-queues a
-  task pings whether or not other tasks wait.
+  task pings whether or not other tasks wait. A submit, a fail or a release by the worker pings for its oldest queued
+  task, so a worker that takes one task per run is called back for the rest.
 - The wake body is `{user_id, account_id, worker_id, generation}`; the ping names the worker by its `worker_id`.
 - `WakeRefusal` has two more codes, `server_error` and `unreachable`, the retryable ones; they never reach the owner. A
   name that does not resolve is `dns_failure` (final); a send that outruns `WAKE_TIMEOUT_S`, DNS included, is
@@ -732,6 +733,8 @@ Rhythm comes from the stored generation, not from the task name (`decisions/work
 - A second task created while the first is still queued adds no ping, because the generation is unchanged.
 - No ping is sent while any task of the worker holds an unexpired lease: the worker is draining.
 - A `held` task never causes a ping.
+- After a worker submits, fails or releases a task while others of its tasks are queued, the service pings for the
+  worker's oldest queued task (same lease check, so no ping while another task is leased). A replayed submit does not.
 
 **The wake task.** `ExternalTaskWakeTask` (a `WorkerTask`, registered in `build_worker_tasks`, plus a row in the
 SCHEDULERS.md task-type map):
