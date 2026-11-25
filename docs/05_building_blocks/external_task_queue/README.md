@@ -24,7 +24,7 @@ covers:
   src/ports/external_worker_store.py
   src/ports/window_counter.py
   src/ports/outbound_webhook_port.py
-  src/adapters/outbound_webhook/guarded_webhook_adapter.py
+  src/adapters/outbound_webhook/
   src/adapters/firestore_external_task_store.py
   src/adapters/firestore_external_worker_store.py
   src/adapters/firestore_window_counter.py
@@ -45,293 +45,313 @@ covers:
 
 ## Purpose
 
-Some work is better done by an agent or a service the user already runs elsewhere: a long piece of research, or a job
-that needs tools or models the bot does not have. This block is the hand-off. In a chat turn the bot (Smart, through
-the task specialist) puts a free-text task into a per-user queue; a worker the user registered claims it, does it elsewhere and submits a text
-result; the bot stores that result as untrusted content and tells the user where it is. A worker is anything outside
-the bot: a script, a scheduled agent, an automation service.
+The hand-off from the bot to a worker the owner runs elsewhere (a script, a scheduled agent, an automation service). Smart,
+through the task specialist, puts a free-text task into a per-user queue; a registered worker claims it, does the work
+outside the bot and submits a text result; the bot stores the result as outside content and tells the owner in the chat
+the task came from. The queue does not know what a task is about: the owner's skills decide when and to which worker
+work is handed (`agent_skills_workspace`). It never runs the task, and a worker never talks to the owner directly.
 
-The queue does not know what a task is about. The user's own skills decide when Smart hands work over and to which
-worker;
-a new kind of hand-off is a new skill, not new code (`agent_skills_workspace`).
+Examples use the invented user Alex Doe, the worker labels `research` and `calendar-watch`, and the task "compare three
+community-garden irrigation kits for Shelbyville".
 
-What it is not: not a worker runtime (the bot runs nothing of the task), not the voice or MCP surface (not built yet),
-not a way for a worker to talk to the user (the result is stored and announced, never answered in a model turn), and
-not a push of work: a wake-up tells a worker that work exists, never what it is.
+## The whole path
 
-Spec and decisions: `docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`. Examples below use the invented user Alex Doe, the
-label `research` and the task "compare three community-garden irrigation kits for Shelbyville".
+```
+ owner's chat turn ─┐                                      owner: receipt file (+ `$task send` / «Send» in a chat turn)
+ reminder's run ────┴─► Smart ──intent──► ExternalTaskAgent ──create──► queue (held │ queued)
+                                                                            │
+                     wake ping {"event":"tasks_available"} ◄── wake task ◄──┤ (task became queued, worker idle)
+                                    │                                       │
+                                    ▼                                       │
+          worker (key or OAuth grant) ── MCP /tasks-mcp or REST ──► list / claim / renew / submit / release / fail
+                                                                            │
+                                         submit / fail / expiry ──► external_task_deliver (Cloud Task)
+                                                                            │
+                            workspace file references/external_tasks/… ◄───┤
+                                                                            ▼
+                                      system alert (+ the task's note) ──► Smart, background run in the origin channel
+                                                                            ▼
+                                                                    owner reads Smart's answer
+```
 
-## State of the build
+## Task lifecycle
 
-Steps 1 and 2 of the RFC are in. Built: the queue and `ExternalTaskService`; the task specialist
-(`ExternalTaskAgent`, intent `work_with_external_tasks`) with the five queue tools (create, list, get, cancel, list
-workers), where every task created in a chat turn is held until the owner confirms it with `$task send` (on Slack
-also with the «Send» button under the command); the REST
-worker endpoint `/external-tasks/v1/*`
-with per-worker keys and limits; the Cabinet "External workers" card (register and remove a worker, mint and revoke
-keys, set and clear a wake-up target; the target is entered as a pasted `curl` command plus a separate secret, see below); lease, deadline and hold timers; delivery of a result to the workspace; the
-wake-up POST behind the outbound-request guard; the operator flag script.
+Statuses: `src/domain/external_task.py::ExternalTaskStatus`; every transition is one store transaction applying a pure
+rule of `src/domain/external_task_rules.py`; timers are `external_task_timer` Cloud Tasks
+(`docs/07_deployment/SCHEDULERS.md`). Limits are the named constants of `src/domain/external_task.py`.
 
-For the owner, a plain-language help page explains the whole feature (the task's journey, keys and the connector, the
-wake-up, several connections, recipes, troubleshooting): `/cabinet/help/workers`, linked from the card
-(`src/web/static/workers_help.html`; its numbers are this block's constants, so change both together).
+| Status | Entered by | Leaves to | Timer |
+|---|---|---|---|
+| `held` | a create in a chat turn: a confirmation code returned once (stored as a keyed digest), `hold_until` = now + `HOLD_S` | `queued` by `$task send` or the «Send» button; `cancelled`; `expired` by the hold timer, silently (no alert) | hold |
+| `queued` | a create in a reminder's run; a confirm; a release; a lease timer on a lapsed lease | `leased` by a claim; `cancelled`; `expired`; `failed` (`claim_loop`) | deadline (enqueued at the reminder create or at the confirm) |
+| `leased` | a claim: a fresh lease id, `until` = now + `LEASE_S`; a renew extends it by `LEASE_S` while the lease is live, at most `MAX_RENEWALS_PER_TASK` times | `done` (submit), `failed` (fail), `queued` (release, lease timer), re-claimed when lapsed, `cancelled`, `expired` | lease (one per claim and per renewal) |
+| `done` `failed` `cancelled` `expired` | final; `purge_after` = now + `RETENTION_S` | nothing: only the `delivery` fields still change | — |
 
-Step 3 is in too: the worker MCP resource `/tasks-mcp` on worker keys (below).
+- **Deadline.** `deadline_at` = `created_at` + `TASK_MAX_AGE_S` for every task (a held task's clock starts at its
+  creation, not at the confirm). The deadline timer expires any non-final task; a claim that meets a candidate past its
+  deadline expires it instead of leasing it. A timer further out than `TIMER_MAX_DELAY_S` re-enqueues itself.
+- **Claim.** The worker's oldest `queued` task, else its oldest lapsed lease (lazy recovery of a lost lease timer). A
+  candidate whose `claims` reached `MAX_CLAIMS_PER_TASK` fails with `claim_loop`; a release counts through the claim
+  before it. A held task is invisible to every worker operation (`WORKER_VISIBLE_STATUSES`).
+- **Worker precondition** for renew, submit, release, fail: status `leased` and the presented lease id. A lapsed lease
+  nobody re-claimed still accepts a submit; a renew of a lapsed lease is `lease_expired`. A second submit of the same
+  body (same sha256) is an idempotent replay; another body after `done` is `already_submitted`.
+- **Caps.** `MAX_OPEN_TASKS_PER_USER` (held tasks count), `MAX_WORKERS_PER_USER`, `MAX_KEYS_PER_WORKER`.
+- **Which end gets an alert.** `done` (on submit and on every replay, dedup `deliver:<task_id>`), `failed` (a worker's
+  fail, `claim_loop`), `expired` by the deadline. A cancelled task and an expired hold get none.
 
-Step 4 is in too: OAuth for `/tasks-mcp` (a claude.ai custom connector). A client may register the scope
-`external_tasks` (never a default); the consent page asks which worker the client acts as and the grant is bound to it
-(`wid`); the flag is checked at consent, code exchange and refresh, and every tool call re-checks the grant; the
-Cabinet lists each worker's OAuth grants (client name, granted time, last refresh) with Revoke, and removing a worker
-revokes its grants. The live check of §10 Q1 (the authorize-time scope equals the registered one) is run after the
-deploy.
+## The two entries
 
-Not built: step 5, the primary drive's Inbox as a destination. Code that mentions it (`WorkerDestination.DRIVE`) is
-placeholder for that step.
+`task_entry` (`src/domain/external_task_entry.py`) reads the entry from the run's context in code, never from a model:
+`CHAT` on the owner's interactive turn, `REMINDER` while one of the owner's reminders runs (`run_origin`
+`background:execute_reminder`), otherwise none and no queue at all.
+
+| | Chat turn (`TaskEntry.CHAT`) | Reminder's run (`TaskEntry.REMINDER`) |
+|---|---|---|
+| Created as | `held`, hold timer only | `queued`, deadline timer, a wake-up when due |
+| Why | nothing leaves without the owner's confirmation, whatever the turn read | the owner approved the reminder when it was set |
+| Owner sees | the receipt file `task-<id>.txt`, a literal line (worker, title, id), then the command `$task send <code>` as its own message; on Slack that message carries a «Send» button | the same file and a literal line that the task was handed over from a reminder (`EXTERNAL_TASK_QUEUED_FROM_REMINDER`); no command, no button |
+| Posted by | `ConversationHandler` after the answer | `UserNotificationService.notify` after the reminder run's answer; not in history |
+| Model reads | a tool note with the task id and the hold; never the code | a tool note that the task is queued |
+
+**The receipt** (`src/domain/external_task_receipt.py`) is a literal notice (`src/domain/literal_notice.py`): YAML front
+matter with the title, the worker label and the note, each one double-quoted line (`src/domain/front_matter.py`, so no
+note text can end the block or add a key), a `---` line, then the task text byte for byte. It is what leaves the system,
+shown before it leaves. If the receipt cannot be posted, the command is not sent.
+
+**The Send button.** On Slack (`SEND_BUTTON_PLATFORMS`) the command message is an interactive message of the shared
+mechanism, posted in the receipt's thread when it has one: binding `external_task_send:<task_id>`, the option id is the
+code. A press goes `POST /slack/interactivity` → `interactive_choice` task → `InteractiveChoiceService` (IAM read fresh:
+an unknown or locked user stops there) → `ExternalTaskSendChoice`: the task must be the clicker's (`is_owner`; another
+user's press does and shows nothing), then the command's own `confirm(user_id, code)`, and its answer replaces the
+button (`send_refusal_reply`, shared with the command). Not found (a second press, already sent, a lapsed hold) removes
+the button; unavailable (flag off, account locked) keeps it. `confirm` is one transaction on the hold, so no number of
+presses sends a task twice. Telegram has the command only.
+
+**The brief, word for word.** The create handler refuses a text that is not a part of the specialist's instruction after
+whitespace is normalised (`ERROR_NOT_THE_BRIEF`): the brief is Smart's; the specialist picks the title and the worker
+label only.
+
+## The note
+
+A result returns hours later to a turn that has none of the conversation, so every task carries the bot's own return
+instructions (decision record `external_task_confirmation_and_alerts.md`).
+
+- **Who writes it.** Smart says what the owner asked and why, how to present the result and what comes next (the
+  intent's capability line in `agent_manifest.py`); the specialist writes the required `note` argument of
+  `create_external_task` from it. Capped at `NOTE_MAX_CHARS`, refused over it and never cut, normalised like every
+  stored text; not checked against the instruction (it is the specialist's own text). Stored with the task's `entry`.
+- **Where it is shown.** To the owner in the receipt's front matter, at creation, for both entries.
+- **How the alert frames it.** A task with a note and an entry gets the alert framed like a fired reminder's
+  (`src/domain/reminder_alert.py`): you handed this over earlier and wrote this note as your own instructions for now
+  (per entry: the owner confirmed it with the brief / was shown it as the reminder handed the task over); the note as
+  plain lines; after a `---` line, what happened, the worker's file marked as data only, what the note may drive for
+  this outcome (done: act on it; done without a file: what waits for a chat turn; no result: only what the outcome
+  means for the owner's request), and the turn's limits (no task queue, no memory proposal).
+- **Never to a worker.** No worker surface carries it: not `ClaimedTask`, not `WorkerTaskSummary`, not REST, not MCP.
+- **Never in saved history.** The history pair keeps the code-made `alert_summary` and the alert rendered without the
+  note (`notify(..., system_alert_history=...)`), because the consolidator reads a user-role line as the owner's words.
+- A task stored before the note existed has `note` and `entry` None and gets the plain alert.
+
+## Surfaces
+
+**The specialist** (`src/agents/external_task_agent.py`, intent `work_with_external_tasks`,
+`decisions/external_task_specialist.md`). Smart has no queue tool. It offers the internal intent only when
+`task_entry` gives an entry, the turn was not reached by delegation and the cached profile has the flag
+(`smart_response_agent.py`); Quick never sees it. The specialist repeats the gate in code before any model call (an
+entry, a call chain of itself alone, a service, a user; then the service's fresh flag and lock check) and answers a
+refusal with one code-written line, so a nested Smart or the voice delegate naming the intent gets no model call. It
+runs its own engine loop, delegates nothing, and its prompt carries no memory facts, directives or location; the
+system prompt ends, after the cache boundary, with a `queue_state` block of worker labels. Its five tools
+(`src/infrastructure/external_task_tools.py`): `create_external_task` (left out when no worker exists; the `worker`
+enum is the labels), `list_external_tasks`, `get_external_task`, `cancel_external_task`, `list_external_workers`.
+Its answer is composed by code from a record of every tool call (each result verbatim, then the model's short note,
+then a line when the run was cut), so a run cut by its soft deadline, the turn cap or an exception after a create still
+posts the receipt; it answers success whenever it got past the prompt build (no whole-run retry: it would create twice).
+
+**Worker MCP** `/tasks-mcp` (`src/composition/tasks_mcp_setup.py`; beside the facts and drive connectors:
+[`remote_mcp_server`](../remote_mcp_server/README.md)). Six tools over the same service operations as REST:
+`list_tasks`, `claim_task`, `renew_lease`, `submit_task_result`, `release_task`, `fail_task`; none takes a user, worker
+or label. Two credentials:
+- a worker key as the bearer: `resolve_key` then `ExternalWorkerUserGate`, as REST, but every refusal is `401` (the
+  SDK's verifier returns a token or nothing) and REST's `401` address limits are not applied;
+- an OAuth access token of the tasks resource. A client must register the scope `external_tasks` (never a default, so an
+  existing connector never gains it); the consent page (`src/web/mcp_consent_app.py`) lists the owner's active workers
+  and Approve needs one, and the grant is bound to it (`worker_id` on the code and refresh token, `wid` in the access
+  token). The flag is checked at consent, code exchange and every refresh; each tool call re-checks the grant, so a
+  grant revoked in the Cabinet is refused on its next call.
+Each call: the lock, the grant (OAuth), the worker's limits (the REST buckets, shared by keys and grants of one
+worker), then the service. Answers are text from the tokens `MCP_TASK_TOOL_TEXTS` and `MCP_TASK_RESULT_TEXTS`; a claim
+prints the task id, created time and lease and a "written by the user's assistant" line before the title and the brief.
+A refusal is an `isError` result; no task is a success.
+
+**Worker REST** `/external-tasks/v1/*` (`src/web/external_task_api.py`; routes in `docs/06_runtime/API_REFERENCE.md`).
+Not under `/api/`, not behind the Cabinet cookie; a worker key in `Authorization: Bearer` only. Per request: the `401`
+limits (`429` + `Retry-After`, the key store not read), the key's shape, `resolve_key` (`401` for a bad key, `403` for
+locked, flag off or a revoked worker), `ExternalWorkerUserGate` (stored user active, with an email, whitelisted), the
+worker's limits (`CALLS_PER_WINDOW`, plus `CLAIMS_PER_WINDOW` / `SUBMITS_PER_WINDOW`), then the body. Answers are
+JSON codes; another worker's task, a held task and a missing task are one `404`.
+
+**Cabinet card** "External workers" (`src/web/cabinet_external_workers.py`, UI in `cabinet-settings.js`; hidden for a
+user without the flag). Register a worker (label + one-line description) and remove it (revokes its keys and OAuth
+grants, cancels its open tasks); mint a key (shown once, stored as a keyed digest) and revoke one; list each worker's
+OAuth grants (client name, granted, last refresh) with Revoke; set a wake-up target by pasting a provider's `curl`
+command plus a separate secret, or clear it (the worker then polls). Labels and descriptions are not editable.
+
+**Help page** `/cabinet/help/workers` (`src/web/static/workers_help.html`, linked from the card): the task's journey,
+keys and the connector, the wake-up, several connections, recipes, troubleshooting, in plain language.
+
+**`$task send <code>`** (`ConversationHandler`, the `task` command): a wrong, used or expired code gets one neutral line;
+the service re-checks flag and lock.
+
+## Wake-up
+
+A worker with a target is pinged when it has work, instead of polling. `ExternalTaskService._wake_if_due` and
+`_wake_for_next` decide; the ping is an `external_task_wake` Cloud Task; `on_wake` sends it.
+
+| Pings | Does not ping |
+|---|---|
+| a reminder create, when the task is the worker's oldest queued one | a held task (a chat create), ever |
+| a confirm (`$task send` or «Send»), when the task is the worker's oldest queued one | a create or confirm of a task that is not the worker's oldest queued one (an earlier task already pinged) |
+| a lease timer that re-queues a lapsed task (oldest or not) | any task of the worker holding an unexpired lease (the worker is draining) |
+| a submit, fail or release while the worker still has queued tasks: a ping for the oldest (a released task may be it) | a replayed submit |
+| | a worker with no target, or not active; a lapsed lease recovered by a claim |
+
+- **Generation.** Each ping moves the worker's `wake_generation` on (its own worker transaction, after the task write)
+  and enqueues the task under dedup `external_task_wake:<worker_id>:<generation>`. `on_wake` re-reads the worker: a
+  changed generation, another account, a cleared target, a removed worker or no queued work sends nothing. A crash
+  between the two writes loses one ping; the task stays queued. A failed check or enqueue is logged, never raised.
+- **What is sent.** The target is decrypted (AAD `external_workers/{user_id}:{worker_id}`) and POSTed
+  `{"event": "tasks_available", "worker": <worker id>}`: no task text, title, label or count.
+- **Outbound-request guard** (`src/adapters/outbound_webhook/guarded_webhook_adapter.py`, rules in
+  `src/domain/wake_target.py`), the only code that sends to a user-entered URL, all within `WAKE_TIMEOUT_S`. Before any
+  DNS query: `https`, port 443, no userinfo, a DNS name of two labels or more (no IP literal, no numeric form), not under
+  `.internal`, `.localhost`, `.local` or `.arpa`, not one of the bot's own hosts (`wake_own_hosts`, built at boot from
+  every deploy unit's configured URL) and not under `run.app`; header names are tokens, values printable ASCII, framing,
+  hop-by-hop, `Content-Type` and `Accept-Encoding` refused, count and size capped. Then every resolved address must be
+  public (no private, loopback, link-local or metadata, CGNAT, multicast, reserved, documentation, ULA, site-local, nor
+  NAT64, 6to4 or Teredo ranges); the connection goes to the vetted address with the name as `Host` and SNI (no second
+  resolution), no redirect is followed, no proxy is read from the environment, and the answer is asked uncompressed and
+  read as raw bytes up to `WAKE_RESPONSE_READ_MAX`, then dropped. The Cabinet save runs the name-level rules; every send
+  runs them all again.
+- **Retries vs refusal** (`src/services/external_task_wake_task.py`). A 5xx or no answer in time (`server_error`,
+  `unreachable`) answers 503 and Cloud Tasks retries, until the attempt count reaches `WAKE_MAX_ATTEMPTS`, which gives up
+  silently. Any other `WakeRefusal` (a guard rule, a 3xx, a 4xx) is final: one literal notice to the origin channel of
+  the worker's oldest queued task naming the label and the closed code; no agent turn, no history. The task stays
+  queued either way, for polling or the next ping.
+- **The form.** `src/domain/wake_curl.py` reads the pasted command: it starts with `curl`; only `-X POST`, `-H`, the data
+  options (their value is ignored: the bot writes its own body), `--url` and a few output flags are read, and any other
+  option is refused (`curl_option`), never skipped; a `Content-Type` header is dropped. A `$NAME` or `${NAME}`
+  placeholder in the URL or a header is replaced by the secret: one name only, a placeholder needs a secret and a secret
+  needs a placeholder. `PUT /api/external-workers/<id>/wake` also takes the older `{url, headers}` body.
+
+## Delivery of results
+
+`ExternalTaskDeliveryTask` (`src/services/external_task_delivery_task.py`) runs the `external_task_deliver` Cloud Task,
+enqueued with the dispatch deadline `DELIVER_DEADLINE_S` (the alert is a Smart run).
+
+1. **File.** A done task's result, or the reason a worker gave when it failed the task, is written as an ordinary
+   workspace file `references/external_tasks/<date>-<short id>.md` (the full id when the short name holds a file of
+   another provenance) below a code-written outside-content header naming the task, title, worker and time
+   (`src/domain/external_task_delivery.py`). A workspace refusal (caps, size) or no workspace means no file; the text
+   stays in the task record.
+2. **Alert** (`src/domain/external_task_alert.py`). `UserNotificationService.notify` with kind `EXTERNAL_TASK`, Smart as
+   the recipient, the task's origin channel, origin `external_task_deliver`: the alert is the user turn of a background
+   Smart run and Smart's answer is what the owner reads. Alert kinds: `done` (file), `done_no_copy`, `failed_file`,
+   `failed_no_file`, `claim_loop`, `expired`. It carries code-made values only (task id, label, file path, failure code,
+   counts) plus the note; never the title, the result or a reason.
+3. **History.** The pair is kept in that channel: the user line is `alert_summary` (`External task <id> for <label>
+   ended: <outcome>; workspace:<path>`), its full text the alert without the note.
+4. **Record.** `delivery.state` = `delivered`, so a second Cloud Tasks run is `already`. Every outcome of the turn is
+   final, as for a reminder: no channel is logged, an empty answer is reported to ops, a failed turn is not run again.
 
 ## Owned data
 
-Firestore, database `us-production`, names from `EnvironmentConfig` (`external_tasks_collection`,
-`external_task_results_collection`, `external_workers_collection`, `external_worker_keys_collection`), env prefix.
+Firestore `us-production`, env-prefixed names from `EnvironmentConfig`:
 
-- **tasks**: one `ExternalTask` per document (`domain/external_task.py`): status, `origin` (the creating turn's
-  channel; the delivery alert goes there), `note` and `entry` (below), `hold`, `lease`, `result_meta`, `failure`, `delivery` (a stored `created_tainted` of an older record is ignored on read and dropped at the next write). The result body
-  is a separate document so a listing never reads it. A task stored before the note existed reads `note` and `entry`
-  as None (no migration).
-- **results**: the submitted text, one per done task.
-- **workers** and **worker keys**: a worker is a label plus a description, bound to the registering account. A key is
-  stored only as a keyed digest; the raw key is shown once, at minting. A worker's wake-up target is one `CipherPort`
-  ciphertext of `{url, headers}` bound to the record (AAD `external_workers/{user_id}:{worker_id}`); only its host is
-  stored in clear (`wake_host`), and `wake_generation` counts the pings started.
-- **rate windows**: per-worker and `401` counters in the `worker_task_dedup` collection through `WindowCounter`.
+| Collection | Holds |
+|---|---|
+| `external_tasks` | one `ExternalTask`: status, `origin` (platform, channel, session), `note`, `entry`, `hold`, `lease`, `claims`, `result_meta`, `failure`, `delivery`, `deadline_at`, `purge_after` |
+| `external_task_results` | the submitted text of a done task, apart so a listing never reads it |
+| `external_workers` | doc `{user_id}:{worker_id}`: label, description, account, `wake_host` (clear), `wake_secret` (one `CipherPort` ciphertext of `{url, headers}`), `wake_generation` |
+| `external_worker_keys` | doc id = the key's keyed digest; hint, worker, `last_used_at` (written at most every `KEY_TOUCH_S`), revocation |
 
-Two of these carry `purge_after` (tasks, results) and are deleted by a TTL policy 30 days after the final state
-(`config/ttl_registry.json`). A task still open has none.
-
-## Flows
-
-**Hand-off** (`decisions/external_task_specialist.md`). Smart has no queue tool. On the owner's own chat turn or while one
-of the owner's reminders runs (`task_entry`, `src/domain/external_task_entry.py`), for a flagged user, not reached by
-delegation, it is offered one internal intent, `work_with_external_tasks`,
-and writes the task specialist a natural-language instruction: the worker's name and the whole brief, or which task to
-read or cancel. `ExternalTaskAgent` (`src/agents/external_task_agent.py`) repeats that gate in code before any model
-call (a run with a task entry, a call chain of itself alone, a service, a user, then the service's fresh flag and lock
-check) and answers a refusal with one code-written line. It runs its own engine loop over the five tools, delegating
-nothing; its system prompt ends, after the cache boundary, with a `queue_state` block of worker labels. Its answer is
-composed by code from a pass-through record of every tool call: each result word for word, then the model's short note,
-then a line when the run was cut. The receipts come from that record, so a run cut by its soft deadline, the turn cap or
-an engine exception after a create still posts the owner's receipt; it answers success whenever a tool ran (a failure
-would drop the delivery items).
-
-**The brief, word for word.** The create handler refuses a text that is not a part of the instruction after whitespace
-is normalised (`ERROR_NOT_THE_BRIEF`), so what leaves the system is Smart's brief; the specialist chooses the title and
-the worker label only. The brief's language follows the owner's skill or words, not "Always English"
-(`PROTOCOL_AGENT_SELECTION`, `query_language`).
-
-**The task's note** (decision record `external_task_confirmation_and_alerts.md`, amendment of 2026-11-24). A result
-comes back hours later to a turn with none of the conversation, so every task carries the bot's own return
-instructions: what the owner asked and why, how to present the result, what to do after it. Smart says them in its
-instruction (the intent's capability line in `agent_manifest.py`); the specialist writes the `note` argument of
-`create_external_task` from it, self-contained (required, at most `NOTE_MAX_CHARS`, refused and never cut over it,
-normalised like every stored text). It is stored with the task's `entry` (chat or reminder), shown to the owner in the
-receipt file, and handed back to Smart by the completion alert. No worker surface carries it: not the REST answers, not
-the MCP results, not `ClaimedTask` or `WorkerTaskSummary`. It is not checked against the instruction: it is the
-specialist's own text.
-
-**Create to deliver.** The specialist's `create_external_task` handler (`src/infrastructure/external_task_tools.py`)
-calls `ExternalTaskService.create` (`src/services/external_task_service.py:335`): the `entry` decides: a chat create is
-`held` (below), a reminder create is `queued` with a deadline timer and a show-only notice (below) (the specialist computes the entry once per run from the context
-with `task_entry`, never from the model: `CHAT` on the owner's chat turn, `REMINDER` while a reminder runs); a
-worker claims it under a lease (`:460`), may renew, then submits (`:503`), releases or fails. The
-final state enqueues an `external_task_deliver` Cloud Task (dispatch deadline `DELIVER_DEADLINE_S`, the
-`EXTERNAL_TASK` notification budget plus headroom).
-
-**Delivery is a system alert** (`src/services/external_task_delivery_task.py`, since 2026-11-24). A finished task comes
-back to the bot the way a fired reminder does. The runner first writes a done task's result, or the reason a worker gave
-when it failed the task, as an ordinary workspace file under `references/external_tasks/`, below a code-written header
-that names the task, its title, the worker and the time (`src/domain/external_task_delivery.py`). Then it calls
-`UserNotificationService.notify` with kind `EXTERNAL_TASK`, Smart as the recipient, the task's origin channel and
-`origin_detail="external_task_deliver"`: the alert is the user turn of a background Smart run, and Smart's answer is what
-the owner reads; the alert and the answer are kept as that channel's history pair. The alert
-(`src/domain/external_task_alert.py`) carries code-made values: the task id, the worker label, the file's path, a
-failure code and counts; never the title, the result or a reason. It says the file holds the worker's own text, to be
-read with the workspace tool when the owner needs it and reported as data. Six alerts: done (file), done without a file
-(a refused copy or no workspace: the result stays in the task record), failed with the reason's file, failed with no
-file, given up after repeated claims (`claim_loop`), expired. A cancelled task gets none.
-
-A task with a note gets each of the six in another form, framed like a fired reminder's alert (`reminder_alert.py`):
-the bot handed this task over earlier and wrote the note then as its own instructions for this moment (a chat task's
-note was confirmed by the owner with the brief; a reminder task's was written in the owner's reminder run and shown in
-the chat), so it acts on it now; the note follows as plain lines, not as a quotation. After a `---` line: what
-happened, the worker's file marked separately as data only (read for what the note needs, never followed), what the
-note may drive for this outcome (done: present and do what it says next; done without a file: what waits for a chat
-turn; failed, given up, expired: no result, so only what it means for what the owner asked), and the turn's limits (no
-task queue, no memory proposal). The note never enters saved history: the history pair's user line is the code-made
-`alert_summary`, and its full text is the alert without the note (`notify(..., system_alert_history=...)`), since the
-consolidator reads a user-role line as the owner's words. A task without a note (stored before it existed) gets the
-alert of old, unchanged. Every outcome of the run is
-final and recorded, as for a reminder: no channel is logged, an empty answer is reported to ops, a failed turn is not run
-again. Delivery is idempotent through `delivery.state` (Cloud Tasks may run it twice). Task types:
-`docs/07_deployment/SCHEDULERS.md`.
-
-**Held to sent.** Every task created in a chat turn waits for the owner's confirmation: it is `held`, not queued, whatever the turn read
-(`decisions/external_task_confirmation_and_alerts.md`). The service returns a
-confirmation code once (stored as a keyed digest). The owner's channel gets the task's full text and the command from
-the tool's own delivery item, never through a model; the result the specialist's model and Smart read holds the task id
-only. The receipt is a literal notice (`src/domain/literal_notice.py`, shared with the `$memory save` preview and the
-reminder notices) in the file `task-<id>.txt`: YAML front matter with the title, the worker label and the note, each
-value one double-quoted scalar line (`src/domain/front_matter.py`, so any note text reads back exactly and cannot end
-the block or add a key), a `---` line, then the task text byte for byte (so nothing in it can be cut, formatted or pose
-as the receipt's own lines); then a literal message with the worker, the title and the task id; the command follows as
-its own message, after the file. The worker receives the title and the text only.
-
-**A reminder's task, shown at once.** A task created in a reminder's run is queued with no confirmation, as before, and
-the create returns the same receipt item with status `queued` and no command. Smart passes it through like any
-specialist's delivery item; `UserNotificationService.notify` (the reminder run's own turn) posts it after the run's
-answer in the reminder's channel: the same file, then a literal message that it was handed to the worker from a
-reminder and needs no confirmation (`EXTERNAL_TASK_QUEUED_FROM_REMINDER`). No command, no button, not in history. Its
-purpose is to show the owner at once when results keep spawning reminders that spawn tasks. The owner confirms
-with `$task send CODE` (`ConversationHandler`, the `task` command); the service moves it to `queued`. A held task
-that is not confirmed expires through its hold timer. A wrong, used or expired code gets one neutral line. A held task
-is invisible to every worker surface.
-
-**The Send button (Slack).** On Slack the command message carries one «Send» button: it is an interactive message of
-the memory review's mechanism (`external_task_receipt.send_button`; the same command text as its prompt), posted in the
-receipt's thread when the receipt has one. The binding names the task (`external_task_send:<task_id>`), the button's
-option id is the code, so the code is carried only on the message that already shows it. A press goes the shared click
-path (`POST /slack/interactivity` → `interactive_choice` task → `InteractiveChoiceService`, IAM read fresh, so an
-unknown or locked user stops there) to `ExternalTaskSendChoice`: the task must be the clicker's
-(`ExternalTaskService.is_owner`; another user's press in a shared channel does and shows nothing), then the command's
-own `confirm(user_id, code)`, and the command's own answer replaces the button (`send_refusal_reply` is shared): sent;
-not found for a second press, a task the command already sent or a lapsed hold (the button goes); unavailable when the
-flag is off or the account was locked after the press was authorised (the button stays). `confirm` is one store
-transaction on the hold, so no number of presses sends a task twice. If the button cannot be posted, the command goes
-alone. Telegram keeps the command only, and the command keeps working on Slack.
-
-**Timers.** Lease, deadline and hold timers are Cloud Tasks scheduled for the instant; `on_timer` (`:538`) applies the
-kind's precondition, so a stale timer changes nothing. A timer further than Cloud Tasks can schedule re-enqueues itself.
-
-**Wake-up.** A worker with a target is pinged when work appears, instead of polling. When a task becomes `queued` (a
-reminder create or `$task send`) and it is the worker's oldest queued task, and no task of the worker holds an
-unexpired lease (the worker is draining), the service moves the worker's `wake_generation` on and enqueues
-`external_task_wake` for that generation; a lease timer that re-queues a task pings the same way, and so does a worker that submits, fails or releases a task
-while others of its tasks are queued (`_wake_for_next`: a ping for the worker's oldest queued task, under the same
-lease check; a replayed submit does not ping again). A held task never pings. `ExternalTaskWakeTask` calls `on_wake`, which re-reads the worker (a changed generation, a cleared target or no
-queued work sends nothing), decrypts the target and POSTs `{"event": "tasks_available", "worker": <worker id>}` through
-`OutboundWebhookPort`: no task text, title, label or count. A 5xx or a timeout is retried by Cloud Tasks up to
-`WAKE_MAX_ATTEMPTS`; a guard refusal, a 3xx or a 4xx is final and the owner gets one literal notice naming the label and
-the closed `WakeRefusal` code. The task stays queued either way, for polling or the next ping.
-
-**Outbound-request guard** (`src/adapters/outbound_webhook/guarded_webhook_adapter.py`, the rules in
-`src/domain/wake_target.py`). The only code that sends to a user-entered URL. Before any DNS query: `https`, port 443,
-no userinfo, a DNS name of two labels or more (no IP literal, no numeric form), not under `.internal`, `.localhost`,
-`.local` or `.arpa`, not one of the bot's own hosts (built at boot from every deploy unit's configured URL,
-`wake_own_hosts` in `src/composition/external_task_setup.py`) and not under `run.app`; header names are tokens, values
-printable, framing, hop-by-hop and `Accept-Encoding` headers refused, count and size capped. Then every resolved address
-must be public (no private, loopback, link-local or metadata, CGNAT, multicast, reserved, documentation, ULA, IPv6
-site-local, nor any range that embeds IPv4: NAT64, 6to4, Teredo), the connection goes to the vetted address with the
-name as `Host` and SNI (no second resolution, so no rebinding), no redirect is followed, no proxy is taken from the
-environment, and the answer is asked for uncompressed and read as raw bytes up to a small cap, then dropped (a
-compressed body cannot expand past the cap). The Cabinet save runs the name-level rules only; every send runs them all
-again.
-
-**Worker REST.** `create_external_task_api_blueprint` (`src/web/external_task_api.py:73`), not under `/api/`, not
-behind the Cabinet cookie. Per request: the `401` limits are checked first, then the key's shape, then `resolve_key`,
-then the stored user (active, whitelisted: `ExternalWorkerUserGate`, `src/services/external_worker_user_gate.py`, the
-one whitelist rule of every worker-key surface; the core leaves it out), then the worker's own limits, then the body. A task of another worker, a
-held task and a missing task are one `404`. Routes are in `docs/06_runtime/API_REFERENCE.md`.
-
-**Worker MCP.** `/tasks-mcp` (`src/composition/tasks_mcp_setup.py`; how it sits beside the facts and drive connectors:
-[`remote_mcp_server`](../remote_mcp_server/README.md)) serves six tools over the same service operations as REST:
-`list_tasks`, `claim_task`, `renew_lease`, `submit_task_result`, `release_task`, `fail_task`. A client sends a worker
-key as its bearer. The key is checked as REST checks it (`resolve_key`, then `ExternalWorkerUserGate`), but every
-refusal at that point is `401` (the SDK's verifier returns a token or nothing), and the `401` address limits of REST
-are not applied. The worker's limits are the REST buckets, shared. Answers are text from two prompt tokens; a claim
-prints the task id, created time, lease and "written by the user's assistant" line before the title and the brief, and
-the brief is plain. A refusal is an `isError` result naming its code; no task is a success.
-
-**Token upload order.** `MCP_TASK_TOOL_TEXTS`, then `MCP_TASK_RESULT_TEXTS`
-(`prompts_snapshot/tokens/system/`, `firestore_utils/snapshot_upload.py`), both before the deploy that builds the app:
-without them the app is not built and `/tasks-mcp` answers 404 (one ops alert).
+Tasks and results carry `purge_after` (`RETENTION_S` after the final state) and are deleted by TTL policy
+(`config/ttl_registry.json`); an open task has none. Per-worker rate windows are `WindowCounter` documents
+(`xtrate:<key>:<window>`) in the `worker_task_dedup` collection, shared by every instance; the `401` counters are in
+each instance's memory only.
 
 ## Security rules enforced in code
 
-- **A chat create always waits.** Every task a chat turn creates is held for the owner's `$task send`, whatever the
-  turn read; a reminder run's create is queued. There is no per-execution taint tracking (decision record
-  `external_task_confirmation_and_alerts.md`).
-- **Only the owner's own chat turn and the owner's reminders reach the queue.** Smart offers the specialist's intent only
-  on an interactive-delivery turn or a reminder's run (`run_origin` `background:execute_reminder`) that was not reached
-  by delegation and whose user has the flag; Quick never sees it (the
-  intent is internal). The specialist repeats the gate in code: the coordinator checks no allowlist, so a nested Smart
-  or Lelik's `/voice/delegate` naming the intent gets a code-written refusal, no model call. The service re-checks flag
-  and lock, so a stale cached profile gains nothing.
-  A reminder's create goes straight to the queue with no confirmation (the owner approved that reminder when it was
-  set); the owner is shown it as a show-only notice after the run's answer. Its task's origin is the reminder's channel,
-  so the completion alert lands where the reminder spoke.
-  The daily review, a voice errand and the delivery's alert turn have no entry. The delivery's alert turn is a background run (`background:external_task_deliver`, no `interactive_delivery`), so a
-  worker's result never starts new work.
-- **A worker's text is wrapped where a model reads it through the queue.** `get_external_task` returns a result or a
-  failure reason inside an outside-content wrapper after the reminder; a delivered result or reason is an ordinary
-  workspace file under an outside-content header (no file-level mark).
-- **Results never in a system slot on delivery.** The alert is code-written from code-made values and the task's note
-  (the bot's own text, shown to the owner at creation); a worker's text and a failure reason reach the model only as
-  the workspace file the alert names, marked as data.
-- **The note never reaches a worker or saved history.** No worker surface returns it; the alert's history pair keeps a
-  code-made label and the alert without the note.
+- **A chat create always waits** for the owner's `$task send` or «Send», whatever the turn read; only a reminder's run
+  queues at once. There is no per-turn taint tracking (`external_task_confirmation_and_alerts.md`).
+- **Only the owner's own chat turn and the owner's reminders reach the queue.** The daily review, a voice errand, a
+  delegated Smart and the delivery's alert turn (`background:external_task_deliver`) have no entry, so a worker's result
+  never starts new work. The service re-checks flag and lock on every owner, worker and registry call.
+- **A worker's text is wrapped wherever a model reads it.** `get_external_task` returns a result or reason inside an
+  outside-content wrapper after the reminder; a delivered one is a workspace file under the outside-content header,
+  named by the alert, never inlined.
+- **The note never reaches a worker or saved history** (see The note).
+- **A worker's description never reaches a model.** It is free text from the Cabinet, and a tool or parameter
+  description reads with the schema's authority, so the specialist's tools carry labels only.
 - **One refusal for the unknown.** A label that does not exist, another user's task and a missing task give the same
-  tool error or `404`; nothing reveals existence.
-- **`401` limits live in memory.** Per address (rightmost `X-Forwarded-For` entry) and global, held by the rate limiter
-  over `WindowCounter`; the per-worker limits count calls, claims and submits. Logs name a worker by
-  `fingerprint(worker_id)`, never a key, text, result or header.
-- **Inactive user.** Refused at the Cabinet routes, the REST endpoint, `$task send` and the Send button (IAM at the
-  click, then the service's own check in `confirm`).
-- **A worker's description never reaches a model.** It is free text typed in the Cabinet; a tool or parameter
-  description is read with the schema's authority, so the specialist's tools carry labels only (the `worker` enum and
-  its lead line, the `list_external_workers` result, the `queue_state` block). The description is shown to the owner in the Cabinet and nowhere else.
-- **Wake-up secrets are never shown back or logged.** The Cabinet gets the host only after a save; logs name the host
-  and a code or an error class, never the URL, a header or the target's answer. httpx's own request log line is dropped
-  while a send runs.
+  tool error or `404`.
+- **Inactive user** refused at the Cabinet routes (`423`), REST, MCP (every call), `$task send`, the Send button (IAM at
+  the click, then `confirm`) and `/worker` (timer, delivery and wake bodies name the user).
+- **Keys and codes are stored as keyed digests**; a raw key is shown once. Logs name a worker by
+  `fingerprint(worker_id)`, a user by 8 characters; never a key, code, text, title, note, result, reason, URL or header.
+- **Wake-up secrets are never shown back or logged.** The Cabinet gets the host only; httpx's request log line is
+  dropped while a send runs.
 
 ## Traps
 
 - **Indexes first.** The queue's composite indexes in `config/firestore.indexes.json` must be `READY` before the code
-  deploys (`make deploy-indexes`); a missing one fails at claim or list time, not at deploy.
+  deploys; a missing one fails at claim or list time.
 - **The flag is operator-only.** `config.external_tasks_enabled` is set by `scripts/set_external_tasks_flag.py` (dry run
-  unless `--apply`) or the console. No Cabinet route, command or API writes it. Smart's offer follows the flag within
-  about an hour (the factory caches a profile); the specialist's gate and the service read it fresh. Switching off
-  deletes nothing.
-- **Upload the specialist's prompt before the deploy.** Profile `external_tasks`, blueprint `external_task_agent_v1`,
-  `COGNITIVE_PROCESS_EXTERNAL_TASKS`, `OUTPUT_FORMAT_EXTERNAL_TASKS` and the `PROTOCOL_AGENT_SELECTION` clause ship by
-  token upload; a deploy before them runs the specialist on an empty profile (`docs/how_to/NEW_AGENT_PLAYBOOK.md`). The
-  create tool's texts (the note included) ship by code deploy; `COGNITIVE_PROCESS_EXTERNAL_TASKS` tells the specialist
-  how to write the note, so upload it before the deploy that requires the note.
-- **A skill names the hand-off, not a tool.** Smart has no `create_external_task`; a skill that names a queue tool
-  points at nothing Smart can call.
-- **Two `purge_after` collections**: tasks and results; both are in the TTL registry and a test scans for it. A new
-  collection of this block needs its own entry.
-- **Limits are placeholders** set at implementation review (named constants in `domain/external_task.py`); none was
-  measured. Change the constant, not a copy.
-- **The guard assumes no VPC egress.** The main service reaches only the public internet; a VPC connector would let a
-  wake-up URL reach a private network the address rules do not know. The deploy trap: `docs/07_deployment/README.md`,
-  "Main service egress".
-- **A worker on the platform's default domain cannot be woken.** Every name under `run.app` is refused (the bot's own
-  services live there); such a worker needs a custom domain, or polls.
-- **Not a place for a worker's secrets.** A task text is plain stored text capped to fit one literal receipt.
+  unless `--apply`) or the console; no route, command or API writes it. Smart's offer follows the flag within the agent
+  factory's profile cache (about an hour); the specialist, the service and OAuth read it fresh. Switching off deletes
+  nothing: open tasks are not served and run to their deadlines.
+- **Upload before the deploy.** The specialist's profile `external_tasks`, blueprint `external_task_agent_v1`,
+  `COGNITIVE_PROCESS_EXTERNAL_TASKS` (it says how to write the note), `OUTPUT_FORMAT_EXTERNAL_TASKS` and the
+  `PROTOCOL_AGENT_SELECTION` clause ship by token upload, as do `MCP_TASK_TOOL_TEXTS` and `MCP_TASK_RESULT_TEXTS`
+  (`prompts_snapshot/tokens/system/`, `firestore_utils/snapshot_upload.py`). Without the MCP texts `/tasks-mcp` is not
+  built and answers 404 (one ops alert); without the prompt the specialist runs on an empty profile. The tool texts in
+  `src/domain/external_task_texts.py` ship by code deploy.
+- **A skill names the hand-off, not a tool.** Smart has no `create_external_task`.
+- **A new collection of this block needs a TTL registry entry**; a test scans for `purge_after` writers.
+- **Limits are placeholders** set at implementation review, none measured: change the constant, and the help page's
+  numbers with it.
+- **The guard assumes no VPC egress** on the main service; a VPC connector would let a wake-up URL reach a private
+  network (`docs/07_deployment/README.md`, "Main service egress").
+- **A worker on the platform's default domain cannot be woken** (every name under `run.app` is refused); it needs a
+  custom domain, or polls.
+- **Not a place for a worker's secrets.** A task text is plain stored text, capped to fit one receipt.
+- **Not built:** the drive Inbox destination (`WorkerDestination.DRIVE` is a placeholder; a worker registered with it is refused).
+
+## Where things live
+
+| File | Responsibility |
+|---|---|
+| `src/services/external_task_service.py` | every rule applied: create, confirm, claim, renew, submit, release, fail, cancel, timers, wake decisions, `on_wake`, worker registry |
+| `src/domain/external_task.py`, `src/domain/external_task_rules.py` | the record, statuses, limits; the pure transitions |
+| `src/domain/external_task_entry.py` | chat vs reminder entry |
+| `src/domain/external_task_jobs.py` | timer, deliver and wake payloads and dedup keys |
+| `src/domain/external_task_text.py` | normalisation and caps of every stored text |
+| `src/agents/external_task_agent.py`, `src/infrastructure/external_task_tools.py`, `src/domain/external_task_texts.py` | the specialist, its five tools, their texts |
+| `src/domain/external_task_receipt.py`, `src/services/external_task_send_choice.py` | the receipt, the command and the Send button |
+| `src/services/external_task_delivery_task.py`, `src/domain/external_task_delivery.py`, `src/domain/external_task_alert.py` | delivery: file, alert, history label |
+| `src/services/external_task_timer_task.py`, `src/services/external_task_wake_task.py` | `/worker` runners of timers and wake-ups |
+| `src/domain/wake_target.py`, `src/domain/wake_curl.py`, `src/adapters/outbound_webhook/guarded_webhook_adapter.py` | target rules, the pasted command, the guarded send |
+| `src/web/external_task_api.py`, `src/services/external_task_rate_limiter.py`, `src/services/external_worker_user_gate.py` | REST, limits, whitelist gate |
+| `src/composition/tasks_mcp_setup.py` | the MCP resource and its credentials |
+| `src/web/cabinet_external_workers.py`, `src/web/static/workers_help.html` | Cabinet card routes, help page |
+| `src/composition/external_task_setup.py`, `src/composition/external_task_api_setup.py` | wiring, own hosts, limiter |
 
 ## Links
 
-`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`, `docs/07_deployment/SCHEDULERS.md` (timer, deliver and wake task types),
-`docs/05_building_blocks/agent_skills_workspace/README.md` (workspace flag), `docs/06_runtime/API_REFERENCE.md`
-(worker routes).
-
-## Wake-up target form (Cabinet)
-
-The worker card takes two fields: a `curl` command as a webhook provider shows it, and the secret. The server parses the
-command (`src/domain/wake_curl.py`) into the URL and the header lines, then stores them through the same path as a typed
-target (`save_wake_target`, `check_headers`). Rules: the command starts with `curl`; only `-X POST`, `-H`, the data
-options (their value is ignored: the bot writes its own body), `--url` and the quiet/fail flags are read, and any other
-option is refused (`wake_curl_option`), never skipped; a `Content-Type` header is dropped. A placeholder `$NAME` or
-`${NAME}` in the URL or a header value is replaced by the secret; all placeholders must share one name, a placeholder
-needs a non-empty secret and a secret needs a placeholder (leave it empty when the command already holds it). The old
-`{url, headers}` body of `PUT /api/external-workers/<id>/wake` is still accepted. Neither the command nor the secret is
-logged or sent back.
+`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md`; decision records `external_task_specialist.md`,
+`external_task_confirmation_and_alerts.md` (in `docs/04_solution_strategy/decisions/`);
+`docs/07_deployment/SCHEDULERS.md` (timer, deliver and wake task types); `docs/06_runtime/API_REFERENCE.md` (worker
+routes); [`remote_mcp_server`](../remote_mcp_server/README.md) (OAuth and `/tasks-mcp`);
+`docs/05_building_blocks/agent_skills_workspace/README.md` (the workspace results land in); help page
+`src/web/static/workers_help.html`.
