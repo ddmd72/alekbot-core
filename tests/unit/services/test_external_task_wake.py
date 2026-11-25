@@ -328,3 +328,79 @@ async def test_a_reminder_entry_pings_the_worker_and_a_chat_entry_does_not_until
     await world.create(entry=TaskEntry.REMINDER)
     assert len(world.wakes()) == 1 and world.worker().wake_generation == 1
     assert world.tasks.tasks[held.task_id].status.value == "held"
+
+
+# ---------------------------------------------------------------------------------------------------- after a worker ends a task (§5.8)
+
+async def _claimed_with_one_waiting(world):
+    """A claimed task, another one queued behind its live lease (no ping for it), and the pings so far."""
+    claim = await world.claimed()
+    world.at(10)
+    await world.create()
+    return claim, len(world.wakes())
+
+
+async def test_a_submit_with_another_task_queued_pings_once_under_a_new_generation(world):
+    await world.target()
+    claim, pinged = await _claimed_with_one_waiting(world)
+    await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
+    assert [b["generation"] for b in world.wakes()] == [1, 2] and len(world.wakes()) == pinged + 1
+
+
+async def test_a_submit_with_nothing_queued_sends_no_ping(world):
+    await world.target()
+    claim = await world.claimed()
+    await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
+    assert [b["generation"] for b in world.wakes()] == [1] and world.worker().wake_generation == 1
+
+
+async def test_a_replayed_submit_adds_no_ping(world):
+    await world.target()
+    claim, _ = await _claimed_with_one_waiting(world)
+    await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
+    await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
+    assert [b["generation"] for b in world.wakes()] == [1, 2]
+
+
+async def test_a_fail_with_another_task_queued_pings(world):
+    await world.target()
+    claim, _ = await _claimed_with_one_waiting(world)
+    await world.service.fail(world.alex, claim.task_id, claim.lease_id, "supplier down")
+    assert [b["generation"] for b in world.wakes()] == [1, 2]
+
+
+async def test_a_release_pings_for_the_oldest_queued_task_the_released_one_included(world):
+    await world.target()
+    claim = await world.claimed()
+    await world.service.release(world.alex, claim.task_id, claim.lease_id)
+    assert world.tasks.tasks[claim.task_id].status is S.QUEUED
+    assert [b["generation"] for b in world.wakes()] == [1, 2]
+
+
+async def test_no_ping_after_a_submit_while_another_task_of_the_worker_is_still_leased(world):
+    await world.target()
+    first = await world.claimed()
+    await world.create()
+    second = await world.service.claim(world.alex)
+    assert second is not None and second.task_id != first.task_id
+    await world.create()                     # a third waits in the queue
+    await world.service.submit(world.alex, first.task_id, first.lease_id, "Kit B waters evenly.")
+    assert [b["generation"] for b in world.wakes()] == [1]
+
+
+async def test_a_worker_without_a_target_is_not_pinged_after_a_submit(world):
+    claim, _ = await _claimed_with_one_waiting(world)
+    await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
+    assert world.wakes() == [] and world.worker().wake_generation == 0
+
+
+async def test_a_failure_while_looking_for_the_next_task_never_fails_the_submit(world, monkeypatch):
+    await world.target()
+    claim, pinged = await _claimed_with_one_waiting(world)
+
+    async def broken(*args: Any) -> list:
+        raise RuntimeError("store down")
+    monkeypatch.setattr(world.tasks, "queued_candidates", broken)
+    receipt = await world.service.submit(world.alex, claim.task_id, claim.lease_id, "Kit B waters evenly.")
+    assert receipt.replay is False and world.tasks.tasks[claim.task_id].status is S.DONE
+    assert len(world.wakes()) == pinged

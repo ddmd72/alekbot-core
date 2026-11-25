@@ -214,8 +214,9 @@ kind's precondition, so a stale timer changes nothing. A timer further than Clou
 **Wake-up.** A worker with a target is pinged when work appears, instead of polling. When a task becomes `queued` (a
 reminder create or `$task send`) and it is the worker's oldest queued task, and no task of the worker holds an
 unexpired lease (the worker is draining), the service moves the worker's `wake_generation` on and enqueues
-`external_task_wake` for that generation; a lease timer that re-queues a task pings the same way. A held task never
-pings. `ExternalTaskWakeTask` calls `on_wake`, which re-reads the worker (a changed generation, a cleared target or no
+`external_task_wake` for that generation; a lease timer that re-queues a task pings the same way, and so does a worker that submits, fails or releases a task
+while others of its tasks are queued (`_wake_for_next`: a ping for the worker's oldest queued task, under the same
+lease check; a replayed submit does not ping again). A held task never pings. `ExternalTaskWakeTask` calls `on_wake`, which re-reads the worker (a changed generation, a cleared target or no
 queued work sends nothing), decrypts the target and POSTs `{"event": "tasks_available", "worker": <worker id>}` through
 `OutboundWebhookPort`: no task text, title, label or count. A 5xx or a timeout is retried by Cloud Tasks up to
 `WAKE_MAX_ATTEMPTS`; a guard refusal, a 3xx or a 4xx is final and the owner gets one literal notice naming the label and
