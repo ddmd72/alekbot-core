@@ -115,9 +115,10 @@ class TestTelegramSendLongText:
         await ch.send_long_text(text)
 
         ch.send_chunked_message.assert_not_awaited()
-        # Split into >= 2 real messages; first one is content, not a marker.
-        assert ch.send_message.await_count >= 2
-        first_arg = ch.send_message.await_args_list[0].args[0]
+        # Split into >= 2 real messages posted to the bot; first one is content, not a marker.
+        ch.bot.edit_message_text.assert_not_awaited()
+        assert ch.bot.send_message.await_count >= 2
+        first_arg = ch.bot.send_message.await_args_list[0].kwargs["text"]
         assert first_arg.startswith("C") and "📩" not in first_arg
 
     @pytest.mark.asyncio

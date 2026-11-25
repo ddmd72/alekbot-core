@@ -11,6 +11,7 @@ from slack_sdk.errors import SlackApiError
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
+from ...domain.link_previews import link_previews_allowed
 from ...ports.localization_port import LocalizationPort
 from ...utils.file_conversion import safe_temp_suffix
 from ...utils.logger import logger
@@ -159,6 +160,17 @@ class SlackResponseChannel(ResponseChannel):
         Returns:
             Slack message response object
         """
+        return await self._post_message(text, thread_id, link_list)
+
+    async def _post_message(
+        self,
+        text: str,
+        thread_id: Optional[str] = None,
+        link_list: Optional[list] = None,
+        previews_allowed: Optional[bool] = None,
+    ) -> Any:
+        """Post one message. `previews_allowed` is the whole answer's link-preview decision when the caller posts a
+        part of a longer answer; None means this message is the whole answer and decides on its own text."""
         try:
             # Resolve link anchors before platform formatting so <url|title> survives _format_for_platform
             text = self._resolve_links_slack(text, link_list)
@@ -167,11 +179,16 @@ class SlackResponseChannel(ResponseChannel):
             if len(formatted) > SLACK_MAX_MESSAGE_LENGTH:
                 formatted = formatted[:SLACK_MAX_MESSAGE_LENGTH] + self._ui_string(UIMessage.RESPONSE_TRUNCATED_SUFFIX)
             
+            if previews_allowed is None:
+                previews_allowed = link_previews_allowed(formatted)
+            # Allowed previews add no kwargs: the call keeps its default shape.
+            no_unfurl = self._no_unfurl(previews_allowed)
             response = await self.client.chat_postMessage(
                 channel=self.channel_id,
                 text=formatted,
                 thread_ts=thread_id,
-                mrkdwn=True
+                mrkdwn=True,
+                **no_unfurl,
             )
             # Normalize: when initialized with a user ID (U...), Slack auto-opens the DM
             # and returns the actual channel ID (D...) in response['channel'].
@@ -184,6 +201,11 @@ class SlackResponseChannel(ResponseChannel):
             logger.error(f"❌ [SlackResponseChannel] Failed to send message: {e}")
             raise
     
+    @staticmethod
+    def _no_unfurl(previews_allowed: bool) -> Dict[str, Any]:
+        """Extra `chat.postMessage` kwargs: none when previews are allowed, so the call keeps its default shape."""
+        return {} if previews_allowed else {"unfurl_links": False, "unfurl_media": False}
+
     async def send_reply(self, text: str, to_message_id: str) -> Any:
         """Post `text` literally (see `send_literal`) in the thread of the message `to_message_id` (its `ts` is the
         thread parent)."""
@@ -198,10 +220,12 @@ class SlackResponseChannel(ResponseChannel):
         if not chunks:
             raise ValueError("a literal message needs text")
         first = None
+        no_unfurl = self._no_unfurl(link_previews_allowed(text))
         try:
             for chunk in chunks:
                 response = await self.client.chat_postMessage(
                     channel=self.channel_id, text=escape_literal(chunk), thread_ts=to_message_id, mrkdwn=False,
+                    **no_unfurl,
                 )
                 if response.get("channel"):
                     self.channel_id = response["channel"]  # a user id opened a DM: later calls need the real channel id
@@ -262,6 +286,7 @@ class SlackResponseChannel(ResponseChannel):
         chunks = self._resolve_and_split(text, link_list)
         if not chunks:
             return
+        previews_allowed = link_previews_allowed(self._format_for_platform(self._resolve_links_slack(text, link_list)))
 
         if len(chunks) == 1:
             await self.update_message(message_id, chunks[0])
@@ -271,7 +296,7 @@ class SlackResponseChannel(ResponseChannel):
 
         thread_ts = thread_id if thread_id else message_id
         for chunk in chunks:
-            await self.send_message(chunk, thread_ts)
+            await self._post_message(chunk, thread_ts, previews_allowed=previews_allowed)
 
     async def send_long_text(
         self, text: str, link_list: Optional[list] = None, thread_id: Optional[str] = None
@@ -302,9 +327,10 @@ class SlackResponseChannel(ResponseChannel):
         chunks = self._split_into_chunks(formatted, SLACK_CHUNK_SIZE)
         if not chunks:
             return
+        previews_allowed = link_previews_allowed(formatted)
         await self.update_message(status_message_id, chunks[0])
         for chunk in chunks[1:]:
-            await self.send_message(chunk)  # no thread_id → top-level
+            await self._post_message(chunk, previews_allowed=previews_allowed)  # no thread_id → top-level
 
     async def send_rich_content(self, content: RichContent, thread_id: Optional[str] = None) -> Any:
         """
@@ -700,8 +726,9 @@ class SlackResponseChannel(ResponseChannel):
         await self.send_message(header)  # no thread_id → top-level, stays in main feed
         if not text.strip():
             return  # a rich-content-only answer: the caller delivers the content next
+        previews_allowed = link_previews_allowed(self._format_for_platform(self._resolve_links_slack(text, link_list)))
         for chunk in self._resolve_and_split(text, link_list):
-            await self.send_message(chunk)
+            await self._post_message(chunk, previews_allowed=previews_allowed)
 
     async def on_long_turn(self) -> None:
         """Fire the long-turn hook (once) — e.g. release a held thread lock."""
