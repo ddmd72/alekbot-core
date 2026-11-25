@@ -561,8 +561,25 @@ class MCPAuthorizationService:
         """The worker's live OAuth grants (an unrevoked, unexpired refresh token), oldest grant first. The client name
         is the registered one (its client id when the client is gone). Does not check that the worker is the user's:
         the caller does."""
+        tokens = await self._repo.list_worker_grants(user_id, worker_id, datetime.now(timezone.utc))
+        return await self._grants_of(tokens)
+
+    async def resource_grants(self, user_id: str, resource: MCPResource) -> List[WorkerGrant]:
+        """The user's live OAuth grants of `resource` (the memory inbox's connected apps in the Cabinet), oldest grant
+        first, shaped as `worker_grants`. Only tokens that carry the resource's scope count; a resource this server does
+        not serve has none."""
+        uri = self._uris.get(resource)
+        scope = self._scope_of.get(resource)
+        if uri is None or scope is None:
+            return []
+        tokens = await self._repo.list_resource_grants(user_id, uri, datetime.now(timezone.utc))
+        return await self._grants_of([t for t in tokens if scope in t.scopes])
+
+    async def _grants_of(self, tokens: List[MCPRefreshToken]) -> List[WorkerGrant]:
+        """The latest token of each grant (tokens without a grant id cannot be revoked by grant: skipped), with the
+        client's registered name (its client id when the client is gone), oldest grant first."""
         latest: Dict[str, MCPRefreshToken] = {}
-        for token in await self._repo.list_worker_grants(user_id, worker_id, datetime.now(timezone.utc)):
+        for token in tokens:
             if not token.grant_id:
                 continue
             held = latest.get(token.grant_id)

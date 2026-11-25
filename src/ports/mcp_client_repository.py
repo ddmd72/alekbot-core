@@ -123,6 +123,12 @@ class MCPClientRepository(ABC):
         of other workers are never returned; an unknown worker answers []. Order is unspecified."""
 
     @abstractmethod
+    async def list_resource_grants(self, user_id: str, resource: str, now: datetime) -> List[MCPRefreshToken]:
+        """Every refresh token of `user_id` whose `resource` is that canonical resource URI, with `revoked_at` null and
+        `expires_at` > now: the live tokens of the user's grants of that resource (the memory inbox's connected apps).
+        Other users' tokens and other resources' tokens are never returned; order is unspecified."""
+
+    @abstractmethod
     async def revoke_grant(self, user_id: str, grant_id: str, now: datetime) -> int:
         """Set revoked_at to `now` on every refresh token of `user_id` with that `grant_id` that is not revoked yet, in
         one transaction, and return how many it revoked; the grant then ends at its next refresh, and `has_active_grant`

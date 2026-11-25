@@ -303,6 +303,11 @@ class FirestoreMCPClientRepository(MCPClientRepository):
                                                                                          worker_id).get()]
         return [t for t in tokens if t.user_id == user_id and t.worker_id == worker_id and t.expires_at > now]
 
+    async def list_resource_grants(self, user_id: str, resource: str, now: datetime) -> List[MCPRefreshToken]:
+        tokens = [self._refresh_from_fs(doc.to_dict()) for doc in await self._unrevoked(user_id, "resource",
+                                                                                         resource).get()]
+        return [t for t in tokens if t.user_id == user_id and t.resource == resource and t.expires_at > now]
+
     async def _revoke_matching(self, user_id: str, field: str, value: str, now: datetime) -> int:
         query = self._unrevoked(user_id, field, value)
 
