@@ -9,6 +9,7 @@ DELETE /api/gmail/disconnect
 DELETE /api/tasks/disconnect
 DELETE /api/tasks/microsoft/disconnect
 DELETE /api/user/link-platform
+DELETE /api/user/memory-inbox/apps/<grant_id>
 DELETE /api/user/reminders/<note_id>
 GET /
 GET /alek.jpg
@@ -37,6 +38,8 @@ GET /api/user/invite-codes
 GET /api/user/language
 GET /api/user/location
 GET /api/user/memory-inbox
+GET /api/user/memory-inbox/apps
+GET /api/user/memory-inbox/settings
 GET /api/user/passkeys
 GET /api/user/platforms
 GET /api/user/reminders
@@ -162,6 +165,7 @@ PUT /api/gmail/auto-index
 PUT /api/gmail/daily-review
 PUT /api/user/deep-research
 PUT /api/user/location
+PUT /api/user/memory-inbox/settings
 PUT /api/user/reminders/<note_id>
 PUT /api/user/timezone
 PUT /api/user/voice-languages
