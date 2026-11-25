@@ -6,9 +6,9 @@
 ## Context
 
 Slack unfurls every link of a new `chat.postMessage` (probed: 3 links gave 3 attachments; with `unfurl_links=False,
-unfurl_media=False`, none). A long answer split into chunks shows previews under each chunk; one real answer had 4 links
-in its first chunk, so 4 preview cards sat in the middle of the text. Telegram shows one preview per message, so 3 chunks
-gave 3 previews. `chat.update` never unfurls (probed: 0 attachments after 40 s, whatever the original post's flags), so
+unfurl_media=False`, none). A long answer split into chunks shows previews under each chunk, so a
+list of links puts a wall of preview cards in the middle of the text. Telegram shows one preview per message, so each
+chunk with a link gets its own preview. `chat.update` never unfurls (probed: 0 attachments after 40 s, whatever the original post's flags), so
 only new posts need a decision. Telegram shows previews on edits too.
 
 ## Decision
