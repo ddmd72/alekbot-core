@@ -730,6 +730,23 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}fact_review_state"
 
     @property
+    def memory_inbox_collection(self) -> str:
+        """
+        The memory inbox (MCP_MEMORY_SUBMISSIONS_RFC §6.1): the submissions outside assistants sent and the candidates triage
+        made of them, two kinds under one `status` field. A closed record carries `purge_after`, the collection's TTL
+        policy field; no field is named `expires_at`. Dev: development_memory_inbox
+        """
+        return f"{self.firestore_collection_prefix}memory_inbox"
+
+    @property
+    def memory_inbox_state_collection(self) -> str:
+        """
+        The memory inbox's state, one per user, doc id = user id (MCP_MEMORY_SUBMISSIONS_RFC §6.2): the triage and final
+        rhythm and the day's received count. No TTL policy and no field named `expires_at`. Dev: development_memory_inbox_state
+        """
+        return f"{self.firestore_collection_prefix}memory_inbox_state"
+
+    @property
     def long_turns_collection(self) -> str:
         """
         Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns

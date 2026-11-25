@@ -249,3 +249,8 @@ class UIMessage(Enum):
     FACTS_PIN_RESET_CANCELLED = "facts_pin_reset_cancelled"
     FACTS_PIN_NO_RESET_PENDING = "facts_pin_no_reset_pending"
     FACTS_PIN_USAGE = "facts_pin_usage"
+    # The memory inbox's notice after a triage that made new candidates (MCP_MEMORY_SUBMISSIONS_RFC §11): a count only,
+    # never a candidate's text. `{source}` is the one outside assistant they all came from (untrusted text, the
+    # registered client's name); without one, the generic wording names no source.
+    MEMORY_INBOX_CANDIDATES = "memory_inbox_candidates"
+    MEMORY_INBOX_CANDIDATES_FROM = "memory_inbox_candidates_from"

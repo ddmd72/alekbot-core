@@ -42,6 +42,7 @@ def test_declared_contains_the_fields_of_every_surface():
     for key in (
         "consolidation:update_fact.updates.metadata",
         "consolidation_review:update_fact.payment.paid",
+        "consolidation_triage:record_candidate.submission_ids",
         "notes:create_self_reminder.complexity",
         "tasks:update_task.recurrence.days_of_week",
         "smart_local:draft_skill.files[].from_file",
@@ -56,8 +57,8 @@ def test_declared_contains_the_fields_of_every_surface():
     ):
         assert key in keys, key
     assert "smart_local:draft_skill.files[]" not in keys            # an array of objects has no path of its own
-    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "external_tasks", "drive",
-                        "drive_notes", "delegate")
+    assert IN_SCOPE == ("consolidation", "consolidation_review", "consolidation_triage", "notes", "tasks", "smart_local",
+                        "external_tasks", "drive", "drive_notes", "delegate")
 
 
 def test_every_read_only_tool_and_field_is_declared():

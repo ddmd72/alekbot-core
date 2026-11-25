@@ -109,6 +109,7 @@ def _cabinet(p: Probe):
         # reviewer edit, facts S4 T11a/T11b: main.py passes all three (the review queue, the answers, the button labels)
         fact_review_store=w("fact_review_store"), fact_answer_service=w("fact_answer_service"),
         localization=w("localization"), connectors=ConnectorRegistry(),
+        memory_inbox=w("memory_inbox"),   # memory inbox U5: main.py passes it (the three memory-inbox routes)
     ), {}
 
 
@@ -372,6 +373,10 @@ INPUT: Dict[Tuple[str, str], dict] = {
                                  "json": {"latitude": 41.1, "longitude": -8.6, "accuracy": 40}},
     # A well-formed batch (Facts S4 T11b), so an anonymous one is refused by the gate, not by the body check.
     ("POST", "/api/user/facts/review-answers"): {"json": {"answers": [{"question_id": "q1", "answer": "still_true"}]}},
+    # Memory inbox U5: a well-formed edit, so an anonymous confirmation is refused by the gate, not by the body check.
+    ("POST", "/api/user/memory-inbox/<candidate_id>/confirm"): {"path": {"candidate_id": "c1"},
+                                                                 "json": {"text": "Clara booked the Coimbra weekend"}},
+    ("POST", "/api/user/memory-inbox/<candidate_id>/reject"): {"path": {"candidate_id": "c1"}},
 }
 
 

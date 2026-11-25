@@ -313,4 +313,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_CANCELLED.value: "The facts PIN reset is cancelled. Your PIN stays as it was.",
     UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "No facts PIN reset is pending.",
     UIMessage.FACTS_PIN_USAGE.value: "Send `$pin cancel` to cancel a pending facts PIN reset.",
+    UIMessage.MEMORY_INBOX_CANDIDATES.value: 'New items from your assistants wait for your check: {count}. They are in the Cabinet, under Memory: nothing reaches your memory unless you confirm it.',
+    UIMessage.MEMORY_INBOX_CANDIDATES_FROM.value: 'New items from *{source}* wait for your check: {count}. They are in the Cabinet, under Memory: nothing reaches your memory unless you confirm it.',
 }

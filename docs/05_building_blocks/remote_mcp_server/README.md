@@ -8,6 +8,7 @@ covers:
   src/composition/drive_link_setup.py
   src/composition/voice_mcp_setup.py
   src/composition/tasks_mcp_setup.py
+  src/composition/memory_inbox_mcp_setup.py
   src/web/mcp_consent_app.py
   src/web/mcp_dispatcher.py
   src/web/mcp_error_logger.py
@@ -26,6 +27,9 @@ covers:
   src/domain/voice_mcp_token.py
   src/domain/external_task_mcp_contract.py
   src/domain/external_task_mcp_result.py
+  src/domain/memory_inbox_mcp_contract.py
+  src/domain/memory_inbox_mcp_result.py
+  src/domain/memory_inbox_items.py
   src/ports/media_stream_port.py
   src/adapters/http_media_stream_adapter.py
 -->
@@ -38,7 +42,7 @@ exocortex as a tool provider. Claude has the better chat experience but knows no
 has the memory. The connector closes that gap at conversation time, in one direction: the client calls in, the
 exocortex never calls out through this block.
 
-One authorization server fronts three protected resources, each its own FastMCP app with its own scope:
+One authorization server fronts four protected resources, each its own FastMCP app with its own scope:
 
 - **facts**, `/mcp`, scope `user_context`: the tool `get_user_context(queries)`. It hands the phrases to the memory
   search agent (`FactsMemoryAgent`, the same entry point Smart, Quick and Lelik use) and returns the matching facts as
@@ -52,6 +56,10 @@ One authorization server fronts three protected resources, each its own FastMCP 
   worker keys (a CLI client or a script sends one as the bearer) and OAuth access tokens bound to one worker picked at
   consent (a claude.ai custom connector) (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4). The queue itself is
   [`external_task_queue`](../external_task_queue/README.md).
+- **memory inbox**, `/memory-inbox-mcp`, scope `memory_submit`: one write-only tool, `submit_user_information(items)`, through
+  which an outside assistant sends what it learned about the owner. It reads nothing back and writes nothing a model reads
+  as the owner's words: items wait as `received` submissions the owner checks one by one in the Cabinet before any can become
+  a fact (`MCP_MEMORY_SUBMISSIONS_RFC.md`; the store, triage and final pass are in [`memory`](../memory/README.md) §5.7).
 
 Every tool call of every app reads the token's user fresh (`InactiveUserCheck`) and answers the tool error
 `ACCOUNT_LOCKED_TOOL_ERROR` for a locked account (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8): an access token issued before
@@ -117,7 +125,7 @@ TTLs (access token, refresh token, code, consent request) are `AuthConfig.mcp_*_
 `main.py` builds the facts app (`src/composition/mcp_setup.py::build_mcp_components`), then the drive app, then the
 tasks app, then wraps them and the Quart app in one plain ASGI callable (`src/web/mcp_dispatcher.py::build_shared_asgi`,
 `build_mcp_parent_asgi`). `mcp_owner` decides by path: tasks paths first (`/tasks-mcp`, its protected-resource
-metadata), then drive paths (`/drive-mcp`, its protected-resource metadata), then the facts set (`/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, the two `.well-known` families),
+metadata), then inbox paths (`/memory-inbox-mcp`, its metadata), then drive paths (`/drive-mcp`, its protected-resource metadata), then the facts set (`/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, the two `.well-known` families),
 everything else to Quart, including `/mcp/consent`, `/d/<id>` and `/auth/*`. The lifespan enters every built FastMCP
 session manager. `McpErrorLogger` wraps each app but acts only on `/mcp` and `/mcp/`: it logs why they answered 400 or above (401 excluded), without the `Authorization`
 header.
@@ -128,7 +136,9 @@ routes at absolute paths; `resource_server_url` is `/mcp`, so the protected-reso
 connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` falls through to Quart as a 404, and the
 `/d/` route is registered only when the drive app built. The tasks app is built the same way
 (`build_tasks_mcp_or_none`): no task queue, no prompt token store or a failed first load of its texts leaves it out and
-`/tasks-mcp` answers 404.
+`/tasks-mcp` answers 404. The inbox app (`src/composition/memory_inbox_mcp_setup.py::build_memory_inbox_mcp_for`) is built
+the same way, last: no task queue (no inbox), no prompt token store or a failed first load of its texts leaves it out and
+`/memory-inbox-mcp` answers 404.
 
 ### Authorization (every resource)
 
@@ -136,9 +146,10 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
    metadata; the authorization-server metadata is served by the facts app for both.
 2. **Registration** (`/register`, the SDK). `MCPSdkOAuthProvider.register_client` →
    `MCPAuthorizationService.save_client`: every redirect URI must be https (http only on loopback) and its host must be
-   one of `_ALLOWED_REDIRECT_HOSTS` or a subdomain. The client may register `user_context`, `drive_read` and
-   `external_tasks`; none given registers `user_context` and `drive_read` only (`_facts_auth_settings`: the tasks scope
-   is in `valid_scopes`, never in `default_scopes`), so an existing connector never gains the task queue. claude.ai
+   one of `_ALLOWED_REDIRECT_HOSTS` or a subdomain. The client may register `user_context`, `drive_read`,
+   `external_tasks` and `memory_submit`; none given registers `user_context` and `drive_read` only
+   (`_facts_auth_settings`: the tasks and inbox scopes are in `valid_scopes`, never in `default_scopes`), so an existing
+   connector never gains the task queue or a write path into memory; the owner adds the inbox as a new connector. claude.ai
    registers the one scope the resource's protected-resource metadata advertises (`scopes_supported`).
 3. **Authorize** (`/authorize`). `build_consent_redirect` requires a registered `redirect_uri`, PKCE with `S256`, binds
    resource and scope (`src/domain/mcp_resource.py::bind_resource`, below), requires the scope to be registered for the
@@ -148,7 +159,9 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
    gets the drive wording (`is_drive_grant`). A tasks grant (`is_tasks_grant`) gets the task wording and a radio list of
    the user's active workers (`ExternalTaskService.list_workers`; labels and descriptions escaped, none picked in
    advance); with no worker, the flag off, a locked account or no task queue the page says why and offers Deny only.
-   Its POST reads the workers again and answers 400 with no code for a `worker_id` that is not one of them. On approve, `issue_auth_code_for_consent` stamps the Cabinet user and
+   Its POST reads the workers again and answers 400 with no code for a `worker_id` that is not one of them. An inbox grant
+   (`is_memory_inbox_grant`) gets its own heading and wording: the connector only sends records the owner checks one by
+   one in the Cabinet (Memory, From your assistants), and it cannot read memory, drives or tasks; no picker, no flag. On approve, `issue_auth_code_for_consent` stamps the Cabinet user and
    account onto a new code and redirects to the client with `code` and `state`; deny redirects with
    `error=access_denied`. The user who is logged into the Cabinet at the moment of Approve is the identity the token
    carries.
@@ -164,14 +177,17 @@ connector-text token, no file conversion) leaves `/mcp` up and `/drive-mcp` fall
    `aud` equal to the resource in canonical form (`canonical_resource`: lowercase scheme and host, no trailing slash).
    The drive verifier copies `gid` into the token it hands the tools; the facts one does not need it. The tasks
    verifier (below) sends every credential without the worker-key prefix here with `aud` = the tasks URI and copies
-   `gid` and `wid`; a token without `wid` is refused.
+   `gid` and `wid`; a token without `wid` is refused. The inbox verifier (`MemoryInboxTokenVerifier`) takes OAuth access tokens only, `aud` =
+   the inbox URI, and copies `gid`; a token of another resource and a voice token never verify there.
 
 **Resource and scope binding.** `bind_resource` is applied at authorize and again at refresh. With `resource` given it
 must canonicalise to a served resource's URI, every requested scope must be that resource's own, and no scope means the
 resource's own. Without `resource`, `drive_read` alone selects drive, `external_tasks` alone selects tasks, an empty or
 `user_context`-only request selects facts, and a mix or an unknown scope is refused. A token never carries an audience
 its scope does not belong to. The service serves the tasks resource only when its `scope_of` holds the tasks scope
-(composition's `SCOPE_OF` does); without it the tasks URI and scope are refused.
+(composition's `SCOPE_OF` does); without it the tasks URI and scope are refused. The inbox resource is served only when `scope_of` holds `memory_submit`
+(`memory_inbox_resource_uri`: the facts host, path `MEMORY_INBOX_PATH`; no second deploy key); a grant of it is an ordinary
+grant.
 
 **A grant of the tasks resource** (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4 "OAuth") is bound to one worker:
 `issue_auth_code_for_consent(..., worker_id)` refuses a tasks consent without a worker and any other consent with one,
@@ -257,6 +273,28 @@ every listing; the server instructions are served from the texts last read.
 - **Texts** come from `MCP_TASK_TOOL_TEXTS` and `MCP_TASK_RESULT_TEXTS`, loaded and validated as the drive texts; the
   key sets are `src/domain/external_task_mcp_contract.py`.
 
+### Memory inbox tool call
+
+`src/composition/memory_inbox_mcp_setup.py::build_memory_inbox_mcp_app` builds a fourth `TokenTextFastMCP`, a resource
+server only, with one tool listed with no read-only hint (it writes). The advertised `items` is an array of one inline
+object of four strings (`information` required; `basis`, `said_when`, `happens_when`), no advertised constraint; whatever
+the client sent is normalised first (`src/domain/memory_inbox_items.py`: an object, a string, a list of strings or a JSON
+string is accepted; caps cut and are counted, never refused). One call:
+
+1. user and account from the verified token, never from an argument;
+2. the account lock, read fresh (`ACCOUNT_LOCKED_TOOL_ERROR`);
+3. the texts (`MCP_MEMORY_INBOX_TOOL_TEXTS`, `MCP_MEMORY_INBOX_RESULT_TEXTS`, loaded and validated as the drive texts; key
+   sets in `src/domain/memory_inbox_mcp_contract.py`);
+4. the grant, **re-checked on every call** (`grant_allowed(user, gid)`: an active refresh token of the grant, the user
+   active and whitelisted), so a grant revoked in the Cabinet stores nothing from its next call; a token without `gid`
+   stores nothing; both answer the neutral `REFUSED` line;
+5. `MemoryInboxService.submit`, one transaction storing the items and counting the owner-local day (`RECEIVED_PER_DAY`).
+
+The only `isError` results are authentication, the locked account, a store failure and no usable item; a cut or an item
+over the day's cap is a success whose text names it. One span `mcp.memory_inbox.submit` and one
+`[MemoryInbox] submit user=<8> client=<8> items=… stored=… cut=… over_day=…` line: counts and ids, never submitted text.
+Lelik has no path to the tool (a voice token never verifies on this resource), and no Smart or voice agent reads the inbox.
+
 ### One-time download link
 
 `get_download_link(file_ref)` (and an open that is withheld as an image or an untranscribed recording, which prints
@@ -305,7 +343,9 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
   in the log). `isError` is only for authentication, a backend fault, or no phrases at all.
   `decisions/mcp_tool_schema_liberal_input.md`.
 - **claude.ai caches `tools/list` at registration.** A changed facts tool schema or description needs the connector
-  removed and re-added. A client that caches `tools/list` needs the same re-add to see new drive or tasks texts, which the server reads from tokens on each listing; a changed tasks tool parameter needs it too: a claude.ai
+  removed and re-added. The facts description's closing sentence (what memory returns is never sent back into it) is a code
+  constant, so it reaches a claude.ai user only after that re-add; the inbox tool's own texts come from tokens and follow the
+  same rule for a changed `items` schema. A client that caches `tools/list` needs the same re-add to see new drive or tasks texts, which the server reads from tokens on each listing; a changed tasks tool parameter needs it too: a claude.ai
   task connector keeps calling with the cached schema until it is removed and added again (a new grant, a new worker
   pick).
 - **No `Mount`.** Starlette's `Mount("/mcp")` does not match an exact `POST /mcp` and strips the prefix, which breaks
@@ -358,6 +398,8 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
   connector access, the link, wide results).
 - [`LELIK_VOICE_MCP_RFC.md`](../../10_rfcs/LELIK_VOICE_MCP_RFC.md): the voice token kind and the xAI session consumer.
 - [`EXTERNAL_TASK_QUEUE_RFC.md`](../../10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md) §5.4: the tasks resource.
+- [`MCP_MEMORY_SUBMISSIONS_RFC.md`](../../10_rfcs/MCP_MEMORY_SUBMISSIONS_RFC.md) §5: the memory inbox resource and its tool;
+  [`memory_inbox_external_submissions.md`](../../04_solution_strategy/decisions/memory_inbox_external_submissions.md).
 - [`mcp_tool_schema_liberal_input.md`](../../04_solution_strategy/decisions/mcp_tool_schema_liberal_input.md),
   [`secrets_at_rest_cipher_and_digest.md`](../../04_solution_strategy/decisions/secrets_at_rest_cipher_and_digest.md).
 - Deployment keys and the TTL runbook: [`07_deployment/README.md`](../../07_deployment/README.md) (`MCP_RESOURCE_URI`,
@@ -375,3 +417,4 @@ A second access-token kind for Lelik's own calls (`LELIK_VOICE_MCP_RFC` §5), fo
 - `src/services/drive_link_service.py::DriveLinkService`: issue and the fetch re-checks.
 - `src/services/voice_mcp_token_service.py::VoiceMcpTokenService`: mint, verify, revoke.
 - `src/composition/tasks_mcp_setup.py::build_tasks_mcp_app`: the tasks app, its key verifier and `_TaskCaller.run`.
+- `src/composition/memory_inbox_mcp_setup.py::build_memory_inbox_mcp_app`: the inbox app, its token verifier and the one call.

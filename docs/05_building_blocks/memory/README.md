@@ -3,6 +3,10 @@ audited: 2026-11-23
 covers:
   src/domain/fact_*.py
   src/domain/consolidation*.py
+  src/domain/memory_inbox.py
+  src/domain/memory_inbox_runs.py
+  src/domain/memory_inbox_triage_task.py
+  src/domain/memory_inbox_final_task.py
   src/domain/entities.py
   src/domain/stored_fact.py
   src/domain/memory_fact.py
@@ -26,6 +30,7 @@ covers:
   src/ports/consolidation_queue.py
   src/ports/memory_fact_draft_repository.py
   src/ports/memory_write_lease.py
+  src/ports/memory_inbox_repository.py
   src/ports/repository.py
   src/ports/biographical_cache_port.py
   src/ports/search_enrichment_port.py
@@ -50,6 +55,9 @@ covers:
   src/services/consolidation_service.py
   src/services/fact_*.py
   src/services/memory_fact_service.py
+  src/services/memory_inbox_service.py
+  src/services/memory_inbox_triage_pass.py
+  src/services/memory_inbox_final_pass.py
   src/services/overflow_routing_service.py
   src/services/search_enrichment_service.py
   src/services/interactive_choice_service.py
@@ -63,9 +71,12 @@ covers:
   src/composition/consolidation_model_setup.py
   src/composition/memory_search_setup.py
   src/composition/memory_setup.py
+  src/composition/memory_inbox_setup.py
   src/composition/session_routing_setup.py
   src/infrastructure/memory_fact_tools.py
   src/infrastructure/fact_review_scope.py
+  src/infrastructure/memory_inbox_triage_scope.py
+  src/web/cabinet_memory_inbox.py
   src/infrastructure/interactive_message_router.py
   scripts/consolidation/
   scripts/data_audit/
@@ -93,13 +104,14 @@ call-summary pair written into the primary channel's history, which is consolida
 **Links.** RFCs (design records; where they differ from this file, the code and this file win):
 `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md`, `docs/10_rfcs/CLUSTER_REVIEW_RFC.md`,
 `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md`, `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`,
-`docs/10_rfcs/FACT_PROFILE_RFC.md`, `docs/10_rfcs/FACT_LIFECYCLE_RFC.md`, `docs/10_rfcs/FACT_SEARCH_LIST_MODE_RFC.md`.
+`docs/10_rfcs/FACT_PROFILE_RFC.md`, `docs/10_rfcs/FACT_LIFECYCLE_RFC.md`, `docs/10_rfcs/FACT_SEARCH_LIST_MODE_RFC.md`,
+`docs/10_rfcs/MCP_MEMORY_SUBMISSIONS_RFC.md`.
 Decision records (`docs/04_solution_strategy/decisions/`): `fact_s1_defects.md`, `fact_versions_one_writer.md`,
 `fact_expiry_and_janitor.md`, `fact_review_and_owner_questions.md`, `standing_directives.md`,
 `directive_applicability_gate.md`, `memory_facts_owner_confirmed.md`, `consolidation_one_batch_per_task.md`,
 `consolidation_failed_batch_bounded.md`, `sonnet55_adaptive_thinking_stall.md`, `consolidation_provider_model_eval.md`,
 `router_prefetch_once_per_message.md`, `smart_deduplication_keep_duplicate_over_lost_detail.md`,
-`memory_telemetry.md`, `model_refresh_2026_10.md`.
+`memory_telemetry.md`, `model_refresh_2026_10.md`, `memory_inbox_external_submissions.md`.
 
 ## 0. How to answer questions about memory
 
@@ -129,6 +141,8 @@ Decision records (`docs/04_solution_strategy/decisions/`): `fact_s1_defects.md`,
 | What the Router prefetches before Smart answers | §4.4 |
 | What Lelik and the claude.ai connector (MCP) see | §4.6, §4.7 |
 | What `$memory save` does; why the bot never writes memory itself | §5.1 |
+| What an outside assistant (another AI tool the owner connected) can send to memory; who checks it; why a sent item did not become a fact, or when it will | §5.7, §7 |
+| What the inbox's daily triage and its final pass do, when each runs, and what the owner is asked in the Cabinet | §5.7 |
 | What the Cabinet fact page reads and changes | §4.8, §5.2 |
 | What `$consolidate` does | §5.4 |
 | What happens on a tool error, a bad enum value, a provider outage, the turn cap, a crash; what retries | §6 |
@@ -159,7 +173,9 @@ Decision records (`docs/04_solution_strategy/decisions/`): `fact_s1_defects.md`,
    over indexed mail (§3 steps 4–8).
 5. At the end the baseline cache is rebuilt, so the next message sees the new facts (§3 step 9).
 
-There is no other writer of facts in normal operation. The bot never saves facts itself (§5.1). The owner can invalidate
+There is no other writer of facts in normal operation. The bot never saves facts itself (§5.1). The one other path is the
+memory inbox (§5.7): what an outside assistant sent about the owner becomes facts only after the owner checks each item in
+the Cabinet, and only the inbox's final pass, a consolidator pass, writes them. The owner can invalidate
 a fact from the Cabinet (§5.2). A daily zero-LLM job, the janitor, only moves a fact whose expiry has passed from
 `current` to `stale` (§5.5). What becomes of a stale fact is decided by the **review pass** (§5.6): it brings the fact
 back, sets it aside, rewrites it as history, or asks the owner one question at a time in the primary chat. The owner's
@@ -184,7 +200,11 @@ are `EnvironmentConfig` properties (`src/config/environment.py::EnvironmentConfi
 | Review questions | `fact_review_questions_collection`, doc id = the question id | one question per fact (status, quoted text, queue place, posted message, the owner's reply and answer); a closed one carries `purge_after` | the review service, `FactAnswerService` (§5.6) |
 | Review messages | `fact_review_messages_collection` | the claim that lets one weekly digest go out per ISO week, and quote translations; both carry `purge_after` | the review service |
 | Review state | `fact_review_state_collection`, doc id = account id | when the review last ran or failed, offers per fact, the current question and today's send count, digest marks, alert marks, message language and labels | the janitor (enqueue and alert marks), the review service, `FactAnswerService` |
+| Memory inbox | `memory_inbox_collection` | one collection, two kinds of record under one `status`: submissions (`received` → `triaged` or `discarded`) and candidates (`candidate` → `confirmed` → `consolidated`, or `rejected`, `expired`); `purge_after` set when a record closes, never on an open one | the inbox service (an MCP tool call, the Cabinet's answers), the triage and final passes, the sweep (§5.7) |
+| Memory inbox state | `memory_inbox_state_collection`, doc id = user id | the rhythm: `last_triage_at`, `last_triage_failed_at`, `final_due_at`, `final_attempts`, `last_final_at` and the owner-local day's received count | the same writers (§5.7) |
 | Profile data | `confirmed_people_collection`, `profile_answers_collection`, `person_cards_collection` | the owner's confirmed people list, his answers to profile questions, the derived people cards (§3 step 9b) | `src/adapters/firestore_confirmed_people_repo.py`, `FactAnswerService` (profile answers), the profile step (cards) |
+
+The inbox's `purge_after` is its own TTL field (§5.7); the state collection has no TTL and no `expires_at`.
 
 **No TTL policy** may exist on the facts, janitor-day, line-mark, run-guard, review-state collections or any field named
 `expires_at` of facts: `expires_at` there is a decision to stale, not a deletion time. A test walks the tree and fails on
@@ -693,7 +713,7 @@ into a typed `PassCall` and renders the lines (no arguments, no fact text):
   returns no operations, the writes it made stay.
 - 📊 temporary: while `CONSOLIDATION_STATS_ALERTS` is on (`os.getenv`, wired in `src/composition/user_agent_factory.py`),
   every pass that ends with a report posts one line: pass label (`stage1`, `stage2a`, `stage2b`, `email`, `cluster`,
-  `review`), model, effort, turns, tool counts, writes, tool-error turns, seconds.
+  `review`, `inbox_triage`, `inbox`), model, effort, turns, tool counts, writes, tool-error turns, seconds.
 - **Abandoned refusals, 🚨 permanent, also with the stats line off.** A refused create or merge is abandoned when no later
   successful create or merge in the same pass answers it (same text, or on a cleanup pass a born-due refusal answered by
   the rewrite it asks for: a later merge of the same set, or a create with the same `directive` decision (and, when made from facts, the same
@@ -843,7 +863,9 @@ Alek. A failed cache read raises, and the call is not opened on an empty context
 
 `get_user_context(queries)` (`src/composition/mcp_setup.py`) hands the phrases to the token account's `FactsMemoryAgent`
 (§4.5), the same entry point as every other caller; no model and no Router in the connector itself. The answer is the same
-`format_search_result` text as `search_memory` returns (§4.5).
+`format_search_result` text as `search_memory` returns (§4.5). Its description ends with one sentence for a client that also
+holds the memory inbox connector (§5.7): what memory returns is already in memory and is never sent back into it, as it is
+or reworded, so a memory fed its own records does not confirm itself. Triage drops what it recognises as known (§5.7).
 
 ### 4.8 The Cabinet fact page
 
@@ -875,7 +897,8 @@ can show twice or be missed once at a page boundary; reload the list.
 ### 5.1 `propose_memory_facts` and `$memory save`
 
 The bot never writes facts. The consolidator reads every user message as the owner's own words, so a bot-written save let
-procedures and file notes become facts and directives (`docs/04_solution_strategy/decisions/memory_facts_owner_confirmed.md`).
+procedures and file notes become facts and directives (`docs/04_solution_strategy/decisions/memory_facts_owner_confirmed.md`). The owner-confirmed path for text that is not the owner's
+own words to this bot, an outside assistant's, is the memory inbox (§5.7), never this session pair.
 
 1. On interactive turns only, Smart has the local tool `propose_memory_facts` (`src/agents/core/smart_response_agent.py`).
    Up to `MAX_FACTS_PER_DRAFT` facts, each one line of at most `MAX_FACT_CHARS` plus a source
@@ -1195,6 +1218,71 @@ its claim and tries again at the next run.
 translation's write time plus its own retention (`src/domain/fact_review_quote_translation.py`); it exists only in storage. A Firestore TTL policy on it deletes them; without one they stay and the janitor's run-level 🚨 reports them. An
 open question never has one; the state document has none.
 
+
+### 5.7 The memory inbox: what outside assistants send
+
+The second owner-confirmed path into facts (`docs/10_rfcs/MCP_MEMORY_SUBMISSIONS_RFC.md`,
+`docs/04_solution_strategy/decisions/memory_inbox_external_submissions.md`). An outside assistant (Claude in claude.ai or
+Claude Code) learns things about the owner in its own conversations that never reach this bot. It sends them to a
+write-only MCP tool; they wait as submissions; a daily triage condenses the worthwhile ones into candidates; the owner
+checks each candidate in the Cabinet; one hour after the owner's last confirmation a final consolidator pass is the only writer
+of facts. External text never enters a chat session, as a user-role message or otherwise, so none of it can be read as the
+owner's own words before the owner has attested it.
+
+**Intake.** The fourth MCP resource, `/memory-inbox-mcp`, scope `memory_submit` (registrable, never a default scope), has
+one tool, `submit_user_information(items)` (remote MCP map: `docs/05_building_blocks/remote_mcp_server/README.md`). The
+account comes from the token. Items are normalised liberally (`src/domain/memory_inbox_items.py`): `information` required,
+`basis` (`said` | `document` | `inferred`, anything else `inferred`), `said_when`, `happens_when`; caps cut and never fail
+(`MAX_ITEMS_PER_CALL` 20, `MAX_INFORMATION_CHARS` 1000, `MAX_WHEN_CHARS` 200). `RECEIVED_PER_DAY` (100) per user per
+owner-local day is counted on the state document inside the write's transaction; items past it are not stored and not an
+error. `MemoryInboxService.submit` (`src/services/memory_inbox_service.py`) stores them `received`.
+
+**Store.** One collection, two kinds of record under one `status` (`src/domain/memory_inbox.py`); the port is
+`src/ports/memory_inbox_repository.py`, the adapter `src/adapters/firestore_memory_inbox_repository.py`. Every status
+change is a precondition write, so an expiry and the owner's "True" on one candidate never overwrite each other.
+`purge_after` (the TTL field) is set when a record closes: a triaged or discarded submission 30 days after triage, an
+`expired` candidate 30 days, a `rejected` or `consolidated` one 180 days; an open record has none and no field is named
+`expires_at`. Indexes: `(user_id, status, received_at)`, `(user_id, status, created_at desc)`, `(status, answer_by)`.
+
+**Triage** (`MemoryInboxTriagePass`, task `triage_memory_inbox`, profile `consolidation_inbox_triage`, pass label
+`inbox_triage`). At most once per interval (`memory_inbox_triage_interval_days`, default 1, owner-local calendar days;
+user, then account, then system) and only when something is `received`. Under the account's memory-write lease it sends
+up to `TRIAGE_BATCH` (40) submissions per pass, at most `TRIAGE_PASSES` (3) passes, with the open candidates and the
+newest `TRIAGE_SHOWN_CAP` (100) answered ones, as JSON objects (a submitted text stays inside its own object). The model
+has two decisions through `MemoryInboxTriageScope`: `record_candidate` (one thought, at most `CANDIDATE_MAX_WORDS` 60,
+refused with its count, never cut; a relation `new`, `refines`, `contradicts` or `duplicates` to a current fact of the
+account) and `discard_submissions` (`known`, `waiting`, `answered_before`, `not_about_user`, `trivial`, `unclear`). Triage
+writes no fact and never edits, merges or closes an open candidate. The decisions the scope holds are written by code
+whatever happened to the agent; a submission offered `TRIAGE_MAX_OFFERS` (2) times with no decision becomes `discarded`
+`undecided`, so a poison batch ends instead of looping. When candidates were made the owner gets one literal notice
+(`notify_ui_notice`, a count and the client's name, never a candidate's text, not in history).
+
+**The owner's check.** Cabinet, Memory, "From your assistants" (`src/web/cabinet_memory_inbox.py`, behind the facts PIN):
+one card at a time, text, `happens_when`, `said_when` and `basis` editable, then "True" or "Not true". "True" attests
+authenticity only; it is not an order to save, and there is no batch approval. A candidate unanswered for `ANSWER_WINDOW`
+(30 days) is `expired` by the sweep. A confirmation sets `final_due_at` to an hour ahead and enqueues one final task named
+by that value.
+
+**Final pass** (`MemoryInboxFinalPass`, task `consolidate_memory_inbox`, profile `consolidation_inbox`, label `inbox`).
+`memory_inbox_final` finds `now < final_due_at` and answers `not_due` (a later confirmation moved it, so a burst of "True"
+runs once); otherwise it takes the lease, runs the pass, and runs the profile step (§3 step 9b) inside the lease when the
+pass wrote. The pass sends the `confirmed` candidates oldest receipt first, `FINAL_BATCH` (20) per agent task; the
+consolidator reads each as the owner's own statement and applies every normal fact rule (dedup, SCD2, conflicts, expiry),
+and may still discard one. `reported_date` is the candidate's `said_when`, else the receipt time, never the confirmation
+time, bounded to the oldest receipt minus `SAID_WHEN_LOOKBACK` (365 days) up to the newest receipt (§2.7). A batch that
+ended with a report marks its candidates `consolidated`; a candidate confirmed after the pass read its batch is not
+marked and waits for its own run. A failed batch leaves them `confirmed` with one more attempt, the runner asks for one
+more run an hour later, and a candidate at `FINAL_MAX_ATTEMPTS` (3) becomes `consolidated` with outcome `gave_up` and one 🚨
+(ids and count).
+
+**Sweep.** `memory_inbox_sweep`, Cloud Scheduler daily 08:30 Europe/Madrid, no model and no lease: it expires candidates,
+enqueues one triage per due user (named by the owner-local date) and, as a backstop, one final run for a user whose
+`final_due_at` passed more than `FINAL_BACKSTOP_GRACE` (1 h) ago while confirmed candidates still wait. Tasks, keys and
+deadlines: `docs/07_deployment/SCHEDULERS.md`. Wiring: `src/composition/memory_inbox_setup.py` (the passes, built in
+`build_memory`) and `build_worker_tasks`; without a task queue there is no inbox and the three task types answer 501.
+
+**Logs** `[MemoryInbox] …` carry ids and counts, never a submission's or candidate's text, and never a time field's text.
+
 ---
 
 ## 6. Outcomes: tool calls and failures
@@ -1240,6 +1328,10 @@ open question never has one; the state document has none.
 | a question cannot be sent | pair not stored: back to the front of the queue, nothing posted; post failed: a "not delivered" pair, back to the front, no more that day | the next day's run |
 | a Slack click arrives with a bad signature, or the queue is down | 401 with nothing parsed; 503 or 500 when the task is not queued | the owner clicks again |
 | the digest is not delivered | the claim is released, the next run tries again | yes |
+| an inbox triage pass raises, times out or uses all its turns | the run is `failed`, `last_triage_failed_at` set, decisions already written stand, every sent submission gets one more offer; at `TRIAGE_MAX_OFFERS` it is `discarded` `undecided` | the next day's sweep |
+| an inbox triage or final task finds the lease taken | one deferral task per account and 120 s bucket | yes |
+| a final pass fails or ends only partly | the candidates stay `confirmed` with one more attempt; one more task an hour later while the burst's retries are below `FINAL_MAX_ATTEMPTS`; at the cap `consolidated`, outcome `gave_up`, one 🚨 | then the sweep's backstop |
+| the owner's "True" and the sweep's expiry meet on one candidate | the store's precondition lets one win; the other changes nothing | no |
 
 ---
 
@@ -1278,6 +1370,11 @@ supersedes it; a plan whose date passed is rewritten as history on evidence or i
 parts of one plan folded into one question); what the owner does not answer for `QUESTION_TIMEOUT` falls back as its
 question says, and a weekly digest lists what was set aside.
 
+**Something an outside assistant learned.** Stored `received` at once; nothing searchable, nothing in a prompt. The next
+08:30 (Europe/Madrid) sweep enqueues a triage when the owner's interval has elapsed; the owner then gets one notice and finds the
+candidates in the Cabinet. Each "True" starts an hour's wait; one hour after the last, the final pass writes the facts, and
+they are searchable from then (§5.7). A candidate the owner leaves unanswered for 30 days expires; a "Not true" ends it.
+
 **A directive.** Consolidated with its batch. Stage 1 decides `directive: true` only if the rule is about agent behaviour
 and holds for most requests; otherwise it is an ordinary fact reached by search. Stage 2b of the same run already sees it and
 may rewrite, merge or demote it. It is in `standing_directives` from the next message after the run.
@@ -1300,7 +1397,9 @@ when mail is pending, so a batch with nothing new still pays for two loops); ret
 `batch_size` messages per channel. The janitor calls no model. The review pass is one more model loop with a large fixed
 prompt, run only when a fact is stale or a reply in words waits; a digit, a button, a Cabinet click, a send, a digest and a
 timeout fallback with nothing to look at cost no model call. The profile step is one structured call per fact, capped per
-run by `FACT_PROFILER_MAX_PER_RUN`.
+run by `FACT_PROFILER_MAX_PER_RUN`. The inbox adds two loops: one triage per due user per day and only when something arrived (up to three passes of
+40 submissions), and one final run per burst of confirmations; an intake call, the Cabinet's answers, the sweep and a
+final run with nothing confirmed cost no model call (§5.7).
 
 **Where it is recorded.** Every model call goes through `BaseAgent._call_llm`, which bills the account per model that ran
 (`docs/04_solution_strategy/decisions/billing_execution_scoped_ledger.md`) and writes a `prompt_content` row per turn
@@ -1493,5 +1592,6 @@ vocabulary and the echo-trap exception. The review pass cannot run without its p
 | The profile step | `src/services/fact_profile_service.py::FactProfileService`, `src/agents/fact_profiler_agent.py::FactProfilerAgent`, `src/domain/fact_domains.py`, `src/domain/person_cards.py`, `src/composition/fact_profile_setup.py` |
 | Janitor and review | `src/services/fact_lifecycle_sweep_service.py::FactLifecycleSweepService`, `src/domain/fact_lifecycle_sweep.py`, `src/services/fact_review_service.py::FactReviewService`, `src/services/fact_answer_service.py::FactAnswerService`, `src/domain/fact_review_rules.py`, `src/infrastructure/fact_review_scope.py::FactReviewScope`, `src/adapters/firestore_fact_review_store.py` |
 | Interactive messages | `src/domain/interactive_message.py`, `src/infrastructure/interactive_message_router.py`, `src/adapters/slack/interactive_message_adapter.py`, `src/adapters/plain_text_interactive_message_adapter.py`, `src/services/interactive_choice_service.py` |
+| The memory inbox | `src/services/memory_inbox_service.py::MemoryInboxService`, `src/services/memory_inbox_triage_pass.py`, `src/services/memory_inbox_final_pass.py`, `src/services/memory_inbox_{triage,final,sweep}_task.py`, `src/infrastructure/memory_inbox_triage_scope.py`, `src/domain/memory_inbox.py`, `src/adapters/firestore_memory_inbox_repository.py`, `src/web/cabinet_memory_inbox.py`, `src/composition/memory_inbox_setup.py` |
 | `$memory save`, `$consolidate`, Cabinet | `src/services/memory_fact_service.py::MemoryFactService`, `src/handlers/conversation_handler.py::ConversationHandler`, `src/services/cabinet_fact_service.py::CabinetFactService`, `src/web/user_cabinet_app.py` |
 | Wiring | `src/composition/memory_setup.py::build_memory`, `src/composition/application_graph.py::build_application_graph`, `src/composition/user_agent_factory.py` |

@@ -202,3 +202,17 @@ class TestErrorContract:
             await tool.run({"queries": ["q"]}, context=ctx, convert_result=False)
 
         assert memory_agent.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Registration: the memory inbox's scope (MCP_MEMORY_SUBMISSIONS_RFC §5.1)
+# ---------------------------------------------------------------------------
+
+
+def test_memory_submit_is_registrable_but_never_a_default():
+    from src.composition.mcp_setup import MEMORY_INBOX_SCOPE, SCOPE_OF, _facts_auth_settings
+    from src.domain.mcp_resource import MCPResource
+
+    opts = _facts_auth_settings("https://mcp.example.test", _RESOURCE_URI).client_registration_options
+    assert MEMORY_INBOX_SCOPE == "memory_submit" and SCOPE_OF[MCPResource.MEMORY_INBOX] == "memory_submit"
+    assert "memory_submit" in opts.valid_scopes and "memory_submit" not in opts.default_scopes

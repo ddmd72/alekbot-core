@@ -10,6 +10,8 @@ from src.domain.mcp_resource import (
     canonical_resource,
     drive_resource_uri,
     is_drive_grant,
+    is_memory_inbox_grant,
+    memory_inbox_resource_uri,
 )
 
 FACTS_SCOPE = "user_context"
@@ -82,3 +84,40 @@ def test_no_resource_and_no_scope_binds_the_facts_default(scopes):
 def test_no_resource_with_an_unknown_scope_is_refused(scopes):
     with pytest.raises(ScopeRefused):
         bind_resource(None, scopes, URIS, SCOPE_OF)
+
+
+# ---------------------------------------------------------------------------------------- the memory inbox (fourth resource)
+
+INBOX_SCOPE = "memory_submit"
+INBOX_URI = "https://mcp.example.test/memory-inbox-mcp"
+INBOX_SCOPE_OF = {**SCOPE_OF, MCPResource.MEMORY_INBOX: INBOX_SCOPE}
+INBOX_URIS = {**URIS, MCPResource.MEMORY_INBOX: INBOX_URI}
+
+
+def test_the_inbox_uri_is_the_facts_host_with_the_inbox_path():
+    assert memory_inbox_resource_uri(FACTS_URI) == INBOX_URI
+
+
+def test_the_inbox_scope_alone_binds_the_inbox_resource():
+    assert bind_resource(None, [INBOX_SCOPE], INBOX_URIS, INBOX_SCOPE_OF) == (
+        MCPResource.MEMORY_INBOX, INBOX_URI, [INBOX_SCOPE])
+    assert bind_resource(INBOX_URI + "/", [], INBOX_URIS, INBOX_SCOPE_OF) == (
+        MCPResource.MEMORY_INBOX, INBOX_URI, [INBOX_SCOPE])
+
+
+def test_the_inbox_scope_never_mixes_or_rides_another_resource():
+    with pytest.raises(ScopeRefused):
+        bind_resource(None, [FACTS_SCOPE, INBOX_SCOPE], INBOX_URIS, INBOX_SCOPE_OF)
+    with pytest.raises(ScopeRefused):
+        bind_resource(FACTS_URI, [INBOX_SCOPE], INBOX_URIS, INBOX_SCOPE_OF)
+    with pytest.raises(ScopeRefused):
+        bind_resource(INBOX_URI, [FACTS_SCOPE], INBOX_URIS, INBOX_SCOPE_OF)
+    with pytest.raises(ScopeRefused):      # not served: no inbox URI
+        bind_resource(None, [INBOX_SCOPE], URIS, INBOX_SCOPE_OF)
+    with pytest.raises(ScopeRefused):      # unknown: no inbox scope
+        bind_resource(None, [INBOX_SCOPE], INBOX_URIS, SCOPE_OF)
+
+
+def test_only_the_inbox_path_is_an_inbox_grant():
+    assert is_memory_inbox_grant(INBOX_URI) and is_memory_inbox_grant(INBOX_URI + "/")
+    assert not any(is_memory_inbox_grant(uri) for uri in (FACTS_URI, DRIVE_URI, None, INBOX_URI + "/sub"))

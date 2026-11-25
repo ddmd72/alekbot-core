@@ -133,6 +133,16 @@
             </div>
           </div>
 
+          <!-- The memory inbox: what the user's outside assistants sent, one card at a time, collapsed into one row -->
+          <div id="memory-inbox" class="c-group c-mem-q hidden">
+            <button type="button" class="c-row" id="memory-inbox-row" aria-expanded="false" onclick="toggleMemoryInbox()">
+              <span class="c-mem-qbadge" id="memory-inbox-count"></span>
+              <span class="c-row-title" id="memory-inbox-title"></span>
+              <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            </button>
+            <div id="memory-inbox-body" class="c-mem-q-body"></div>
+          </div>
+
           <!-- The review questions, collapsed into one row that opens to them -->
           <div id="memory-review" class="c-group c-mem-q hidden">
             <button type="button" class="c-row" id="memory-review-row" aria-expanded="false" onclick="toggleMemoryReview()">

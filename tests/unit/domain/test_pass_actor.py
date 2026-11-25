@@ -42,6 +42,10 @@ ROWS = {
     "owner": (False, False, STALE_OR_CURRENT, False, RefusalWording.REVIEW),
     # P2 revised (C9): a question's history fallback written on silence takes the owner's row.
     "timeout": (False, False, STALE_OR_CURRENT, False, RefusalWording.REVIEW),
+    # Reviewer edit (MCP_MEMORY_SUBMISSIONS_RFC §7.1, §9.1): both memory-inbox passes take the conversation row; the
+    # final pass's model dates count and a born-due expiry gets the "discard or rewrite as history" wording.
+    "inbox_triage": (True, False, CONSOLIDATION_ACCEPTS, False, RefusalWording.STAGE1),
+    "inbox": (True, False, CONSOLIDATION_ACCEPTS, False, RefusalWording.STAGE1),
 }
 
 

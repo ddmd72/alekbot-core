@@ -45,7 +45,7 @@ def test_every_oidc_job_pins_an_audience():
     assert script.count("--oidc-token-audience") >= 13 * 2 - 2
 
 
-def test_all_thirteen_jobs_are_build_managed():
+def test_all_fourteen_jobs_are_build_managed():
     names = set(re.findall(r"scheduler jobs (?:create|update) http (\S+)", _scheduler_script()))
     assert "alek-voice-relay-dev-keep-alive" in names and "alek-bot-dev-keep-alive" in names
     # S1b F1: the email indexing watchdog and the companion consolidation sweep are build-managed too
@@ -55,9 +55,11 @@ def test_all_thirteen_jobs_are_build_managed():
     assert "alek-bot-dev-fact-lifecycle-sweep" in names
     # SECRETS_AT_REST_RFC §6.2 R1, plan D-P4: the hourly Gmail / To Do reconnect notice sweep
     assert "alek-bot-dev-reconnect-notice-sweep" in names
+    # MCP_MEMORY_SUBMISSIONS_RFC §10.1: the daily memory inbox sweep
+    assert "alek-bot-dev-memory-inbox-sweep" in names
     # email index v2 slice 10: the v1 embedding repair job is gone (the owner deletes the live one)
     assert "alek-bot-dev-repair-email-embeddings" not in names
-    assert len(names) == 13
+    assert len(names) == 14
 
 
 def test_renew_task_subscriptions_is_never_deleted():

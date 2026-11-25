@@ -276,7 +276,7 @@ tests/unit/web/test_cabinet_escape_html.py :: skipif :: shutil.which('node') is 
 tests/unit/web/test_cabinet_external_workers_page.py :: skipif :: shutil.which('node') is None :: x6  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_facts_pin_ui.py :: skipif :: shutil.which('node') is None :: x16  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_home.py :: skipif :: shutil.which('node') is None :: x14  # ci: node is on the ubuntu-latest runner image
-tests/unit/web/test_cabinet_memory_ui.py :: skipif :: shutil.which('node') is None :: x14  # ci: node is on the ubuntu-latest runner image
+tests/unit/web/test_cabinet_memory_ui.py :: skipif :: shutil.which('node') is None :: x21  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_passkey_add_flow.py :: skipif :: _NODE :: x15  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_reminders.py :: skipif :: shutil.which('node') is None :: x11  # ci: node is on the ubuntu-latest runner image
 tests/unit/web/test_cabinet_settings.py :: skipif :: shutil.which('node') is None :: x20  # ci: node is on the ubuntu-latest runner image

@@ -12,6 +12,13 @@ REVIEW_PROFILE_ID = "consolidation_review"
 # Stage 3's agent profile when it reads email cards (email index v2 §6.7): consolidation's tokens plus the one that
 # explains the card candidates.
 EMAIL_PROFILE_ID = "consolidation_email"
+# The memory inbox's triage pass (MCP_MEMORY_SUBMISSIONS_RFC §7): its agent profile and the consolidation agent's task
+# name the triage pass service sends.
+INBOX_TRIAGE_PROFILE_ID = "consolidation_inbox_triage"
+TRIAGE_AGENT_TASK = "triage_memory_inbox"
+# Its final pass (§9): the agent profile and the consolidation agent's task name the final pass service sends.
+INBOX_PROFILE_ID = "consolidation_inbox"
+FINAL_AGENT_TASK = "consolidate_memory_inbox"
 
 
 def consolidation_agent_id(user_id: str) -> str:

@@ -52,7 +52,9 @@ from tests.support.oauth_credentials_store import creds
 from src.composition.drive_connector_tools import RESULT_TEXTS_TOKEN, TOOL_TEXTS_TOKEN
 from src.composition.tasks_mcp_setup import RESULT_TEXTS_TOKEN as TASK_RESULT_TEXTS_TOKEN
 from src.composition.tasks_mcp_setup import TOOL_TEXTS_TOKEN as TASK_TOOL_TEXTS_TOKEN
-from src.domain.mcp_resource import DRIVE_PATH, TASKS_PATH
+from src.composition.memory_inbox_mcp_setup import RESULT_TEXTS_TOKEN as INBOX_RESULT_TEXTS_TOKEN
+from src.composition.memory_inbox_mcp_setup import TOOL_TEXTS_TOKEN as INBOX_TOOL_TEXTS_TOKEN
+from src.domain.mcp_resource import DRIVE_PATH, MEMORY_INBOX_PATH, TASKS_PATH
 from tests.support.prompt_seed import seed_agent_prompt, seed_tokens
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -116,6 +118,9 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
                            "renewals": 0},
     "external_task_deliver": {"user_id": "u1", "account_id": "a1", "task_id": "t1", "notice": "done"},
     "external_task_wake": {"user_id": "u1", "account_id": "a1", "worker_id": "w1", "generation": 1},
+    # The account comes from the user's profile, never from the payload (MCP_MEMORY_SUBMISSIONS_RFC §10.2).
+    "memory_inbox_triage": {"user_id": "u1"},
+    "memory_inbox_final": {"user_id": "u1"},
 }
 
 # The pinned answer of every task type, from the boot with the deploy's environment, an empty database and the rows' seed
@@ -131,6 +136,8 @@ MATRIX: Dict[str, Expect] = {
                                          "conflicts": 0, "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0,
                                          "purge_overdue": 0, "dry_run": False}),
     "fire_due_reminders": Expect(200, {"claim_lost": 0, "enqueued": 0, "skipped": 0}),
+    # The memory inbox's daily tick (MCP_MEMORY_SUBMISSIONS_RFC §10.1) over an empty inbox: nothing to expire or enqueue.
+    "memory_inbox_sweep": Expect(200, {"expired": 0, "triage_enqueued": 0, "final_backstop": 0}),
     "renew_all_task_subscriptions": Expect(200, {"enqueued": 1, "status": "ok"}),
     # R1 (SECRETS_AT_REST_RFC §6.2, plan D-P4): the sweep lists users from the feature stores, and when it runs (sorted
     # order) no Gmail indexing state or To Do config is stored, so it has no candidate and sends nothing.
@@ -180,6 +187,10 @@ MATRIX: Dict[str, Expect] = {
     "external_task_deliver": Expect(200, {"status": "gone"}),
     # No worker is stored: the wake is skipped before any target is read, so nothing is sent.
     "external_task_wake": Expect(200, {"status": "skipped"}),
+    # The memory inbox's runners on an empty inbox (MCP_MEMORY_SUBMISSIONS_RFC §10.2, §10.3): the triage finds nothing
+    # received, the final run finds no `final_due_at`.
+    "memory_inbox_triage": Expect(200, {"status": "empty"}),
+    "memory_inbox_final": Expect(200, {"status": "not_due"}),
 }
 
 
@@ -342,10 +353,12 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
     boot = Boot()
     services = prod_env.install_offline_services(monkeypatch)
     boot.db = services.db
-    # The drive connector's tools (DRIVE_MCP_CONNECTOR_RFC §5.3) and the tasks MCP resource's tools
-    # (EXTERNAL_TASK_QUEUE_RFC §5.4) each load two tokens at boot, as the uploaded tokens.
+    # The drive connector's tools (DRIVE_MCP_CONNECTOR_RFC §5.3), the tasks MCP resource's tools
+    # (EXTERNAL_TASK_QUEUE_RFC §5.4) and the memory inbox resource's tools (MCP_MEMORY_SUBMISSIONS_RFC §5) each load two
+    # tokens at boot, as the uploaded tokens.
     await seed_tokens(services.db, EnvironmentConfig(), (TOOL_TEXTS_TOKEN, RESULT_TEXTS_TOKEN,
-                                                         TASK_TOOL_TEXTS_TOKEN, TASK_RESULT_TEXTS_TOKEN))
+                                                         TASK_TOOL_TEXTS_TOKEN, TASK_RESULT_TEXTS_TOKEN,
+                                                         INBOX_TOOL_TEXTS_TOKEN, INBOX_RESULT_TEXTS_TOKEN))
     monkeypatch.setattr(main, "init_telemetry", lambda *a, **k: None)
     monkeypatch.setattr(main, "build_memory_telemetry", lambda *a, **k: None)
 
@@ -463,7 +476,7 @@ def _check_served_app(boot: Boot) -> List[str]:
 
 
 # The MCP apps beside the facts app; each is built at boot and handed to the dispatcher (`build_shared_asgi`).
-RESOURCE_APP_PATHS = (DRIVE_PATH, TASKS_PATH)
+RESOURCE_APP_PATHS = (DRIVE_PATH, TASKS_PATH, MEMORY_INBOX_PATH)
 
 
 def _check_resource_apps_served(boot: Boot) -> List[str]:
@@ -809,9 +822,11 @@ def test_every_resource_app_must_answer_its_metadata_through_the_dispatcher():
     def prm(path: str) -> Tuple[int, Any]:
         return 200, {"resource": "https://mcp.example.test" + path}
     assert _check_resource_apps_served(Boot(resource_metadata={p: prm(p) for p in RESOURCE_APP_PATHS})) == []
-    missing = Boot(resource_metadata={DRIVE_PATH: prm(DRIVE_PATH), TASKS_PATH: (404, None)})
+    missing = Boot(resource_metadata={DRIVE_PATH: prm(DRIVE_PATH), TASKS_PATH: (404, None),
+                                      MEMORY_INBOX_PATH: prm(MEMORY_INBOX_PATH)})
     assert _check_resource_apps_served(missing) == [f"{TASKS_PATH} is not served by its MCP app: 404 None"]
-    wrong = Boot(resource_metadata={DRIVE_PATH: prm(DRIVE_PATH), TASKS_PATH: prm(DRIVE_PATH)})
+    wrong = Boot(resource_metadata={DRIVE_PATH: prm(DRIVE_PATH), TASKS_PATH: prm(DRIVE_PATH),
+                                    MEMORY_INBOX_PATH: prm(MEMORY_INBOX_PATH)})
     assert len(_check_resource_apps_served(wrong)) == 1
     assert len(_check_resource_apps_served(Boot())) == len(RESOURCE_APP_PATHS)
 

@@ -352,6 +352,9 @@ def test_the_closing_reason_column_is_the_plans():
         PassActor.STAGE1: "model", PassActor.EMAIL: "model", PassActor.STAGE2A: "model", PassActor.STAGE2B: "model",
         PassActor.CLUSTER: "model", PassActor.BACKSTOP: "directive cap", PassActor.REVIEW: None, PassActor.OWNER: None,
         PassActor.TIMEOUT: None,  # P2 revised: the owner's row, whose writes always carry their reason
+        # Reviewer edit (MCP_MEMORY_SUBMISSIONS_RFC §7.1, §9.1): the conversation row; triage writes no fact, so its
+        # closing reason is never read.
+        PassActor.INBOX_TRIAGE: "model", PassActor.INBOX: "model",
     }
 
 

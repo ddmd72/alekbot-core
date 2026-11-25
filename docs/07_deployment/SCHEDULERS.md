@@ -17,6 +17,10 @@ covers:
   src/services/external_task_timer_task.py
   src/services/external_task_delivery_task.py
   src/services/external_task_wake_task.py
+  src/services/memory_inbox_sweep_task.py
+  src/services/memory_inbox_triage_task.py
+  src/services/memory_inbox_final_task.py
+  src/domain/memory_inbox_task_keys.py
   scripts/infrastructure/cloudbuild_scheduler_jobs.sh
   scripts/infrastructure/setup-daily-email-review-scheduler.sh
   src/services/background_empty_answer_reporter.py
@@ -81,6 +85,8 @@ All Scheduler jobs POST to the main service, with OIDC (`/health` keep-alive exc
 | `sweep_companion_consolidation`, `companion_consolidation` | Scheduler, Cloud Task | `WorkerHandler._handle_sweep_companion_consolidation`, `_handle_companion_consolidation` | Session-keyed twin (`docs/10_rfcs/COMPANION_AGENTS_RFC.md` §6) |
 | `fact_lifecycle_sweep` | Scheduler | `WorkerHandler._handle_fact_lifecycle_sweep` | See § Fact Lifecycle Sweep |
 | `fact_review`, `interactive_choice` | Cloud Task | `WorkerHandler._handle_fact_review`, `_handle_interactive_choice` | See § Fact Lifecycle Sweep |
+| `memory_inbox_sweep` | Scheduler | `MemoryInboxSweepTask` | Daily 08:30 Europe/Madrid: expires unanswered inbox candidates, enqueues `memory_inbox_triage` per user with new submissions (interval in owner-local days) and the final backstop (`MCP_MEMORY_SUBMISSIONS_RFC.md` §10.1); 501 without the inbox |
+| `memory_inbox_triage`, `memory_inbox_final` | Cloud Task | `MemoryInboxTriageTask`, `MemoryInboxFinalTask` | Triage under the account's memory-write lease (busy: one deferral task per account and 120 s bucket); the final pass one hour after the last "True", `not_due` when a later confirmation moved it (RFC §10.2, §10.3); 501 without the inbox |
 | `billing_daily_summary` | Scheduler | `BillingDailySummaryTask` | Daily per-account usage report; 501 without the alert sink or account repo |
 | `deep_research_failed`, `geo_mark_turn` | Cloud Task | `DeepResearchFailedTask`, `GeoMarkTurnTask` | See below |
 | `external_task_timer` | Cloud Task | `ExternalTaskTimerTask` → `ExternalTaskService.on_timer` | Lease, deadline and hold timers of the external task queue; no Scheduler job; 501 without a task queue |
@@ -103,6 +109,7 @@ A task type whose budget can exceed 10 minutes must pass `deadline_seconds` to `
 | `execute_reminder`, `daily_email_review` | `src/infrastructure/notification_sla.py::dispatch_deadline_s` of the kind (`REMINDER`, `DAILY_DIGEST`) |
 | `external_task_deliver` | `src/domain/external_task_jobs.py::DELIVER_DEADLINE_S`, pinned by a test to `dispatch_deadline_s(EXTERNAL_TASK)` |
 | `drive_sync` (every enqueue) | `src/domain/drive_index_params.py::TICK_DEADLINE_S` |
+| `memory_inbox_triage`, `memory_inbox_final` (the sweep's enqueue, a deferral, a retry, the confirmation's own task) | `src/domain/memory_inbox_task_keys.py::INBOX_DEADLINE_S` (1800 s, the review's value); a deferral is delayed by `LEASE_BUSY_RETRY_DELAY_S` |
 | `fact_review` (janitor enqueue, the review's own deferral) | `src/domain/fact_review_task_keys.py::REVIEW_DEADLINE_S`; the `next` send released by an answer sets none (it takes no lease and makes no model call); the review's own deferral is delayed by `LEASE_BUSY_RETRY_DELAY_S` |
 | `consolidation` deferral, `geo_mark_turn` | `src/services/consolidation_service.py::_DEFERRAL_DEADLINE_S`, `src/services/geo_mark_service.py::TURN_DEADLINE_S` |
 | anything else | what its enqueue method sets (`GcpTaskQueue`), else 600 s |
@@ -281,6 +288,29 @@ It enqueues the two memory-review task types. Neither has a Scheduler job; both 
 | `interactive_choice` | the Slack interactivity route (`src/adapters/slack/interactivity_route.py`) after verifying the Slack signature, one task per button press | the choice (`InteractiveChoice.to_payload`) | `interactive_choice-` + hash of the action | `WorkerHandler._handle_interactive_choice` → `InteractiveChoiceService.handle`; 400 when the payload is not a choice |
 
 Without the service wired, `/worker` answers either with 501.
+
+### Memory inbox (outside assistants' submissions)
+
+Job `alek-bot-dev-memory-inbox-sweep`, `30 8 * * *` Europe/Madrid (before the 09:00 billing summary and the 09:30
+janitor, so triage leases are mostly released before the review starts), attempt deadline 180 s, body
+`{"task_type":"memory_inbox_sweep"}`. `MemoryInboxSweepTask` takes no model call and no lease and is idempotent, so a
+Scheduler retry is harmless; it answers 200 `{"expired", "triage_enqueued", "final_backstop"}` (a task whose name already
+exists is not counted). What it does to the inbox: owner's map `docs/05_building_blocks/memory/README.md` §5.7; spec
+`docs/10_rfcs/MCP_MEMORY_SUBMISSIONS_RFC.md` §10. Hub-level facts:
+
+| Task type | Enqueued by | Payload | Dedup key (`src/domain/memory_inbox_task_keys.py`) | Runs |
+|---|---|---|---|---|
+| `memory_inbox_triage` | the sweep, once per user whose interval elapsed; the triage's own deferral | `{user_id}` | `memory-inbox-triage:<user>:<owner-local date>`; deferral `memory-inbox-triage-defer:<account>:<120 s bucket>` | `MemoryInboxTriageTask`: 400 without a user; 200 `interval`, `deferred`, `completed`, `empty` or `failed`; a lease, store or queue error is a 5xx and Cloud Tasks retries (the interval recheck keeps a rerun safe) |
+| `memory_inbox_final` | the Cabinet's "True", one hour later; the sweep's backstop; a retry an hour after a failed run; the final's own deferral | `{user_id}` | `memory-inbox-final:<user>:<final_due_at epoch s>`; deferral `memory-inbox-final-defer:<account>:<bucket>`; the sweep's backstop reuses the confirmation's name; a retry is `memory-inbox-final-retry:<user>:<final_due_at epoch s>:<failed runs>` | `MemoryInboxFinalTask`: 200 `not_due`, `deferred`, `completed`, `partial`, `failed` or `empty` |
+
+- **Rhythm lives on the state document, never in a name.** The names only collapse near-simultaneous enqueues (a Cloud
+  Tasks name outlives its task by about an hour: `decisions/worker_task_dedup.md`): the triage day is the owner's local date,
+  a confirmation's name is its `final_due_at`, and a busy lease defers by `LEASE_BUSY_RETRY_DELAY_S` (120 s) under a
+  per-bucket name. A burst of "True" enqueues N final tasks and only the one whose `final_due_at` has come runs.
+- **Deadline:** both task types pass `INBOX_DEADLINE_S` (1800 s) to `enqueue_worker_task`; a pass runs under the account's
+  memory-write lease for at most the lease's length.
+- **Without a task queue** (no inbox) all three types answer 501 `{"error": "memory inbox not configured"}`
+  (`DisabledTask`, `src/composition/worker_setup.py`).
 
 ### Consolidation sweeps
 

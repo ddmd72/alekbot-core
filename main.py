@@ -26,6 +26,7 @@ from src.composition.mcp_setup import build_mcp_components
 from src.composition.drive_connector_tools import build_drive_connector_tools_from_container
 from src.composition.drive_mcp_setup import build_drive_mcp_or_none
 from src.composition.tasks_mcp_setup import build_tasks_mcp_or_none
+from src.composition.memory_inbox_mcp_setup import build_memory_inbox_mcp_for
 from src.composition.drive_link_setup import build_drive_link_service
 from src.composition.voice_mcp_setup import build_voice_mcp_tokens, voice_mcp_tools_enabled
 from src.composition.voice_resume_setup import build_voice_resume_service
@@ -164,6 +165,7 @@ async def main():
             facts_pin=app.facts_pin,
             external_tasks=app.external_tasks,
             mcp_authorization=mcp_components.authorization_service if mcp_components is not None else None,
+            memory_inbox=app.memory_inbox.service if app.memory_inbox is not None else None,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
@@ -530,7 +532,7 @@ async def main():
                 # Mounted under /mcp in a Starlette parent alongside main_app.
                 # ====================================================================
                 drive_mcp = None
-                tasks_mcp = None
+                tasks_mcp = inbox_mcp = None
                 try:
                     if mcp_components is not None:
                         # Consent blueprint is built in main.py (not in
@@ -577,6 +579,7 @@ async def main():
                             token_repo=assembly.token_repo if assembly is not None else None, alert_sink=app.alert_sink,
                             inactive_users=mcp_components.inactive_users, auth_config=app.auth_config,
                             authorization_service=mcp_components.authorization_service)   # OAuth worker grants
+                        inbox_mcp = await build_memory_inbox_mcp_for(app, mcp_components)   # /memory-inbox-mcp or None
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",
@@ -613,7 +616,7 @@ async def main():
                             main_app,
                             facts_mcp=mcp_components.fastmcp if mcp_components is not None else None,
                             drive_mcp=drive_mcp,
-                            tasks_mcp=tasks_mcp,
+                            tasks_mcp=tasks_mcp, inbox_mcp=inbox_mcp,
                         ),
                         hypercorn_config,
                     )

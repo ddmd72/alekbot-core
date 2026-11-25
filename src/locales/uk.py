@@ -318,4 +318,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_CANCELLED.value: "Скидання PIN фактів скасовано. Твій PIN лишається таким, як був.",
     UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "Немає запиту на скидання PIN фактів.",
     UIMessage.FACTS_PIN_USAGE.value: "Надішли `$pin cancel`, щоб скасувати запит на скидання PIN фактів.",
+    UIMessage.MEMORY_INBOX_CANDIDATES.value: "Нові записи від твоїх асистентів чекають на перевірку: {count}. Вони в Кабінеті, у розділі «Пам'ять»: до пам'яті не потрапить нічого, що ти не підтвердиш.",
+    UIMessage.MEMORY_INBOX_CANDIDATES_FROM.value: "Нові записи від *{source}* чекають на перевірку: {count}. Вони в Кабінеті, у розділі «Пам'ять»: до пам'яті не потрапить нічого, що ти не підтвердиш.",
 }

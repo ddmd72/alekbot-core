@@ -5,7 +5,8 @@ FastMCP registers its bound `list_tools` as the `tools/list` handler and builds 
 call (`mcp/server/fastmcp/server.py`, `_setup_handlers`, `list_tools`); the override here reads `ConnectorTextService`
 (60 s cache) and, per registered tool, deep-copies the schema the SDK built from the handler's signature (types,
 required, defaults: never touched), fills the tool's `description` and every `properties[p].description` from the
-texts (`<tool>`, `<tool>.<param>`), marks the tool `readOnlyHint` when it is read-only (`read_only_tools`; None:
+texts (`<tool>`, `<tool>.<param>`) and, for a parameter that is an array of inline objects, every item field's
+`properties[p].items.properties[f].description` (`<tool>.<param>.<field>`, the memory inbox's `items`), marks the tool `readOnlyHint` when it is read-only (`read_only_tools`; None:
 every tool, as the drive app's), and passes the tool's registered `_meta` through as
 a copy. The registered tool objects are never mutated: they are shared by concurrent requests.
 
@@ -73,7 +74,12 @@ class TokenTextFastMCP(FastMCP):
 def _listed(info: RegisteredTool, texts: ConnectorTexts, read_only: bool) -> MCPTool:
     schema = copy.deepcopy(info.parameters)
     for name, prop in schema.get("properties", {}).items():
-        prop["description"] = texts.tools[text_key_of_parameter(info.name, name)]
+        key = text_key_of_parameter(info.name, name)
+        prop["description"] = texts.tools[key]
+        item = prop.get("items") if prop.get("type") == "array" else None
+        if isinstance(item, dict) and item.get("type") == "object":
+            for field, field_schema in item.get("properties", {}).items():
+                field_schema["description"] = texts.tools[f"{key}.{field}"]
     return MCPTool(
         name=info.name,
         title=info.title,

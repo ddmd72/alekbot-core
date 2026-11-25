@@ -1781,8 +1781,42 @@
       .c-group.c-mem-q > * + * {
         border-top: 0;
       }
-      #memory-review:not(.open) > #review-questions {
+      #memory-review:not(.open) > #review-questions,
+      #memory-inbox:not(.open) > #memory-inbox-body {
         display: none;
+      }
+      .c-inbox-card {
+        display: grid;
+        gap: var(--c-s3);
+      }
+      .c-inbox-card label {
+        display: grid;
+        gap: 4px;
+        font-size: 13px;
+        color: var(--c-text-2);
+      }
+      .c-inbox-card textarea.c-input {
+        resize: vertical;
+        max-width: none;
+      }
+      .c-inbox-card .c-input {
+        max-width: none;
+      }
+      .c-inbox-card .c-hint,
+      .c-inbox-card p {
+        margin: 0;
+      }
+      .c-inbox-card details {
+        font-size: 14px;
+        color: var(--c-text-2);
+      }
+      .c-inbox-card details p + p {
+        margin-top: var(--c-s2);
+      }
+      .c-inbox-card blockquote {
+        margin: 0;
+        padding-left: var(--c-s3);
+        border-left: 3px solid var(--c-fill);
       }
       .c-mem-q-body {
         padding: 2px var(--c-s4) var(--c-s4);

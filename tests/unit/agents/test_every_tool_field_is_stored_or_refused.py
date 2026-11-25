@@ -54,6 +54,7 @@ LEDGER = Path(__file__).with_name("tool_field_ledger.txt")
 
 CONSOLIDATION_FILE = "tests/unit/agents/test_consolidation_tool_fields_e2e.py"
 REVIEW_FILE = "tests/unit/services/test_fact_review_tool_fields_e2e.py"
+TRIAGE_FILE = "tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py"
 NOTES_FILE = "tests/unit/agents/test_notes_agent_tool_fields_e2e.py"
 TASKS_FILE = "tests/unit/agents/test_tasks_agent_tool_fields_e2e.py"
 SMART_FILE = "tests/unit/agents/core/test_smart_local_tools_e2e.py"
@@ -64,6 +65,7 @@ DRIVE_NOTES_FILE = "tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py"
 SURFACE_FILES: Dict[str, str] = {
     "consolidation": CONSOLIDATION_FILE,
     "consolidation_review": REVIEW_FILE,
+    "consolidation_triage": TRIAGE_FILE,
     "notes": NOTES_FILE,
     "delegate:manage_self_reminders": NOTES_FILE,
     "tasks": TASKS_FILE,

@@ -273,9 +273,10 @@
    "collection": null,
    "field": "expires_at",
    "deleted_by": "not-stored",
-   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim; the Cabinet access token's `exp` claim; the tasks MCP resource's verified worker-key token (no expiry, `None`)",
+   "note": "in-memory values: a provider token's expiry, a prompt cache's expiry, a voice token's `exp` claim; the Cabinet access token's `exp` claim; the tasks MCP resource's verified worker-key token (no expiry, `None`); the memory inbox resource's verified token (it copies the access token's `exp`)",
    "writers": [
     "src/adapters/google/google_drive_adapter.py",
+    "src/composition/memory_inbox_mcp_setup.py",
     "src/composition/tasks_mcp_setup.py",
     "src/domain/drive_media_source.py",
     "src/domain/llm.py",
@@ -302,6 +303,17 @@
    "what_expires": "weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written)",
    "writers": [
     "src/adapters/firestore_fact_review_store.py"
+   ]
+  },
+  {
+   "id": "memory_inbox",
+   "collection": "memory_inbox",
+   "field": "purge_after",
+   "deleted_by": "ttl-policy",
+   "what_expires": "memory-inbox submissions once triaged or discarded (30 days after triage) and closed candidates (expired: 30 days; rejected or consolidated: 180 days); an open record has no `purge_after`",
+   "writers": [
+    "src/adapters/firestore_memory_inbox_repository.py",
+    "src/domain/memory_inbox.py"
    ]
   },
   {

@@ -288,6 +288,132 @@ def test_the_review_questions_collapse_into_one_row_with_their_count(tmp_path):
     assert out[2] is True
 
 
+# ------------------------------------------------------------------------------------------------ the memory inbox
+
+INBOX_CARD = {
+    "candidate_id": "c1", "text": "Clara booked the Coimbra weekend", "happens_when": "March 6-8", "said_when": "",
+    "basis": "said", "source": "Desk assistant", "received": "2026-11-25T11:30:00+00:00",
+    "draft": {"directive": False, "temporal_class": "ephemeral", "context_priority": "medium",
+              "expiry": {"kind": "date", "date": "2026-03-08"}},
+    "relation": {"kind": "refines", "fact_text": "Clara has a trip <b>in March</b>"},
+    "raw": [{"information": "Clara booked Coimbra", "basis": "inferred", "said_when": "", "happens_when": "",
+             "received": "2026-11-25T11:30:00+00:00"}],
+}
+INBOX_NEXT = {**INBOX_CARD, "candidate_id": "c2", "text": "Alex trains with Robin", "relation": {"kind": "new",
+              "fact_text": None}}
+# The stand-in DOM does not fill a field from the markup: `useInbox` loads the list and `typed` puts the card's own values
+# into the fields, as the browser does, so a test changes only what the owner would.
+_INBOX_ROUTE = ("routes = { '/api/user/memory-inbox': { candidates: [INBOX_CARD, INBOX_NEXT], confirmed: 1 } };"
+                "async function useInbox() { factsMode = 'browse'; await loadMemoryInbox(); requests.length = 0; typed(); }"
+                "function typed(over = {}) { const c = inboxCandidates[0]; els['inbox-text'].value = c.text;"
+                " els['inbox-happens'].value = c.happens_when; els['inbox-said'].value = c.said_when;"
+                " Object.entries(over).forEach(([id, v]) => { els[id].value = v; }); }")
+
+
+def _run_inbox(tmp_path: Path, body: str):
+    return _run(tmp_path, f"const INBOX_CARD = {json.dumps(INBOX_CARD)}, INBOX_NEXT = {json.dumps(INBOX_NEXT)};\n"
+                          f"{_INBOX_ROUTE}\n{body}")
+
+
+@_node
+def test_the_inbox_is_one_collapsed_row_with_its_count(tmp_path):
+    out = _run_inbox(tmp_path, """
+      await useInbox();
+      const shown = [els["memory-inbox"].has("hidden"), els["memory-inbox-count"].textContent,
+        els["memory-inbox-title"].textContent, els["memory-inbox"].has("open")];
+      toggleMemoryInbox();
+      const opened = [els["memory-inbox"].has("open"), els["memory-inbox-row"].attrs["aria-expanded"]];
+      routes = { "/api/user/memory-inbox": { candidates: [], confirmed: 0 } }; await loadMemoryInbox();
+      return [shown, opened, els["memory-inbox"].has("hidden"), els["memory-inbox-body"].innerHTML];""")
+    assert out[0] == [False, "2", "From your assistants", False]
+    assert out[1] == [True, "true"]
+    assert out[2] is True and out[3] == ""
+
+
+@_node
+def test_a_card_edits_four_fields_and_shows_the_rest_read_only(tmp_path):
+    html = _run_inbox(tmp_path, """await useInbox(); return els["memory-inbox-body"].innerHTML;""")
+    assert re.search(r'<textarea id="inbox-text"[^>]*>Clara booked the Coimbra weekend</textarea>', html)
+    assert 'id="inbox-happens"' in html and 'value="March 6-8"' in html and 'id="inbox-said"' in html
+    assert len(re.findall(r"<input ", html)) == 2 and len(re.findall(r"<textarea ", html)) == 1
+    basis = re.findall(r'data-basis="(\w+)"[^>]*class="(on)?" aria-pressed="(\w+)"', html)
+    assert basis == [("said", "on", "true"), ("document", "", "false"), ("inferred", "", "false")]
+    assert "From Desk assistant, received" in html and "2026" in html
+    assert "Memory would likely file it as: short-lived, medium priority, holds until" in html
+    assert "Refines what memory holds: \u201cClara has a trip &#60;b&#62;in March&#60;/b&#62;\u201d" in html
+    assert "<b>" not in html
+    assert re.search(r"<details><summary>What was sent</summary>.*Clara booked Coimbra", html, re.S)
+    assert "<details open" not in html
+
+
+@_node
+def test_a_source_name_with_replacement_patterns_renders_literally(tmp_path):
+    html = _run_inbox(tmp_path, """
+      INBOX_CARD.source = "Desk $' and $` assistant";
+      INBOX_CARD.relation = { kind: "refines", fact_text: "Trip $' and $`" };
+      await useInbox(); return els["memory-inbox-body"].innerHTML;""")
+    assert "From Desk $&#39; and $` assistant, received" in html
+    assert "Trip $&#39; and $`" in html
+
+
+@_node
+def test_true_sends_only_the_edited_fields_and_the_card_leaves_the_list(tmp_path):
+    out = _run_inbox(tmp_path, """
+      await useInbox();
+      authFetch = async (url, init) => { requests.push({ url, method: init.method, body: init.body });
+        return { ok: true, status: 200, json: async () => ({ status: "confirmed" }), clone() { return this; } }; };
+      typed({ "inbox-text": " Clara booked the Coimbra weekend, March 6-8 " }); setInboxBasis("document");
+      await answerInbox("confirm");
+      const first = [requests.map((r) => [r.method, r.url, r.body]), inboxCandidates.map((c) => c.candidate_id),
+        els["memory-inbox-body"].innerHTML.includes("Alex trains with Robin"),
+        els["memory-inbox-body"].innerHTML.includes("2 confirmed, waiting"), els["memory-inbox-count"].textContent];
+      typed();
+      await answerInbox("confirm");
+      return [first, requests[1].body, els["memory-inbox"].has("hidden")];""")
+    assert out[0][0] == [["POST", "/api/user/memory-inbox/c1/confirm",
+                          '{"text":"Clara booked the Coimbra weekend, March 6-8","basis":"document"}']]
+    assert out[0][1:] == [["c2"], True, True, "1"]
+    assert out[1] == "{}" and out[2] is True
+
+
+@_node
+def test_not_true_rejects_without_a_body_and_a_refused_edit_keeps_the_card(tmp_path):
+    out = _run_inbox(tmp_path, """
+      await useInbox();
+      const answers = [{ status: 400, error: "too_long" }, { status: 200 }];
+      authFetch = async (url, init) => { requests.push({ url, method: init.method, body: init.body });
+        const a = answers.shift();
+        return { ok: a.status === 200, status: a.status, json: async () => (a.error ? { error: a.error } : { status: "rejected" }),
+          clone() { return this; } }; };
+      await answerInbox("confirm");
+      const kept = [inboxCandidates.length, toasts.slice(), els["inbox-true"].disabled];
+      await answerInbox("reject");
+      return [kept, requests.map((r) => [r.url, r.body]), inboxCandidates.map((c) => c.candidate_id), inboxConfirmed];""")
+    assert out[0] == [2, [["The text is too long: shorten it.", "error"]], False]
+    assert out[1] == [["/api/user/memory-inbox/c1/confirm", "{}"], ["/api/user/memory-inbox/c1/reject", None]]
+    assert out[2:] == [["c2"], 1]
+
+
+@_node
+def test_a_locked_tab_shows_nothing_of_the_inbox(tmp_path):
+    out = _run_inbox(tmp_path, """
+      await useInbox(); forgetFacts();
+      const forgotten = [els["memory-inbox"].has("hidden"), els["memory-inbox-body"].innerHTML];
+      renderMemoryInbox();
+      return [forgotten, els["memory-inbox"].has("hidden"), els["memory-inbox-body"].innerHTML];""")
+    assert out == [[True, ""], True, ""]
+
+
+@_node
+def test_there_is_no_batch_control(tmp_path):
+    html = _run_inbox(tmp_path, """await useInbox(); return els["memory-inbox-body"].innerHTML;""")
+    assert "checkbox" not in html and 'type="radio"' not in html and "select-all" not in html
+    labels = re.findall(r"<button[^>]*>(.*?)</button>", html, re.S)
+    assert labels == ["You said it", "A document says it", "Inferred", "True", "Not true"]
+    assert re.findall(r"onclick=\"(\w+)\(", html) == ["setInboxBasis"] * 3 + ["answerInbox"] * 2
+    assert "Memory still decides what to keep" in html
+
+
 # ------------------------------------------------------------------------------------------------ strings
 
 def _dicts():
@@ -318,3 +444,26 @@ def test_the_new_strings_are_not_english_copies():
 
 def test_the_counts_route_is_read_through_the_guarded_fetch():
     assert "factsFetch(\n            `${API}/api/user/facts/domain-counts?state=${encodeURIComponent(state)}`" in _MEMORY_JS
+
+
+_INBOX_STRING_KEYS = (
+    ["row", "confirmed", "from", "field_text", "field_happens", "field_said", "field_basis", "class", "directive",
+     "expiry_none", "expiry_date", "expiry_horizon", "rel_new", "rel_refines", "rel_contradicts", "rel_duplicates",
+     "raw", "true", "not_true", "note", "err_too_long", "err_empty", "err_gone", "failed"]
+    + [f"basis_{b}" for b in ("said", "document", "inferred")]
+    + [f"temporal_{c}" for c in ("permanent", "stable", "dynamic", "ephemeral")]
+    + [f"priority_{p}" for p in ("critical", "high", "medium", "low", "archival")])
+
+
+def test_the_inbox_strings_exist_in_four_languages():
+    dicts = _dicts()
+    keys = [f"memory.inbox_{k}" for k in _INBOX_STRING_KEYS]
+    assert [(lang, k) for lang in LANGS for k in keys if not dicts[lang].get(k)] == []
+    for key, holes in {"memory.inbox_from": ("{source}", "{date}"), "memory.inbox_confirmed": ("{n}",),
+                       "memory.inbox_class": ("{what}",), "memory.inbox_expiry_date": ("{date}",),
+                       "memory.inbox_expiry_horizon": ("{days}",)}.items():
+        assert [(lang, h) for lang in LANGS for h in holes if h not in dicts[lang][key]] == []
+    for kind in ("refines", "contradicts", "duplicates"):
+        assert [lang for lang in LANGS if "{fact}" not in dicts[lang][f"memory.inbox_rel_{kind}"]] == []
+    used = set(re.findall(r't\("(memory\.inbox_[\w]+)"\)', _MEMORY_JS))
+    assert [(lang, k) for lang in LANGS for k in sorted(used) if not dicts[lang].get(k)] == []

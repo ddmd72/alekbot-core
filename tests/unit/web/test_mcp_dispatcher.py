@@ -50,3 +50,67 @@ async def test_a_drive_path_falls_through_to_quart_when_the_drive_app_did_not_bu
     asgi = build_shared_asgi(quart, facts_mcp=_FakeMcp("facts", events), drive_mcp=None)
     await asgi(_scope("/drive-mcp"), _noop, _noop)
     assert events == ["quart served /drive-mcp"]
+
+
+# ----------------------------------------------------------------------------- the memory inbox app (fourth resource)
+
+def test_the_dispatcher_routes_the_inbox_paths():
+    from src.web.mcp_dispatcher import mcp_owner
+    assert [mcp_owner(p) for p in ("/memory-inbox-mcp", "/memory-inbox-mcp/",
+                                   "/.well-known/oauth-protected-resource/memory-inbox-mcp", "/mcp")] == [
+        "inbox", "inbox", "inbox", "facts"]
+    assert [mcp_owner(p) for p in ("/memory-inbox-mcp/sub", "/memory-inbox-mcpx", "/mcp/memory-inbox-mcp")] == [
+        None, None, None]
+
+
+async def test_with_an_inbox_app_its_paths_reach_it():
+    events: list = []
+
+    async def quart(scope, receive, send):
+        events.append(f"quart served {scope['path']}")
+
+    asgi = build_shared_asgi(quart, facts_mcp=_FakeMcp("facts", events), drive_mcp=None,
+                             inbox_mcp=_FakeMcp("inbox", events))
+    for path in ("/memory-inbox-mcp", "/.well-known/oauth-protected-resource/memory-inbox-mcp", "/mcp"):
+        await asgi(_scope(path), _noop, _noop)
+    assert events == ["inbox served /memory-inbox-mcp",
+                      "inbox served /.well-known/oauth-protected-resource/memory-inbox-mcp", "facts served /mcp"]
+
+
+async def test_without_an_inbox_app_its_path_falls_to_quart():
+    events: list = []
+
+    async def quart(scope, receive, send):
+        events.append(f"quart served {scope['path']}")
+
+    asgi = build_shared_asgi(quart, facts_mcp=_FakeMcp("facts", events), drive_mcp=None, inbox_mcp=None)
+    await asgi(_scope("/memory-inbox-mcp"), _noop, _noop)
+    assert events == ["quart served /memory-inbox-mcp"]
+
+
+async def test_the_lifespan_runs_the_inbox_session_manager():
+    import contextlib
+    events: list = []
+
+    class Managed(_FakeMcp):
+        def __init__(self, name: str) -> None:
+            super().__init__(name, events)
+            self.session_manager = self
+
+        @contextlib.asynccontextmanager
+        async def run(self):
+            events.append(f"{self.name} up")
+            yield
+            events.append(f"{self.name} down")
+
+    messages = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+
+    async def receive():
+        return messages.pop(0)
+
+    async def quart(scope, receive, send):
+        pass
+
+    asgi = build_shared_asgi(quart, facts_mcp=Managed("facts"), drive_mcp=None, inbox_mcp=Managed("inbox"))
+    await asgi({"type": "lifespan"}, receive, _noop)
+    assert events == ["facts up", "inbox up", "inbox down", "facts down"]

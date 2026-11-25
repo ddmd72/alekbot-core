@@ -36,6 +36,7 @@ GET /api/user/facts/review-queue
 GET /api/user/invite-codes
 GET /api/user/language
 GET /api/user/location
+GET /api/user/memory-inbox
 GET /api/user/passkeys
 GET /api/user/platforms
 GET /api/user/reminders
@@ -105,6 +106,8 @@ POST /api/user/join-team
 POST /api/user/language
 POST /api/user/link-platform
 POST /api/user/link-telegram
+POST /api/user/memory-inbox/<candidate_id>/confirm
+POST /api/user/memory-inbox/<candidate_id>/reject
 POST /api/user/passkeys/<cred_hash>/remove
 POST /api/user/passkeys/register/options
 POST /api/user/passkeys/register/verify
