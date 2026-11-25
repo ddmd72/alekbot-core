@@ -94,7 +94,8 @@
         document.getElementById("memory-inbox").classList.add("hidden");
         inboxSettings = null;
         inboxApps = [];
-        renderInboxSettings();
+        document.getElementById("inbox-apps").innerHTML = "";
+        document.getElementById("memory-inbox-settings").classList.add("hidden");
       }
 
       // Leaving the tab or closing the page relocks the session (best effort: the 15-minute end is the guarantee).
