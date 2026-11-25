@@ -1244,9 +1244,14 @@ change is a precondition write, so an expiry and the owner's "True" on one candi
 `expired` candidate 30 days, a `rejected` or `consolidated` one 180 days; an open record has none and no field is named
 `expires_at`. Indexes: `(user_id, status, received_at)`, `(user_id, status, created_at desc)`, `(status, answer_by)`.
 
+**Connected apps.** The same Cabinet block lists the apps holding a live `memory_submit` grant
+(`MCPAuthorizationService.resource_grants`) and revokes one by its grant id; the inbox tool re-checks the grant on every
+call, so a revoked app's next submission is refused at once (2026-11-25, owner).
+
 **Triage** (`MemoryInboxTriagePass`, task `triage_memory_inbox`, profile `consolidation_inbox_triage`, pass label
 `inbox_triage`). At most once per interval (`memory_inbox_triage_interval_days`, default 1, owner-local calendar days;
-user, then account, then system) and only when something is `received`. Under the account's memory-write lease it sends
+user, then account, then system; the owner chooses 1, 2, 3 or 7 days in the Cabinet's Memory section, effective at the
+next sweep) and only when something is `received`. Under the account's memory-write lease it sends
 up to `TRIAGE_BATCH` (40) submissions per pass, at most `TRIAGE_PASSES` (3) passes, with the open candidates and the
 newest `TRIAGE_SHOWN_CAP` (100) answered ones, as JSON objects (a submitted text stays inside its own object). The model
 has two decisions through `MemoryInboxTriageScope`: `record_candidate` (one thought, at most `CANDIDATE_MAX_WORDS` 60,
