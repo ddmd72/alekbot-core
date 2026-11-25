@@ -137,6 +137,7 @@ notification path to it. Interactive messages escape the same way before capping
 External facts. Slack expects the event acknowledgement within 3 seconds (hence the immediate 200 and the Cloud Tasks
 enqueue), allows about 3000 characters of text per block, and asks bots to stay near one message per second per channel
 (status updates are throttled).
+- **Link previews are decided per answer.** More than two distinct links in an answer turn `unfurl_links` / `unfurl_media` off on every new post of it; `chat.update` never unfurls (`src/domain/link_previews.py`, `rich_content_protocol/README.md` § Link previews). `tests/unit/adapters/test_slack_link_previews.py`.
 
 ## Links
 

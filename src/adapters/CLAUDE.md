@@ -285,3 +285,4 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
 - **Workspace bucket (versioned):** `GcsWorkspaceAdapter` deletes by metadata patch + delete of the live object under
   `if_generation_match`, never a generation-addressed delete (that erases the version).
 - **Slack voice memo** is detected by the file name `audio_message.*`, never by mimetype (seen as `audio/mp4` and `video/mp4`).
+- **Slack `chat.update` never unfurls links** (probed; it has no unfurl parameters), `chat.postMessage` unfurls every link by default. Link previews are decided per answer in the Slack and Telegram response channels via `src/domain/link_previews.py` (`decisions/link_previews_threshold.md`).

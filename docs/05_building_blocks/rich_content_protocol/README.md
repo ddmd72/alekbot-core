@@ -9,6 +9,7 @@ covers:
   src/ports/platform_media_port.py
   src/ports/notification_channel_factory_port.py
   src/ports/notification_state_port.py
+  src/domain/link_previews.py
   src/domain/notification.py
   src/domain/notification_kind.py
   src/domain/notify_result.py
@@ -153,6 +154,22 @@ A `Title [N]` pair is first rewritten to `[Title][N]` so the name is not printed
   fact review (line 38) skips frames that are not the owner's words, and protocol tokens name these lines verbatim.
 - **Adapters never convert or render.** `PlatformMediaPort` and `HtmlRendererPort` implementations only call the
   platform API or the browser; conversion and rendering belong in `RichContentService`.
+
+## Link previews
+
+A bot answer with more than two distinct http(s) links is delivered with previews off; one or two links keep them.
+The links are counted once over the whole answer as it is delivered (anchors `[N]` already resolved to links), not per
+chunk, and the decision is all-or-nothing: every post of that answer carries it (`src/domain/link_previews.py`,
+`LINK_PREVIEW_MAX_LINKS = 2`). The response channels pass it to the SDK only when previews are off: Slack
+`unfurl_links=False, unfurl_media=False` on `chat.postMessage`, Telegram `link_preview_options` disabled on send and on
+edit (Telegram previews appear on edits too). A separate post is its own answer: the late-answer header with the origin
+permalink, a document link, the html-page link that `RichContentService` sends as a plain message.
+
+Slack `chat.update` never unfurls, whatever the original post's flags, so the reply that replaces the status message has
+no previews whatever the count; only new posts (the overflow chunks of a long answer) need the decision. Why a
+threshold and not "first link only": `decisions/link_previews_threshold.md`.
+`tests/unit/domain/test_link_previews.py`, `tests/unit/adapters/test_slack_link_previews.py`,
+`tests/unit/adapters/test_telegram_link_previews.py`.
 
 ## Links
 

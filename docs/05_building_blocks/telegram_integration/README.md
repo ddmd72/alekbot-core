@@ -103,6 +103,7 @@ the fallback text; the GCS-URL media types are dropped with a warning. Inline ke
 - **A turn can outlive the webhook.** An inline webhook loses CPU once Telegram drops the connection, which is why the
   queue path exists (`LONG_RUNNING_TURNS_RFC.md` section 5.8); the turn then runs in a worker, not in the request.
 - **Unsupported:** inline keyboards, and rich content of the GCS-URL kinds, which are dropped with a warning (see the rich content protocol).
+- **Link previews are decided per answer.** More than two distinct links in an answer disable the preview (`link_preview_options`) on every send and on the edit that carries the first chunk (`src/domain/link_previews.py`, `rich_content_protocol/README.md` § Link previews). `tests/unit/adapters/test_telegram_link_previews.py`.
 
 ## Links
 

@@ -6,10 +6,11 @@ import random
 import tempfile
 import aiohttp
 from typing import Any, Dict, Optional, List
-from telegram import Bot
+from telegram import Bot, LinkPreviewOptions
 from ...domain.messaging import MessageRef, ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
+from ...domain.link_previews import link_previews_allowed
 from ...ports.localization_port import LocalizationPort
 from ...utils.file_conversion import safe_temp_suffix
 from ...utils.message_chunker import MessageChunker
@@ -216,6 +217,19 @@ class TelegramResponseChannel(ResponseChannel):
         
         return text
 
+    _MD_ESCAPE_RE = re.compile(r"\\([_\[\]()~>#+\-=|{}.!\\])")
+
+    def _previews_allowed(self, text: str, link_list: Optional[List]) -> bool:
+        """Link-preview decision for an answer: counts the distinct links of its rendered form (anchors resolved to
+        links), with the MarkdownV2 escapes removed so a raw `example\\.com` URL counts as `example.com`."""
+        rendered = self._resolve_links_telegram(self._format_for_platform(text), link_list)
+        return link_previews_allowed(self._MD_ESCAPE_RE.sub(r"\1", rendered))
+
+    @staticmethod
+    def _no_preview(previews_allowed: bool) -> Dict[str, Any]:
+        """Extra send/edit kwargs: none when previews are allowed, so the call keeps its default shape."""
+        return {} if previews_allowed else {"link_preview_options": LinkPreviewOptions(is_disabled=True)}
+
     async def send_message(self, text: str, thread_id: Optional[str] = None, link_list: Optional[List] = None) -> Any:
         """
         Send a text message to Telegram with graceful markdown fallback.
@@ -233,6 +247,20 @@ class TelegramResponseChannel(ResponseChannel):
         Returns:
             Message ID (as string)
         """
+        return await self._post_message(text, thread_id, link_list)
+
+    async def _post_message(
+        self,
+        text: str,
+        thread_id: Optional[str] = None,
+        link_list: Optional[List] = None,
+        previews_allowed: Optional[bool] = None,
+    ) -> Any:
+        """Post one message. `previews_allowed` is the whole answer's link-preview decision when the caller posts a
+        part of a longer answer; None means this message is the whole answer and decides on its own text."""
+        no_preview = self._no_preview(
+            self._previews_allowed(text, link_list) if previews_allowed is None else previews_allowed
+        )
         try:
             # Truncate BEFORE formatting to account for escaping overhead
             # MarkdownV2 escaping can add ~30% extra characters
@@ -259,7 +287,8 @@ class TelegramResponseChannel(ResponseChannel):
                 chat_id=self.chat_id,
                 text=formatted,
                 parse_mode="MarkdownV2",
-                message_thread_id=int(thread_id) if thread_id else None
+                message_thread_id=int(thread_id) if thread_id else None,
+                **no_preview,
             )
             return str(message.message_id)
 
@@ -277,7 +306,8 @@ class TelegramResponseChannel(ResponseChannel):
                         chat_id=self.chat_id,
                         text=text,  # Original text, NO formatting
                         parse_mode=None,
-                        message_thread_id=int(thread_id) if thread_id else None
+                        message_thread_id=int(thread_id) if thread_id else None,
+                        **no_preview,
                     )
                     logger.info("✅ [Telegram] Plain text fallback successful")
                     return str(message.message_id)
@@ -319,9 +349,11 @@ class TelegramResponseChannel(ResponseChannel):
         if not chunks:
             raise ValueError("a literal message needs text")
         first = None
+        no_preview = self._no_preview(link_previews_allowed(text))
         try:
             for index, chunk in enumerate(chunks):
-                extra = {"reply_to_message_id": int(to_message_id)} if to_message_id and index == 0 else {}
+                extra: Dict[str, Any] = {"reply_to_message_id": int(to_message_id)} if to_message_id and index == 0 else {}
+                extra.update(no_preview)
                 message = await self.bot.send_message(chat_id=self.chat_id, text=chunk, parse_mode=None, **extra)
                 if first is None:
                     first = str(message.message_id)
@@ -345,6 +377,19 @@ class TelegramResponseChannel(ResponseChannel):
             text: New message content
             link_list: Optional [{anchor, title, url}] — [N] anchors resolved to [title](url)
         """
+        await self._edit_message(message_id, text, link_list)
+
+    async def _edit_message(
+        self,
+        message_id: str,
+        text: str,
+        link_list: Optional[List] = None,
+        previews_allowed: Optional[bool] = None,
+    ) -> None:
+        """Edit one message; `previews_allowed` as in `_post_message` (Telegram shows previews on edits too)."""
+        if previews_allowed is None:
+            previews_allowed = self._previews_allowed(text, link_list)
+        no_preview = self._no_preview(previews_allowed)
         try:
             # Truncate BEFORE formatting to account for escaping overhead
             safe_length = int(TELEGRAM_MAX_MESSAGE_LENGTH * 0.7)
@@ -368,7 +413,8 @@ class TelegramResponseChannel(ResponseChannel):
                 chat_id=self.chat_id,
                 message_id=int(message_id),
                 text=formatted,
-                parse_mode="MarkdownV2"
+                parse_mode="MarkdownV2",
+                **no_preview,
             )
 
         except Exception as e:
@@ -386,7 +432,8 @@ class TelegramResponseChannel(ResponseChannel):
                         chat_id=self.chat_id,
                         message_id=int(message_id),
                         text=text,  # Original text, NO formatting
-                        parse_mode=None
+                        parse_mode=None,
+                        **no_preview,
                     )
                     logger.info("✅ [Telegram] Plain text update successful")
                     return
@@ -397,7 +444,7 @@ class TelegramResponseChannel(ResponseChannel):
             # Telegram: messages older than 48h cannot be edited
             logger.warning(f"⚠️ [TelegramResponseChannel] Cannot edit message {message_id}: {e}")
             # Final fallback: send new message
-            await self.send_message(text, thread_id=None)
+            await self._post_message(text, thread_id=None, link_list=None, previews_allowed=previews_allowed)
 
     async def send_chunked_message(
         self,
@@ -428,12 +475,14 @@ class TelegramResponseChannel(ResponseChannel):
         if not chunks:
             return
 
+        previews_allowed = self._previews_allowed(text, link_list)
+
         # First chunk replaces the status bubble with real content.
-        await self.update_message(message_id, chunks[0], link_list=link_list)
+        await self._edit_message(message_id, chunks[0], link_list, previews_allowed)
 
         # Remaining chunks as follow-up messages (no fake thread_id).
         for chunk in chunks[1:]:
-            await self.send_message(chunk, thread_id=thread_id, link_list=link_list)
+            await self._post_message(chunk, thread_id, link_list, previews_allowed)
 
     async def send_long_text(
         self, text: str, link_list: Optional[List] = None, thread_id: Optional[str] = None
@@ -452,9 +501,10 @@ class TelegramResponseChannel(ResponseChannel):
             return await self.send_message(text, thread_id=thread_id, link_list=link_list)
 
         chunks = self.chunker.split(text)
-        first = await self.send_message(chunks[0], thread_id=thread_id, link_list=link_list)
+        previews_allowed = self._previews_allowed(text, link_list)
+        first = await self._post_message(chunks[0], thread_id, link_list, previews_allowed)
         for chunk in chunks[1:]:
-            await self.send_message(chunk, thread_id=thread_id, link_list=link_list)
+            await self._post_message(chunk, thread_id, link_list, previews_allowed)
         return first
 
     async def send_flat_response(self, text: str, status_message_id: str) -> None:
@@ -462,9 +512,10 @@ class TelegramResponseChannel(ResponseChannel):
         chunks = self.chunker.split(text)
         if not chunks:
             return
-        await self.update_message(status_message_id, chunks[0])
+        previews_allowed = self._previews_allowed(text, None)
+        await self._edit_message(status_message_id, chunks[0], None, previews_allowed)
         for chunk in chunks[1:]:
-            await self.send_message(chunk)  # no thread_id → top-level
+            await self._post_message(chunk, None, None, previews_allowed)  # no thread_id → top-level
 
     async def send_rich_content(
         self,
