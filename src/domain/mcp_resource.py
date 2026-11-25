@@ -1,8 +1,9 @@
 """
 The protected resources of the remote MCP server and the rule that binds a scope to its resource.
 
-One authorization server fronts the resource servers: the facts connector (`/mcp`), the drive connector (`/drive-mcp`)
-and the external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4). Each has one OAuth scope;
+One authorization server fronts the resource servers: the facts connector (`/mcp`), the drive connector (`/drive-mcp`),
+the external task queue's worker resource (`/tasks-mcp`, EXTERNAL_TASK_QUEUE_RFC §5.4) and the memory inbox
+(`/memory-inbox-mcp`, MCP_MEMORY_SUBMISSIONS_RFC §5.1). Each has one OAuth scope;
 the scope strings live in the composition layer (one of them is also a Firestore collection name, which core layers must
 not spell) and are injected as a `scope_of` mapping. A token must never carry an audience its scope does not belong to
 (DRIVE_MCP_CONNECTOR_RFC §3.3, E1). A resource missing from the served `uris` is never bound: its scope is refused
@@ -18,10 +19,12 @@ class MCPResource(str, Enum):
     FACTS = "facts"
     DRIVE = "drive"
     TASKS = "tasks"
+    MEMORY_INBOX = "memory_inbox"
 
 
 DRIVE_PATH = "/drive-mcp"
 TASKS_PATH = "/tasks-mcp"     # not under `/mcp/`: the facts app owns that prefix (EXTERNAL_TASK_QUEUE_RFC §5.4)
+MEMORY_INBOX_PATH = "/memory-inbox-mcp"   # not under `/mcp/` either (MCP_MEMORY_SUBMISSIONS_RFC §5.1)
 
 
 class ResourceRefused(ValueError):
@@ -53,6 +56,12 @@ def tasks_resource_uri(facts_resource_uri: str) -> str:
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), TASKS_PATH, "", ""))
 
 
+def memory_inbox_resource_uri(facts_resource_uri: str) -> str:
+    """Same scheme and host as the facts URI, path MEMORY_INBOX_PATH (no new deploy key, as the drive URI)."""
+    parts = urlsplit(facts_resource_uri.strip())
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), MEMORY_INBOX_PATH, "", ""))
+
+
 def bind_resource(
     resource: Optional[str],
     scopes: Sequence[str],
@@ -64,9 +73,9 @@ def bind_resource(
     `scope_of` maps each resource to its one scope.
     `resource` given: it must canonicalise to one of `uris` (else ResourceRefused); every requested scope must be
     that resource's own (else ScopeRefused); none requested -> the resource's own scope.
-    `resource` absent: DRIVE when the scopes are exactly its scope; TASKS when they are exactly its scope (a
-    `scope_of` without TASKS knows no such scope); FACTS when they are empty or exactly its scope; anything else (a
-    mix, an unknown scope) -> ScopeRefused. A kind selected so that is not in `uris` (not served) -> ScopeRefused.
+    `resource` absent: DRIVE when the scopes are exactly its scope; TASKS, MEMORY_INBOX when they are exactly that
+    resource's scope (a `scope_of` without the resource knows no such scope); FACTS when they are empty or exactly its
+    scope; anything else (a mix, an unknown scope) -> ScopeRefused. A kind selected so that is not in `uris` (not served) -> ScopeRefused.
     """
     requested = list(scopes)
     if resource is not None:
@@ -84,6 +93,8 @@ def bind_resource(
         kind = MCPResource.DRIVE
     elif unique == {scope_of.get(MCPResource.TASKS)}:
         kind = MCPResource.TASKS
+    elif unique == {scope_of.get(MCPResource.MEMORY_INBOX)}:
+        kind = MCPResource.MEMORY_INBOX
     elif not unique or unique == {scope_of[MCPResource.FACTS]}:
         kind = MCPResource.FACTS
     else:
@@ -101,3 +112,8 @@ def is_drive_grant(resource: Optional[str]) -> bool:
 def is_tasks_grant(resource: Optional[str]) -> bool:
     """The resource bound at authorize is the task queue's worker resource: the consent page asks for a worker."""
     return resource is not None and urlsplit(resource).path.rstrip("/") == TASKS_PATH
+
+
+def is_memory_inbox_grant(resource: Optional[str]) -> bool:
+    """The resource bound at authorize is the memory inbox: the consent page says it only sends records for review."""
+    return resource is not None and urlsplit(resource).path.rstrip("/") == MEMORY_INBOX_PATH

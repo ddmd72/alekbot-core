@@ -1,5 +1,7 @@
 """build_worker_tasks: the runner registry `WorkerHandler` receives from composition (S5b)."""
 import logging
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,7 +15,17 @@ from src.services.deep_research_notice_sender import DeepResearchNoticeSender
 from src.services.disabled_task import DisabledTask
 from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
 from src.services.execute_reminder_task import ExecuteReminderTask
+from src.composition.memory_inbox_setup import MemoryInbox
 from src.composition.worker_setup import build_worker_tasks
+from src.domain.memory_inbox_task_keys import FINAL_TASK, SWEEP_TASK, TRIAGE_TASK
+from src.domain.ui_messages import UIMessage
+from src.handlers.worker_handler import WorkerHandler
+from src.services.memory_inbox_final_task import MemoryInboxFinalTask
+from src.services.memory_inbox_sweep_task import MemoryInboxSweepTask
+from src.services.memory_inbox_triage_task import MemoryInboxTriageTask
+from tests.support.memory_inbox_rhythm import (
+    UTC, FakePass, Languages, Notifier, ProfileStep, Rig, final_outcome, triage_outcome,
+)
 from src.services.video_generation_delivery import deliver_video
 from src.services.video_generation_polling_task import VideoGenerationPollingTask
 
@@ -21,7 +33,8 @@ from src.services.video_generation_polling_task import VideoGenerationPollingTas
 # Every task type is registered whatever is configured: an absent dependency gives a refusal, never an unknown type.
 _TASK_TYPES = {"execute_reminder", "video_generation_polling", "deep_research_failed",
                "start_daily_email_review", "daily_email_review", "billing_daily_summary", "geo_mark_turn",
-               "external_task_timer", "external_task_deliver", "external_task_wake"}
+               "external_task_timer", "external_task_deliver", "external_task_wake",
+               "memory_inbox_triage", "memory_inbox_final", "memory_inbox_sweep"}
 
 
 class _Factory:
@@ -202,3 +215,90 @@ async def test_without_the_account_store_the_billing_task_answers_the_refusal_it
     with caplog.at_level(logging.WARNING):
         assert await tasks["billing_daily_summary"]({}, {}) == ({"error": "account_repo not configured"}, 501)
     assert caplog.messages == ["[Worker] billing_daily_summary: account_repo not configured"]
+
+
+_INBOX_TASK_TYPES = {TRIAGE_TASK, FINAL_TASK, SWEEP_TASK}
+
+
+# --- the memory inbox's three task types (MCP_MEMORY_SUBMISSIONS_RFC §10) -------------------------------------------
+
+class _InboxWorld(Rig):
+    """The rhythm kit's store, lease, queue and users, the bundle over them with scripted passes, and the registry."""
+
+    def __init__(self) -> None:
+        super().__init__(datetime.now(UTC) - timedelta(hours=3))
+        self.triage_pass = FakePass(self.db, triage_outcome(candidates=2, sources=("Desk assistant",)))
+        self.final_pass = FakePass(self.db, final_outcome(wrote=1))
+        self.profile_step = ProfileStep(self.db)
+        self.notifier = Notifier()
+        self.languages = Languages()
+        self.bundle = MemoryInbox(
+            store=self.repo, service=MagicMock(), triage_pass=self.triage_pass, final_pass=self.final_pass,
+            lease=self.lease, owner_zones=self.owner_zones, profile_step=self.profile_step,
+            languages=self.languages, task_queue=self.queue, run_timeout_s=600.0)  # type: ignore[arg-type]
+        self.tasks = build_worker_tasks(**_deps(object(), user_repo=self.users, account_repo=self.accounts,
+                                                notification_service=self.notifier, memory_inbox=self.bundle))
+        self.handler = WorkerHandler(
+            agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), consolidation_service=MagicMock(),
+            agent_factory=MagicMock(), user_repo=self.users, tasks=self.tasks)
+
+    async def dispatch(self, task_type: str, **payload):
+        return await self.handler.handle({"task_type": task_type, **payload})
+
+
+def test_with_the_inbox_the_three_runners_hold_the_bundles_parts():
+    world = _InboxWorld()
+    triage, final, sweep = (world.tasks[t] for t in (TRIAGE_TASK, FINAL_TASK, SWEEP_TASK))
+
+    assert (type(triage), type(final), type(sweep)) == (MemoryInboxTriageTask, MemoryInboxFinalTask, MemoryInboxSweepTask)
+    assert triage._store is final._store is sweep._store is world.repo
+    assert triage._pass is world.triage_pass and final._pass is world.final_pass
+    assert triage._lease is final._lease is world.lease
+    assert triage._task_queue is final._task_queue is sweep._task_queue is world.queue
+    assert triage._owner_zones is final._owner_zones is sweep._owner_zones is world.owner_zones
+    assert triage._user_repo is final._user_repo is sweep._user_repo is world.users
+    assert triage._account_repo is sweep._account_repo is world.accounts
+    assert triage._languages is world.languages and triage._notifications is world.notifier
+    assert final._profile_step is world.profile_step
+    assert triage._run_timeout_s == final._run_timeout_s == 600.0
+
+
+@pytest.mark.parametrize("task_type", sorted(_INBOX_TASK_TYPES))
+@pytest.mark.parametrize("missing", ["memory_inbox", "account_repo"])
+async def test_without_the_inbox_or_the_account_store_a_memory_inbox_task_answers_501(task_type, missing):
+    tasks = build_worker_tasks(**_deps(object(), **{missing: None}))
+
+    assert type(tasks[task_type]) is DisabledTask
+    assert await tasks[task_type]({"user_id": "u1"}, {}) == ({"error": "memory inbox not configured"}, 501)
+
+
+async def test_the_handler_dispatches_a_triage_task_to_the_runner_and_the_owner_gets_one_notice():
+    world = _InboxWorld()
+    await world.received()
+
+    body, status = await world.dispatch(TRIAGE_TASK, user_id="u1", account_id="a1")
+
+    assert (body, status) == ({"status": "completed"}, 200)
+    assert len(world.triage_pass.requests) == 1 and world.triage_pass.requests[0].account_id == "a1"
+    [(user_id, account_id, message, fields)] = world.notifier.posts
+    assert (user_id, account_id, message, fields["count"]) == ("u1", "a1", UIMessage.MEMORY_INBOX_CANDIDATES_FROM, "2")
+
+
+async def test_the_handler_dispatches_a_final_task_to_the_runner_and_the_profile_step_runs_after_a_write():
+    world = _InboxWorld()
+    await world.confirmed(world.clock.now)              # confirmed three hours ago: its final run is due
+
+    body, status = await world.dispatch(FINAL_TASK, user_id="u1", account_id="a1")
+
+    assert (body, status) == ({"status": "completed"}, 200)
+    assert len(world.final_pass.requests) == 1 and [c[0] for c in world.profile_step.calls] == ["a1"]
+
+
+async def test_the_handler_dispatches_a_sweep_task_to_the_runner_and_it_enqueues_the_triage():
+    world = _InboxWorld()
+    await world.received()
+
+    body, status = await world.dispatch(SWEEP_TASK)
+
+    assert (body, status) == ({"expired": 0, "triage_enqueued": 1, "final_backstop": 0}, 200)
+    assert [call["task_type"] for call in world.queue.created] == [TRIAGE_TASK]

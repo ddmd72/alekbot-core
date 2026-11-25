@@ -504,3 +504,41 @@ class TestAccountLock:
         self._lock(users)
 
         assert await service.grant_allowed("user-1", token.grant_id) is False
+
+
+# ---------------------------------------------------------------------------
+# The memory inbox resource (MCP_MEMORY_SUBMISSIONS_RFC §5.1)
+# ---------------------------------------------------------------------------
+
+_INBOX_URI = "https://dev.alekbot.app/memory-inbox-mcp"
+_CALLBACK = "https://claude.ai/api/mcp/auth_callback"
+
+
+def _client(scope: str) -> MCPClient:
+    return MCPClient(client_id=f"mcp-{scope.replace(' ', '-')}", client_secret="s", client_name="Claude",
+                     redirect_uris=[_CALLBACK], scope=scope, created_at=datetime.now(timezone.utc))
+
+
+class TestMemoryInboxResource:
+    async def test_an_inbox_client_gets_a_token_for_the_inbox_only(self, service):
+        client = _client("memory_submit")
+        await service.save_client(client)
+        for params in ({"scopes": ["memory_submit"]}, {"scopes": [], "resource": _INBOX_URI}):
+            url = await service.build_consent_redirect(client, AuthorizationParams(
+                redirect_uri=_CALLBACK, code_challenge="c" * 43, **params))
+            req = url.split("req=")[1]
+            assert service.verify_consent_request(req).resource == _INBOX_URI
+            code, _ = await service.issue_auth_code_for_consent(req, "user-1", "acc-1")
+            issued = await service.finalize_auth_code(code)
+            assert issued.scopes == ["memory_submit"]
+            verified = service.verify_access_token(issued.access_token, resource=_INBOX_URI)
+            assert (verified.user_id, verified.account_id, verified.worker_id) == ("user-1", "acc-1", None)
+            assert service.verify_access_token(issued.access_token) is None          # not a facts token
+
+    @pytest.mark.parametrize("params", [{"scopes": ["memory_submit"]}, {"scopes": [], "resource": _INBOX_URI}])
+    async def test_a_facts_client_cannot_reach_the_inbox_resource(self, service, params):
+        client = _client("user_context drive_read")
+        await service.save_client(client)
+        with pytest.raises(MCPAuthError):
+            await service.build_consent_redirect(client, AuthorizationParams(
+                redirect_uri=_CALLBACK, code_challenge="c" * 43, **params))

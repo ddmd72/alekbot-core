@@ -2,7 +2,9 @@
 (TEST_COVERAGE_SYSTEMIC_RFC §5 P14, card A).
 
 A surface is a list of tool declarations, built by the production builder each time it is read:
-- `consolidation`, `consolidation_review`: `ConsolidationAgent._get_tool_declarations` for the two pass kinds;
+- `consolidation`, `consolidation_review`, `consolidation_triage`: `ConsolidationAgent._get_tool_declarations` for the
+  three pass kinds (the triage's writing tools, `record_candidate` and `discard_submissions`, write the memory inbox
+  through the triage pass service, MCP_MEMORY_SUBMISSIONS_RFC §7.4);
 - `notes`, `tasks`: the agents' `_TOOL_DECLARATIONS`;
 - `smart_local`: Smart's three local writing tools (`propose_memory_facts`, `draft_skill`, `workspace`);
 - `external_tasks`: the task specialist's five external task tools (EXTERNAL_TASK_QUEUE_RFC §5.3), built for one
@@ -78,6 +80,7 @@ def _delegate() -> List[Dict[str, Any]]:
 SURFACES: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "consolidation": lambda: ConsolidationAgent._get_tool_declarations(None, "consolidation"),  # type: ignore[arg-type]
     "consolidation_review": lambda: ConsolidationAgent._get_tool_declarations(None, "review"),  # type: ignore[arg-type]
+    "consolidation_triage": lambda: ConsolidationAgent._get_tool_declarations(None, "triage"),  # type: ignore[arg-type]
     "notes": lambda: copy.deepcopy(notes_agent._TOOL_DECLARATIONS),
     "tasks": lambda: copy.deepcopy(tasks_agent._TOOL_DECLARATIONS),
     "smart_local": lambda: [build_propose_memory_facts_tool_declaration(), build_draft_skill_tool_declaration(),
@@ -93,6 +96,7 @@ IN_SCOPE = tuple(SURFACES)
 # become the answer the orchestrator's model reads, so each is a `prompt-input` line with a test.
 READ_ONLY: FrozenSet[str] = frozenset({
     "consolidation:search_existing_facts", "consolidation:count_words", "consolidation_review:count_words",
+    "consolidation_triage:search_existing_facts", "consolidation_triage:count_words",
     "tasks:list_tasks", "tasks:search_tasks",
     "drive:search_drive", "drive:search_deleted_recordings_and_notes", "drive:list_folder", "drive:open_drive_file",
     "drive:get_recording_link", "drive:find_passages", "drive:read_passages", "drive_notes:get_note",

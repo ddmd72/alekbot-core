@@ -23,6 +23,9 @@ page lists the user's active workers (`ExternalTaskService.list_workers`, which 
 radio buttons and Approve needs one picked. With no worker, the flag off, a locked account or no task queue on this
 server the page explains why and offers Deny only. The POST reads the workers again and refuses (400, no code) a
 `worker_id` that is not one of them; the service then stamps it on the code.
+
+The memory inbox (MCP_MEMORY_SUBMISSIONS_RFC §5.1): its grant gets its own heading and intro (the connector only sends
+records the owner checks one by one in the Cabinet, and reads nothing); no worker picker, no closing block.
 """
 
 from html import escape
@@ -33,7 +36,7 @@ from quart import Blueprint, Response, abort, make_response, redirect, request
 
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.external_worker import ExternalWorker
-from ..domain.mcp_resource import is_drive_grant, is_tasks_grant
+from ..domain.mcp_resource import is_drive_grant, is_memory_inbox_grant, is_tasks_grant
 from ..services.mcp_authorization_service import (
     MCPAuthError,
     MCPAuthorizationService,
@@ -128,6 +131,14 @@ def build_mcp_consent_blueprint(
                 "come back to you as outside content. It cannot see your memory or your drives.</p>"
             )
             closing_block = _worker_picker(workers or [], blocked)
+        elif is_memory_inbox_grant(resource):
+            heading = "Authorize memory inbox connector"
+            intro_block = (
+                f"<p><strong>{client_name}</strong> is asking to send records about you to your alekbot memory inbox. "
+                "Nothing it sends becomes memory until you check each record yourself in the Cabinet "
+                "(Memory \u2192 From your assistants). It cannot read your memory, your drives or your tasks.</p>"
+            )
+            closing_block = ""
         else:
             heading = "Authorize MCP connector"
             intro_block = (

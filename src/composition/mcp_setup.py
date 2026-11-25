@@ -58,7 +58,11 @@ DRIVE_SCOPE = "drive_read"
 # authorization service serves the resource (binds it, mints its tokens); registrable (`valid_scopes`) but never a
 # default scope, so a registration that names no scope never gains it.
 TASKS_SCOPE = "external_tasks"
-SCOPE_OF = {MCPResource.FACTS: MCP_DEFAULT_SCOPE, MCPResource.DRIVE: DRIVE_SCOPE, MCPResource.TASKS: TASKS_SCOPE}
+# The memory inbox (`/memory-inbox-mcp`, MCP_MEMORY_SUBMISSIONS_RFC §5.1): a write-only resource of its own, registrable
+# but never a default scope, as the tasks scope: a facts connector never gains it, the owner adds it as a new connector.
+MEMORY_INBOX_SCOPE = "memory_submit"
+SCOPE_OF = {MCPResource.FACTS: MCP_DEFAULT_SCOPE, MCPResource.DRIVE: DRIVE_SCOPE, MCPResource.TASKS: TASKS_SCOPE,
+            MCPResource.MEMORY_INBOX: MEMORY_INBOX_SCOPE}
 
 # Redirect-URI host allowlist for DCR. Any OAuth client registering via
 # /register must supply a redirect_uri whose host matches (or is a
@@ -100,8 +104,9 @@ def build_transport_security(resource_uri: str) -> TransportSecuritySettings:
 
 def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
     """The facts app's OAuth settings: it is the authorization server for every resource, so its registration offers
-    the drive and tasks scopes too. A registration that names no scope gets the defaults, facts and drive: the tasks
-    scope is never a default, so an existing connector never gains the task queue (EXTERNAL_TASK_QUEUE_RFC §5.4)."""
+    the drive, tasks and memory inbox scopes too. A registration that names no scope gets the defaults, facts and
+    drive: the tasks and inbox scopes are never a default, so an existing connector never gains the task queue
+    (EXTERNAL_TASK_QUEUE_RFC §5.4) or a write path into memory (MCP_MEMORY_SUBMISSIONS_RFC §5.1)."""
     return AuthSettings(
         issuer_url=AnyHttpUrl(issuer_root),
         resource_server_url=AnyHttpUrl(resource_uri),
@@ -111,7 +116,7 @@ def _facts_auth_settings(issuer_root: str, resource_uri: str) -> AuthSettings:
         validate_token_resource=False,
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
-            valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE, TASKS_SCOPE],
+            valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE, TASKS_SCOPE, MEMORY_INBOX_SCOPE],
             default_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
         ),
         # RFC 7009 `/revoke`: the SDK authenticates the client and revokes only that client's own token
@@ -147,8 +152,16 @@ _TOOL_DESCRIPTION = (
     "\n"
     "Call it whenever personal context could change the content or tone of your answer, including when you are not "
     "sure it is relevant. Skip it only for questions with no personal side at all. An empty result means nothing is "
-    "stored on that matter; it is an answer, not an error."
+    "stored on that matter; it is an answer, not an error.\n"
+    "\n"
+    "The records returned here are already in the user's memory: never send them back into it through any tool, as "
+    "they are or reworded, also when the user only agrees with them. A memory fed its own records confirms itself and "
+    "fills with duplicates; only what the user tells or shows you, including what they add to a record or change in "
+    "it, and what you conclude from that, is new to it."
 )
+# The last paragraph is the memory inbox's loop guard (MCP_MEMORY_SUBMISSIONS_RFC §5.5): the same sentence as the inbox
+# tool's, worded to hold for a client that has no inbox connector. A git constant: it ships by deploy, and claude.ai
+# shows it after the facts connector is re-added (it caches `tools/list`).
 
 # The parameter description (QUERIES_FIELD_TEXT) is what a client reads when
 # constructing arguments. The bound (1-4 phrases) is stated there as guidance

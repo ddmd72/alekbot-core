@@ -132,7 +132,7 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
 | LLM adapters: tier→model, capability gates, output-format standard | `src/adapters/CLAUDE.md`, `docs/05_building_blocks/provider_resolution/README.md` |
 | Tests: layout, fakes, guards, coverage gates, mutation | `tests/CLAUDE.md`, `docs/11_quality/README.md` |
 | Runtime flows (chat turn, background work, voice) | `docs/06_runtime/README.md`, `docs/06_runtime/API_REFERENCE.md` |
-| Memory: consolidation, facts, expiry and janitor, review, standing directives, `$memory save` | `docs/05_building_blocks/memory/README.md` |
+| Memory: consolidation, facts, expiry and janitor, review, standing directives, `$memory save`, external submissions (the memory inbox) | `docs/05_building_blocks/memory/README.md` |
 | Memory search (RRF) | `docs/08_concepts/multi_vector_rrf_search.md` |
 | User drive: storage, specialist, indexing, search, transcripts, notes | `docs/05_building_blocks/user_drive/README.md` |
 | Gmail indexing, daily email review | `docs/05_building_blocks/gmail_email_indexing/README.md`, `docs/07_deployment/SCHEDULERS.md` |
@@ -174,8 +174,9 @@ Things that break silently. The deploy-substitution and `config.get()` traps are
 - **Cloud Run throttles CPU once a response is sent:** background work started in a route dies or stalls. Flush pending
   writes (e.g. `PromptContentStore`) before responding, or enqueue a Cloud Task.
 - **The bot never writes to memory itself.** The consolidator reads every user-role message as the owner's own words, so
-  bot-written text in a user message becomes facts and directives; only an owner-confirmed `$memory save` path writes
-  (`decisions/memory_facts_owner_confirmed.md`).
+  bot-written text in a user message becomes facts and directives; only two owner-confirmed paths write: `$memory save`
+  (`decisions/memory_facts_owner_confirmed.md`) and the memory inbox's final pass, which reads outside assistants'
+  submissions the owner confirmed one by one in the Cabinet (`decisions/memory_inbox_external_submissions.md`).
 - **Two delivery paths for prompt text:** tokens (`PROTOCOL_*`, `OUTPUT_FORMAT_*`, …) live in Firestore and ship by token
   upload, not by deploy; texts in `src/domain/*_texts.py` and `src/locales/` ship by code deploy.
 - **Code-written text never claims the system's voice:** a tool result says `Tool note:`/`Tool error:`, never `[System: …]`/`SYSTEM:`; current-turn code text sent into the user channel goes through `wrap_system` with the turn's key (`SYSTEM_TURN_FINGERPRINT_RFC.md`).

@@ -256,6 +256,8 @@ class UserBotConfig(BaseModel):
 
     # Memory review (FACT_LIFECYCLE_RFC D6): days between reviews; None = the account default, then the system default.
     fact_review_interval_days: Optional[int] = None
+    # Memory inbox (MCP_MEMORY_SUBMISSIONS_RFC §10.2): days between triage runs; None = the account default, then 1.
+    memory_inbox_triage_interval_days: Optional[int] = None
 
     # ========================================================================
     # NEW Multi-Vector Search Session (2026-02-07): Search context limits

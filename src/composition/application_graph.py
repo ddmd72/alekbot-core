@@ -39,6 +39,7 @@ from src.composition.file_delivery_setup import FileDelivery, build_file_deliver
 from src.composition.identity_setup import Identity, build_device_auth, build_identity
 from src.composition.integrations_setup import Integrations, build_integrations
 from src.composition.language_setup import Languages, build_languages
+from src.composition.memory_inbox_setup import MemoryInbox
 from src.composition.memory_search_setup import build_memory_search
 from src.composition.memory_setup import Memory, build_memory
 from src.composition.notification_setup import Notifications, build_notifications
@@ -144,6 +145,7 @@ class ApplicationGraph:
     call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
     geo_marks: Optional[GeoMarkService]     # the `$geo` page's routes (GEO_MARKS_RFC §4.5); None without a task queue
     external_tasks: Optional[ExternalTaskService]    # the external task queue (EXTERNAL_TASK_QUEUE_RFC); None without a task queue
+    memory_inbox: Optional[MemoryInbox]      # the memory inbox (MCP_MEMORY_SUBMISSIONS_RFC); None without a task queue
     language_service: LanguageResolver
     language_preferences: LanguagePreferenceService
     localization: _LocalizationService
@@ -273,7 +275,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         media_storage=delivery.media_storage, short_link_service=delivery.short_link_service,
         companion_extractor_runner=companions.extractor_runner, call_text_files=companions.call_text_files,
         geo_marks=chat.geo_mark_service,
-        external_tasks=external_tasks,
+        external_tasks=external_tasks, memory_inbox=memory.memory_inbox,
         language_service=languages.resolver, language_preferences=agents.language_preferences,
         localization=languages.localization, cipher=boot.cipher, digest_key=boot.digest_key,
         agent_task_queue=ops.task_queue, billing_agent=ops.billing_agent,
@@ -439,7 +441,8 @@ def _build_worker_handler(db_client: Any, env_config: EnvironmentConfig, *, cont
             ),
             gmail_reconnect_flag=integrations.gmail_reconnect_flag, account_repo=identity.account_repo,
             geo_mark_turn=slack_adapter.handle_geo_mark_turn,
-            external_tasks=external_tasks, workspace=container.workspace_service),
+            external_tasks=external_tasks, workspace=container.workspace_service,
+            memory_inbox=memory.memory_inbox),
     )
 
 

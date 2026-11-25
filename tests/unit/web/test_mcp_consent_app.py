@@ -180,3 +180,28 @@ class TestPostConsent:
             _sign_in(client)
             resp = await client.post("/mcp/consent", form={})
             assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# The memory inbox grant (MCP_MEMORY_SUBMISSIONS_RFC §5.1, plan §15.5)
+# ---------------------------------------------------------------------------
+
+
+async def test_an_inbox_grant_gets_its_own_consent_text(mock_mcp_service):
+    mock_mcp_service.verify_consent_request = Mock(return_value=ConsentRequest(
+        client_id="mcp-claude-1", redirect_uri="https://claude.ai/api/mcp/auth_callback", code_challenge="c" * 43,
+        code_challenge_method="S256", resource="https://dev.alekbot.app/memory-inbox-mcp", scopes=["memory_submit"],
+        state="xyz"))
+    mock_mcp_service.get_client = AsyncMock(return_value=Mock(client_name="<b>Desk</b>"))
+    app = Quart("test_inbox_consent")
+    app.register_blueprint(build_mcp_consent_blueprint(mock_mcp_service, _KIT.verifier))
+    async with app.test_client() as client:
+        _sign_in(client)
+        resp = await client.get("/mcp/consent?req=JWT")
+        body = (await resp.get_data()).decode()
+    assert resp.status_code == 200
+    assert "Authorize memory inbox connector" in body
+    assert "<strong>&lt;b&gt;Desk&lt;/b&gt;</strong> is asking to send records about you" in body
+    assert "<code>memory_submit</code>" in body and "Approve" in body
+    assert 'name="worker_id"' not in body and "biographical facts" not in body
+    assert "Authorize MCP connector" not in body and "Authorize task connector" not in body

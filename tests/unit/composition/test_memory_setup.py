@@ -146,3 +146,28 @@ def test_the_cabinet_writes_through_the_containers_fact_repository_and_the_bundl
     assert built.memory.cabinet_facts._repo is built.container.repository
     with pytest.raises(dataclasses.FrozenInstanceError):
         built.memory.fact_review = None  # type: ignore[misc]
+
+
+def test_the_memory_inbox_shares_the_zones_the_lease_and_the_profile_step_and_its_passes_run_the_coordinator(build):
+    built = build()
+    inbox, consolidation = built.memory.memory_inbox, built.memory.consolidation_service
+
+    assert inbox is not None
+    assert inbox.owner_zones is consolidation._owner_zones and inbox.lease is consolidation._lease
+    assert inbox.profile_step is built.steps[0] and inbox.languages is LANGUAGES.resolver
+    assert inbox.task_queue == "QUEUE" and inbox.run_timeout_s == CONSOLIDATION.timeout_ms / 1000
+    assert inbox.triage_pass._coordinator is COORDINATOR and inbox.final_pass._coordinator is COORDINATOR
+    assert inbox.final_pass._alert_sink == "ALERT"
+    assert inbox.triage_pass._store is inbox.final_pass._store is inbox.store
+
+
+def test_the_triage_scope_a_pass_builds_validates_fact_ids_against_the_fact_repository(build):
+    built = build()
+    scope = built.memory.memory_inbox.triage_pass._new_scope(["s1"], "a1")
+
+    assert scope.submission_ids == frozenset({"s1"})
+    assert scope._facts is built.container.repository and scope._account_id == "a1"
+
+
+def test_without_a_task_queue_there_is_no_memory_inbox(build):
+    assert build(queue=None).memory.memory_inbox is None

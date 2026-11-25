@@ -56,6 +56,8 @@ ENTRY_POINTS: Dict[str, str] = {
     "mcp_task_tools": "build_tasks_mcp_or_none: TasksTokenVerifier (resolve_key and ExternalWorkerUserGate, each "
                       "with its account-lock check) refuses the key at the door (401); _TaskCaller.run "
                       "(inactive_users) refuses a key verified before the lock",
+    "mcp_inbox_tool": "build_memory_inbox_mcp_or_none (inactive_users): _InboxCaller.run refuses every "
+                      "submit_user_information call of a locked account before anything is stored",
     "cabinet_sessions": "AccountLockService.lock step 2: every device session revoked (the gate then answers 401)",
 }
 
@@ -118,7 +120,8 @@ CABINET_GATE_PREFIX = "/api/"    # every /api/ route sits behind the Cabinet gat
 # The indexer service's routes and the MCP apps' paths (main.py dispatches the latter before the Quart app).
 INDEXER_ROUTES = {("POST", "/worker"): "drive_indexer", ("GET", "/health"): None}
 MCP_PATHS = {"/mcp": "mcp_facts_tool", "/token": "mcp_grants", "/authorize": "cabinet_sessions",
-             "/register": None, "/revoke": None, "/drive-mcp": "mcp_drive_tools", "/tasks-mcp": "mcp_task_tools"}
+             "/register": None, "/revoke": None, "/drive-mcp": "mcp_drive_tools", "/tasks-mcp": "mcp_task_tools",
+             "/memory-inbox-mcp": "mcp_inbox_tool"}
 
 
 # ---------------------------------------------------------------------------------------------- static checks
@@ -182,6 +185,8 @@ def _calls(path: str, name: str) -> List[ast.Call]:
     ("main.py", "create_voice_control_plane_blueprint", "app.inactive_users"),
     ("main.py", "build_drive_mcp_or_none", "mcp_components.inactive_users"),
     ("main.py", "build_tasks_mcp_or_none", "mcp_components.inactive_users"),
+    # main.py's one call `build_memory_inbox_mcp_for(app, mcp_components)` hands the facts app's check on here
+    ("src/composition/memory_inbox_mcp_setup.py", "build_memory_inbox_mcp_or_none", "mcp.inactive_users"),
     ("indexer_main.py", "create_indexer_worker_blueprint", "InactiveUserCheck(users)"),
 ])
 def test_the_entry_modules_hand_every_holder_its_check(path, factory, expected):
@@ -568,6 +573,35 @@ async def _mcp_tasks(w: World) -> None:
         user=SimpleNamespace(access_token=token))))
     result = await tasks._tool_manager.get_tool(contract.CLAIM_TASK).run({}, context=ctx)
     assert (result.isError, [c.text for c in result.content]) == (True, [ACCOUNT_LOCKED_TOOL_ERROR])
+
+
+@probe("mcp_inbox_tool")
+async def _mcp_inbox(w: World) -> None:
+    """The inbox app built as main.py builds it over the graph's objects (the texts from the marker tokens: the offline
+    graph holds no prompt tokens), and a call on an access token of the inbox resource issued before the lock: it
+    answers the lock's text and stores nothing."""
+    from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
+    from src.composition.mcp_setup import MEMORY_INBOX_SCOPE
+    from src.composition.memory_inbox_mcp_setup import build_memory_inbox_mcp_or_none
+    from src.domain import memory_inbox_mcp_contract as contract
+    from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR
+    from src.domain.mcp_resource import memory_inbox_resource_uri
+    from tests.support.memory_inbox_mcp_texts import InboxTokenStore
+    assert w.app.memory_inbox is not None
+    inbox = await build_memory_inbox_mcp_or_none(
+        inbox=w.app.memory_inbox.service, token_repo=InboxTokenStore(),  # type: ignore[arg-type]
+        alert_sink=None, inactive_users=w.mcp.inactive_users, auth_config=w.app.auth_config,
+        authorization_service=w.mcp.authorization_service)
+    assert inbox is not None
+    token = AlekAccessToken(token="jwt", client_id="mcp-claude", scopes=[MEMORY_INBOX_SCOPE], expires_at=4102444800,
+                            resource=memory_inbox_resource_uri(w.app.auth_config.mcp_resource_uri), user_id=USER,
+                            account_id=ACCOUNT)
+    ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(
+        user=SimpleNamespace(access_token=token))))
+    result = await inbox._tool_manager.get_tool(contract.TOOL).run({"items": ["Clara booked the Coimbra weekend"]},
+                                                                   context=ctx)
+    assert (result.isError, [c.text for c in result.content]) == (True, [ACCOUNT_LOCKED_TOOL_ERROR])
+    assert await w.app.memory_inbox.store.received(USER, 40) == []
 
 
 @probe("cabinet_sessions")

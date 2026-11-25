@@ -13,6 +13,8 @@ Owns:
   scope (its URI is the facts host with `TASKS_PATH`, as the drive URI); a grant of it is bound to one worker
   (`worker_id` on the code and the refresh token, `wid` in the access token) and needs the user's flag at consent,
   at code exchange and at every refresh rotation
+- The memory inbox (MCP_MEMORY_SUBMISSIONS_RFC §5.1): served only when `scope_of` holds its scope (its URI is the facts
+  host with `MEMORY_INBOX_PATH`); a grant of it is an ordinary grant (no worker, no flag)
 
 This service is intentionally SDK-free. The `mcp` Python SDK calls into
 `MCPSdkOAuthProvider` (an adapter), which translates the SDK's typed
@@ -35,6 +37,7 @@ from ..domain.mcp_resource import (
     ScopeRefused,
     bind_resource,
     canonical_resource,
+    memory_inbox_resource_uri,
     tasks_resource_uri,
 )
 from ..ports.mcp_client_repository import MCPClientRepository
@@ -173,8 +176,9 @@ class MCPAuthorizationService:
             drive_resource_uri: canonical URI of the drive connector
                 resource (the second audience this server mints)
             scope_of: the one OAuth scope of each resource (injected: the strings live in composition). The tasks
-                resource is served only when it has a scope here; without one its scope is refused (fail closed).
-                Its URI is derived from `mcp_resource_uri`, as composition derives the drive URI (no new key)
+                and memory inbox resources are each served only when it has a scope here; without one its scope is
+                refused (fail closed). Their URIs are derived from `mcp_resource_uri`, as composition derives the
+                drive URI (no new key)
             user_repo / whitelist_repo: read at every refresh rotation
                 (required, no default: a missing reader must fail the
                 build, not open the gate)
@@ -193,6 +197,8 @@ class MCPAuthorizationService:
         if MCPResource.TASKS in self._scope_of:
             self._tasks_uri = canonical_resource(tasks_resource_uri(mcp_resource_uri))
             self._uris[MCPResource.TASKS] = self._tasks_uri
+        if MCPResource.MEMORY_INBOX in self._scope_of:
+            self._uris[MCPResource.MEMORY_INBOX] = canonical_resource(memory_inbox_resource_uri(mcp_resource_uri))
         self._user_repo = user_repo
         self._whitelist_repo = whitelist_repo
         self._consent_base_url = consent_base_url

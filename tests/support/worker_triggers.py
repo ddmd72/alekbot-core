@@ -31,7 +31,9 @@ OTHER_SERVICE: Dict[str, str] = {"drive_sync": "indexer_main.py /worker, deliver
 MANUAL_ONLY: Dict[str, str] = {}
 # Names that stand for a task type: the module attribute they are read from, checked against its runtime value.
 CONSTANTS: Dict[str, str] = {"DRIVE_SYNC_TASK": "src.domain.drive_task_keys", "FACT_REVIEW_TASK": "src.domain.fact_review_task_keys",
-                            "INTERACTIVE_CHOICE_TASK": "src.domain.interactive_choice"}
+                            "INTERACTIVE_CHOICE_TASK": "src.domain.interactive_choice",
+                            "TRIAGE_TASK": "src.domain.memory_inbox_task_keys",
+                            "FINAL_TASK": "src.domain.memory_inbox_task_keys"}
 # The registry entry `_dispatch` runs for a payload without a task type: a queued Slack event has none by design.
 SLACK_EVENT_BRANCH = "<queued slack event>"
 

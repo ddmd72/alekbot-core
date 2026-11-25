@@ -27,6 +27,9 @@ from ..services.external_task_service import ExternalTaskService
 from ..services.external_task_timer_task import ExternalTaskTimerTask
 from ..services.external_task_wake_task import ExternalTaskWakeTask
 from ..services.geo_mark_turn_task import GeoMarkTurnTask
+from ..services.memory_inbox_final_task import MemoryInboxFinalTask
+from ..services.memory_inbox_sweep_task import MemoryInboxSweepTask
+from ..services.memory_inbox_triage_task import MemoryInboxTriageTask
 from ..services.gmail_reconnect_flag import GmailReconnectFlag
 from ..services.provider_registry import ProviderRegistry
 from ..services.start_daily_email_review_task import StartDailyEmailReviewTask
@@ -35,6 +38,7 @@ from ..services.user_notification_service import UserNotificationService
 from ..services.video_generation_delivery import deliver_video
 from ..services.video_generation_polling_task import VideoGenerationPollingTask
 from ..services.workspace_service import WorkspaceService
+from .memory_inbox_setup import MemoryInbox
 
 
 def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRepository,
@@ -49,10 +53,12 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
                        geo_mark_turn: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None,
                        external_tasks: Optional[ExternalTaskService] = None,
                        workspace: Optional[WorkspaceService] = None,
+                       memory_inbox: Optional[MemoryInbox] = None,
                        ) -> Mapping[str, WorkerTask]:
     """Task type -> runner for every task served outside `WorkerHandler`. `geo_mark_turn` is the platform's runner of
     a queued `$geo` question (the Slack adapter's entry); None: the task answers 501. `external_tasks` None (no task
-    queue): the three external task types answer 501; `workspace` None: a delivered result gets no workspace copy."""
+    queue): the three external task types answer 501; `workspace` None: a delivered result gets no workspace copy.
+    `memory_inbox` None (no task queue) or `account_repo` None: the three memory inbox task types answer 501."""
     tasks: Dict[str, WorkerTask] = {}
     empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=alert_sink)
     if notes_port is None:
@@ -116,4 +122,22 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
             ensure_agents=ensure_agents, empty_answer_reporter=empty_answer_reporter)
         tasks["external_task_wake"] = ExternalTaskWakeTask(
             external_tasks=external_tasks, notification_service=notification_service)
+    if memory_inbox is None or account_repo is None:
+        refusal = {"error": "memory inbox not configured"}
+        tasks["memory_inbox_triage"] = DisabledTask("memory_inbox_triage: memory inbox not configured", 501, refusal)
+        tasks["memory_inbox_final"] = DisabledTask("memory_inbox_final: memory inbox not configured", 501, refusal)
+        tasks["memory_inbox_sweep"] = DisabledTask("memory_inbox_sweep: memory inbox not configured", 501, refusal)
+    else:
+        tasks["memory_inbox_triage"] = MemoryInboxTriageTask(
+            store=memory_inbox.store, triage_pass=memory_inbox.triage_pass, lease=memory_inbox.lease,
+            task_queue=memory_inbox.task_queue, user_repo=user_repo, account_repo=account_repo,
+            owner_zones=memory_inbox.owner_zones, languages=memory_inbox.languages,
+            notifications=notification_service, run_timeout_s=memory_inbox.run_timeout_s)
+        tasks["memory_inbox_final"] = MemoryInboxFinalTask(
+            store=memory_inbox.store, final_pass=memory_inbox.final_pass, lease=memory_inbox.lease,
+            task_queue=memory_inbox.task_queue, user_repo=user_repo, owner_zones=memory_inbox.owner_zones,
+            profile_step=memory_inbox.profile_step, run_timeout_s=memory_inbox.run_timeout_s)
+        tasks["memory_inbox_sweep"] = MemoryInboxSweepTask(
+            store=memory_inbox.store, task_queue=memory_inbox.task_queue, user_repo=user_repo,
+            account_repo=account_repo, owner_zones=memory_inbox.owner_zones)
     return tasks

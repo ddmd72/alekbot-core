@@ -290,4 +290,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.FACTS_PIN_RESET_CANCELLED.value: "Se canceló el restablecimiento del PIN de los hechos. Tu PIN sigue igual.",
     UIMessage.FACTS_PIN_NO_RESET_PENDING.value: "No hay ningún restablecimiento del PIN de los hechos pendiente.",
     UIMessage.FACTS_PIN_USAGE.value: "Envía `$pin cancel` para cancelar un restablecimiento pendiente del PIN de los hechos.",
+    UIMessage.MEMORY_INBOX_CANDIDATES.value: 'Hay elementos nuevos de tus asistentes esperando tu revisión: {count}. Están en el Cabinet, en Memoria: nada llega a tu memoria si no lo confirmas.',
+    UIMessage.MEMORY_INBOX_CANDIDATES_FROM.value: 'Hay elementos nuevos de *{source}* esperando tu revisión: {count}. Están en el Cabinet, en Memoria: nada llega a tu memoria si no lo confirmas.',
 }

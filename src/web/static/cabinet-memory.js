@@ -90,6 +90,8 @@
       function forgetFacts() {
         factsMode = "idle";
         document.getElementById("facts-container").innerHTML = "";
+        document.getElementById("memory-inbox-body").innerHTML = "";
+        document.getElementById("memory-inbox").classList.add("hidden");
       }
 
       // Leaving the tab or closing the page relocks the session (best effort: the 15-minute end is the guarantee).
@@ -127,6 +129,7 @@
         renderStateChips();
         renderAreaSelect();
         loadReviewQuestions();
+        loadMemoryInbox();
         loadAreaCounts();
         await loadFactDomains();
         if (factsState === "closed") await closedLoad();
@@ -842,11 +845,194 @@
         row.setAttribute("aria-expanded", String(open));
       }
 
+      /* ── The memory inbox: what the user's outside assistants sent, one card at a time ── */
+      // The row shows how many candidates wait for the owner and opens to the first one. Each card is answered alone:
+      // there is no selection and no "all". "True" sends only what the owner edited; memory still decides what to keep.
+      let inboxCandidates = [],
+        inboxConfirmed = 0,
+        inboxBasis = "inferred",
+        inboxBusy = false;
+      const INBOX_BASES = ["said", "document", "inferred"];
+
+      async function loadMemoryInbox() {
+        try {
+          const res = await factsFetch(`${API}/api/user/memory-inbox`, { credentials: "include" });
+          if (res.ok) {
+            const data = await res.json();
+            inboxCandidates = data.candidates || [];
+            inboxConfirmed = data.confirmed || 0;
+          } else {
+            inboxCandidates = [];
+            inboxConfirmed = 0;
+          }
+        } catch {
+          inboxCandidates = [];
+          inboxConfirmed = 0;
+        }
+        renderMemoryInbox();
+      }
+
+      function renderMemoryInbox() {
+        const wrap = document.getElementById("memory-inbox");
+        const n = factsMode === "idle" ? 0 : inboxCandidates.length;   // nothing of the inbox shows while the tab is locked
+        wrap.classList.toggle("hidden", n === 0);
+        document.getElementById("memory-inbox-count").textContent = String(n);
+        document.getElementById("memory-inbox-title").textContent = t("memory.inbox_row");
+        const body = document.getElementById("memory-inbox-body");
+        if (n === 0) {
+          body.innerHTML = "";
+          return;
+        }
+        inboxBasis = INBOX_BASES.includes(inboxCandidates[0].basis) ? inboxCandidates[0].basis : "inferred";
+        body.innerHTML = inboxCardHtml(inboxCandidates[0]);
+      }
+
+      function toggleMemoryInbox() {
+        const wrap = document.getElementById("memory-inbox");
+        const open = !wrap.classList.contains("open");
+        wrap.classList.toggle("open", open);
+        const row = document.getElementById("memory-inbox-row");
+        row.classList.toggle("open", open);
+        row.setAttribute("aria-expanded", String(open));
+      }
+
+      function inboxWord(prefix, value) {
+        const key = prefix + value;
+        const word = t(key);
+        return word === key ? String(value) : word;
+      }
+
+      // The draft classification in words: what memory would likely make of the candidate (advisory; memory decides).
+      function inboxClassWords(draft) {
+        const d = draft || {};
+        const parts = [];
+        if (d.directive) parts.push(t("memory.inbox_directive"));
+        parts.push(inboxWord("memory.inbox_temporal_", d.temporal_class), inboxWord("memory.inbox_priority_", d.context_priority));
+        const e = d.expiry || {};
+        if (e.kind === "date") parts.push(t("memory.inbox_expiry_date").replace("{date}", () => shortDate(e.date)));
+        else if (e.kind === "horizon") parts.push(t("memory.inbox_expiry_horizon").replace("{days}", () => e.days));
+        else parts.push(t("memory.inbox_expiry_none"));
+        return t("memory.inbox_class").replace("{what}", () => parts.join(", "));
+      }
+
+      function inboxRelationLine(rel) {
+        const r = rel || { kind: "new" };
+        const key = "memory.inbox_rel_" + r.kind;
+        const text = t(key) === key ? t("memory.inbox_rel_new") : t(key);
+        return text.replace("{fact}", () => r.fact_text || "");
+      }
+
+      function inboxBasisButtons() {
+        return INBOX_BASES.map(
+          (b) =>
+            `<button type="button" data-basis="${b}" onclick="setInboxBasis(this.dataset.basis)" class="${b === inboxBasis ? "on" : ""}" aria-pressed="${b === inboxBasis}">${escapeHtml(t("memory.inbox_basis_" + b))}</button>`,
+        ).join("");
+      }
+
+      function setInboxBasis(basis) {
+        if (!INBOX_BASES.includes(basis)) return;
+        inboxBasis = basis;
+        document.getElementById("inbox-basis").innerHTML = inboxBasisButtons();
+      }
+
+      function inboxCardHtml(c) {
+        const from = t("memory.inbox_from")
+          .replace("{source}", () => c.source || "")
+          .replace("{date}", () => shortDate(c.received));
+        const confirmed = inboxConfirmed > 0 ? `<p class="c-hint">${escapeHtml(t("memory.inbox_confirmed").replace("{n}", () => inboxConfirmed))}</p>` : "";
+        const raw = (c.raw || [])
+          .map((r) => {
+            const meta = [t("memory.inbox_basis_" + r.basis), r.said_when, r.happens_when, shortDate(r.received)]
+              .filter((x) => x && x !== "memory.inbox_basis_" + r.basis)
+              .join(" · ");
+            return `<blockquote><p>${escapeHtml(r.information)}</p><p class="c-hint">${escapeHtml(meta)}</p></blockquote>`;
+          })
+          .join("");
+        return `
+        <div class="c-inbox-card" data-candidate="${escapeHtml(c.candidate_id)}">
+          <p class="c-hint">${escapeHtml(from)}</p>
+          <label>${escapeHtml(t("memory.inbox_field_text"))}
+            <textarea id="inbox-text" class="c-input" rows="3">${escapeHtml(c.text)}</textarea></label>
+          <label>${escapeHtml(t("memory.inbox_field_happens"))}
+            <input id="inbox-happens" type="text" class="c-input" value="${escapeHtml(c.happens_when)}" /></label>
+          <label>${escapeHtml(t("memory.inbox_field_said"))}
+            <input id="inbox-said" type="text" class="c-input" value="${escapeHtml(c.said_when)}" /></label>
+          <div>
+            <span class="c-hint">${escapeHtml(t("memory.inbox_field_basis"))}</span>
+            <div id="inbox-basis" class="c-seg" role="group" aria-label="${escapeHtml(t("memory.inbox_field_basis"))}">${inboxBasisButtons()}</div>
+          </div>
+          <p class="c-hint">${escapeHtml(inboxClassWords(c.draft))}</p>
+          <p>${escapeHtml(inboxRelationLine(c.relation))}</p>
+          <details><summary>${escapeHtml(t("memory.inbox_raw"))}</summary>${raw}</details>
+          <div class="c-btns">
+            <button type="button" id="inbox-true" onclick="answerInbox('confirm')" class="c-btn c-pri">${escapeHtml(t("memory.inbox_true"))}</button>
+            <button type="button" id="inbox-not-true" onclick="answerInbox('reject')" class="c-btn c-sec">${escapeHtml(t("memory.inbox_not_true"))}</button>
+          </div>
+          <p class="c-hint">${escapeHtml(t("memory.inbox_note"))}</p>
+          ${confirmed}
+        </div>`;
+      }
+
+      // Only the fields the owner changed; trimmed as the server reads them.
+      function inboxEdits(c) {
+        const edits = {};
+        const text = document.getElementById("inbox-text").value.trim();
+        const happens = document.getElementById("inbox-happens").value.trim();
+        const said = document.getElementById("inbox-said").value.trim();
+        if (text !== c.text.trim()) edits.text = text;
+        if (happens !== c.happens_when.trim()) edits.happens_when = happens;
+        if (said !== c.said_when.trim()) edits.said_when = said;
+        if (inboxBasis !== c.basis) edits.basis = inboxBasis;
+        return edits;
+      }
+
+      // "True" (confirm, with the edits if any) or "Not true" (reject) on the card on screen; the card leaves the list.
+      async function answerInbox(verb) {
+        const c = inboxCandidates[0];
+        if (!c || inboxBusy) return;
+        inboxBusy = true;
+        document.getElementById("inbox-true").disabled = true;
+        document.getElementById("inbox-not-true").disabled = true;
+        try {
+          const init = { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } };
+          if (verb === "confirm") init.body = JSON.stringify(inboxEdits(c));
+          const res = await factsFetch(`${API}/api/user/memory-inbox/${encodeURIComponent(c.candidate_id)}/${verb}`, init);
+          if (res.ok) {
+            inboxCandidates.shift();
+            if (verb === "confirm") inboxConfirmed += 1;
+            renderMemoryInbox();
+            return;
+          }
+          let error = "";
+          try {
+            error = (await res.json()).error || "";
+          } catch { /* no body */ }
+          if (error === "facts_locked") return;
+          if (res.status === 400) {
+            showToast(t(error === "empty_text" ? "memory.inbox_err_empty" : error === "too_long" ? "memory.inbox_err_too_long" : "memory.inbox_failed"), "error");
+          } else if (res.status === 403 || res.status === 404 || res.status === 409) {
+            showToast(t("memory.inbox_err_gone"), "error");
+            await loadMemoryInbox();
+          } else {
+            showToast(t("memory.inbox_failed"), "error");
+          }
+        } catch {
+          showToast(t("memory.inbox_failed"), "error");
+        } finally {
+          inboxBusy = false;
+          const yes = document.getElementById("inbox-true");
+          const no = document.getElementById("inbox-not-true");
+          if (yes) yes.disabled = false;
+          if (no) no.disabled = false;
+        }
+      }
+
       // The language changed while Memory is open: its controls are drawn again in it.
       function renderMemoryControls() {
         renderStateChips();
         renderAreaSelect();
         renderReviewRow();
+        renderMemoryInbox();
       }
 
       let _modalFactIdx = null;

@@ -100,7 +100,8 @@ def test_draft_files_is_an_unprefixed_subcollection_group():
 
 def test_the_runbook_keeps_its_original_words():
     block = gen.render_block(ENTRIES)
-    assert "Seven collections expire on a different field, **`purge_after`**, which exists only in storage:" in block
+    # Reviewer edit (MCP_MEMORY_SUBMISSIONS_RFC §6.3): `memory_inbox` is the eighth `purge_after` policy.
+    assert "Eight collections expire on a different field, **`purge_after`**, which exists only in storage:" in block
     assert "unsaved skill drafts (30 days) and their staged file contents |" in block
 
 

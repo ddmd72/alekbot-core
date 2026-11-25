@@ -7,10 +7,11 @@ from __future__ import annotations
 import copy
 import json
 from types import SimpleNamespace
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, Dict, Optional
 
 import httpx
 import pytest
+from pydantic import WithJsonSchema
 
 from src.composition.drive_connector_tools import DriveConnectorTools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
@@ -209,3 +210,39 @@ async def test_a_call_after_the_texts_became_unavailable_is_an_error_result():
         if resp.headers["content-type"].startswith("text/event-stream") else resp.text
     result = json.loads(data)["result"]
     assert result["isError"] is True and "not available" in result["content"][0]["text"]
+
+
+class FixedTexts:
+    """A text service serving fixed texts (the probe tool's own key set)."""
+
+    def __init__(self, tools: Dict[str, str]) -> None:
+        from src.domain.connector_texts import ConnectorTexts
+        self.value = ConnectorTexts(tools=tools, results={})
+
+    async def texts(self):
+        return self.value
+
+
+_ITEMS = Annotated[list, WithJsonSchema({"type": "array", "items": {
+    "type": "object", "properties": {"information": {"type": "string"}, "basis": {"type": "string"}},
+    "required": ["information"]}})]
+
+
+async def test_an_array_of_objects_gets_a_description_per_item_field():
+    keys = ("instructions", "send", "send.items", "send.items.information", "send.items.basis")
+    texts = FixedTexts({key: f"<{key}>" for key in keys})
+    app = TokenTextFastMCP(texts=texts, initial=await texts.texts(), name="probe")    # type: ignore[arg-type]
+
+    @app.tool(name="send")
+    async def send(items: _ITEMS) -> str:
+        return ""
+
+    registered = copy.deepcopy(app._tool_manager.get_tool("send").parameters)
+    [tool] = await app.list_tools()
+    listed = tool.inputSchema["properties"]["items"]
+    assert listed["description"] == "<send.items>"
+    assert {f: p["description"] for f, p in listed["items"]["properties"].items()} == {
+        "information": "<send.items.information>", "basis": "<send.items.basis>"}
+    assert listed["items"]["required"] == ["information"]
+    assert app._tool_manager.get_tool("send").parameters == registered      # the registered schema is untouched
+    assert "description" not in json.dumps(registered)

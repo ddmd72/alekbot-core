@@ -17,6 +17,7 @@ from ..services.user_drive_service import UserDriveService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.external_task_service import ExternalTaskService
+from ..services.memory_inbox_service import MemoryInboxService
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..services.facts_pin_service import FactsPinService
 from ..services.localization_service import LocalizationService
@@ -60,6 +61,7 @@ from ..utils.billed_scope import billed_scope
 from ..utils.logger import exc_brief, logger
 from .cabinet_auth import CabinetSessionVerifier, make_auth_required
 from .cabinet_external_workers import register_external_worker_routes
+from .cabinet_memory_inbox import register_memory_inbox_routes
 from .facts_pin_app import make_facts_unlock_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -146,6 +148,7 @@ def create_user_cabinet_blueprint(
     facts_pin: Optional[FactsPinService] = None,
     external_tasks: Optional[ExternalTaskService] = None,
     mcp_authorization: Optional[MCPAuthorizationService] = None,
+    memory_inbox: Optional[MemoryInboxService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -159,6 +162,7 @@ def create_user_cabinet_blueprint(
     carry `facts_unlock_required` (a user with a PIN and a session not unlocked gets 403 `facts_locked`).
     `external_tasks` serves the External workers routes (`cabinet_external_workers.py`); without it they answer as a user
     without the flag. `mcp_authorization` lists and revokes the workers' OAuth grants there; without it they have none.
+    `memory_inbox` serves the memory-inbox routes (`cabinet_memory_inbox.py`, MCP_MEMORY_SUBMISSIONS_RFC §8.2).
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -2218,4 +2222,5 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": "Internal server error"}), 500
 
     register_external_worker_routes(bp, auth_required, external_tasks, mcp_authorization)
+    register_memory_inbox_routes(bp, auth_required, facts_unlock_required, memory_inbox)
     return bp

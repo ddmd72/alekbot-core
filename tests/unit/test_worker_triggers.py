@@ -34,8 +34,8 @@ def test_every_job_has_an_update_and_a_create_with_the_same_body_and_uri():
 def test_the_worker_jobs_post_to_worker_with_a_task_type():
     posting = [j for j in wt.scheduler_jobs().values() if "message-body" in j.create]
     # SECRETS_AT_REST_RFC §6.2 R1, plan D-P4: + reconnect_notice_sweep;
-    # email index v2 slice 10: - repair_email_embeddings
-    assert len(posting) == 11
+    # email index v2 slice 10: - repair_email_embeddings; MCP_MEMORY_SUBMISSIONS_RFC §10.1: + memory_inbox_sweep
+    assert len(posting) == 12
     for job in posting:
         assert job.create["uri"].endswith("/worker"), job.name
         assert job.create["http-method"] == "POST", job.name
@@ -61,18 +61,21 @@ def test_the_exemption_tables_are_not_stale():
 
 
 @pytest.mark.slow
-def test_the_trigger_set_is_the_eleven_scheduler_types_and_the_enqueue_only_ones():
+def test_the_trigger_set_is_the_twelve_scheduler_types_and_the_enqueue_only_ones():
     scheduler = set(wt.scheduler_task_types())
     enqueue_only = {s.task_type for s in wt.enqueue_sites()} - scheduler
-    assert len(scheduler) == 11   # email index v2 slice 10: repair_email_embeddings is no longer scheduled
+    # email index v2 slice 10: repair_email_embeddings is no longer scheduled; MCP_MEMORY_SUBMISSIONS_RFC §10.1: the
+    # memory inbox sweep is
+    assert len(scheduler) == 12
     assert "repair_email_embeddings" not in scheduler
     assert "reconnect_notice_sweep" in scheduler   # SECRETS_AT_REST_RFC §6.2 R1, plan D-P4: a scheduled worker task
+    assert "memory_inbox_sweep" in scheduler       # MCP_MEMORY_SUBMISSIONS_RFC §10.1: its own daily job
     assert enqueue_only == {
         "agent_execution", "video_generation_polling", "email_indexing", "consolidation", "companion_consolidation",
         "telegram_update", "execute_reminder", "setup_microsoft_todo", "reindex_task_list", "renew_task_subscriptions",
         "daily_email_review", "deep_research_failed", "drive_sync", "fact_review",
         "interactive_choice", "geo_mark_turn", "external_task_timer", "external_task_deliver",
-        "external_task_wake",
+        "external_task_wake", "memory_inbox_triage", "memory_inbox_final",
     }
 
 

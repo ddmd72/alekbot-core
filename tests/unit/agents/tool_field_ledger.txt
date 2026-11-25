@@ -1,6 +1,5 @@
 # One line per declared tool field: <surface>:<tool>.<path>  # <class> <evidence>
 # Read by test_every_tool_field_is_stored_or_refused.py (its docstring holds the classes and the rules).
-
 consolidation:count_words.text  # read-only reading tool, writes nothing
 consolidation:create_fact.content  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
 consolidation:create_fact.fact_attributes.context  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
@@ -76,6 +75,26 @@ consolidation_review:update_fact.updates.state  # stored tests/unit/services/tes
 consolidation_review:update_fact.updates.superseded_by  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_supersede_and_a_revive_with_a_date_expiry
 consolidation_review:update_fact.updates.tags  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
 consolidation_review:update_fact.updates.temporal_class  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_triage:count_words.text  # read-only reading tool, writes nothing
+consolidation_triage:discard_submissions.reason  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_discard_stores_its_submissions_and_reason
+consolidation_triage:discard_submissions.submission_ids  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_discard_stores_its_submissions_and_reason
+consolidation_triage:record_candidate.basis  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.context_priority  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.directive  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.expiry.date  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.expiry.days  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_horizon_expiry_is_stored
+consolidation_triage:record_candidate.expiry.kind  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.fact_id  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.happens_when  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.relation  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.said_when  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.submission_ids  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.temporal_class  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:record_candidate.text  # stored tests/unit/services/test_memory_inbox_triage_tool_fields_e2e.py::test_a_candidate_with_every_field_is_stored
+consolidation_triage:search_existing_facts.alternative_query  # read-only reading tool, writes nothing
+consolidation_triage:search_existing_facts.keywords  # read-only reading tool, writes nothing
+consolidation_triage:search_existing_facts.limit  # read-only reading tool, writes nothing
+consolidation_triage:search_existing_facts.primary_query  # read-only reading tool, writes nothing
 delegate:manage_self_reminders.workspace_file  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
 delegate:manage_user_tasks.background  # prompt-input tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_background_reaches_the_task_agents_prompt
 delegate:work_with_drive_files.file_contents[].name  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_save_text_without_file_name_uses_the_items_name_and_inbox

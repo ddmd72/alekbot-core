@@ -371,13 +371,14 @@ gcloud firestore fields ttls update expires_at --collection-group=<collection-gr
   --enable-ttl --database=us-production --project=<PROJECT_ID>
 ```
 
-Seven collections expire on a different field, **`purge_after`**, which exists only in storage:
+Eight collections expire on a different field, **`purge_after`**, which exists only in storage:
 
 | Collection group | What expires |
 |---|---|
 | `<prefix>auth_device_sessions_v1` | ended or expired Cabinet device sessions (the record is kept for a grace period after its absolute end or its revocation) |
 | `<prefix>fact_review_questions` | closed memory-review questions (90 days after closing; an open question has no `purge_after`) |
 | `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written) |
+| `<prefix>memory_inbox` | memory-inbox submissions once triaged or discarded (30 days after triage) and closed candidates (expired: 30 days; rejected or consolidated: 180 days); an open record has no `purge_after` |
 | `<prefix>audio_transcripts` | cached transcripts of opened chat audio (90 days after they were written; chat uploads themselves are deleted after 30 days by the bucket lifecycle) |
 | `<prefix>drive_links` | the drive connector's one-time download links (a day after issue; a link itself dies 5 minutes after issue, checked on read) |
 | `<prefix>external_tasks` | external task records (30 days after the task reaches a final state; a task still open has no `purge_after`) |

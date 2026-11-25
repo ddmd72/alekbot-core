@@ -39,6 +39,7 @@ from ..utils.logger import logger
 from .fact_profile_setup import build_fact_profile_service, max_per_run as profile_max_per_run
 from .identity_setup import Identity
 from .language_setup import Languages
+from .memory_inbox_setup import MemoryInbox, build_memory_inbox
 from .memory_search_setup import MemorySearch
 from .notification_setup import Notifications
 from .operations_setup import Operations
@@ -50,7 +51,8 @@ class Memory:
     """`fact_answers`, `interactive_choice` and `fact_review` are None without a task queue (the review also needs the
     ops alert sink); `/worker` then answers their tasks with 501. `task_send_buttons` is the interactive-message router
     for the chat handler's Slack Send button on a held external task, set only when the click service answers that
-    button (a queue and the external task service); None: the command goes alone."""
+    button (a queue and the external task service); None: the command goes alone. `memory_inbox` (the outside
+    assistants' submissions, MCP_MEMORY_SUBMISSIONS_RFC) is None without a task queue."""
 
     consolidation_service: ConsolidationService
     fact_lifecycle_sweep: FactLifecycleSweepService
@@ -59,6 +61,7 @@ class Memory:
     fact_review: Optional[FactReviewService]
     cabinet_facts: CabinetFactService
     task_send_buttons: Optional[InteractiveMessagePort] = None
+    memory_inbox: Optional[MemoryInbox] = None
 
 
 def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: Any, coordinator: AgentCoordinator,
@@ -73,6 +76,12 @@ def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: An
     profile_step = build_fact_profile_service(
         container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")),
         person_cards=memory_search.person_cards, atlas=memory_search.place_atlas, quota=ops.quota_service)
+    memory_inbox = build_memory_inbox(
+        db_client, env_config, task_queue=ops.task_queue, owner_zones=owner_zones, coordinator=coordinator,
+        ensure_agents=lambda user_id: agent_factory.ensure_agents_for_user(user_id), facts=container.repository,
+        alert_sink=ops.alert_sink,
+        lease=lease, profile_step=profile_step, languages=languages.resolver,
+        run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000)
     consolidation = ConsolidationService(
         queue=routing.consolidation_queue,
         coordinator=coordinator,
@@ -105,7 +114,7 @@ def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: An
         owner_zones=owner_zones, lease=lease, profile_step=profile_step, cabinet_memory_url=cabinet_memory_url,
         external_tasks=external_tasks)
     return Memory(consolidation_service=consolidation, fact_lifecycle_sweep=sweep, fact_answers=answers,
-                  interactive_choice=choice, fact_review=review, task_send_buttons=buttons,
+                  interactive_choice=choice, fact_review=review, task_send_buttons=buttons, memory_inbox=memory_inbox,
                   # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
                   cabinet_facts=CabinetFactService(container.repository, container.biographical_context_service))
 

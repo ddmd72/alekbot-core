@@ -163,6 +163,37 @@ gcloud scheduler jobs describe alek-bot-dev-fact-lifecycle-sweep \
   --attempt-deadline=180s \
   --project=$PROJECT_ID
 
+# Memory inbox sweep (MCP_MEMORY_SUBMISSIONS_RFC §10.1): once a day, before the 09:00 billing summary and the 09:30
+# janitor so triage leases are mostly released before the review starts. Expires unanswered candidates, enqueues the
+# triage of every user with new submissions whose interval elapsed, and re-enqueues a lost final pass. No LLM, no lease,
+# idempotent (every task it enqueues has a dedup name), so a retry by Cloud Scheduler is harmless.
+gcloud scheduler jobs describe alek-bot-dev-memory-inbox-sweep \
+  --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+&& gcloud scheduler jobs update http alek-bot-dev-memory-inbox-sweep \
+  --schedule="30 8 * * *" \
+  --time-zone="Europe/Madrid" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"memory_inbox_sweep"}' \
+  --update-headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=180s \
+  --project=$PROJECT_ID \
+|| gcloud scheduler jobs create http alek-bot-dev-memory-inbox-sweep \
+  --schedule="30 8 * * *" \
+  --time-zone="Europe/Madrid" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"memory_inbox_sweep"}' \
+  --headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=180s \
+  --project=$PROJECT_ID
+
 gcloud scheduler jobs describe alek-bot-dev-sweep-consolidation \
   --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
 && gcloud scheduler jobs update http alek-bot-dev-sweep-consolidation \

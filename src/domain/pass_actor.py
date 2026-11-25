@@ -29,6 +29,10 @@ class PassActor(StrEnum):
     OWNER = "owner"
     # A question's history fallback written on silence (P2-3): the owner's row, under its own label in the trail.
     TIMEOUT = "timeout"
+    # The memory inbox's two passes (MCP_MEMORY_SUBMISSIONS_RFC §7.1, §9.1): triage writes no fact; the final pass
+    # writes the owner-confirmed candidates with the conversation row, as the mail stage does (the model's dates count).
+    INBOX_TRIAGE = "inbox_triage"
+    INBOX = "inbox"
 
     @property
     def model_dates(self) -> bool:
@@ -121,4 +125,6 @@ _ROWS: Final[Dict[PassActor, _Row]] = {
     PassActor.REVIEW: _REVIEW,
     PassActor.OWNER: _OWNER,
     PassActor.TIMEOUT: _OWNER,
+    PassActor.INBOX_TRIAGE: _CONVERSATION,
+    PassActor.INBOX: _CONVERSATION,
 }

@@ -64,6 +64,8 @@ BUILDERS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
         _STORE + "firestore_memory_write_lease.FirestoreMemoryWriteLease")),
     "make_eval_repo": ("tests/unit/adapters/firestore_drive_eval_fakes.py", (
         _STORE + "firestore_drive_index_repo.FirestoreDriveIndexRepository",)),
+    "inbox_store": ("tests/support/memory_inbox_store.py", (
+        _STORE + "firestore_memory_inbox_repository.FirestoreMemoryInboxRepository",)),
 }
 
 _A = "tests/unit/adapters/"
@@ -107,6 +109,8 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_long_turn_registry.FirestoreLongTurnRegistry": (_A + "test_long_turn_store_kit.py",),
     _STORE + "firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository": (
         _A + "test_memory_fact_draft_store_kit.py",),
+    # MCP memory submissions RFC §6: the memory inbox
+    _STORE + "firestore_memory_inbox_repository.FirestoreMemoryInboxRepository": (_A + "test_memory_inbox_store_kit.py",),
     _STORE + "firestore_notification_state_adapter.FirestoreNotificationStateAdapter": (
         _A + "test_notification_state_store_kit.py",),
     _STORE + "firestore_session_store.FirestoreSessionStore": (_A + "test_session_store_kit.py",),

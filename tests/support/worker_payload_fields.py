@@ -40,6 +40,7 @@ from src.domain.drive_index import Nudge
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_task_keys import scope_payload
 from src.domain.fact_review_task_keys import review_payload
+from src.domain.memory_inbox_task_keys import task_payload as inbox_task_payload
 from src.domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from tests.support import worker_triggers as wt
 from tests.support.worker_triggers import ROOT, SLACK_EVENT_BRANCH, WORKER_HANDLER, ExtractorError
@@ -78,6 +79,14 @@ def _review_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
     return review_payload("u1", "a1", "daily")
 
 
+def _inbox_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
+    count = len(call.args) + len(call.keywords)
+    try:
+        return inbox_task_payload(*("u1", "a1", "x")[:count])
+    except TypeError as exc:
+        raise ExtractorError(f"{where}: task_payload with {count} arguments: {exc}") from exc
+
+
 def _scope_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
     count = len(call.args) + len(call.keywords)
     if count == 1:
@@ -89,7 +98,7 @@ def _scope_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
 
 # Payload builders evaluated with dummy arguments: their keys do not depend on the values.
 EVALUATED: Dict[str, Callable[[ast.Call, str], Dict[str, object]]] = {
-    "review_payload": _review_payload_keys, "scope_payload": _scope_payload_keys,
+    "review_payload": _review_payload_keys, "scope_payload": _scope_payload_keys, "task_payload": _inbox_payload_keys,
 }
 
 

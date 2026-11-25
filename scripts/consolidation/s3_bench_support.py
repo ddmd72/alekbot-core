@@ -113,9 +113,16 @@ async def build_agent(user_id: str) -> BenchHandles:
     env_config = config["ENVIRONMENT_CONFIG"]
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     user_repo = FirestoreUserRepository(db, env_config, account_repo)
-    container = ServiceContainer(config=config, db_client=db, env_config=env_config, account_repo=account_repo)
+    from src.composition.deploy_topology import build_deploy_topology
+    container = ServiceContainer(
+        config=config, db_client=db, env_config=env_config, account_repo=account_repo,
+        deploy_topology=build_deploy_topology(config, env_config),
+    )
+    from src.composition.memory_search_setup import build_memory_search
+    memory_search = build_memory_search(db, env_config, container=container)
     factory = UserAgentFactory(
-        config=config, env_config=env_config, coordinator=AgentCoordinator(),
+        config=config, deploy_topology=build_deploy_topology(config, env_config), coordinator=AgentCoordinator(),
+        fact_search=memory_search.fact_search,
         user_repo=user_repo, account_repo=account_repo, services=container.agent_services(),
     )
     agents = await factory.ensure_agents_for_user(user_id)

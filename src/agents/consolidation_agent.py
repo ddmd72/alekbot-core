@@ -48,7 +48,9 @@ from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation import EMAIL_PROFILE_ID, REVIEW_PROFILE_ID
+from ..domain.consolidation import (
+    EMAIL_PROFILE_ID, FINAL_AGENT_TASK, INBOX_PROFILE_ID, INBOX_TRIAGE_PROFILE_ID, REVIEW_PROFILE_ID, TRIAGE_AGENT_TASK,
+)
 from ..domain.confirmed_people import ConfirmedPeople
 from ..domain.email_card import CardState
 from ..domain.email_memory_candidate import (
@@ -70,11 +72,17 @@ from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_result import FactReviewResult, encode_review_result
 from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
 from ..domain.fact_words import MAX_FACT_WORDS, word_count
+from ..domain.memory_inbox import CANDIDATE_MAX_WORDS, DiscardReason, RelationKind
+from ..domain.memory_inbox_final_task import decode_final_task, encode_final_result, final_message, final_span
+from ..domain.memory_inbox_triage_task import (
+    TRIAGE_SCOPE_KEY, decode_triage_task, encode_triage_result, triage_message,
+)
 from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
 from ..infrastructure.agent_manifest import Intent
 from ..infrastructure.fact_review_scope import FactReviewScope
+from ..infrastructure.memory_inbox_triage_scope import MemoryInboxTriageScope
 
 
 @dataclass
@@ -330,6 +338,146 @@ _REVIEW_COUNT_WORDS_DESCRIPTION = (
 )
 
 
+_SEARCH_EXISTING_FACTS_SCHEMA: Dict[str, Any] = {
+    "name": "search_existing_facts",
+    "description": "Search existing facts using multi-vector RRF strategy (no semantic dedup - exact duplicates only). No filter - returns all relevant facts.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Domain keywords (nouns, names, objects, places, domain terms). Extract key entities from candidate fact."
+            },
+            "primary_query": {
+                "type": "string",
+                "description": "Primary semantic search phrase (natural language, full context of candidate fact)"
+            },
+            "alternative_query": {
+                "type": "string",
+                "description": "Alternative phrasing for diversity (optional, different angle or synonyms)"
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results to return (default: 20)"
+            }
+        },
+        "required": ["keywords", "primary_query"]
+    }
+}
+
+# The memory inbox triage pass's tools (MCP_MEMORY_SUBMISSIONS_RFC §7.4). Explore-stage texts: tuned against the dry run.
+_TRIAGE_COUNT_WORDS_DESCRIPTION = (
+    f"Count the words of a planned candidate text. A candidate holds at most {CANDIDATE_MAX_WORDS} words and "
+    "record_candidate refuses a longer one (it is never cut), so count a long text before you record it. Returns "
+    "word_count, limit, within_limit and excess."
+)
+
+_RECORD_CANDIDATE_SCHEMA: Dict[str, Any] = {
+    "name": "record_candidate",
+    "description": (
+        "Record one candidate: one thought about the owner, made from one or more new submissions. The owner reads it "
+        "days from now in the owner's own language and answers only whether it is true; a later pass decides whether and how "
+        "memory keeps it, reading your draft classification as advice. Code checks every argument; a refused call "
+        "records nothing and names the argument and its fix: resend it fixed. A submission cited here can no longer "
+        "be discarded."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "submission_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "ids of the new submissions this candidate is made from; a submission that holds several thoughts "
+                    "feeds several candidates"
+                ),
+            },
+            "text": {
+                "type": "string",
+                "description": (
+                    "the candidate: one thought in full sentences about the owner, in the third person and in the "
+                    f"language the message header names; one line, at most {CANDIDATE_MAX_WORDS} words"
+                ),
+            },
+            "happens_when": {
+                "type": "string",
+                "description": (
+                    "when what it states happens or holds, in words, in the header's language, made absolute and "
+                    "approximate, anchored on when it was said: the submission's said_when when it gives one, else "
+                    "its received stamp; empty when nothing says"
+                ),
+            },
+            "said_when": {
+                "type": "string",
+                "description": (
+                    "when the owner said or showed it, in words, in the header's language, only when a submission "
+                    "places it at another time than its receipt; else empty"
+                ),
+            },
+            "basis": {
+                "type": "string",
+                "enum": ["said", "document", "inferred"],
+                "description": (
+                    "how the outside assistant knows it, as the cited submissions give it: said (the owner said it), "
+                    "document (a document the owner showed says it), inferred (the assistant concluded it); when they "
+                    "differ, the least certain"
+                ),
+            },
+            "directive": {"type": "boolean", "description": _DIRECTIVE_DESCRIPTION},
+            "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL, as on create_fact"},
+            "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL, as on create_fact"},
+            "expiry": _EXPIRY_SCHEMA,
+            "relation": {
+                "type": "string",
+                "enum": [kind.value for kind in RelationKind],
+                "description": (
+                    "how the candidate stands to stored memory, from your search: new (memory holds nothing on it), "
+                    "refines (adds to a stored fact), contradicts (says a stored fact is wrong or no longer holds), "
+                    "duplicates (says a stored fact again; kept only for its newer date)"
+                ),
+            },
+            "fact_id": {
+                "type": "string",
+                "description": (
+                    "with refines, contradicts or duplicates: the id of that stored fact as search_existing_facts "
+                    "returned it (code shows the owner its stored text); empty with new"
+                ),
+            },
+        },
+        "required": ["submission_ids", "text", "basis", "directive", "temporal_class", "context_priority", "expiry",
+                     "relation"],
+    },
+}
+
+_DISCARD_SUBMISSIONS_SCHEMA: Dict[str, Any] = {
+    "name": "discard_submissions",
+    "description": (
+        "Discard new submissions that yield no candidate, all with one reason. A discarded submission is never shown "
+        "to the owner and is gone for good; the reason is only counted. A submission cited by a candidate cannot be "
+        "discarded."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "submission_ids": {"type": "array", "items": {"type": "string"}, "description": "ids of new submissions"},
+            "reason": {
+                "type": "string",
+                "enum": [reason.value for reason in DiscardReason if reason is not DiscardReason.UNDECIDED],
+                "description": (
+                    "known: memory already holds it; waiting: an open candidate already says exactly this, adding, "
+                    "changing and correcting nothing; answered_before: a candidate the owner already answered says the "
+                    "same thing, adding, changing and correcting nothing; not_about_user: it says nothing about the "
+                    "owner's life; trivial: memory would not keep it; unclear: it states nothing the owner could "
+                    "answer true or false (an uncertain inference is not unclear)"
+                ),
+            },
+        },
+        "required": ["submission_ids", "reason"],
+    },
+}
+
+
 def _count_words_tool(description: str) -> Dict[str, Any]:
     return {
         "name": "count_words",
@@ -388,8 +536,17 @@ _PASS_TOOLS: Dict[str, PassTool] = {
     "ask_owner": PassTool.ASK,
 }
 
-# Which tools a pass offers: the consolidation passes', or the review's three (Facts S4 §3.5).
-PassKind = Literal["consolidation", "review"]
+# Which tools a pass offers: the consolidation passes', the review's three (Facts S4 §3.5), or the memory inbox
+# triage's four (MCP_MEMORY_SUBMISSIONS_RFC §7.4).
+PassKind = Literal["consolidation", "review", "triage"]
+
+
+@dataclass
+class _PassEnd:
+    """Whether a pass's loop ended with the model's final report (`reached`), not on its turn cap or a raise. Built per
+    pass by the caller that needs it, never stored on the agent."""
+
+    reached: bool = False
 
 
 def _pass_call(tool_call: ToolCall, timezone_name: str) -> PassCall:
@@ -680,7 +837,7 @@ class _TrackingFactManagement(FactManagementPort):
       of Stage 2a; it is not every id that changed: tags-only and metadata-only versions change the id and
       are not in it.
     - `wrote` is set by any successful write, a state-only update included. It decides whether a run that
-      failed still refreshes the biographical cache.
+      failed still refreshes the biographical cache. `writes` counts those writes (the inbox final pass reports it).
     A not_found, failed or refused result records nothing.
     """
 
@@ -688,6 +845,7 @@ class _TrackingFactManagement(FactManagementPort):
         self._real = real
         self.changed: List[Tuple[str, str]] = []  # (fact_id, content)
         self.wrote = False
+        self.writes = 0
 
     async def search_existing_facts(
         self,
@@ -712,6 +870,7 @@ class _TrackingFactManagement(FactManagementPort):
         result = await self._real.create_fact(content=content, metadata=metadata, context=context)
         if result.get("status") == STATUS_CREATED:
             self.wrote = True
+            self.writes += 1
             if fid := result.get("fact_id"):
                 self.changed.append((fid, content))
         return result
@@ -737,6 +896,7 @@ class _TrackingFactManagement(FactManagementPort):
         """One rule for both update paths, called for an update that wrote: it is a write; a content change records the
         version written, a history fact records itself."""
         self.wrote = True
+        self.writes += 1
         if content and written_id:
             self.changed.append((written_id, content))
         if history and history_id:
@@ -750,6 +910,7 @@ class _TrackingFactManagement(FactManagementPort):
         )
         if result.get("status") == STATUS_MERGED:
             self.wrote = True
+            self.writes += 1
             if fid := result.get("new_fact_id"):
                 self.changed.append((fid, merged_content))
         return result
@@ -896,7 +1057,7 @@ class ConsolidationAgent(BaseAgent):
         task = message.payload.get("task", "").lower()
         return task in [
             "consolidate", "consolidate_cluster", "consolidate_email", "consolidate_full",
-            Intent.REVIEW_STALE_FACTS,
+            Intent.REVIEW_STALE_FACTS, TRIAGE_AGENT_TASK, FINAL_AGENT_TASK,
             "synthesize", "librarian",  # legacy aliases → consolidate
         ]
     
@@ -910,6 +1071,8 @@ class ConsolidationAgent(BaseAgent):
           consolidate_email    → Stage 3 email triage only
           consolidate_full     → Stage 1 + Stage 2 + Stage 3 email
           review_stale_facts   → the memory review's pass over a batch of stale facts (Facts S4 §3.3)
+          triage_memory_inbox  → the memory inbox's triage pass over a batch of submissions (MCP_MEMORY_SUBMISSIONS_RFC §7)
+          consolidate_memory_inbox → the memory inbox's final pass over a batch of confirmed candidates (§9)
           synthesize/librarian → legacy aliases for consolidate
         """
         user_id = message.context.get("user_id")
@@ -965,6 +1128,14 @@ class ConsolidationAgent(BaseAgent):
                 )
             if task == Intent.REVIEW_STALE_FACTS:
                 return await self._handle_review_stale_facts(
+                    message, user_id, account_id, bio_context_raw, start_time
+                )
+            if task == TRIAGE_AGENT_TASK:
+                return await self._handle_triage_memory_inbox(
+                    message, user_id, account_id, bio_context_raw, start_time
+                )
+            if task == FINAL_AGENT_TASK:
+                return await self._handle_consolidate_memory_inbox(
                     message, user_id, account_id, bio_context_raw, start_time
                 )
 
@@ -1487,6 +1658,179 @@ class ConsolidationAgent(BaseAgent):
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
 
+    async def _handle_triage_memory_inbox(
+        self,
+        message: AgentMessage,
+        user_id: str,
+        account_id: str,
+        bio_context_raw: List[Dict],
+        start_time: float,
+    ) -> AgentResponse:
+        """
+        Intent: triage_memory_inbox — the memory inbox's triage pass over one batch of submissions
+        (MCP_MEMORY_SUBMISSIONS_RFC §7). Payload: the `TriageTask` as `encode_triage_task` writes it (built by the
+        triage pass service).
+
+        One triage loop under the `consolidation_inbox_triage` prompt over `triage_message`; its `record_candidate`,
+        `discard_submissions` and `count_words` go to the `MemoryInboxTriageScope` the pass service handed over under
+        `TRIAGE_SCOPE_KEY` (the service keeps its decisions when this execution is cancelled; without one, a scope of its
+        own over the task's submissions), its `search_existing_facts` to the agent's own port. The agent writes nothing: the result is the scope's decisions
+        (`encode_triage_result`), with `ended` (the model gave its final report) and `failed` (the loop raised). Both
+        are answered as a success, so decisions made before a turn cap or a raise stand (§7.4). A task or prompt that
+        cannot be read is a failure response: nothing was decided.
+        """
+        try:
+            task = decode_triage_task(message.payload)
+        except ValueError as e:
+            logger.error(f"❌ [ConsolidationAgent] triage_memory_inbox: {e}")
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(e))
+        if self._fact_management is None:
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error="triage needs the fact management port",
+            )
+
+        zone = self._owner_timezone(message)
+        try:
+            system_prompt = await self.prompt_builder.build_for_agent(
+                agent_type=INBOX_TRIAGE_PROFILE_ID,
+                user_id=user_id,
+                account_id=account_id,
+                routing_metadata=None,
+                include_directives=False,  # directives are curated as records, never obeyed
+                biographical_facts=bio_context_raw or [],
+                conversation_history=[],
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"triage prompt failed: {type(e).__name__}: {e}",
+            )
+        if not system_prompt:
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error="triage prompt is empty")
+
+        sent = [s.submission_id for s in task.submissions]
+        scope = message.payload.get(TRIAGE_SCOPE_KEY)
+        if scope is None:
+            scope = MemoryInboxTriageScope(sent, account_id, self._repo)
+        elif not isinstance(scope, MemoryInboxTriageScope) or scope.submission_ids != frozenset(sent):
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id,
+                error="the triage scope in the payload is not a scope over this task's submissions",
+            )
+        end = _PassEnd()
+        failed = False
+        try:
+            await self._run_consolidation_loop(
+                user_message_text=triage_message(task, zone),
+                system_prompt=system_prompt,
+                user_id=user_id,
+                account_id=account_id,
+                write_context=self._write_context(PassActor.INBOX_TRIAGE.value, zone),
+                pass_kind="triage",
+                triage_scope=scope,
+                end=end,
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            failed = True
+        decisions = scope.decisions()
+        total_duration = time.time() - start_time
+        logger.info(
+            f"✅ [ConsolidationAgent] triage_memory_inbox done: {len(task.submissions)} submissions, "
+            f"{len(decisions.candidates)} candidates, {len(decisions.discards)} discarded, ended={end.reached} "
+            f"failed={failed} in {total_duration:.1f}s"
+        )
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result=encode_triage_result(decisions, ended=end.reached, failed=failed),
+            confidence=1.0,
+            metadata={"total_duration_ms": int(total_duration * 1000)},
+        )
+
+    async def _handle_consolidate_memory_inbox(
+        self,
+        message: AgentMessage,
+        user_id: str,
+        account_id: str,
+        bio_context_raw: List[Dict],
+        start_time: float,
+    ) -> AgentResponse:
+        """
+        Intent: consolidate_memory_inbox — the memory inbox's final pass over one batch of confirmed candidates
+        (MCP_MEMORY_SUBMISSIONS_RFC §9). Payload: the candidates as `encode_final_task` writes them (built by the final
+        pass service).
+
+        One consolidation loop under the `consolidation_inbox` prompt over `final_message`, with the normal fact tools
+        on the run's tracker, under actor `inbox` and `final_span` (the model's `reported_date` is clamped into it, a
+        missing one is the newest receipt). Neither Stage 2a nor 2b runs (§9.4). The baseline is refreshed after a pass
+        that wrote, also when the loop raised. Result (`encode_final_result`): `ended` (the model gave its final report
+        and the loop did not raise) and `wrote` (the writes the store reported). A raise is answered as a success with
+        `ended` false, so the service counts the attempt and still learns what was written; a task or prompt that
+        cannot be read is a failure response.
+        """
+        try:
+            candidates = decode_final_task(message.payload)
+        except ValueError as e:
+            logger.error(f"❌ [ConsolidationAgent] consolidate_memory_inbox: {e}")
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(e))
+        if self._fact_management is None:
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error="the final pass needs the fact management port",
+            )
+
+        zone = self._owner_timezone(message)
+        try:
+            system_prompt = await self.prompt_builder.build_for_agent(
+                agent_type=INBOX_PROFILE_ID,
+                user_id=user_id,
+                account_id=account_id,
+                routing_metadata=None,
+                include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
+                biographical_facts=bio_context_raw or [],
+                conversation_history=[],
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"final prompt failed: {type(e).__name__}: {e}",
+            )
+        if not system_prompt:
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error="final prompt is empty")
+
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
+        end = _PassEnd()
+        failed = False
+        try:
+            await self._run_consolidation_loop(
+                user_message_text=final_message(candidates, zone),
+                system_prompt=system_prompt,
+                user_id=user_id,
+                account_id=account_id,
+                fact_management=tracker,
+                write_context=self._write_context(PassActor.INBOX.value, zone, final_span(candidates)),
+                end=end,
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            failed = True
+        finally:
+            if tracker.wrote:
+                await self._refresh_biographical_cache(account_id)
+        ended = end.reached and not failed
+        total_duration = time.time() - start_time
+        logger.info(
+            f"✅ [ConsolidationAgent] consolidate_memory_inbox done: {len(candidates)} candidates, "
+            f"{tracker.writes} writes, ended={ended} in {total_duration:.1f}s"
+        )
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result=encode_final_result(ended=ended, wrote=tracker.writes),
+            confidence=1.0,
+            metadata={"total_duration_ms": int(total_duration * 1000)},
+        )
+
     @staticmethod
     def _now() -> datetime:
         """The review pass's clock (its scope's `now`, the questions' timeout)."""
@@ -1759,6 +2103,8 @@ class ConsolidationAgent(BaseAgent):
         max_turns: Optional[int] = None,
         review_scope: Optional[FactReviewScope] = None,
         report: Optional[Dict[str, Any]] = None,
+        triage_scope: Optional[MemoryInboxTriageScope] = None,
+        end: Optional[_PassEnd] = None,
     ) -> List[Dict[str, Any]]:
         """
         Single multi-turn LLM loop for one consolidation or review pass.
@@ -1767,8 +2113,10 @@ class ConsolidationAgent(BaseAgent):
         `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
         `write_context` goes with every write the pass's tools make; its actor names the pass in the ops alerts and
         the stats. `pass_kind` picks the tools (`_get_tool_declarations`) and must match the actor (`review` with
-        PassActor.REVIEW only); a review pass needs its `review_scope`, which serves its `update_fact` and `ask_owner`,
-        and no other pass takes one. `max_turns` caps the loop and is the cap
+        PassActor.REVIEW only, `triage` with PassActor.INBOX_TRIAGE only); a review pass needs its `review_scope`, which
+        serves its `update_fact` and `ask_owner`, a triage pass its `triage_scope`, which serves `record_candidate`,
+        `discard_submissions` and `count_words`, and no other pass takes either. `end`, when given, is marked when the
+        model gives its final report (a turn cap or a raise leaves it unmarked). `max_turns` caps the loop and is the cap
         the stats report (None = MAX_CONSOLIDATION_TURNS). `report`, when given, receives the final report's JSON object
         (left empty when there is none or it is not one).
 
@@ -1777,10 +2125,13 @@ class ConsolidationAgent(BaseAgent):
         while CONSOLIDATION_STATS_ALERTS is on.
         """
         review = pass_kind == "review"
-        if review != (write_context.actor is PassActor.REVIEW):
+        triage = pass_kind == "triage"
+        if review != (write_context.actor is PassActor.REVIEW) or triage != (write_context.actor is PassActor.INBOX_TRIAGE):
             raise ValueError(f"a {pass_kind} pass cannot run under the {write_context.actor.value} actor")
         if review != (review_scope is not None):
             raise ValueError(f"a {pass_kind} pass {'needs' if review else 'takes no'} review scope")
+        if triage != (triage_scope is not None):
+            raise ValueError(f"a {pass_kind} pass {'needs' if triage else 'takes no'} triage scope")
         max_turns = self.MAX_CONSOLIDATION_TURNS if max_turns is None else max_turns
         tools = self._get_tool_declarations(pass_kind)
         stats = ConsolidationPassStats(write_context.actor, max_turns)
@@ -1810,6 +2161,8 @@ class ConsolidationAgent(BaseAgent):
 
                 if not response.tool_calls:
                     logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
+                    if end is not None:
+                        end.reached = True
                     ops = self._parse_operations_report(response.text or "")
                     if report is not None:
                         report.update(_report_object(response.text or "") or {})
@@ -1850,6 +2203,7 @@ class ConsolidationAgent(BaseAgent):
                     write_context=write_context,
                     fact_management=fact_management,
                     review_scope=review_scope,
+                    triage_scope=triage_scope,
                 )
 
                 stats.record_outcomes(calls, [tr.outcome for tr in tool_responses])
@@ -2128,11 +2482,14 @@ class ConsolidationAgent(BaseAgent):
         write_context: FactWriteContext,
         fact_management: Optional[FactManagementPort] = None,
         review_scope: Optional[FactReviewScope] = None,
+        triage_scope: Optional[MemoryInboxTriageScope] = None,
     ) -> List[ToolResponse]:
         """Execute fact management tools via FactManagementPort (`fact_management`, else the agent's own).
 
         With a `review_scope` (the review pass) only the review's tools run: `update_fact` and `ask_owner` go to the
-        scope, `count_words` stays the agent's own, and any other tool is unknown.
+        scope, `count_words` stays the agent's own, and any other tool is unknown. With a `triage_scope` (the inbox
+        triage) `record_candidate`, `discard_submissions` and `count_words` (against the candidates' limit) go to the
+        scope, `search_existing_facts` stays the agent's own, and any other tool is unknown.
 
         All tool calls within a single LLM turn are dispatched concurrently via
         asyncio.gather. search_existing_facts calls are always independent (each
@@ -2159,6 +2516,9 @@ class ConsolidationAgent(BaseAgent):
                         result_str=json.dumps(result, ensure_ascii=False),
                         outcome=outcome_of(result),
                     )
+
+                if triage_scope is not None and tool_call.name != "search_existing_facts":
+                    return await self._triage_tool(triage_scope, tool_call)
 
                 if review_scope is not None and tool_call.name != "count_words":
                     logger.warning(f"⚠️ Unknown review tool: {tool_call.name}")
@@ -2280,12 +2640,30 @@ class ConsolidationAgent(BaseAgent):
 
         return [await _execute_one(tool_calls[0])]
     
+    @staticmethod
+    async def _triage_tool(scope: MemoryInboxTriageScope, tool_call: ToolCall) -> ToolResponse:
+        """One triage tool call other than the search: the scope's three tools, or an unknown tool."""
+        args = tool_call.args or {}
+        if tool_call.name == "record_candidate":
+            result = await scope.record_candidate(args)
+        elif tool_call.name == "discard_submissions":
+            result = await scope.discard_submissions(args)
+        elif tool_call.name == "count_words":
+            result = scope.count_words(args)
+        else:
+            logger.warning(f"⚠️ Unknown triage tool: {tool_call.name}")
+            result = {"error": f"Unknown tool: {tool_call.name}"}
+        return ToolResponse(name=tool_call.name, result_str=json.dumps(result, ensure_ascii=False),
+                            outcome=outcome_of(result))
+
     def _get_tool_declarations(self, pass_kind: PassKind = "consolidation") -> List[Dict[str, Any]]:
         """
         Build tool declarations for ConsolidationAgent v3, from module constants only.
 
         `pass_kind="review"`: the review's three tools (Facts S4 §3.5): `update_fact` (with `basis` and `history`, no
         `reported_date`), `ask_owner` and `count_words`, as fresh copies (an adapter may rewrite a schema in place).
+        `pass_kind="triage"`: the memory inbox triage's four (MCP_MEMORY_SUBMISSIONS_RFC §7.4): `search_existing_facts`,
+        `count_words` against the candidates' limit, `record_candidate` and `discard_submissions`, as fresh copies.
 
         4 tools from CONSOLIDATION_V3_PROMPT.txt:
         - search_existing_facts
@@ -2301,36 +2679,15 @@ class ConsolidationAgent(BaseAgent):
                 copy.deepcopy(_REVIEW_UPDATE_SCHEMA), copy.deepcopy(_ASK_OWNER_SCHEMA),
                 _count_words_tool(_REVIEW_COUNT_WORDS_DESCRIPTION),
             ]
+        if pass_kind == "triage":
+            return [
+                copy.deepcopy(_SEARCH_EXISTING_FACTS_SCHEMA), _count_words_tool(_TRIAGE_COUNT_WORDS_DESCRIPTION),
+                copy.deepcopy(_RECORD_CANDIDATE_SCHEMA), copy.deepcopy(_DISCARD_SUBMISSIONS_SCHEMA),
+            ]
         if pass_kind != "consolidation":
             raise ValueError(f"no tools for pass kind {pass_kind!r}")
         return [
-            {
-                "name": "search_existing_facts",
-                "description": "Search existing facts using multi-vector RRF strategy (no semantic dedup - exact duplicates only). No filter - returns all relevant facts.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "keywords": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Domain keywords (nouns, names, objects, places, domain terms). Extract key entities from candidate fact."
-                        },
-                        "primary_query": {
-                            "type": "string",
-                            "description": "Primary semantic search phrase (natural language, full context of candidate fact)"
-                        },
-                        "alternative_query": {
-                            "type": "string",
-                            "description": "Alternative phrasing for diversity (optional, different angle or synonyms)"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Max results to return (default: 20)"
-                        }
-                    },
-                    "required": ["keywords", "primary_query"]
-                }
-            },
+            copy.deepcopy(_SEARCH_EXISTING_FACTS_SCHEMA),
             {
                 "name": "create_fact",
                 "description": "Create NEW fact when candidate is orthogonal or new entity",
