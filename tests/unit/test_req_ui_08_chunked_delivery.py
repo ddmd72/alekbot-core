@@ -37,9 +37,9 @@ async def test_chunked_delivery_multiple_chunks_posts_thread():
     - Fails if chunks are not posted or header update missing: ✅
     """
     client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "posted-ts", "channel": "C1"}
     channel = SlackResponseChannel(client, "C1", "token")
     channel.update_message = AsyncMock()
-    channel.send_message = AsyncMock()
 
     long_text = "A" * (SLACK_CHUNK_SIZE + 25)
     expected_chunks = channel._split_into_chunks(long_text, SLACK_CHUNK_SIZE)
@@ -48,6 +48,9 @@ async def test_chunked_delivery_multiple_chunks_posts_thread():
 
     channel.update_message.assert_called_once_with("msg-2", "✅ Відповідь готова.")
 
-    assert channel.send_message.await_count == len(expected_chunks)
-    for chunk in expected_chunks:
-        channel.send_message.assert_any_call(chunk, "msg-2")
+    # Every chunk is posted, in order, as a reply in the thread of the status message.
+    assert client.chat_postMessage.await_count == len(expected_chunks)
+    posted = [c.kwargs for c in client.chat_postMessage.await_args_list]
+    assert posted == [
+        {"channel": "C1", "text": chunk, "thread_ts": "msg-2", "mrkdwn": True} for chunk in expected_chunks
+    ]

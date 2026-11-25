@@ -150,22 +150,21 @@ def test_telegram_ui_string_localized_and_fallback():
 async def test_telegram_multichunk_first_chunk_is_content():
     """Telegram DMs have no threads: the first chunk REPLACES the status bubble
     with real content (not a localized 'ready' header), the rest follow."""
+    bot = AsyncMock()
     channel = TelegramResponseChannel(
-        MagicMock(), 1, language=LanguageCode.EN, localization=FileLocalizationAdapter(),
+        bot, 1, language=LanguageCode.EN, localization=FileLocalizationAdapter(),
     )
-    channel.update_message = AsyncMock()
-    channel.send_message = AsyncMock()
 
     long_text = "word " * 1200  # > TELEGRAM_CHUNK_SIZE → multiple chunks
     await channel.send_chunked_message(long_text, "42")
 
-    channel.update_message.assert_called_once()
-    call = channel.update_message.call_args
-    assert call.args[0] == "42"
-    assert call.args[1].startswith("word")
-    assert "Response ready" not in call.args[1]
+    bot.edit_message_text.assert_called_once()
+    call = bot.edit_message_text.call_args
+    assert call.kwargs["message_id"] == 42
+    assert call.kwargs["text"].startswith("word")
+    assert "Response ready" not in call.kwargs["text"]
     # Remaining chunks delivered as follow-up messages.
-    assert channel.send_message.call_count >= 1
+    assert bot.send_message.call_count >= 1
 
 
 # ---------------------------------------------------------------------------
