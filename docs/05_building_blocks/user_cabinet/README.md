@@ -119,6 +119,20 @@ The page builds an English message ("current text / correct text / please update
 (`copyCorrectMessage` in `cabinet-memory.js`); the user pastes it into chat. The correction then goes through the normal
 consolidation path, which owns re-embedding and lineage. There is deliberately no Cabinet route that rewrites a fact.
 
+### From your assistants (the memory inbox)
+
+A card at the top of the Memory section (`cabinet-memory.js`) shows what outside assistants sent about the owner over MCP
+and the daily triage turned into candidates (mechanism, limits and the final pass: [memory](../memory/README.md) §5.7;
+`../../10_rfcs/MCP_MEMORY_SUBMISSIONS_RFC.md` §8.2). It shows one candidate at a time, never a batch. The owner can edit
+four fields: the text, `happens_when`, `said_when` and `basis`. The draft classification, the relation to a stored
+fact and the raw submissions are read-only. Two buttons answer it, "True" and "Not true".
+
+Three routes in `src/web/cabinet_memory_inbox.py`, behind the session gate and the facts PIN like every facts route:
+`GET /api/user/memory-inbox` lists the waiting candidates, newest first, with a count of confirmed ones awaiting the
+final pass; `POST /api/user/memory-inbox/<id>/confirm` takes the edited fields (400 `too_long` / `empty_text` / `basis`,
+403 `other_user`, 404 `not_found`, 409 `not_waiting`); `POST .../<id>/reject` takes none. The routes never write a fact:
+a confirmed candidate reaches memory through the consolidator's final pass. Without the inbox they answer 501.
+
 ### Memory-review questions
 
 `GET /api/user/facts/review-queue` lists the open questions of this user (`FactAnswerService.review_queue`) with the

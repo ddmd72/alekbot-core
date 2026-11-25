@@ -101,6 +101,8 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is in `../05
 | `{p}fact_review_questions` | question id | `src/adapters/firestore_fact_review_store.py` |
 | `{p}fact_review_messages` | `{user_id}:digest:{iso_week}`, `{account_id}:quote:{language}:{source_digest}` | same |
 | `{p}fact_review_state` | `account_id` | same |
+| `{p}memory_inbox` (the memory inbox: two document kinds under one `status`, submissions `received`/`triaged`/`discarded` and candidates `candidate`/`confirmed`/`consolidated`/`rejected`/`expired`; a closed record expires on `purge_after`, an open one never, no field named `expires_at`) | submission or candidate id | `Submission`, `Candidate`, `src/domain/memory_inbox.py`; `src/adapters/firestore_memory_inbox_repository.py`; `../10_rfcs/MCP_MEMORY_SUBMISSIONS_RFC.md` §6; mechanism in `../05_building_blocks/memory/README.md` §5.7 |
+| `{p}memory_inbox_state` (the inbox rhythm, no TTL: `last_triage_at`, `last_triage_failed_at`, `final_due_at`, `final_attempts`, `last_final_at`, `received_day` as `{day, count}`) | `user_id` | `InboxState`, `src/domain/memory_inbox.py`; same adapter |
 | `{p}person_cards` (retrieval index, never a fact) | `{account_id}:{card_key}` | `PersonCard`, `src/domain/person_cards.py` |
 | `{p}confirmed_people` | `account_id` | `ConfirmedPeople`, `src/domain/confirmed_people.py` |
 | `{p}profile_answers` | `account_id` | `ProfileAnswers`, `src/domain/profile_answers.py` |
