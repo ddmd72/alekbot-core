@@ -2222,5 +2222,5 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": "Internal server error"}), 500
 
     register_external_worker_routes(bp, auth_required, external_tasks, mcp_authorization)
-    register_memory_inbox_routes(bp, auth_required, facts_unlock_required, memory_inbox)
+    register_memory_inbox_routes(bp, auth_required, facts_unlock_required, memory_inbox, user_repo, mcp_authorization)
     return bp
