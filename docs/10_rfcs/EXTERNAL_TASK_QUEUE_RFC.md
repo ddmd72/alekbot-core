@@ -1,6 +1,6 @@
 # RFC: External task queue
 
-**Status:** Accepted (2026-11-23); steps 1–4 implemented, step 5 pending.
+**Status:** Accepted (2026-11-23); steps 1–4 and 6 implemented, step 5 pending.
 **Owner's map:** `docs/05_building_blocks/external_task_queue/README.md`.
 The decisions are in §2. Every example below is invented: the user is Alex Doe, the worker labels are `research` and
 `calendar-watch`, and the tasks are "compare three community-garden irrigation kits for Shelbyville" and "find what
@@ -86,6 +86,20 @@ specified.
 - `main.py` builds the MCP components before the Cabinet blueprint, so the Cabinet gets the authorization service; a
   failed build still leaves the bot up without MCP.
 - §10 Q1's remaining live check (the authorize-time scope equals the registered one) is run after the deploy.
+
+**Implementation notes (step 6, task files).** The build differs from §5.12 and §7 as follows; the body is kept as
+specified.
+- Refusal codes the body does not name. Worker side: `no_such_file` (`404`: a number the task does not carry, or a
+  `file` that is no number) and `link_unavailable` (`503`: the bucket or the signer failed, §7's retryable answer);
+  `file_gone` is `410`. Create side: `files_cap`, `files_too_large`, `files_unavailable` (a server built without the
+  media bucket) and `file_unresolved`, the one tool error naming the reference with the resolver's own line.
+- REST takes the lease id in an `X-Lease-Id` header: the route is a GET, and a URL is logged by the platform.
+- The `files` of a claim (REST) and of a stored task are present only when the task carries files, so a task without
+  files keeps the shape it had before.
+- `get_task_file` is not listed read-only (only `list_tasks` is). Its lapsed-lease answer is `renew_lease`'s
+  `E_LEASE_EXPIRED` line, worded for both tools.
+- `ExternalTaskService` was at the constructor arity cap: the wake-up's cipher, guard and own hosts now travel as one
+  `WakeKit`, beside the one `ExternalTaskFiles`.
 
 ## 1. Purpose
 

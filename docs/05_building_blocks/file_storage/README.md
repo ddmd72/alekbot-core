@@ -44,10 +44,12 @@ One bucket, `GCS_MEDIA_BUCKET`, with no public access. Two adapters write to it 
 | `{user_id}/files/{name}`: a chat upload, addressed by bare file name | `GcsFileStorageAdapter.upload` | `GcsFileStorageAdapter.download` (via `FileConversionService`) |
 | `docs/{user_id}/{uuid}-{name}` and `email_review/{user_id}/{uuid}-{name}`: generated documents | `DocumentDeliveryService.store` (`_PREFIX`) through `GcsMediaAdapter.store` | `GcsMediaAdapter.fetch` (agents), the `/f` route (users) |
 | `deep_research/{user_id}/...`, `video_generation/{user_id}/{timestamp}.mp4` | `src/services/deep_research_delivery.py`, `src/services/video_generation_delivery.py` | same |
+| `external_tasks/{user_id}/{task_id}/{n}-{name}`: the copies an external task carries | `ExternalTaskFiles.store_all` through `GcsMediaAdapter.store` | the worker, through a signed link `ExternalTaskFiles.link` mints for the lease holder (`docs/05_building_blocks/external_task_queue/README.md`); never a ref the bot opens |
 
 - **Delivered keys carry `user_id` as the second path segment.** That segment is the ownership proof for `open_file`
   (see Invariants).
-- **Retention** is a bucket lifecycle rule set outside the repo: `email_review/` is deleted after 5 days, everything
+- **Retention** is a bucket lifecycle rule set outside the repo: `email_review/` is deleted after 5 days,
+  `external_tasks/` after 8 (`docs/07_deployment/README.md`, "Media bucket: the task files' age rule"), everything
   else after 30 (stated in the `GcsMediaAdapter` docstring and `decisions/private_file_storage_token_redirect.md`). History keeps
   keys and refs, so a ref can outlive its object; the readers answer "not found" or "expired" for it (Flows).
 - **Capability token**, stored nowhere: an HS256 JWT with `key`, `uid`, `gated`, `type`, `iat`, `exp`

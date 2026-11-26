@@ -280,6 +280,19 @@ Local dev shares the live bucket: with `GOOGLE_CLOUD_PROJECT` set, `load_setting
 `GCS_WORKSPACE_BUCKET` from Secret Manager, and the developer's own account needs object access. Another bucket name in
 `.env` points elsewhere; with the key empty and no project, no workspace is built.
 
+**Media bucket: the task files' age rule** (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.12). The copies of the files an
+external task carries live in `GCS_MEDIA_BUCKET` under `external_tasks/{user_id}/{task_id}/`; no code deletes them, only
+this lifecycle rule, applied by hand: delete at `TASK_MAX_AGE_S` (`src/domain/external_task.py`, 7 days) plus one day,
+so every copy outlives every use of its task (a task never outlives its deadline) and none outlives it by more than a
+day. Until it is set, the bucket's 30-day rule applies. An update replaces the bucket's whole lifecycle, so merge the rule
+into the current ones:
+```bash
+gcloud storage buckets describe gs://<MEDIA_BUCKET> --format="json(lifecycle_config)" > lifecycle.json
+# add to its "rule" list: {"action": {"type": "Delete"}, "condition": {"age": 8, "matchesPrefix": ["external_tasks/"]}}
+gcloud storage buckets update gs://<MEDIA_BUCKET> --lifecycle-file=lifecycle.json
+```
+A change of `TASK_MAX_AGE_S` changes the rule's `age` with it.
+
 **Stored-secrets encryption (`docs/10_rfcs/SECRETS_AT_REST_RFC.md`).** The main service mounts two more secrets and refuses
 to start without either (locally too); the indexer mounts `KMS_CRYPTO_KEY` and refuses to start without it (it refreshes
 OneDrive tokens through the credential store, `decisions/credential_store_cutover.md`).

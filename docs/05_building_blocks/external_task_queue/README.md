@@ -4,6 +4,7 @@ covers:
   src/domain/external_task.py
   src/domain/external_task_alert.py
   src/domain/external_task_entry.py
+  src/domain/external_task_files.py
   src/domain/external_task_delivery.py
   src/domain/external_task_http.py
   src/domain/external_task_jobs.py
@@ -29,6 +30,8 @@ covers:
   src/adapters/firestore_external_worker_store.py
   src/adapters/firestore_window_counter.py
   src/services/external_task_service.py
+  src/services/external_task_files.py
+  src/services/external_task_wake_kit.py
   src/services/external_task_send_choice.py
   src/services/external_task_rate_limiter.py
   src/services/external_worker_user_gate.py
@@ -97,6 +100,11 @@ rule of `src/domain/external_task_rules.py`; timers are `external_task_timer` Cl
   nobody re-claimed still accepts a submit; a renew of a lapsed lease is `lease_expired`. A second submit of the same
   body (same sha256) is an idempotent replay; another body after `done` is `already_submitted`.
 - **Caps.** `MAX_OPEN_TASKS_PER_USER` (held tasks count), `MAX_WORKERS_PER_USER`, `MAX_KEYS_PER_WORKER`.
+- **Files** (`EXTERNAL_TASK_QUEUE_RFC.md` §5.12). A task may carry up to `MAX_FILES_PER_TASK` files,
+  `TASK_FILES_MAX_BYTES` together. They are copied at create, before the record is written, and never change after; a
+  held task's files are as invisible to workers as the task. The lease is the right to them: only the worker holding a
+  live lease gets a link, and once the task is final the link answer is the missing task's. The copies are not deleted
+  with the record: the media bucket's age rule deletes them (Traps).
 - **Which end gets an alert.** `done` (on submit and on every replay, dedup `deliver:<task_id>`), `failed` (a worker's
   fail, `claim_loop`), `expired` by the deadline. A cancelled task and an expired hold get none.
 
@@ -131,6 +139,19 @@ presses sends a task twice. Telegram has the command only.
 **The brief, word for word.** The create handler refuses a text that is not a part of the specialist's instruction after
 whitespace is normalised (`ERROR_NOT_THE_BRIEF`): the brief is Smart's; the specialist picks the title and the worker
 label only.
+
+**Task files.** Smart names the owner's files by their file references in its instruction; the specialist passes them
+in the optional `files` argument of `create_external_task`, and the handler refuses a reference that does not appear in
+the instruction (`ERROR_FILE_NOT_NAMED`) before anything is read. `ExternalTaskFiles`
+(`src/services/external_task_files.py`) resolves every reference with `FileConversionService.resolve_file(ref, user_id,
+action="send")`, the bytes and refusals of sending the file to the owner's chat, an email attachment also through the
+send's active-kind check; nothing is parsed. All of them are resolved before any is stored: one that does not resolve
+refuses the whole create with one tool error naming it (`ERROR_FILE_UNRESOLVED`, with the resolver's own line when it
+gave one), and the count and total caps refuse it too. Then each is copied once to the private media bucket at
+`external_tasks/{user_id}/{task_id}/{n}-{name}` (the name made safe by `src/domain/external_task_files.py`: last path
+segment, NFC, controls and reserved characters replaced, cut with the extension kept), and the record keeps each copy's
+number, name, type, size and key. The receipt lists each file by name and size after the note (`file_<n>` lines of the
+front matter), for both entries; the tool note tells the models which files the task carries.
 
 ## The note
 
@@ -170,9 +191,9 @@ then a line when the run was cut), so a run cut by its soft deadline, the turn c
 posts the receipt; it answers success whenever it got past the prompt build (no whole-run retry: it would create twice).
 
 **Worker MCP** `/tasks-mcp` (`src/composition/tasks_mcp_setup.py`; beside the facts and drive connectors:
-[`remote_mcp_server`](../remote_mcp_server/README.md)). Six tools over the same service operations as REST:
-`list_tasks`, `claim_task`, `renew_lease`, `submit_task_result`, `release_task`, `fail_task`; none takes a user, worker
-or label. Two credentials:
+[`remote_mcp_server`](../remote_mcp_server/README.md)). Seven tools over the same service operations as REST:
+`list_tasks`, `claim_task`, `renew_lease`, `submit_task_result`, `release_task`, `fail_task`, `get_task_file`; none takes
+a user, worker or label. Two credentials:
 - a worker key as the bearer: `resolve_key` then `ExternalWorkerUserGate`, as REST, but every refusal is `401` (the
   SDK's verifier returns a token or nothing) and REST's `401` address limits are not applied;
 - an OAuth access token of the tasks resource. A client must register the scope `external_tasks` (never a default, so an
@@ -182,15 +203,21 @@ or label. Two credentials:
   grant revoked in the Cabinet is refused on its next call.
 Each call: the lock, the grant (OAuth), the worker's limits (the REST buckets, shared by keys and grants of one
 worker), then the service. Answers are text from the tokens `MCP_TASK_TOOL_TEXTS` and `MCP_TASK_RESULT_TEXTS`; a claim
-prints the task id, created time and lease and a "written by the user's assistant" line before the title and the brief.
-A refusal is an `isError` result; no task is a success.
+prints the task id, created time and lease and a "written by the user's assistant" line before the title and the brief;
+a task with files adds one line per file (number, name, type, size; never a link or a key) between the title and the
+brief. `get_task_file(task_id, lease_id, file)` answers a fresh signed GET link (`FILE_LINK_TTL_S`) for one copy on every
+call, after the lease check of `renew` (`file_refusal`: a final task `not_found`, a lapsed lease `lease_expired`); a
+number the task does not carry (or no number) is `no_such_file`, a copy no longer stored `file_gone`, a failed signing
+`link_unavailable` (asking again works). A refusal is an `isError` result; no task is a success.
 
 **Worker REST** `/external-tasks/v1/*` (`src/web/external_task_api.py`; routes in `docs/06_runtime/API_REFERENCE.md`).
 Not under `/api/`, not behind the Cabinet cookie; a worker key in `Authorization: Bearer` only. Per request: the `401`
 limits (`429` + `Retry-After`, the key store not read), the key's shape, `resolve_key` (`401` for a bad key, `403` for
 locked, flag off or a revoked worker), `ExternalWorkerUserGate` (stored user active, with an email, whitelisted), the
 worker's limits (`CALLS_PER_WINDOW`, plus `CLAIMS_PER_WINDOW` / `SUBMITS_PER_WINDOW`), then the body. Answers are
-JSON codes; another worker's task, a held task and a missing task are one `404`.
+JSON codes; another worker's task, a held task and a missing task are one `404`. A claimed task with files carries
+`files` (number, name, type, size); `GET /tasks/<task_id>/files/<n>` with the lease id in `X-Lease-Id` (a GET: never in
+the logged URL) answers the link, `404 no_such_file`, `410 file_gone` or `503 link_unavailable`.
 
 **Cabinet card** "External workers" (`src/web/cabinet_external_workers.py`, UI in `cabinet-settings.js`; hidden for a
 user without the flag). Register a worker (label + one-line description) and remove it (revokes its keys and OAuth
@@ -271,10 +298,13 @@ Firestore `us-production`, env-prefixed names from `EnvironmentConfig`:
 
 | Collection | Holds |
 |---|---|
-| `external_tasks` | one `ExternalTask`: status, `origin` (platform, channel, session), `note`, `entry`, `hold`, `lease`, `claims`, `result_meta`, `failure`, `delivery`, `deadline_at`, `purge_after` |
+| `external_tasks` | one `ExternalTask`: status, `origin` (platform, channel, session), `note`, `entry`, `hold`, `lease`, `claims`, `result_meta`, `failure`, `delivery`, `files` (only when the task has files: number, name, mime, size, key each), `deadline_at`, `purge_after` |
 | `external_task_results` | the submitted text of a done task, apart so a listing never reads it |
 | `external_workers` | doc `{user_id}:{worker_id}`: label, description, account, `wake_host` (clear), `wake_secret` (one `CipherPort` ciphertext of `{url, headers}`), `wake_generation` |
 | `external_worker_keys` | doc id = the key's keyed digest; hint, worker, `last_used_at` (written at most every `KEY_TOUCH_S`), revocation |
+
+Task files are objects of the private media bucket (`GCS_MEDIA_BUCKET`) at `external_tasks/{user_id}/{task_id}/{n}-{name}`,
+written once at create and deleted only by the bucket's age rule for the prefix (Traps).
 
 Tasks and results carry `purge_after` (`RETENTION_S` after the final state) and are deleted by TTL policy
 (`config/ttl_registry.json`); an open task has none. Per-worker rate windows are `WindowCounter` documents
@@ -292,6 +322,10 @@ each instance's memory only.
   outside-content wrapper after the reminder; a delivered one is a workspace file under the outside-content header,
   named by the alert, never inlined.
 - **The note never reaches a worker or saved history** (see The note).
+- **A file leaves only with its task and only what Smart named.** The specialist cannot attach a reference its
+  instruction does not contain; the receipt names every file; a worker reaches a file only through a link minted for the
+  lease holder and never learns where the file came from. Logs name the task and the file number, never the link, the
+  name, the key or the reference.
 - **A worker's description never reaches a model.** It is free text from the Cabinet, and a tool or parameter
   description reads with the schema's authority, so the specialist's tools carry labels only.
 - **One refusal for the unknown.** A label that does not exist, another user's task and a missing task give the same
@@ -326,13 +360,19 @@ each instance's memory only.
 - **A worker on the platform's default domain cannot be woken** (every name under `run.app` is refused); it needs a
   custom domain, or polls.
 - **Not a place for a worker's secrets.** A task text is plain stored text, capped to fit one receipt.
+- **The task files' age rule is set by hand.** The media bucket needs a lifecycle rule deleting `external_tasks/` at
+  `TASK_MAX_AGE_S` plus one day (`docs/07_deployment/README.md`, "Media bucket: the task files' age rule"); until it is
+  set the bucket's 30-day rule applies. A change of `TASK_MAX_AGE_S` changes the rule with it.
+- **The service is at the constructor arity cap.** The wake-up's three collaborators travel as one `WakeKit`
+  (`src/services/external_task_wake_kit.py`) and the files as one `ExternalTaskFiles`; a new collaborator joins a bundle.
 - **Not built:** the drive Inbox destination (`WorkerDestination.DRIVE` is a placeholder; a worker registered with it is refused).
 
 ## Where things live
 
 | File | Responsibility |
 |---|---|
-| `src/services/external_task_service.py` | every rule applied: create, confirm, claim, renew, submit, release, fail, cancel, timers, wake decisions, `on_wake`, worker registry |
+| `src/services/external_task_service.py` | every rule applied: create, confirm, claim, renew, submit, release, fail, cancel, file links, timers, wake decisions, `on_wake`, worker registry |
+| `src/services/external_task_files.py`, `src/domain/external_task_files.py` | task files: resolve, copy, sign; safe names and keys |
 | `src/domain/external_task.py`, `src/domain/external_task_rules.py` | the record, statuses, limits; the pure transitions |
 | `src/domain/external_task_entry.py` | chat vs reminder entry |
 | `src/domain/external_task_jobs.py` | timer, deliver and wake payloads and dedup keys |
