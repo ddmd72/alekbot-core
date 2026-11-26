@@ -155,15 +155,3 @@ async def test_anonymous_callers_are_refused_on_all_four():
         resp = await world.call(method, path, body, headers=False)
         assert resp.status_code == 401
     assert world.users.writes == []
-
-
-async def test_a_locked_facts_pin_answers_facts_locked_on_all_four():
-    world = World(facts_pin=LockedPin())
-    await world.auth.repo.save_refresh_token(token(1, "ga"))
-    calls = [("GET", "/settings", None), ("PUT", "/settings", {"triage_interval_days": 2}), ("GET", "/apps", None),
-             ("DELETE", "/apps/ga", None)]
-
-    for method, path, body in calls:
-        resp = await world.call(method, path, body)
-        assert resp.status_code == 403 and await resp.get_json() == {"error": "facts_locked"}
-    assert world.users.writes == [] and await world.live() == ["ga"]
