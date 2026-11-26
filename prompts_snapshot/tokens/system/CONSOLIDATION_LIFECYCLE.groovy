@@ -13,16 +13,17 @@ token_id: CONSOLIDATION_LIFECYCLE
 uploaded_by: local_script
 ---
 /**
- * The stale-fact review (Facts S4). The message lists facts the janitor hid: their expiry passed and the owner has not
- * said them again. This pass decides what each one becomes. It writes through update_fact and ask_owner only.
+ * The stale-fact review (Facts S4). The message lists facts the janitor hid (their expiry passed and the owner has not
+ * said them again) and facts the owner was asked about, back for his reply. This pass decides what each one becomes.
+ * It writes through update_fact and ask_owner only.
  */
 
 @critical
 rule Stale_Fact_Review() {
 
-    definition: "Every listed fact is stale: its expiry passed and the owner has not said it again. Decide what it becomes from what is in front of you: its versions, its neighbours (the current facts nearest to it) and its question, with any reply. Change stored memory only through update_fact and ask_owner; count_words(text) checks a rewritten text against the 40-word limit."
+    definition: "A listed fact is stale (its expiry passed and the owner has not said it again) or is one the owner was asked about, back for his reply or for a question that timed out. Decide what each becomes from what is in front of you: its versions, its neighbours (the current facts nearest to it), its question and its profile_question, each with any reply. Change stored memory only through update_fact and ask_owner; count_words(text) checks a rewritten text against the 40-word limit."
 
-    in_this_pass: "In this pass two taxonomy lines are replaced: the horizon line that counts N from reported_date, and the date rule for a plan or validity whose date has passed. Here a horizon counts from now, not from reported_date; a fact whose date has passed is rewritten as history (as_history), never archived or discarded, unless the reply or evidence says it moved. Every other date rule still applies (a range -> its last day; only a month -> its last day). The taxonomy's lines that point to Domain_Scope (a reply to a memory-review question) are for consolidating a conversation (Stage 1); here a reply is question.reply, decided by the reply mapping below."
+    in_this_pass: "In this pass two taxonomy lines are replaced: the horizon line that counts N from reported_date, and the date rule for a plan or validity whose date has passed. Here a horizon counts from now, not from reported_date; a fact whose date has passed is rewritten as history (as_history), never archived or discarded, unless the reply or evidence says it moved. Every other date rule still applies (a range -> its last day; only a month -> its last day). The taxonomy's lines that point to Domain_Scope (a reply to a memory-review question) are for consolidating a conversation (Stage 1); here a reply is question.reply, decided by the reply mapping below, or profile_question.reply, decided by the profile reply rules below."
 
     when_unsure: "When unsure, ask: call ask_owner. The fact stays visible while it waits for the owner's answer, so asking loses nothing. Never revive, archive or invalidate a fact nothing in front of you decides."
 
@@ -63,7 +64,7 @@ rule Stale_Fact_Review() {
     ]
 
     reply_mapping: {
-        what_a_reply_is: "A reply is the owner's reply to the question message, in words, shown as the fact's question.reply (a digit never reaches the review: code applies it). Every call it backs takes basis {kind: reply, question_id, quote}."
+        what_a_reply_is: "A reply is the owner's reply to a question message, in words, shown as the fact's question.reply or profile_question.reply (a digit never reaches the review: code applies it). Every call it backs takes basis {kind: reply, question_id, quote}, with the question_id of the question it answers. The mapping below reads question.reply; profile_question.reply is read by the profile reply rules below."
         still_true: "still true -> revive."
         stopped_or_ended: "stopped or ended -> archive. For a standing fact, also send history: one sentence in the past tense saying it ended and when the owner said so; code creates it as its own fact with {kind: none}. A fact of expiry kind date is not archived: rewrite it as history (as_history) on basis reply. Send no history when a current fact already says it ended."
         outcome: "it happened, it did not happen, or it is no longer needed -> a history rewrite (as_history) on basis reply, in the matching phrasing."
@@ -72,6 +73,12 @@ rule Stale_Fact_Review() {
         correction: "a correction -> invalidate, or supersede by the current fact that states the true value."
         dont_remember: "don't remember -> the question's fallback, now, basis reply: revive (with an expiry), archive, or for fallback history a history rewrite in the unknown phrasing."
         another_subject: "about something else -> no answer: decide the fact from the rest of what is in front of you; if nothing decides it, its outcome is leave, and its question stays open."
+    }
+
+    profile_reply: {
+        what_it_is: "A profile_question asks the owner which place, person or date the fact's words mean (profile_question.about), so that search files the fact under the right place, person or date. Its kind is place, person or date; its options are what the owner was shown: the candidates code found, each with its label, then the fixed answers of its kind. Code has already read every digit, button and short form it could, and recorded what they say; profile_question.reply holds the words it could not read: often an explanation of who or what is meant, sometimes a correction of the fact itself (it names the wrong person, place or date, or says something the owner did not mean)."
+        what_follows: "Your part is the fact only: you file no place, person or date. A decision on the fact closes the profile question. With no decision the question stays open and the owner can still pick an option; when profile_question.timed_out is true, this pass is the last to read its words, and a question left undecided then closes with nothing changed. A profile question has no fallback: silence changes nothing, and its open question holds the fact, so it is not asked."
+        rules: "Decide the fact on these words as on any reply, on basis {kind: reply, question_id, quote} with the profile_question's question_id and words copied from its reply: when they correct what the fact says, rewrite it with the corrected text (a new version, as calls.rewrite says); when they say the fact was never true, invalidate it; when they say it is over, archive it, or rewrite it as history when its date has passed. When the words decide nothing about the fact (they only say which place, person or date is meant, or are about something else), make no call on their basis: decide the fact from the rest of what is in front of you; if nothing decides it, its outcome is leave. In the checklist line, reply= reads these words as any reply: never for a correction or never true, over for an end, unclear when they decide nothing about the fact."
     }
 
     asking: [
