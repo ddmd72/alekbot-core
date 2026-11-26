@@ -288,10 +288,10 @@ _ASK_TEXT_PROPERTIES: Dict[str, Any] = {
 _ANSWER_PROFILE_QUESTION_SCHEMA: Dict[str, Any] = {
     "name": "answer_profile_question",
     "description": (
-        "Record the owner's own answer to a profile question's point, from the words he replied with. Code files the "
-        "fact under the place, person or date the answer names, for good, and that point is never asked again; the "
-        "answer is recorded as if he had picked it himself. Only for a profile_question whose reply settles which "
-        "place, person or date is meant; one call per question. Code checks the answer against what the question "
+        "Record the owner's own answer to a profile question's point, from the words he replied with. Code records it "
+        "as if he had picked it himself, for good, and that point is never asked again. Only for a profile_question "
+        "whose reply answers its point: a shown candidate, one of its fixed answers (keep, not_listed, dont_know), or, "
+        "for a date question, a date; one call per question. Code checks the answer against what the question "
         "offered and the quote against his reply, and tells you when it refuses."
     ),
     "parameters": {
@@ -302,7 +302,7 @@ _ANSWER_PROFILE_QUESTION_SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "what his words settle: the id of one of the profile_question's options, or, for a date "
-                    "question, a date as YYYY, YYYY-MM or YYYY-MM-DD, or two of one precision joined by a dash"
+                    "question, a date as YYYY, YYYY-MM or YYYY-MM-DD, or two of one precision joined by -, –, — or the word to"
                 ),
             },
             "quote": {"type": "string", "description": "the owner's words that settle it, copied from his reply"},
@@ -727,8 +727,9 @@ _REVIEW_HEADER = (
     "| outcome=<…>.\n\n"
     "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
     "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
-    "facts nearest to it) and, when the owner was asked about it, its `question` (whether it still holds) or its "
-    "`profile_question` (which place, person or date its words mean; its point is answered with `answer_profile_question`), each with any `reply`.\n\n"
+    "facts nearest to it) and, when the owner was asked about it, its `question` (whether it still holds) and/or its "
+    "`profile_question` (which place, person or date its words mean; its point is answered with `answer_profile_question`), each with any `reply`. "
+    "A fact listed for an open question is current: its `stale_since` is null.\n\n"
     "Facts under review:"
 )
 
