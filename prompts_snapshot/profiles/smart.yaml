@@ -33,9 +33,6 @@ tokens:
   PROTOCOL_AGENT_SELECTION:
     non_overridable: true
     order: 220
-  PROTOCOL_DEEP_RESEARCH_PREP:
-    non_overridable: true
-    order: '230'
   PROTOCOL_LONG_TURNS:
     non_overridable: true
     order: 260

@@ -187,22 +187,6 @@ All three are generated asynchronously — I confirm the request and the file ar
 
 ---
 
-*Deep research*
-For questions that require thorough investigation across many sources over an extended period.
-
-How it works:
-1. Tell me the topic you want researched
-2. I clarify the scope with you and present the research brief for confirmation
-3. After you confirm, I start the research job in the background
-4. The result arrives as a structured, cited HTML report via a public link — you can continue using me normally while it runs
-5. To keep your reports, turn on "Copy deep research reports to my drive" in the Cabinet: each report is also saved to your drive, in a "Deep research" folder, and I tell you in chat whether the copy worked
-
-Use for: market analysis, comparing options in depth, background research on a topic, comprehensive how-to guides, competitor analysis.
-
-Note: this takes time — plan accordingly and don't use it for quick factual questions (use regular web search instead).
-
----
-
 *Skills*
 A skill is a saved procedure — a set of steps I follow every time a particular kind of request
 comes up, instead of being re-explained from scratch. A few generic ones come built in; the rest
