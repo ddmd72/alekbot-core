@@ -169,6 +169,7 @@ src.services.email_review_service.EmailReviewService 1  # by-design single insta
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
 src.services.execute_reminder_task.ExecuteReminderTask 1  # by-design the one execute_reminder runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.external_task_delivery_task.ExternalTaskDeliveryTask 1  # by-design the one external_task_deliver runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.external_task_files.ExternalTaskFiles 1  # by-design the one task files backend (the file resolver and the media bucket), built by build_task_files in build_application_graph and held by ExternalTaskService (EXTERNAL_TASK_QUEUE_RFC §5.12)
 src.services.external_task_send_choice.ExternalTaskSendChoice 1  # by-design the one Send-button click handler, held by InteractiveChoiceService as its external_task_send handler over the one ExternalTaskService (memory_setup.py, EXTERNAL_TASK_QUEUE_RFC 5.3)
 src.services.external_task_service.ExternalTaskService 1  # by-design the one external task service, hoisted in build_application_graph and held by the three runners (EXTERNAL_TASK_QUEUE_RFC §5.2)
 src.services.external_task_timer_task.ExternalTaskTimerTask 1  # by-design the one external_task_timer runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks

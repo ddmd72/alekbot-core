@@ -15,6 +15,12 @@ Per request, in order:
 
 A task of another worker or user, a held task and a missing one are one and the same `404`. Logs name the worker by
 `fingerprint(worker_id)` and the user by 8 characters; never a key, text, result or header.
+
+Task files (§5.12): a claim of a task with files adds `files` (number, name, type, size; no link), and
+`GET /tasks/<task_id>/files/<n>` with the lease id in `X-Lease-Id` answers a fresh signed link for that file, valid
+`FILE_LINK_TTL_S` (a final task `404`, a lapsed lease `409 lease_expired`, a file the task does not carry
+`404 no_such_file`, a copy no longer stored `410 file_gone`, a failed signing `503 link_unavailable`). The link is in
+the answer only, never in a log line.
 """
 import json
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -42,6 +48,7 @@ from ..utils.logger import logger
 BODY_OVERHEAD_BYTES = 4_096       # the JSON envelope around a result; the service caps the text itself
 BODY_CAP_BYTES = RESULT_MAX_BYTES + BODY_OVERHEAD_BYTES
 WRITTEN_BY = "written by the user's assistant at the user's request"
+LEASE_HEADER = "X-Lease-Id"       # the file route is a GET: the lease id rides in a header, never in the logged URL
 _BEARER = "bearer "
 
 _HEADERS = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
@@ -176,10 +183,28 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
             claimed = await external_tasks.claim(principal)
             if claimed is None:
                 return Response(status=204, headers=dict(_HEADERS))
-            return _json(200, {"code": "ok", "task_id": claimed.task_id, "created_at": claimed.created_at.isoformat(),
-                               "lease_id": claimed.lease_id, "lease_until": claimed.lease_until.isoformat(),
-                               "origin": WRITTEN_BY, "title": claimed.title, "text": claimed.text})
+            answer: Dict[str, Any] = {
+                "code": "ok", "task_id": claimed.task_id, "created_at": claimed.created_at.isoformat(),
+                "lease_id": claimed.lease_id, "lease_until": claimed.lease_until.isoformat(), "origin": WRITTEN_BY,
+                "title": claimed.title, "text": claimed.text}
+            if claimed.files:     # only a task with files carries the key (§5.12); never a link or a storage key
+                answer["files"] = [{"number": f.number, "name": f.name, "mime": f.mime, "size": f.size}
+                                   for f in claimed.files]
+            return _json(200, answer)
         return await serve("claim", CALLS + (("claims", CLAIMS_PER_WINDOW),), run)
+
+    @bp.route("/tasks/<task_id>/files/<int:number>", methods=["GET"])
+    async def get_task_file(task_id: str, number: int) -> Response:
+        async def run(principal: WorkerPrincipal) -> Response:
+            lease_id = request.headers.get(LEASE_HEADER, "").strip()
+            if not lease_id:
+                raise _Early(_code(400, "bad_request"))
+            link = await external_tasks.get_task_file(principal, task_id, lease_id, number)
+            # The answer carries the link; it is never logged (`serve` logs the status only).
+            return _json(200, {"code": "ok", "task_id": link.task_id, "file": link.number, "name": link.name,
+                               "mime": link.mime, "size": link.size, "url": link.url,
+                               "expires_in": link.ttl_seconds})
+        return await serve("file", CALLS, run)
 
     @bp.route("/tasks/<task_id>/renew", methods=["POST"])
     async def renew_lease(task_id: str) -> Response:

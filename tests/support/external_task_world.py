@@ -4,7 +4,8 @@ The same world `tests/unit/services/test_external_task_service.py` uses: `Extern
 of `external_task_stores.py`, the real `FirestoreUserRepository` on `EvalDb` (the flag is written into the stored user and
 read fresh), the real `InactiveUserCheck`, and the real `GcpTaskQueue` over a Cloud Tasks client that records its bodies.
 
-Alex Doe is `usr-1` (account `acc-1`), flagged, with the worker `research` unless `labels` says otherwise.
+Alex Doe is `usr-1` (account `acc-1`), flagged, with the worker `research` unless `labels` says otherwise. With
+`files=True` the service also serves task files over the fakes of `task_file_fakes.py`.
 """
 from __future__ import annotations
 
@@ -16,11 +17,13 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.external_task import TaskOrigin
 from src.domain.user import UserProfile
+from src.services.external_task_files import ExternalTaskFiles
 from src.services.external_task_service import ExternalTaskService
 from src.services.inactive_user_check import InactiveUserCheck
 from tests.support.external_task_stores import FakeExternalTaskStore, FakeExternalWorkerStore
 from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.task_file_fakes import InMemoryMediaStorage, ScriptedFileSource
 
 USERS = "users"
 DIGEST_KEY = bytes(range(32))
@@ -34,7 +37,9 @@ NOTE = ("Alex Doe asked for this to choose a kit for the Shelbyville community g
 
 
 class ExternalTaskWorld:
-    def __init__(self) -> None:
+    def __init__(self, *, files: bool = False) -> None:
+        """`files`: the service gets the task files' backend, a scripted resolver (`source`) and an in-memory media
+        bucket (`bucket`) of `task_file_fakes.py`; without it a create that names files is refused."""
         self.db = EvalDb()
         env = SimpleNamespace(domain_users_collection=USERS, is_production=False)
         self.users = FirestoreUserRepository(self.db, env, FirestoreAccountRepository(self.db, "accounts"))
@@ -42,9 +47,12 @@ class ExternalTaskWorld:
         self.workers = FakeExternalWorkerStore()
         self.queue, self.client = make_task_queue()
         self._bytes = 0
+        self.source = ScriptedFileSource()
+        self.bucket = InMemoryMediaStorage()
         self.service = ExternalTaskService(
             self.tasks, self.workers, self.queue, self.users, InactiveUserCheck(self.users), digest_key=DIGEST_KEY,
-            clock=lambda: datetime(2026, 11, 23, 9, 0, tzinfo=timezone.utc), random_bytes=self._random_bytes)
+            clock=lambda: datetime(2026, 11, 23, 9, 0, tzinfo=timezone.utc), random_bytes=self._random_bytes,
+            files=ExternalTaskFiles(self.source, self.bucket) if files else None)
 
     def _random_bytes(self, n: int) -> bytes:
         self._bytes += 1

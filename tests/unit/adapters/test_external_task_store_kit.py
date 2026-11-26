@@ -22,6 +22,7 @@ from src.domain.external_task import (
     ExternalTaskStatus,
     SubmitVia,
     TaskDelivery,
+    TaskFile,
     TaskHold,
     TaskLease,
     TaskOrigin,
@@ -331,3 +332,32 @@ async def test_a_task_stored_before_the_note_existed_reads_with_none(kit_db):
         del fs.docs()["tsk-1"][key]
     loaded = await fs.store.get("usr-1", "tsk-1")
     assert (loaded.note, loaded.entry) == (None, None) and loaded == task()
+
+
+# --- task files (EXTERNAL_TASK_QUEUE_RFC §5.12) ---------------------------------------------------------------------
+
+FILES = (TaskFile(number=1, name="Tom's plan.docx", mime="application/vnd.ms-word", size=2048,
+                  key="external_tasks/usr-1/tsk-1/1-Tom's plan.docx"),
+         TaskFile(number=2, name="birth-certificate.pdf", mime="application/pdf", size=4096,
+                  key="external_tasks/usr-1/tsk-1/2-birth-certificate.pdf"))
+
+
+async def test_a_tasks_files_are_stored_and_read_back_whole_through_a_transition(backend):
+    await backend.store.create(task(files=FILES))
+    assert await backend.store.get("usr-1", "tsk-1") == task(files=FILES)
+    leased = await _leased_again(backend)
+    assert leased.files == FILES
+    assert [t.files for t in await backend.store.list_for_user("usr-1", 10)] == [FILES]
+
+
+async def test_files_are_an_array_of_maps_and_a_task_without_files_stores_no_field(kit_db):
+    fs = Firestore(kit_db)
+    await fs.store.create(task(files=FILES))
+    await fs.store.create(task("tsk-2"))
+    assert fs.docs()["tsk-1"]["files"] == [
+        {"number": 1, "name": "Tom's plan.docx", "mime": "application/vnd.ms-word", "size": 2048,
+         "key": "external_tasks/usr-1/tsk-1/1-Tom's plan.docx"},
+        {"number": 2, "name": "birth-certificate.pdf", "mime": "application/pdf", "size": 4096,
+         "key": "external_tasks/usr-1/tsk-1/2-birth-certificate.pdf"}]
+    assert "files" not in fs.docs()["tsk-2"]
+    assert (await fs.store.get("usr-1", "tsk-2")).files == ()

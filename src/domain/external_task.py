@@ -1,8 +1,8 @@
 """The external task record, its embedded value objects and the queue's limits (EXTERNAL_TASK_QUEUE_RFC §5.1, §5.11).
 
 One module on purpose: `ExternalTask` and the value objects it embeds (`TaskOrigin`, `TaskHold`, `TaskLease`,
-`TaskResultMeta`, `TaskFailure`, `TaskDelivery`) and their enums are one stored record, read and written whole; splitting
-them would only scatter one document's shape over seven files.
+`TaskResultMeta`, `TaskFailure`, `TaskDelivery`, `TaskFile`) and their enums are one stored record, read and written
+whole; splitting them would only scatter one document's shape over eight files.
 
 Life of a task (§5.1): `held` (a chat create waits for the owner's `$task send`) or `queued` (a reminder create, or the confirmed `$task send`), `leased` by a claim, then
 one of the final states `done`, `failed`, `cancelled`, `expired`. A final task never changes again except for its
@@ -13,7 +13,7 @@ measured anywhere.
 """
 from datetime import datetime
 from enum import Enum
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict
 
@@ -47,6 +47,10 @@ UNAUTHORIZED_GLOBAL_PER_WINDOW = 500        # set at implementation review
 WAKE_TIMEOUT_S = 10                     # set at implementation review; one wake-up send, DNS included
 WAKE_HEADERS_MAX = 8                    # set at implementation review
 WAKE_HEADER_BYTES_MAX = 1_024           # set at implementation review; names and values of all headers together
+MAX_FILES_PER_TASK = 10                 # set at implementation; files on one task (§5.12)
+TASK_FILES_MAX_BYTES = 100 * 1024 * 1024    # set at implementation; all files of one task together; each file is also
+                                            # within the send cap of `resolve_file` (`document_limits.action_cap`)
+FILE_LINK_TTL_S = 600                   # set at implementation; one signed link to one file copy (§5.12)
 
 # Engineering constants of this implementation (not in the RFC's table).
 TIMER_MARGIN_S = 30                     # set at implementation review; a timer fires this long after its instant
@@ -59,6 +63,8 @@ HOLD_CODE_BYTES = 4                     # set at implementation review; the code
 WAKE_URL_MAX_CHARS = 2_048              # set at implementation review; a wake-up URL
 WAKE_RESPONSE_READ_MAX = 4_096          # set at implementation review; bytes of a wake-up answer read, then discarded
 WAKE_MAX_ATTEMPTS = 5                   # set at implementation review; deliveries of one wake task, retries included
+TASK_FILE_NAME_MAX_CHARS = 120          # set at implementation; a task file's stored name, its extension kept
+TASK_FILE_CHECK_S = 60                  # set at implementation; the macro check of one email attachment at create
 
 HOLD_CODE_DIGEST_PURPOSE = "external_task_hold"
 
@@ -159,6 +165,20 @@ class TaskDelivery(BaseModel):
     delivered_at: Optional[datetime] = None
 
 
+class TaskFile(BaseModel):
+    """One file a task carries (§5.12): a copy of the original bytes taken at create, stored once in the private media
+    bucket under `key` (`external_tasks/{user_id}/{task_id}/{number}-{name}`). `number` counts from 1 in the order the
+    files were attached; `name` is the sanitised name the key ends with. The key never leaves the system: a worker gets
+    the number, name, type and size, and a signed link it asks for under its lease."""
+    model_config = ConfigDict(frozen=True)
+
+    number: int
+    name: str
+    mime: str
+    size: int
+    key: str
+
+
 class ExternalTask(BaseModel):
     """One task (`{prefix}external_tasks`, doc id `task_id`). The result body lives apart, in the result record.
 
@@ -166,7 +186,8 @@ class ExternalTask(BaseModel):
     owner asked and why, how to present the result, what to do after it. The owner is shown it with the brief; the
     completion alert hands it back to the bot; no worker surface ever carries it. `entry` is where the task was created
     from (a chat turn or a reminder's run), which the alert names when it gives the note back. A task stored before the note existed
-    has neither (None)."""
+    has neither (None). `files` are the copies the task carries (§5.12), numbered from 1; a task without files, and one
+    stored before files existed, has none."""
     model_config = ConfigDict(frozen=True)
 
     task_id: str
@@ -186,6 +207,7 @@ class ExternalTask(BaseModel):
     result_meta: Optional[TaskResultMeta] = None
     failure: Optional[TaskFailure] = None
     delivery: Optional[TaskDelivery] = None
+    files: Tuple[TaskFile, ...] = ()
     created_at: datetime
     updated_at: datetime
     deadline_at: datetime
@@ -194,3 +216,7 @@ class ExternalTask(BaseModel):
     @property
     def is_final(self) -> bool:
         return self.status in FINAL_STATUSES
+
+    def file(self, number: int) -> Optional[TaskFile]:
+        """The task's file with that number, or None."""
+        return next((f for f in self.files if f.number == number), None)

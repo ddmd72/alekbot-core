@@ -15,6 +15,7 @@ from src.domain.external_task_texts import NOTE_PENDING
 from tests.support.external_task_agent_rig import specialist_message, specialist_rig
 from tests.support.external_task_world import ORIGIN, TEXT, TITLE, ExternalTaskWorld, NOTE
 from tests.support.scripted_llm import ScriptedLLM, text, tool_results, tools
+from tests.support.task_file_fakes import PLAN, PLAN_REF
 from tests.support.tool_fields import unused
 
 S = ExternalTaskStatus
@@ -95,6 +96,23 @@ async def test_cancelling_an_unknown_task_is_a_tool_error_and_changes_nothing():
     assert result.startswith("Tool error:")
 
 
+PLAN_INSTRUCTION = f"Hand this to research with {PLAN_REF}: {TEXT}"
+CREATE_WITH_FILES = {**CREATE, "files": [PLAN_REF]}
+
+
+async def test_a_created_task_stores_copies_of_the_files_the_instruction_names():
+    world = await ExternalTaskWorld(files=True).seed()
+    llm = ScriptedLLM([tools(("create_external_task", CREATE_WITH_FILES)), text("It waits for your confirmation.")])
+
+    response = await specialist_rig(llm, world).execute(specialist_message(PLAN_INSTRUCTION))
+
+    assert response.status == AgentStatus.SUCCESS
+    [task] = world.tasks.tasks.values()
+    assert [(f.number, f.name, f.mime, f.size) for f in task.files] == [(1, "Tom's plan.docx", PLAN.mime, len(PLAN.data))]
+    assert world.bucket.objects[task.files[0].key] == (PLAN.data, PLAN.mime)
+    assert response.delivery_items[0].data["files"] == [{"name": "Tom's plan.docx", "size": len(PLAN.data)}]
+    assert llm.unanswered == 0 and llm.pending() == 0
+
 def test_the_scripted_calls_use_every_declared_field():
-    assert unused("external_tasks", "create_external_task", [CREATE]) == []
+    assert unused("external_tasks", "create_external_task", [CREATE, CREATE_WITH_FILES]) == []
     assert unused("external_tasks", "cancel_external_task", [cancel("t-1")]) == []

@@ -11,7 +11,7 @@ Alex Doe is `usr-1` (account `acc-1`) with the workers `research` and `calendar-
 """
 import json
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
@@ -26,6 +26,7 @@ from src.domain.external_worker_key import WORKER_KEY_PREFIX
 from src.domain.user import UserProfile
 from src.services.connector_text_service import ConnectorTextService
 from src.services.external_task_rate_limiter import ExternalTaskRateLimiter
+from src.services.external_task_files import ExternalTaskFiles
 from src.services.external_task_service import ExternalTaskService
 from src.services.external_worker_user_gate import ExternalWorkerUserGate
 from src.services.inactive_user_check import InactiveUserCheck
@@ -34,6 +35,7 @@ from tests.support.external_task_stores import FakeExternalTaskStore, FakeExtern
 from tests.support.firestore_eval import EvalDb
 from tests.support.mcp_gate_fakes import FakeWhitelistRepo
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.task_file_fakes import InMemoryMediaStorage, ScriptedFileSource
 from tests.support.task_mcp_texts import RESULT_TOKEN, TOOL_TOKEN, TaskTokenStore
 from tests.support.external_task_world import NOTE
 
@@ -52,7 +54,8 @@ UNKNOWN_KEY = WORKER_KEY_PREFIX + "A" * 43
 
 
 class World:
-    def __init__(self) -> None:
+    def __init__(self, *, files: bool = False) -> None:
+        """`files`: the service serves task files over the fakes of `task_file_fakes.py` (`source`, `bucket`)."""
         self.db = EvalDb()
         self.rates_db = EvalDb()
         env = SimpleNamespace(domain_users_collection=USERS, is_production=False)
@@ -64,9 +67,12 @@ class World:
         self._ids = 0
         self._bytes = 0
         self.inactive = InactiveUserCheck(self.users)
+        self.source = ScriptedFileSource()
+        self.bucket = InMemoryMediaStorage()
         self.service = ExternalTaskService(self.tasks, self.workers, self.queue, self.users, self.inactive,
                                            digest_key=DIGEST_KEY, clock=lambda: self.now, new_id=self._new_id,
-                                           random_bytes=self._random_bytes)
+                                           random_bytes=self._random_bytes,
+                                           files=ExternalTaskFiles(self.source, self.bucket) if files else None)
         self.whitelist = FakeWhitelistRepo(emails=("alex@example.com", "other@example.com"))
         self.gate = ExternalWorkerUserGate(self.users, self.whitelist)
         self.limiter = ExternalTaskRateLimiter(
@@ -101,8 +107,9 @@ class World:
     async def flag(self, user_id: str, on: bool) -> None:
         await self.db.collection(USERS).document(user_id).update({"config.external_tasks_enabled": on})
 
-    async def create(self, user_id: str = "usr-1", label: str = "research", entry: TaskEntry = TaskEntry.REMINDER):
-        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry, note=NOTE)
+    async def create(self, user_id: str = "usr-1", label: str = "research", entry: TaskEntry = TaskEntry.REMINDER,
+                     files: Sequence[str] = ()):
+        return await self.service.create(user_id, label, TITLE, TEXT, ORIGIN, entry=entry, note=NOTE, files=files)
 
     def app(self, inactive_users: Any = None):
         """A fresh app per request: a stateless app's session manager starts once per instance."""

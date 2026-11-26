@@ -1,6 +1,6 @@
 """
-Composition helper: the external task queue's worker MCP resource `/tasks-mcp` and its six tools
-(EXTERNAL_TASK_QUEUE_RFC §5.4, §5.7).
+Composition helper: the external task queue's worker MCP resource `/tasks-mcp` and its seven tools
+(EXTERNAL_TASK_QUEUE_RFC §5.4, §5.7, §5.12).
 
 A third FastMCP instance, a resource server only, beside the facts app (the authorization server) and the drive app.
 Named `tasks_mcp_setup`, not `mcp_tasks_setup`: the drive-notes isolation test treats `mcp_*.py` as memory-side.
@@ -16,10 +16,12 @@ scope `external_tasks`, no expiry, and in `token` the key's stored digest, never
 kind `OAUTH`, its client, grant id (`gid`), worker id (`wid`), scope and expiry.
 
 **Tools**, each a thin handler over one service operation: `list_tasks`, `claim_task`, `renew_lease`,
-`submit_task_result`, `release_task`, `fail_task`. None takes a user, an account, a worker or a label: the principal is
-the verified credential's. Input is liberal (`decisions/mcp_tool_schema_liberal_input.md`): flat strings with defaults,
-no schema constraint; an empty `task_id` or `lease_id` answers a correctable line. `result` and `reason` reach the
-service as sent (None is ""): the service normalises them. Only `list_tasks` is listed read-only.
+`submit_task_result`, `release_task`, `fail_task`, `get_task_file`. None takes a user, an account, a worker or a label:
+the principal is the verified credential's. Input is liberal (`decisions/mcp_tool_schema_liberal_input.md`): flat
+strings with defaults, no schema constraint; an empty `task_id` or `lease_id` answers a correctable line, and a `file`
+that is not a positive number answers as a number the task does not carry (`no_such_file`). `result` and `reason`
+reach the service as sent (None is ""): the service normalises them. Only `list_tasks` is listed read-only.
+`get_task_file` answers a fresh signed link per call; the link is never logged.
 
 **Each call** (`_TaskCaller.run`, the RFC's order):
 1. the principal from the verified token;
@@ -59,7 +61,7 @@ from ..domain.connector_texts import ConnectorTexts
 from ..domain.exceptions import ConnectorTextsUnavailable
 from ..domain.external_task import CALLS_PER_WINDOW, CLAIMS_PER_WINDOW, SUBMITS_PER_WINDOW, SubmitVia
 from ..domain.external_task_mcp_result import TaskToolAnswer
-from ..domain.external_task_refusal import ExternalTaskRefused
+from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from ..domain.external_worker_key import WORKER_KEY_PREFIX
 from ..domain.external_worker_principal import WorkerPrincipal
 from ..domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, normalize_phrase
@@ -225,6 +227,27 @@ def _register_tools(app: TokenTextFastMCP, call: "_TaskCaller", tasks: ExternalT
             await tasks.fail(p, task_id, lease_id, reason or None)
             return answers.failed(texts, task_id)
         return await call.run(contract.FAIL_TASK, ctx, CALLS, op)
+
+    @app.tool(name=contract.GET_TASK_FILE)
+    async def get_task_file(ctx: Context, task_id: _Text = "", lease_id: _Text = "", file: _Text = "") -> CallToolResult:
+        async def op(p: WorkerPrincipal, texts: Mapping[str, str]) -> TaskToolAnswer:
+            missing = _missing_id(texts, task_id, lease_id)
+            if missing is not None:
+                return missing
+            number = _file_number(file)
+            if number is None:     # not a file number at all: the same answer as a number the task does not carry
+                return answers.refused(texts, TaskRefusal.NO_SUCH_FILE)
+            return answers.file_link(texts, await tasks.get_task_file(p, task_id, lease_id, number))
+        return await call.run(contract.GET_TASK_FILE, ctx, CALLS, op)
+
+
+def _file_number(value: str) -> Optional[int]:
+    """A file's number as the claim listed it (`2`, also `#2`); None for anything that is not a positive number."""
+    digits = value.strip().lstrip("#")
+    if not digits.isdigit() or not digits.isascii():
+        return None
+    number = int(digits)
+    return number if number > 0 else None
 
 
 def _missing_id(texts: Mapping[str, str], task_id: str, lease_id: str) -> Optional[TaskToolAnswer]:

@@ -1,5 +1,6 @@
-"""Wiring of the external task queue (EXTERNAL_TASK_QUEUE_RFC §5.2, §5.8): the two Firestore stores, the stored-secrets
-cipher and the outbound-request guard under the service.
+"""Wiring of the external task queue (EXTERNAL_TASK_QUEUE_RFC §5.2, §5.8, §5.12): the two Firestore stores, the
+stored-secrets cipher and the outbound-request guard (one `WakeKit`), and the task files' backend (the file resolver
+and the private media bucket) under the service.
 
 Built in the graph, not in `ServiceContainer`: the container holds neither the `/worker` task queue, the digest key nor
 the account-lock check; the graph builds all three before it gets here.
@@ -20,9 +21,12 @@ from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..domain.wake_target import own_hosts_of
 from ..ports.cipher_port import CipherPort
+from ..ports.media_storage_port import MediaStoragePort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
+from ..services.external_task_files import ExternalTaskFiles, TaskFileSource
 from ..services.external_task_service import ExternalTaskService
+from ..services.external_task_wake_kit import WakeKit
 from ..services.inactive_user_check import InactiveUserCheck
 
 
@@ -36,15 +40,26 @@ def wake_own_hosts(config: Mapping[str, Any], auth_config: AuthConfig, service_u
     ])
 
 
+def build_task_files(file_source: Optional[TaskFileSource],
+                     media_storage: Optional[MediaStoragePort]) -> Optional[ExternalTaskFiles]:
+    """The task files' backend (§5.12): the file resolver (`FileConversionService`) and the private media bucket. None
+    when either is missing (a local run with no bucket): a create that names files is then refused and no link is
+    given."""
+    if file_source is None or media_storage is None:
+        return None
+    return ExternalTaskFiles(file_source, media_storage)
+
+
 def build_external_task_service(db_client: Any, env_config: EnvironmentConfig, *, task_queue: Optional[TaskQueue],
                                 user_repo: UserRepository, inactive_users: InactiveUserCheck,
-                                digest_key: bytes, cipher: CipherPort,
-                                own_hosts: FrozenSet[str]) -> Optional[ExternalTaskService]:
+                                digest_key: bytes, cipher: CipherPort, own_hosts: FrozenSet[str],
+                                files: Optional[ExternalTaskFiles] = None) -> Optional[ExternalTaskService]:
     """The service over its stores; None without a task queue (a local run with no GCP project): every timer, notice
-    and wake-up of the queue is a Cloud Task, so there is nothing to run it on."""
+    and wake-up of the queue is a Cloud Task, so there is nothing to run it on. `files` (`build_task_files`) serves
+    task files."""
     if task_queue is None:
         return None
     return ExternalTaskService(
         FirestoreExternalTaskStore(db_client, env_config), FirestoreExternalWorkerStore(db_client, env_config),
-        task_queue, user_repo, inactive_users, digest_key=digest_key, cipher=cipher,
-        webhook=GuardedWebhookAdapter(own_hosts), own_hosts=own_hosts)
+        task_queue, user_repo, inactive_users, digest_key=digest_key,
+        wake=WakeKit(cipher=cipher, webhook=GuardedWebhookAdapter(own_hosts), own_hosts=own_hosts), files=files)

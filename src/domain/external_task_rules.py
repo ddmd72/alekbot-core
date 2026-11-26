@@ -16,6 +16,7 @@ it. Every final transition sets `purge_after = now + RETENTION_S`.
 Public interface:
     TaskTransition
     lease_refusal(task, worker_id, lease_id) -> Optional[TaskRefusal]
+    file_refusal(task, *, worker_id, lease_id, now) -> Optional[TaskRefusal]      (a read: a link to a task's file)
     claim(task, *, worker_id, expected_status, expected_generation, lease_id, now)
     renew(task, *, worker_id, lease_id, now);  submit(task, *, worker_id, lease_id, meta, now)
     release(task, *, worker_id, lease_id, now);  fail(task, *, worker_id, lease_id, reason, now)
@@ -96,6 +97,21 @@ def lease_refusal(task: ExternalTask, worker_id: str, lease_id: str) -> Optional
 
 def _lease_lapsed(task: ExternalTask, now: datetime) -> bool:
     return task.status is _S.LEASED and task.lease.until is not None and task.lease.until <= now
+
+
+def file_refusal(task: ExternalTask, *, worker_id: str, lease_id: str, now: datetime) -> Optional[TaskRefusal]:
+    """Whether the worker holding `lease_id` may have a link to one of the task's files (§5.12): None when it may. The
+    lease is the right to the files, checked as `renew` checks it: a final task is `not_found` (as for a missing task:
+    the files end with the task), then the worker precondition (`not_found` for another worker's or a held task,
+    `stale_lease`), then a lapsed lease is `lease_expired`. A read: nothing is written either way."""
+    if task.is_final:
+        return TaskRefusal.NOT_FOUND
+    refusal = lease_refusal(task, worker_id, lease_id)
+    if refusal is not None:
+        return refusal
+    if _lease_lapsed(task, now):
+        return TaskRefusal.LEASE_EXPIRED
+    return None
 
 
 def claim(task: ExternalTask, *, worker_id: str, expected_status: ExternalTaskStatus, expected_generation: int,

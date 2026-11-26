@@ -19,7 +19,7 @@ from src.domain.external_task_entry import TaskEntry
 from src.composition import tasks_mcp_setup as tms
 from src.composition.mcp_setup import SCOPE_OF, TASKS_SCOPE
 from src.domain import external_task_mcp_contract as c
-from src.domain.external_task import RESULT_MAX_BYTES, ExternalTaskStatus
+from src.domain.external_task import FILE_LINK_TTL_S, LEASE_S, RESULT_MAX_BYTES, ExternalTaskStatus
 from src.domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
 from src.domain.external_worker_key import WORKER_KEY_PREFIX
 from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR
@@ -29,6 +29,7 @@ from src.domain.user import InactiveReason
 from src.domain.voice_mcp_token import McpTokenKind
 from src.services.connector_text_service import ConnectorTextService
 from src.web import external_task_api as api
+from tests.support.task_file_fakes import CERTIFICATE, CERTIFICATE_REF, PLAN, PLAN_REF, InMemoryMediaStorage
 from tests.support.task_mcp_texts import RESULT_TOKEN, marker
 from tests.support.task_mcp_world import (
     AUTH_CONFIG,
@@ -467,3 +468,96 @@ def test_the_tasks_scope_is_in_scope_of_and_binds_only_where_it_is_served():
         bind_resource(None, [TASKS_SCOPE], served, without_tasks)
     with pytest.raises(ScopeRefused):
         bind_resource(None, [TASKS_SCOPE], uris, SCOPE_OF)
+
+
+# ------------------------------------------------------------------------------------- task files (RFC §5.12)
+
+@pytest.fixture
+async def files_world() -> World:
+    w = await World(files=True).seed()
+    w.initial = await w.texts.texts()
+    return w
+
+
+def _link(text: str) -> str:
+    return text.rstrip(">").rsplit(" ", 1)[-1]
+
+
+class TestTaskFiles:
+    async def test_a_claim_lists_the_files_after_the_title_and_before_the_brief_with_no_link(self, files_world):
+        created = await files_world.create(files=[PLAN_REF, CERTIFICATE_REF])
+        claimed = await files_world.claim()
+        lines = claimed["text"].split("\n")
+        assert lines[2:] == [f"<TITLE {TITLE}>", "<FILES_HEAD 2>",
+                             f"<FILE_LINE {PLAN.mime} Tom's plan.docx 1 {len(PLAN.data)}>",
+                             f"<FILE_LINE application/pdf birth-certificate.pdf 2 {len(CERTIFICATE.data)}>",
+                             "<TASK_TEXT>", TEXT]
+        assert claimed["task_id"] == created.task_id
+        assert InMemoryMediaStorage.SIGNED_BASE not in claimed["text"] and "external_tasks/" not in claimed["text"]
+
+    async def test_a_live_lease_gets_a_fresh_signed_link_on_every_call(self, files_world):
+        await files_world.create(files=[PLAN_REF, CERTIFICATE_REF])
+        claimed = await files_world.claim()
+        first = ok(await files_world.call("get_task_file", task_id=claimed["task_id"], lease_id=claimed["lease_id"],
+                                          file="2"))
+        second = ok(await files_world.call("get_task_file", task_id=claimed["task_id"],
+                                           lease_id=claimed["lease_id"], file=2))
+        key = f"external_tasks/usr-1/{claimed['task_id']}/2-birth-certificate.pdf"
+        assert first.startswith(f"<FILE_LINK application/pdf birth-certificate.pdf 2 {FILE_LINK_TTL_S} "
+                                f"{len(CERTIFICATE.data)} {claimed['task_id']} {InMemoryMediaStorage.SIGNED_BASE}/{key}?")
+        assert _link(first) != _link(second)
+        assert files_world.bucket.signed == [(key, FILE_LINK_TTL_S), (key, FILE_LINK_TTL_S)]
+
+    async def test_a_lapsed_lease_is_refused(self, files_world):
+        await files_world.create(files=[PLAN_REF])
+        claimed = await files_world.claim()
+        files_world.now += timedelta(seconds=LEASE_S)
+        assert err(await files_world.call("get_task_file", task_id=claimed["task_id"],
+                                          lease_id=claimed["lease_id"], file="1")) == "<E_LEASE_EXPIRED lease_expired>"
+        assert files_world.bucket.signed == []
+
+    async def test_another_workers_task_a_held_task_and_a_final_task_are_not_found(self, files_world):
+        await files_world.create(label="calendar-watch", files=[PLAN_REF])
+        watch = await files_world.claim(files_world.watch_key)
+        held = await files_world.create(entry=TaskEntry.CHAT, files=[PLAN_REF])
+        await files_world.create(files=[PLAN_REF])
+        mine = await files_world.claim()
+        ok(await files_world.call("submit_task_result", task_id=mine["task_id"], lease_id=mine["lease_id"],
+                                  result=RESULT))
+        for task_id, lease_id in ((watch["task_id"], watch["lease_id"]), (held.task_id, "L"),
+                                  (mine["task_id"], mine["lease_id"])):
+            assert err(await files_world.call("get_task_file", task_id=task_id, lease_id=lease_id, file="1")) == \
+                "<E_NOT_FOUND not_found>"
+        assert files_world.bucket.signed == []
+
+    async def test_a_missing_copy_is_file_gone_and_a_signing_failure_is_retryable(self, files_world):
+        await files_world.create(files=[PLAN_REF, CERTIFICATE_REF])
+        claimed = await files_world.claim()
+        ids = {"task_id": claimed["task_id"], "lease_id": claimed["lease_id"]}
+        del files_world.bucket.objects[f"external_tasks/usr-1/{claimed['task_id']}/1-Tom's plan.docx"]
+        assert err(await files_world.call("get_task_file", file="1", **ids)) == "<E_FILE_GONE file_gone>"
+        files_world.bucket.fail_sign = True
+        assert err(await files_world.call("get_task_file", file="2", **ids)) == \
+            "<E_LINK_UNAVAILABLE link_unavailable>"
+        files_world.bucket.fail_sign = False
+        assert ok(await files_world.call("get_task_file", file="2", **ids)).startswith("<FILE_LINK ")
+
+    @pytest.mark.parametrize("file", ["3", "0", "", "plan", "-1", "1.5"])
+    async def test_a_file_that_is_not_one_of_the_tasks_numbers_is_no_such_file(self, files_world, file):
+        await files_world.create(files=[PLAN_REF, CERTIFICATE_REF])
+        claimed = await files_world.claim()
+        assert err(await files_world.call("get_task_file", task_id=claimed["task_id"], lease_id=claimed["lease_id"],
+                                          file=file)) == "<E_NO_SUCH_FILE no_such_file>"
+
+    async def test_an_empty_id_gets_the_correctable_line(self, files_world):
+        assert err(await files_world.call("get_task_file", task_id="", lease_id="L", file="1")) == \
+            "<ID_REQUIRED task_id>"
+
+    async def test_the_log_lines_never_carry_the_link_or_the_files_name(self, files_world, logs):
+        await files_world.create(files=[PLAN_REF])
+        claimed = await files_world.claim()
+        link = _link(ok(await files_world.call("get_task_file", task_id=claimed["task_id"],
+                                               lease_id=claimed["lease_id"], file="1")))
+        text = "\n".join(logs.lines)
+        assert "tool=get_task_file" in text
+        assert link not in text and "Tom's plan" not in text and "external_tasks/" not in text
