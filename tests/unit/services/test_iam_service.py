@@ -20,7 +20,8 @@ class TestIAMServiceMessageGeneration:
         return IAMService(
             user_repo=AsyncMock(),
             account_repo=AsyncMock(),
-            whitelist_repo=AsyncMock()
+            whitelist_repo=AsyncMock(),
+            cabinet_url="https://main.example.test/cabinet",
         )
 
     def test_get_rejection_message_telegram_not_registered(self, iam_service):
@@ -34,7 +35,7 @@ class TestIAMServiceMessageGeneration:
         # English onboarding (pre-auth system default)
         assert "Hi!" in message
         assert "Open" in message
-        assert iam_service.CABINET_URL in message
+        assert iam_service.cabinet_url in message
         assert "123456789" in message  # Shows user ID
         assert "come back" in message
 
@@ -48,7 +49,7 @@ class TestIAMServiceMessageGeneration:
         # Should be in English
         assert "Hi" in message
         assert "Open" in message
-        assert iam_service.CABINET_URL in message
+        assert iam_service.cabinet_url in message
         assert "come back" in message
 
     def test_get_rejection_message_revoked(self, iam_service):
@@ -77,7 +78,7 @@ class TestIAMServiceMessageGeneration:
 
         # Should return generic fallback
         assert "Account not found" in message
-        assert iam_service.CABINET_URL in message
+        assert iam_service.cabinet_url in message
 
     def test_get_rejection_message_unknown_reason_fallback(self, iam_service):
         """Test fallback for unknown rejection reasons."""
@@ -99,7 +100,7 @@ class TestIAMServiceMessageGeneration:
 
         # Should still work, just without ID
         assert "Hi!" in message
-        assert iam_service.CABINET_URL in message
+        assert iam_service.cabinet_url in message
         # Should NOT have ID placeholder
         assert "(ID:" not in message
 
@@ -119,7 +120,7 @@ class TestIAMServiceAuthorization:
     @pytest.fixture
     def iam_service(self, mock_repos):
         """Create IAMService with mocks."""
-        return IAMService(**mock_repos)
+        return IAMService(**mock_repos, cabinet_url="https://main.example.test/cabinet")
 
     @pytest.mark.asyncio
     async def test_authorize_existing_platform_user(self, iam_service, mock_repos):
@@ -204,7 +205,7 @@ class TestIAMServiceAuthorizationExtended:
 
     @pytest.fixture
     def svc(self, repos):
-        return IAMService(**repos)
+        return IAMService(**repos, cabinet_url="https://main.example.test/cabinet")
 
     # ------------------------------------------------------------------
     # Line 193: user found but email is empty → ValueError
@@ -237,7 +238,8 @@ class TestIAMServiceAccountLock:
         from tests.support.mcp_gate_fakes import FakeWhitelistRepo
         store = await AlexStore().seed()
         whitelist = FakeWhitelistRepo(emails=("alex@example.com", "other@example.com"))
-        return store, whitelist, IAMService(user_repo=store.users, account_repo=AsyncMock(), whitelist_repo=whitelist)
+        return store, whitelist, IAMService(user_repo=store.users, account_repo=AsyncMock(), whitelist_repo=whitelist,
+                                             cabinet_url="https://main.example.test/cabinet")
 
     async def test_a_locked_user_is_refused_with_the_lock_reply_on_every_platform(self):
         from src.services.iam_service import ACCOUNT_LOCKED_REPLY

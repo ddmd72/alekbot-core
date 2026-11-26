@@ -33,7 +33,8 @@ How to deploy Alek-Core the standard way from a fresh checkout, and keep deployi
   here; they live in the rollout notes (ops).
 
 `.dockerignore` keeps `.env` and key files out of the image; `.env.example` lists the keys a checkout needs;
-`src/composition/deploy_topology.py::DeployTopology` is the one place that derives the service URL, queue suffix and regions.
+`src/composition/deploy_topology.py::DeployTopology` is the one place that derives the service URL, queue suffix and regions; links handed to users (the Cabinet, its
+memory tab) are built on that URL, so `CLOUD_RUN_SERVICE_URL` must be the public host.
 
 Placeholders only (`<PROJECT_ID>`, `<SERVICE_URL>`, service accounts): the real values live in `.env`, Secret Manager or
 memory, never in this file. Resource values (memory, timeouts, scaling, secret lists) live in `cloudbuild-dev.yaml`,

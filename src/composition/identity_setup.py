@@ -54,14 +54,16 @@ class Identity:
 
 
 def build_identity(config: dict, db_client: Any, env_config: EnvironmentConfig, *, auth_config: AuthConfig,
-                   digest_key: bytes) -> Identity:
-    """The repositories over `db_client`, the services over them, the Cabinet's sign-in over `auth_config`."""
+                   digest_key: bytes, cabinet_url: str) -> Identity:
+    """The repositories over `db_client`, the services over them, the Cabinet's sign-in over `auth_config`;
+    `cabinet_url` is the link IAM's onboarding replies send an unregistered user to."""
     logger.info("👤 Initializing identity: accounts, users, whitelist, IAM, invite codes...")
     account_repo = FirestoreAccountRepository(db_client=db_client, collection_name=env_config.account_collection_name)
     user_repo = FirestoreUserRepository(db_client, env_config, account_repo)
     invite_repo = FirestoreInviteCodeRepository(db_client, env_config, digest_key=digest_key)
     whitelist_repo = FirestoreWhitelistRepository(db_client, env_config)
-    iam_service = IAMService(user_repo=user_repo, account_repo=account_repo, whitelist_repo=whitelist_repo)
+    iam_service = IAMService(user_repo=user_repo, account_repo=account_repo, whitelist_repo=whitelist_repo,
+                             cabinet_url=cabinet_url)
     invite_service = InviteCodeService(invite_repo, user_repo, account_repo, whitelist_repo)
 
     logger.info("🔐 Initializing OAuth + Cabinet Services...")

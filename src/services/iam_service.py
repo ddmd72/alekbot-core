@@ -44,27 +44,27 @@ class IAMService(PlatformAuthPort):
     - Testability
     - Single source of truth
     """
-    
-    # Centralized URLs
-    CABINET_URL = "https://my.alekbot.app/cabinet"
-    
+
     def __init__(
         self,
         user_repo: UserRepository,
         account_repo: AccountRepository,
-        whitelist_repo: WhitelistRepository
+        whitelist_repo: WhitelistRepository,
+        cabinet_url: str,
     ):
         """
         Initialize IAMService with repository dependencies.
-        
+
         Args:
             user_repo: User data repository
             account_repo: Account data repository
             whitelist_repo: Whitelist configuration repository
+            cabinet_url: The Cabinet's public URL, from the service's deploy topology
         """
         self.user_repo = user_repo
         self.account_repo = account_repo
         self.whitelist_repo = whitelist_repo
+        self.cabinet_url = cabinet_url
     
     def get_rejection_message(
         self,
@@ -94,7 +94,7 @@ class IAMService(PlatformAuthPort):
             if platform == "telegram":
                 msg = (
                     f"👋 Hi! To use the bot, please register first.\n\n"
-                    f"**Step 1:** Open {self.CABINET_URL}\n"
+                    f"**Step 1:** Open {self.cabinet_url}\n"
                     f"**Step 2:** Sign in with Google\n"
                     f"**Step 3:** Link your Telegram account"
                 )
@@ -108,7 +108,7 @@ class IAMService(PlatformAuthPort):
             elif platform == "slack":
                 return (
                     f"👋 Hi! To use the bot, please register first.\n\n"
-                    f"**Step 1:** Open {self.CABINET_URL}\n"
+                    f"**Step 1:** Open {self.cabinet_url}\n"
                     f"**Step 2:** Sign in with Google\n"
                     f"**Step 3:** Link your Slack account\n\n"
                     f"🔙 Then come back here and send a message!"
@@ -118,7 +118,7 @@ class IAMService(PlatformAuthPort):
                 return (
                     f"👋 Account not found.\n\n"
                     f"Please register first:\n"
-                    f"🔗 {self.CABINET_URL}"
+                    f"🔗 {self.cabinet_url}"
                 )
         
         elif reason == "revoked":

@@ -193,7 +193,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     One bundle per subsystem, in dependency order: a bundle a builder takes is a bundle built before it."""
     env_config = config["ENVIRONMENT_CONFIG"]
     boot = build_boot_checks(config, env_config)    # refuses the start before anything touches the database
-    identity = build_identity(config, db_client, env_config, auth_config=boot.auth_config, digest_key=boot.digest_key)
+    identity = build_identity(config, db_client, env_config, auth_config=boot.auth_config, digest_key=boot.digest_key,
+                              cabinet_url=boot.deploy_topology.cabinet_url)
     ops = build_operations(config, topology=boot.deploy_topology, account_repo=identity.account_repo)
     routing = build_session_routing(db_client, env_config, user_repo=identity.user_repo, task_queue=ops.task_queue)
     documents = build_document_backends(config, parser=boot.parse_adapter)

@@ -38,10 +38,20 @@ def env(monkeypatch):
     return EnvironmentConfig()
 
 
+@pytest.mark.parametrize("platform", ["telegram", "slack", "web"])
+def test_the_onboarding_reply_links_the_cabinet_url_it_is_given(env, platform):
+    identity = build_identity({}, EvalDb(), env, auth_config=AUTH, digest_key=b"d",  # type: ignore[arg-type]
+                              cabinet_url="https://main.example.test/cabinet")
+
+    reply = identity.iam_service.get_rejection_message(platform=platform, reason="not_registered")
+
+    assert "https://main.example.test/cabinet" in reply
+
+
 def test_the_repositories_are_shared_and_the_sign_in_runs_over_the_auth_config(env):
     db = EvalDb()
 
-    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"digest-1")  # type: ignore[arg-type]
+    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"digest-1", cabinet_url="https://main.example.test/cabinet")  # type: ignore[arg-type]
 
     users, accounts, whitelist = identity.user_repo, identity.account_repo, identity.whitelist_repo
     assert users.db is db and users.account_repo is accounts
@@ -69,7 +79,7 @@ def test_the_repositories_are_shared_and_the_sign_in_runs_over_the_auth_config(e
 
 
 def test_with_all_three_twilio_settings_the_verify_service_is_built(env):
-    identity = build_identity(TWILIO, EvalDb(), env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+    identity = build_identity(TWILIO, EvalDb(), env, auth_config=AUTH, digest_key=b"d", cabinet_url="https://main.example.test/cabinet")  # type: ignore[arg-type]
 
     kind, client, service_sid = identity.twilio_verify_client
     assert kind == "verify" and client.credentials == ("AC-test-1", "token-1") and service_sid == "VA-test-1"
@@ -79,13 +89,13 @@ def test_with_all_three_twilio_settings_the_verify_service_is_built(env):
 def test_without_any_one_twilio_setting_there_is_no_verify_client(env, missing):
     config = {k: v for k, v in TWILIO.items() if k != missing}
 
-    identity = build_identity(config, EvalDb(), env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+    identity = build_identity(config, EvalDb(), env, auth_config=AUTH, digest_key=b"d", cabinet_url="https://main.example.test/cabinet")  # type: ignore[arg-type]
 
     assert identity.twilio_verify_client is None
 
 
 def test_the_bundle_is_frozen(env):
-    identity = build_identity({}, EvalDb(), env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+    identity = build_identity({}, EvalDb(), env, auth_config=AUTH, digest_key=b"d", cabinet_url="https://main.example.test/cabinet")  # type: ignore[arg-type]
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         identity.user_repo = None  # type: ignore[misc]
@@ -93,7 +103,7 @@ def test_the_bundle_is_frozen(env):
 
 def test_the_device_sessions_and_passkeys_share_one_store_and_the_rp_is_the_callback_host(env):
     db = EvalDb()
-    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d", cabinet_url="https://main.example.test/cabinet")  # type: ignore[arg-type]
 
     auth = build_device_auth(db, env, session_service=identity.session_service, notification_service="notices",  # type: ignore[arg-type]
                              oauth_redirect_uri="https://cabinet.example.com/auth/callback", cipher=None,  # type: ignore[arg-type]
@@ -129,7 +139,7 @@ def test_a_callback_without_scheme_or_host_refuses_the_start(uri):
 
 def test_the_kill_switch_reaches_the_pin_reset_and_the_mcp_grants_and_the_pin_can_lock(env):
     db = EvalDb()
-    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d")  # type: ignore[arg-type]
+    identity = build_identity({}, db, env, auth_config=AUTH, digest_key=b"d", cabinet_url="https://main.example.test/cabinet")  # type: ignore[arg-type]
     cipher = object()
 
     auth = build_device_auth(db, env, session_service=identity.session_service, notification_service="notices",  # type: ignore[arg-type]

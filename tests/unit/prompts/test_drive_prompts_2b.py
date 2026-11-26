@@ -11,7 +11,7 @@ from src.utils.capabilities import CAPABILITIES_TEXT
 ROOT = Path(__file__).resolve().parents[3]
 TOKENS = ROOT / "prompts_snapshot" / "tokens" / "system"
 EDITED = ("PROTOCOL_AGENT_SELECTION", "COGNITIVE_PROCESS_DRIVE", "PROTOCOL_DRIVE_SEARCH", "PROTOCOL_DRIVE_NOTES")
-CABINET = "https://my.alekbot.app/cabinet"
+CABINET = "https://dev.alekbot.app/cabinet"
 PROVIDER = re.compile(r"(?<![a-z])(onedrive|graph|microsoft|google|gdrive|approot|quickxor|ctag|takendatetime)",
                       re.IGNORECASE)
 CYRILLIC = re.compile("[Ѐ-ӿ]")
