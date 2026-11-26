@@ -134,7 +134,7 @@ Groups and rows, each row collapsed to title and current value:
   `POST /api/user/language`): each row sends both fields.
 - **Connections:** Telegram, Slack, phone (one row, status "n of 3"; body lists each with connect/disconnect) · Gmail
   (status; body: daily review, index actions, disconnect, delete data) · Microsoft To Do (status; connect, reconnect,
-  disconnect) · Drives (link to the Drives section).
+  disconnect) · Memory from assistants (triage frequency, segmented, at once; connected apps with revoke) · Drives (link to the Drives section).
 - **Security:** Memory PIN (§5.3) · Face ID and passkeys (list, remove, add on this device) · Devices (sessions, log
   out one, log out others, log out all) · If a phone is lost (the three steps).
 - **Voice:** Call modes ↗ (opens the modes page).

@@ -123,6 +123,10 @@ _OPERATIONS = {
     "todo": [("renderServiceStatus", "onclick=\"disconnectService('${id}')\""),
              ("renderServiceStatus", 'connectButton(data.connect_href, t("platform.connect_todo")'),
              ("renderServiceStatus", 'connectButton(data.connect_href, t("todo.reconnect")')],
+    # The memory inbox moved here from the Memory section (owner, 2026-11-26): the frequency and an app's revoke.
+    "inbox": [("markup", 'onclick="setInboxInterval(1)"'), ("markup", 'onclick="setInboxInterval(2)"'),
+              ("markup", 'onclick="setInboxInterval(3)"'), ("markup", 'onclick="setInboxInterval(7)"'),
+              ("renderInbox", 'onclick="revokeInboxApp(this.dataset.grant)"')],
     "pin": [("markup", 'onclick="submitPinSet()"'), ("markup", 'onclick="submitPinChange()"'),
             ("markup", 'onclick="submitPinRemove()"'), ("markup", 'onclick="requestPinReset()"'),
             ("markup", 'onclick="cancelPinReset()"'), ("markup", 'onclick="logoutOtherDevices()"'),
@@ -146,7 +150,8 @@ _OPERATIONS = {
 }
 # The renderer's target, which must sit in the row's body.
 _TARGETS = {"platformItem": None, "renderPlatforms": "platforms-container", "renderGmailStatus": "gmail-container",
-            "triggerGmailIndex": None, "renderServiceStatus": "tasks-container", "renderDevices": "devices-list",
+            "triggerGmailIndex": None, "renderServiceStatus": "tasks-container", "renderInbox": "inbox-apps",
+            "renderDevices": "devices-list",
             "renderPasskeys": "passkeys-list", "addPasskeyHere": None, "removePasskey": None, "googleProofUrl": None,
             "resumePasskeyFlow": "passkeys-resume-hint", "generateTeamInvite": "generated-code-container",
             "loadCodes": "codes-list-container", "renderExternalWorkers": "workers-list"}

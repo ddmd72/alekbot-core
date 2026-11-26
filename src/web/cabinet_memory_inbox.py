@@ -16,6 +16,9 @@
   granted_at, last_refresh}]}`; `DELETE /api/user/memory-inbox/apps/<grant_id>` revokes one (404 `not_found` unless it is
   one of those; the connector's next call is refused at once).
 
+The settings and apps routes are connection settings, not facts: they sit behind the sign-in only, not the facts PIN
+(owner, 2026-11-26); the candidate routes keep the PIN.
+
 An answered route never answers 401 (the gate does, `src/web/CLAUDE.md`). Without the inbox (no task queue) the routes
 answer 501. The service logs each answer (ids and counts, never a candidate's text).
 """
@@ -106,7 +109,6 @@ def register_memory_inbox_routes(bp: Blueprint, auth_required: Callable, facts_u
 
     @bp.route("/api/user/memory-inbox/settings", methods=["GET"])
     @auth_required
-    @facts_unlock_required
     async def memory_inbox_settings_get():
         if user_repo is None:
             return jsonify({"error": "Memory inbox not configured"}), 501
@@ -122,7 +124,6 @@ def register_memory_inbox_routes(bp: Blueprint, auth_required: Callable, facts_u
 
     @bp.route("/api/user/memory-inbox/settings", methods=["PUT"])
     @auth_required
-    @facts_unlock_required
     async def memory_inbox_settings_put():
         if user_repo is None:
             return jsonify({"error": "Memory inbox not configured"}), 501
@@ -145,7 +146,6 @@ def register_memory_inbox_routes(bp: Blueprint, auth_required: Callable, facts_u
 
     @bp.route("/api/user/memory-inbox/apps", methods=["GET"])
     @auth_required
-    @facts_unlock_required
     async def memory_inbox_apps():
         if mcp_authorization is None:
             return jsonify({"apps": []}), 200
@@ -159,7 +159,6 @@ def register_memory_inbox_routes(bp: Blueprint, auth_required: Callable, facts_u
 
     @bp.route("/api/user/memory-inbox/apps/<grant_id>", methods=["DELETE"])
     @auth_required
-    @facts_unlock_required
     async def memory_inbox_app_revoke(grant_id: str):
         if mcp_authorization is None:
             return jsonify({"error": "not_found"}), 404
