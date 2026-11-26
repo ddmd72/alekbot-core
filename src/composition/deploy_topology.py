@@ -20,8 +20,12 @@ class DeployTopology:
     slack_intake_region: str
 
     @property
+    def cabinet_url(self) -> str:
+        return f"{self.service_url}/cabinet"
+
+    @property
     def cabinet_memory_url(self) -> str:
-        return f"{self.service_url}/cabinet?tab=memory"
+        return f"{self.cabinet_url}?tab=memory"
 
 
 def build_deploy_topology(config: Mapping[str, Any], env_config: EnvironmentConfig) -> DeployTopology:
