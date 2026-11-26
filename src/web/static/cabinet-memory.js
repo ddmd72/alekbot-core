@@ -92,6 +92,10 @@
         document.getElementById("facts-container").innerHTML = "";
         document.getElementById("memory-inbox-body").innerHTML = "";
         document.getElementById("memory-inbox").classList.add("hidden");
+        inboxSettings = null;
+        inboxApps = [];
+        document.getElementById("inbox-apps").innerHTML = "";
+        document.getElementById("memory-inbox-settings").classList.add("hidden");
       }
 
       // Leaving the tab or closing the page relocks the session (best effort: the 15-minute end is the guarantee).
@@ -130,6 +134,7 @@
         renderAreaSelect();
         loadReviewQuestions();
         loadMemoryInbox();
+        loadInboxSettings();
         loadAreaCounts();
         await loadFactDomains();
         if (factsState === "closed") await closedLoad();
@@ -1027,12 +1032,94 @@
         }
       }
 
+      /* ── The memory inbox's settings: triage frequency and connected apps ── */
+      // Shown whenever the Memory tab is unlocked, not only while candidates wait. The frequency saves on change; a
+      // revoke asks first and stops the app's next submission at once.
+      let inboxSettings = null,
+        inboxApps = [];
+
+      async function loadInboxSettings() {
+        try {
+          const [s, a] = await Promise.all([
+            factsFetch(`${API}/api/user/memory-inbox/settings`, { credentials: "include" }),
+            factsFetch(`${API}/api/user/memory-inbox/apps`, { credentials: "include" }),
+          ]);
+          inboxSettings = s.ok ? await s.json() : null;
+          inboxApps = a.ok ? (await a.json()).apps || [] : [];
+        } catch {
+          inboxSettings = null;
+          inboxApps = [];
+        }
+        renderInboxSettings();
+      }
+
+      function inboxWhen(iso) {
+        return iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : t("memory.inbox_settings_unknown");
+      }
+
+      function renderInboxSettings() {
+        const wrap = document.getElementById("memory-inbox-settings");
+        const show = factsMode !== "idle" && inboxSettings !== null;   // nothing shows while the tab is locked
+        wrap.classList.toggle("hidden", !show);
+        const list = document.getElementById("inbox-apps");
+        if (!show) {
+          list.innerHTML = "";
+          return;
+        }
+        document.getElementById("inbox-settings-title").textContent = t("memory.inbox_settings_title");
+        document.getElementById("inbox-interval-label").textContent = t("memory.inbox_settings_interval");
+        document.getElementById("inbox-apps-title").textContent = t("memory.inbox_settings_apps");
+        document.getElementById("inbox-apps-hint").textContent = t("memory.inbox_settings_hint");
+        const select = document.getElementById("inbox-interval");
+        select.innerHTML = (inboxSettings.choices || []).map((d) =>
+          `<option value="${d}">${escapeHtml(t("memory.inbox_settings_every_" + d))}</option>`).join("");
+        select.value = String(inboxSettings.triage_interval_days);
+        list.innerHTML = inboxApps.length ? inboxApps.map((app) => `<div class="c-mini-s">
+            ${escapeHtml(app.client_name)} · ${escapeHtml(t("memory.inbox_settings_granted"))}: ${escapeHtml(inboxWhen(app.granted_at))} ·
+            ${escapeHtml(t("memory.inbox_settings_refreshed"))}: ${escapeHtml(inboxWhen(app.last_refresh))}
+            <button type="button" class="c-lnk c-lnk-danger" data-grant="${escapeHtml(app.grant_id)}" onclick="revokeInboxApp(this.dataset.grant)">${escapeHtml(t("memory.inbox_settings_revoke"))}</button>
+          </div>`).join("") : `<div class="c-mini-s">${escapeHtml(t("memory.inbox_settings_none"))}</div>`;
+      }
+
+      async function saveInboxInterval() {
+        const note = document.getElementById("inbox-interval-note");
+        const days = Number(document.getElementById("inbox-interval").value);
+        try {
+          const res = await factsFetch(`${API}/api/user/memory-inbox/settings`, {
+            method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ triage_interval_days: days }),
+          });
+          if (res.ok) {
+            inboxSettings = await res.json();
+            note.textContent = t("memory.inbox_settings_saved");
+            return;
+          }
+        } catch { /* shown below */ }
+        note.textContent = t("memory.inbox_settings_failed");
+        if (inboxSettings) document.getElementById("inbox-interval").value = String(inboxSettings.triage_interval_days);
+      }
+
+      async function revokeInboxApp(grantId) {
+        if (!confirm(t("memory.inbox_settings_revoke_confirm"))) return;
+        try {
+          const res = await factsFetch(`${API}/api/user/memory-inbox/apps/${encodeURIComponent(grantId)}`,
+            { method: "DELETE", credentials: "include" });
+          if (res.ok) {
+            showToast(t("memory.inbox_settings_revoked"), "success");
+            await loadInboxSettings();
+            return;
+          }
+        } catch { /* shown below */ }
+        showToast(t("memory.inbox_settings_failed"), "error");
+      }
+
       // The language changed while Memory is open: its controls are drawn again in it.
       function renderMemoryControls() {
         renderStateChips();
         renderAreaSelect();
         renderReviewRow();
         renderMemoryInbox();
+        renderInboxSettings();
       }
 
       let _modalFactIdx = null;

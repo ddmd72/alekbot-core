@@ -389,6 +389,12 @@ waiting for memory. No undo in this RFC: after "True" the owner corrects through
   (`test_locked_user_entry_points.py:12-16`); no new probe row.
 - The owner's text is the owner's own: no security check, the same word limit as triage. A failed enqueue of the final task
   after a stored confirmation still answers 200 (logged); the sweep's backstop finds it (§10.1).
+- **Delta 2026-11-25, owner: frequency choice and connected apps in the Cabinet.** Four more routes in the same module,
+  same decorators: `GET`/`PUT /api/user/memory-inbox/settings` (`{triage_interval_days, choices}`; the PUT takes 1, 2, 3 or
+  7, else 400 `invalid_interval`) and `GET /api/user/memory-inbox/apps` / `DELETE /api/user/memory-inbox/apps/<grant_id>`
+  (the live `memory_submit` grants through `MCPAuthorizationService.resource_grants`, the port's `list_resource_grants`; a
+  grant not among them answers 404). The inbox tool re-checks its grant on every call, so a revoke refuses the next one at
+  once. No limit, backlog rule or triage change came with it.
 - The routes live in their own blueprint module beside `cabinet_external_workers.py`, not in the 2,200-line
   `user_cabinet_app.py`.
 
@@ -491,6 +497,8 @@ that coupling.
   user → account defaults → system default and counted in owner-local calendar days, exactly as
   `fact_review_interval_days` (`src/domain/user.py:258`; `review_interval`, `interval_elapsed`,
   `src/domain/fact_review_rules.py:406-420`). A daily run a few minutes later than yesterday's is never skipped.
+- **Delta 2026-11-25, owner: frequency choice in the Cabinet.** The owner picks the interval (1, 2, 3 or 7 days) in the
+  Memory section (§8.2); the sweep reads it unchanged and a write takes effect at its next run.
 - **Only when something arrived:** the sweep enqueues only for users with `received` submissions.
 - **The run** (new `MemoryInboxService`, `src/services/`): rechecks the interval (a redelivered or hand-sent task), takes
   the account's memory-write lease (`lease_until`, the run timeout; `src/domain/memory_write_lease.py`) — the account

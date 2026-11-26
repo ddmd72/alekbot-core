@@ -59,6 +59,9 @@ class InMemoryMCPRepo(MCPClientRepository):
     async def list_worker_grants(self, user_id: str, worker_id: str, now: datetime) -> list:
         raise NotImplementedError
 
+    async def list_resource_grants(self, user_id: str, resource: str, now: datetime) -> list:
+        raise NotImplementedError
+
     async def revoke_grant(self, user_id: str, grant_id: str, now: datetime) -> int:
         raise NotImplementedError
 

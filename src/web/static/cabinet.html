@@ -143,6 +143,19 @@
             <div id="memory-inbox-body" class="c-mem-q-body"></div>
           </div>
 
+          <!-- The memory inbox's settings: how often the triage may run, and the apps connected to it -->
+          <div id="memory-inbox-settings" class="c-group c-mini hidden">
+            <div class="c-row-title" id="inbox-settings-title"></div>
+            <div class="c-mini-s">
+              <label for="inbox-interval" id="inbox-interval-label"></label>
+              <select id="inbox-interval" class="c-input" onchange="saveInboxInterval()"></select>
+              <span class="c-hint" id="inbox-interval-note" role="status"></span>
+            </div>
+            <div class="c-mini-s" id="inbox-apps-title"></div>
+            <div id="inbox-apps"></div>
+            <p class="c-hint" id="inbox-apps-hint"></p>
+          </div>
+
           <!-- The review questions, collapsed into one row that opens to them -->
           <div id="memory-review" class="c-group c-mem-q hidden">
             <button type="button" class="c-row" id="memory-review-row" aria-expanded="false" onclick="toggleMemoryReview()">
