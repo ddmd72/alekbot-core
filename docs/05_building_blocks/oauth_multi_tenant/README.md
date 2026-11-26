@@ -103,7 +103,8 @@ the user as `owner` in `iam_policy`. A pending team-invite cookie is consumed af
 
 **Chat authorization** (`services/iam_service.py::IAMService.authorize`). Called by the Slack and Telegram adapters on
 every message, no cache. A platform user that exists, is active and whose email is still whitelisted is allowed; an unknown one is
-rejected with a "register in the Cabinet first" message, a locked (inactive) one with the fixed `ACCOUNT_LOCKED_REPLY`
+rejected with a "register in the Cabinet first" message (its link is `DeployTopology.cabinet_url`, the service's own
+host — never a host written in code), a locked (inactive) one with the fixed `ACCOUNT_LOCKED_REPLY`
 (checked before the whitelist), a de-listed one with a "revoked" message. Chat can never
 create an account.
 
