@@ -22,7 +22,7 @@ from .external_task_entry import TaskEntry
 # ---------------------------------------------------------------------------------------------------- limits (§5.11)
 
 TITLE_MAX_CHARS = 120                   # set at implementation review
-TASK_TEXT_MAX_CHARS = 3_000             # set at implementation review; the whole text must fit one literal receipt
+TASK_TEXT_MAX_CHARS = 10_000            # owner 2026-11-26: research briefs outgrew 3 000; the receipt is a file
 NOTE_MAX_CHARS = 1_000                  # owner's decision 2026-11-24; the bot's return instructions on a task
 RESULT_MAX_BYTES = 512_000              # set at implementation review; below the 1 MiB Firestore document limit
 FAIL_REASON_MAX_CHARS = 1_000           # set at implementation review

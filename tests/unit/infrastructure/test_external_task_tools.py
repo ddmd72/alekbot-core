@@ -15,6 +15,7 @@ from src.domain.external_task import (
     HOLD_S,
     MAX_FILES_PER_TASK,
     MAX_OPEN_TASKS_PER_USER,
+    TASK_TEXT_MAX_CHARS,
     ExternalTaskStatus,
 )
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY
@@ -149,7 +150,7 @@ async def test_the_held_code_queues_the_task_through_confirm(world):
 @pytest.mark.parametrize("over,line", [
     ({"worker": "no-such-worker"}, ERROR_NOT_FOUND),
     ({"title": ""}, "non-empty"),
-    ({"text": "x" * 10_000}, "too long"),
+    ({"text": "x" * (TASK_TEXT_MAX_CHARS + 1)}, "too long"),
 ])
 async def test_a_refused_create_is_a_tool_error_and_stores_nothing(world, over, line):
     result = await create(world, **over)
@@ -325,7 +326,7 @@ async def test_with_an_instruction_only_its_own_text_is_created(world, text, cre
 async def test_a_title_too_long_and_a_brief_too_long_get_their_own_lines(world):
     from src.domain.external_task_texts import ERROR_BRIEF_TOO_LONG, ERROR_TITLE_TOO_LONG
     assert (await create(world, title="t" * 500)).result_str == ERROR_TITLE_TOO_LONG
-    assert (await create(world, text="x" * 10_000)).result_str == ERROR_BRIEF_TOO_LONG
+    assert (await create(world, text="x" * (TASK_TEXT_MAX_CHARS + 1))).result_str == ERROR_BRIEF_TOO_LONG
     assert world.tasks.tasks == {}
 
 
