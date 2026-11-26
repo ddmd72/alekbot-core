@@ -216,3 +216,18 @@ def test_delivery_fields_change_on_a_final_task_only_and_once():
     again = rules.record_delivery(out.task, delivery=TaskDelivery(state=DeliveryState.DELIVERED, path="other.md"))
     assert again.ok and not again.written
     assert rules.record_delivery(task(), delivery=delivered).refusal is R.NOT_DUE
+
+
+@pytest.mark.parametrize("subject,refusal", [
+    (leased(), None),                                                          # the lease holder, lease live
+    (leased(until_s=10), R.LEASE_EXPIRED),                                     # lapsed at NOW: as renew refuses it
+    (leased(lease=TaskLease(lease_id="lease-b", until=T0 + timedelta(seconds=LEASE_S), generation=2)),
+     R.STALE_LEASE),                                                           # another lease
+    (task(), R.STALE_LEASE),                                                   # queued: nobody holds it
+    (leased(worker_id="wrk-2"), R.NOT_FOUND),                                  # another worker's task
+    (task(status=S.HELD, hold=HOLD), R.NOT_FOUND),                             # held: invisible to workers
+    (leased(status=S.DONE, purge_after=T0 + timedelta(seconds=RETENTION_S)), R.NOT_FOUND),   # final: as missing
+    (leased(status=S.CANCELLED), R.NOT_FOUND),
+])
+def test_a_file_link_needs_the_live_lease_of_an_open_task(subject, refusal):
+    assert rules.file_refusal(subject, worker_id="wrk-1", lease_id="lease-a", now=NOW) is refusal

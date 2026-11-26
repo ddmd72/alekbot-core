@@ -13,8 +13,8 @@ Public interface:
     CREATE_DESCRIPTION_CHAT, CREATE_DESCRIPTION_REMINDER, create_description(entry) -> str, LIST_DESCRIPTION, GET_DESCRIPTION, CANCEL_DESCRIPTION, LIST_WORKERS_DESCRIPTION
     STATUS_DEFINITIONS                              one sentence on every status and failure code
     worker_parameter_text(workers) -> str           the `worker` parameter, one line per registered worker
-    TITLE_PARAMETER_TEXT, TEXT_PARAMETER_TEXT, NOTE_PARAMETER_TEXT, STATUS_PARAMETER_TEXT, WORKER_FILTER_PARAMETER_TEXT,
-    TASK_ID_PARAMETER_TEXT
+    TITLE_PARAMETER_TEXT, TEXT_PARAMETER_TEXT, NOTE_PARAMETER_TEXT, FILES_PARAMETER_TEXT, STATUS_PARAMETER_TEXT,
+    WORKER_FILTER_PARAMETER_TEXT, TASK_ID_PARAMETER_TEXT
     the tool-note templates and tool-error lines, `NOTE_*` and `ERROR_*`
     ANSWER_*                                       the specialist's answer lines, composed by code
     render_queue_state(labels) -> str              the state block after the cache boundary, labels only
@@ -23,8 +23,10 @@ from typing import Sequence
 
 from .external_task import (
     HOLD_S,
+    MAX_FILES_PER_TASK,
     MAX_OPEN_TASKS_PER_USER,
     NOTE_MAX_CHARS,
+    TASK_FILES_MAX_BYTES,
     TASK_TEXT_MAX_CHARS,
     TITLE_MAX_CHARS,
     ExternalTaskStatus,
@@ -50,7 +52,8 @@ STATUS_DEFINITIONS = (
 
 _CREATE_LEAD = (
     "Puts one task on the external task queue for one of the owner's registered workers. The worker receives only the "
-    "title and the text, never the conversation, and acts on them on its own schedule; its result reaches the system "
+    "title, the text and copies of any files attached to the task, never the conversation, and acts on them on its "
+    "own schedule; its result reaches the system "
     "later as an alert, never in this turn. That alert starts a new turn of the orchestrator, possibly hours later, "
     "with none of this conversation, so every task also carries a note: the system's own return instructions for that "
     "moment, written here from the orchestrator's instruction, which the alert hands back as the system's own "
@@ -126,6 +129,19 @@ NOTE_PARAMETER_TEXT = (
     f"worker's text in `text`. At most {NOTE_MAX_CHARS} characters."
 )
 
+_FILES_MB = TASK_FILES_MAX_BYTES // (1024 * 1024)
+
+FILES_PARAMETER_TEXT = (
+    "The files the worker needs for this task, each given by its file reference exactly as the orchestrator's "
+    "instruction gives it; left out when the instruction names no file. A brief is text and cannot carry a document, "
+    "so the task carries a copy of each file instead, taken when the task is created: the worker downloads that copy "
+    "while it works on the task and gets the file's name, type, size and bytes, never where the file is kept nor "
+    "anything else stored there. The owner is shown every attached file's name and size together with the task. Only "
+    "a reference the instruction itself contains can be attached, and a file that cannot be read stops the whole "
+    f"task, so nothing is created. At most {MAX_FILES_PER_TASK} files and {_FILES_MB} MB together, each file also no "
+    "larger than a file the owner may be sent in the chat."
+)
+
 STATUS_PARAMETER_TEXT = "Only tasks with this status. " + STATUS_DEFINITIONS
 
 WORKER_FILTER_PARAMETER_TEXT = "Only tasks of the worker with this label."
@@ -174,6 +190,10 @@ NOTE_QUEUED = (
     "no command. The owner is to be told in this answer that the task went to {worker}. There is no command. "
     "It is not to be created again."
 )
+NOTE_FILES = (
+    "The task carries these files, copied as they are now and shown to the owner with the task: {files}."
+)
+NOTE_FILE_ITEM = "{number}. {name} ({size})"
 NOTE_WORKERS_NONE = "Tool note: no worker is registered."
 NOTE_WORKERS_HEADER = "Tool note: registered worker labels:"
 NOTE_LIST_EMPTY = "Tool note: no external tasks match."
@@ -213,6 +233,30 @@ ERROR_FAILED = "Tool error: the task queue failed; nothing was changed."
 ERROR_NOT_THE_BRIEF = (
     "Tool error: the text must be the brief exactly as the orchestrator's instruction gives it, whole and word for "
     "word; copy it from the instruction and call again."
+)
+ERROR_FILES_ARGUMENT = "Tool error: files must be a list of file references, each one as text; nothing was created."
+ERROR_FILE_NOT_NAMED = (
+    "Tool error: the file reference {ref} does not appear in the orchestrator's instruction, and only a file the "
+    "instruction names can be attached, so nothing was created; call again with the references exactly as the "
+    "instruction gives them, or without that file."
+)
+ERROR_FILE_UNRESOLVED = (
+    "Tool error: the file {ref} could not be attached, and a task never leaves with only some of its files, so nothing "
+    "was created; the orchestrator is to be told which file failed and why. {reason}"
+)
+FILE_REASON_READER = "The file reader's answer for it: {line}"
+FILE_REASON_NOT_FOUND = "It was not found, it is not the owner's file, or it could not be read just now."
+ERROR_FILES_CAP = (
+    f"Tool error: one task carries at most {MAX_FILES_PER_TASK} files, so nothing was created; the orchestrator is to "
+    "name fewer files."
+)
+ERROR_FILES_TOO_LARGE = (
+    f"Tool error: the files come to more than {_FILES_MB} MB together, the most one task carries, so nothing was "
+    "created; the orchestrator is to name fewer or smaller files."
+)
+ERROR_FILES_UNAVAILABLE = (
+    "Tool error: files cannot be attached to a task on this system, so nothing was created; a task without files can "
+    "still be handed over."
 )
 
 # --- the specialist's answer (composed by code; the orchestrator reads it) -----------------------------------------

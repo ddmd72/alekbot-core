@@ -8,9 +8,9 @@ import pytest
 
 from src.domain import external_task_mcp_contract as c
 from src.domain import external_task_mcp_result as r
-from src.domain.external_task import RESULT_MAX_BYTES, ExternalTaskStatus
+from src.domain.external_task import FILE_LINK_TTL_S, RESULT_MAX_BYTES, ExternalTaskStatus, TaskFile
 from src.domain.external_task_refusal import TaskRefusal
-from src.domain.external_task_views import ClaimedTask, LeaseGrant, SubmitReceipt, WorkerTaskSummary
+from src.domain.external_task_views import ClaimedTask, LeaseGrant, SubmitReceipt, TaskFileLink, WorkerTaskSummary
 from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR
 from tests.support.task_mcp_texts import marker_results
 
@@ -89,3 +89,40 @@ def test_access_refusals_and_any_other_code_share_the_neutral_line(code):
 def test_a_lock_between_verify_and_call_answers_the_lock_text():
     answer = r.refused(TEXTS, TaskRefusal.ACCOUNT_LOCKED)
     assert (answer.text, answer.is_error, answer.status) == (ACCOUNT_LOCKED_TOOL_ERROR, True, "account_locked")
+
+
+# ------------------------------------------------------------------------------------------- task files (§5.12)
+
+PLAN_FILE = TaskFile(number=1, name="Tom's plan.docx", mime="application/vnd.ms-word", size=2048,
+                     key="external_tasks/usr-1/t1/1-Tom's plan.docx")
+CERTIFICATE_FILE = TaskFile(number=2, name="birth-certificate.pdf", mime="application/pdf", size=4096,
+                            key="external_tasks/usr-1/t1/2-birth-certificate.pdf")
+
+
+def test_a_claim_of_a_task_with_files_lists_them_after_the_title_and_before_the_brief_with_no_link_or_key():
+    task = ClaimedTask(task_id="t1", created_at=CREATED, lease_id="L1", lease_until=UNTIL, title="Plan review",
+                       text=BRIEF, files=(PLAN_FILE, CERTIFICATE_FILE))
+    answer = r.claimed(TEXTS, task)
+    assert answer.text.split("\n") == [
+        f"<CLAIMED {CREATED.isoformat()} L1 {UNTIL.isoformat()} t1>", "<WRITTEN_BY>", "<TITLE Plan review>",
+        "<FILES_HEAD 2>",
+        "<FILE_LINE application/vnd.ms-word Tom's plan.docx 1 2048>",
+        "<FILE_LINE application/pdf birth-certificate.pdf 2 4096>",
+        "<TASK_TEXT>", "compare three community-garden irrigation kits for Shelbyville",
+        "line two {not a placeholder}"]
+    assert "external_tasks/" not in answer.text and (answer.is_error, answer.status) == (False, "ok")
+
+
+def test_a_file_link_answer_carries_the_link_its_lifetime_and_the_file():
+    link = TaskFileLink(task_id="t1", number=2, name="birth-certificate.pdf", mime="application/pdf", size=4096,
+                        url="https://storage.example.test/signed/x?n=1", ttl_seconds=FILE_LINK_TTL_S)
+    answer = r.file_link(TEXTS, link)
+    assert answer.text == (f"<FILE_LINK application/pdf birth-certificate.pdf 2 {FILE_LINK_TTL_S} 4096 t1 "
+                           "https://storage.example.test/signed/x?n=1>")
+    assert (answer.is_error, answer.status) == (False, "ok")
+
+
+@pytest.mark.parametrize("reason", [TaskRefusal.NO_SUCH_FILE, TaskRefusal.FILE_GONE, TaskRefusal.LINK_UNAVAILABLE])
+def test_each_file_refusal_has_its_own_line_with_its_code(reason):
+    answer = r.refused(TEXTS, reason)
+    assert answer == r.TaskToolAnswer(f"<{c.text_key_of_refusal(reason)} {reason.value}>", True, reason.value)

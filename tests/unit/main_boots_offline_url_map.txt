@@ -73,6 +73,7 @@ GET /cabinet/docs/<path:filename>
 GET /cabinet/help/workers
 GET /d/<link_id>
 GET /external-tasks/v1/tasks
+GET /external-tasks/v1/tasks/<task_id>/files/<int:number>
 GET /f/<token>
 GET /f/<token>/raw
 GET /favicon.ico

@@ -2,11 +2,12 @@
 
 One pure renderer for the delivery item `create_external_task` returns. The receipt is a literal notice
 (`domain.literal_notice`, shared with the memory-fact draft and the reminder notices) in a file `task-<id>.txt`: YAML
-front matter with the title, the worker's label and the task's note (`domain.front_matter`: one quoted line per value,
-so any note text reads back exactly), a `---` line, then the task text byte for byte as it was stored, never passed
-through a template and never cut. The message after the file carries the header and the task id. The owner must see
-exactly what leaves the system, and the note the bot will act on when the result returns, whatever the model said in
-its answer. The worker receives the title and the text only, never this file.
+front matter with the title, the worker's label, the task's note and one `file_<n>` line per attached file (its name and
+size; §5.12) (`domain.front_matter`: one quoted line per value, so any note text reads back exactly), a `---` line, then
+the task text byte for byte as it was stored, never passed through a template and never cut. The message after the file
+carries the header and the task id. The owner must see exactly what leaves the system, and the note the bot will act on
+when the result returns, whatever the model said in its answer. The worker receives the title, the text and the
+attached files only, never this file.
 
 The header follows the task's status. A task created in a chat turn is `held`: the receipt is the confirmation prompt,
 `ConversationHandler` posts it after the answer, and the command to paste is returned apart so the handler can post it
@@ -36,9 +37,10 @@ Public interface:
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, Final, FrozenSet, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Final, FrozenSet, List, Mapping, Optional, Tuple
 
 from .external_task import HOLD_S, ExternalTaskStatus
+from .external_task_files import size_label
 from .external_task_refusal import TaskRefusal
 from .external_task_views import CreatedTask
 from .interactive_binding import InteractiveBinding
@@ -57,18 +59,39 @@ Strings = Callable[[UIMessage], str]
 
 
 def receipt_data(created: CreatedTask) -> Dict[str, Any]:
-    """The data's `command` is the confirmation command; the raw code appears nowhere else the model can read."""
-    return {
+    """The data's `command` is the confirmation command; the raw code appears nowhere else the model can read. A task
+    with files adds `files`: each attached copy's name and size in bytes, in number order (no key for a task without
+    files, so its data is what it was before files existed)."""
+    data: Dict[str, Any] = {
         "status": created.status.value, "worker": created.label, "title": created.title, "text": created.text,
         "note": created.note, "task_id": created.task_id,
         "command": f"{_SEND_COMMAND} {created.code}" if created.code else None,
     }
+    if created.files:
+        data["files"] = [{"name": f.name, "size": f.size} for f in created.files]
+    return data
+
+
+def _file_lines(data: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """One front matter line per attached file after the note, `file_<n>: "<name> (<size>)"`, so the confirmation
+    covers the files as well as the text (§5.12). Empty for a task without files (the front matter is then unchanged)."""
+    files = data.get("files")
+    if not isinstance(files, list):
+        return []
+    lines = []
+    for number, entry in enumerate(files, start=1):
+        if isinstance(entry, Mapping):
+            size = entry.get("size")
+            shown = size_label(size) if isinstance(size, int) else "?"
+            lines.append((f"file_{number}", f"{entry.get('name') or '?'} ({shown})"))
+    return lines
 
 
 def receipt_file(data: Mapping[str, Any]) -> str:
-    """The file's text: the front matter (title, worker, note), then the task text exactly as stored."""
+    """The file's text: the front matter (title, worker, note, then one line per attached file), then the task text
+    exactly as stored."""
     head = front_matter([("title", str(data.get("title") or "")), ("worker", str(data.get("worker") or "")),
-                         ("note", str(data.get("note") or ""))])
+                         ("note", str(data.get("note") or "")), *_file_lines(data)])
     return head + str(data.get("text") or "")
 
 

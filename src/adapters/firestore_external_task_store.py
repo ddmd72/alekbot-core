@@ -1,7 +1,8 @@
 """Firestore storage of external tasks and their results (EXTERNAL_TASK_QUEUE_RFC §5.1, §5.2).
 
 Collections (`EnvironmentConfig`): `{prefix}external_tasks` (doc id `task_id`; fields: every `ExternalTask` field but
-the id, nested value objects as maps, enums as their values) and `{prefix}external_task_results` (doc id `task_id`;
+the id, nested value objects as maps, enums as their values; `files` as an array of maps, written only when the task
+carries files, so a task without files has the shape it had before files existed) and `{prefix}external_task_results` (doc id `task_id`;
 fields `text`, `purge_after`). Both carry `purge_after` once the task is final; a TTL policy on it deletes them (the
 runbook entry is written with the TTL step of the RFC).
 
@@ -44,7 +45,7 @@ def _encode(value: Any) -> Any:
         return value.value
     if isinstance(value, dict):
         return {k: _encode(v) for k, v in value.items()}
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):     # `files` dumps as a tuple; Firestore stores an array
         return [_encode(v) for v in value]
     return value
 
@@ -66,6 +67,8 @@ def _decode(value: Any) -> Any:
 def _to_doc(task: ExternalTask) -> Dict[str, Any]:
     data: Dict[str, Any] = _encode(task.model_dump())
     del data["task_id"]
+    if not data["files"]:     # a task without files stores no `files` field, as every task stored before files did
+        del data["files"]
     return data
 
 

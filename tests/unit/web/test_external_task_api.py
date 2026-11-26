@@ -20,6 +20,8 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_window_counter import FirestoreWindowCounter
 from src.domain.external_task import (
+    FILE_LINK_TTL_S,
+    LEASE_S,
     MAX_RENEWALS_PER_TASK,
     RATE_WINDOW_S,
     RESULT_MAX_BYTES,
@@ -31,6 +33,7 @@ from src.domain.secret_digest import fingerprint
 from src.domain.user import InactiveReason, UserProfile
 from src.services import external_task_rate_limiter as limiter_module
 from src.services.external_task_rate_limiter import ExternalTaskRateLimiter
+from src.services.external_task_files import ExternalTaskFiles
 from src.services.external_task_service import ExternalTaskService
 from src.services.inactive_user_check import InactiveUserCheck
 from src.web import external_task_api as api
@@ -39,6 +42,14 @@ from tests.support.external_task_stores import FakeExternalTaskStore, FakeExtern
 from tests.support.firestore_eval import EvalDb
 from tests.support.mcp_gate_fakes import FakeWhitelistRepo
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.task_file_fakes import (
+    CERTIFICATE,
+    CERTIFICATE_REF,
+    PLAN,
+    PLAN_REF,
+    InMemoryMediaStorage,
+    ScriptedFileSource,
+)
 from tests.support.external_task_world import NOTE
 
 T0 = UTC_MIDNIGHT.utc
@@ -64,7 +75,8 @@ class RecordingLogger:
 
 
 class World:
-    def __init__(self) -> None:
+    def __init__(self, *, files: bool = False) -> None:
+        """`files`: the service serves task files over the fakes of `task_file_fakes.py` (`source`, `bucket`)."""
         self.db = EvalDb()
         self.rates_db = EvalDb()
         env = SimpleNamespace(domain_users_collection=USERS, is_production=False)
@@ -75,10 +87,13 @@ class World:
         self.now = T0
         self._ids = 0
         self._bytes = 0
+        self.source = ScriptedFileSource()
+        self.bucket = InMemoryMediaStorage()
         self.service = ExternalTaskService(self.tasks, self.workers, self.queue, self.users,
                                            InactiveUserCheck(self.users), digest_key=DIGEST_KEY,
                                            clock=lambda: self.now, new_id=self._new_id,
-                                           random_bytes=self._random_bytes)
+                                           random_bytes=self._random_bytes,
+                                           files=ExternalTaskFiles(self.source, self.bucket) if files else None)
         self.whitelist = FakeWhitelistRepo(emails=("alex@example.com", "other@example.com"))
         self.limiter = ExternalTaskRateLimiter(
             FirestoreWindowCounter(self.rates_db, SimpleNamespace(worker_task_dedup_collection=RATES)),
@@ -572,3 +587,98 @@ async def test_an_exhausted_claims_limit_does_not_refuse_the_listing_early(monke
     assert (await world.call("POST", "/claim", world.key)).status_code == 429
     assert world.workers.get_key_reads == reads
     assert (await world.call("GET", "/tasks", world.key)).status_code == 200
+
+
+# ------------------------------------------------------------------------------------------- task files (RFC §5.12)
+
+@pytest.fixture
+async def files_world() -> World:
+    return await World(files=True).seed()
+
+
+async def files_claim(world: World) -> Dict[str, Any]:
+    await world.service.create("usr-1", "research", TITLE, TEXT, ORIGIN, entry=TaskEntry.REMINDER, note=NOTE,
+                               files=[PLAN_REF, CERTIFICATE_REF])
+    return await world.claim()
+
+
+async def file_call(world: World, claim: Dict[str, Any], number: Any, lease_id: Optional[str] = None,
+                    key: Optional[str] = None):
+    headers = {} if lease_id == "" else {api.LEASE_HEADER: lease_id or claim["lease_id"]}
+    return await world.call("GET", f"/tasks/{claim['task_id']}/files/{number}", key or world.key, headers=headers)
+
+
+async def test_a_claim_of_a_task_with_files_lists_them_with_no_link_or_key(files_world):
+    claim = await files_claim(files_world)
+    assert list(claim)[-1] == "files"
+    assert claim["files"] == [
+        {"number": 1, "name": "Tom's plan.docx", "mime": PLAN.mime, "size": len(PLAN.data)},
+        {"number": 2, "name": "birth-certificate.pdf", "mime": "application/pdf", "size": len(CERTIFICATE.data)}]
+    assert "external_tasks/" not in json.dumps(claim) and InMemoryMediaStorage.SIGNED_BASE not in json.dumps(claim)
+
+
+async def test_a_live_lease_gets_a_fresh_signed_link_on_every_call(files_world):
+    claim = await files_claim(files_world)
+    first = await file_call(files_world, claim, 2)
+    second = await file_call(files_world, claim, 2)
+    assert first.status_code == second.status_code == 200
+    one, two = await body(first), await body(second)
+    key = f"external_tasks/usr-1/{claim['task_id']}/2-birth-certificate.pdf"
+    assert {k: v for k, v in one.items() if k != "url"} == {
+        "code": "ok", "task_id": claim["task_id"], "file": 2, "name": "birth-certificate.pdf",
+        "mime": "application/pdf", "size": len(CERTIFICATE.data), "expires_in": FILE_LINK_TTL_S}
+    assert one["url"].startswith(f"{InMemoryMediaStorage.SIGNED_BASE}/{key}?") and one["url"] != two["url"]
+    assert first.headers["Cache-Control"] == "no-store"
+
+
+async def test_a_lapsed_lease_is_409_lease_expired(files_world):
+    claim = await files_claim(files_world)
+    files_world.at(LEASE_S)
+    response = await file_call(files_world, claim, 1)
+    assert (response.status_code, (await body(response))["code"]) == (409, "lease_expired")
+    assert files_world.bucket.signed == []
+
+
+async def test_another_workers_task_a_final_task_and_a_missing_task_are_one_404(files_world):
+    claim = await files_claim(files_world)
+    other = await file_call(files_world, claim, 1, key=files_world.watch_key)
+    missing = await files_world.call("GET", "/tasks/no-such-task/files/1", files_world.key,
+                                     headers={api.LEASE_HEADER: claim["lease_id"]})
+    await files_world.call("POST", f"/tasks/{claim['task_id']}/result", files_world.key,
+                           json={"lease_id": claim["lease_id"], "result": "The plan holds up."})
+    final = await file_call(files_world, claim, 1)
+    for response in (other, missing, final):
+        assert (response.status_code, (await body(response))["code"]) == (404, "not_found")
+    assert files_world.bucket.signed == []
+
+
+async def test_a_file_number_the_task_does_not_carry_is_404_no_such_file(files_world):
+    claim = await files_claim(files_world)
+    response = await file_call(files_world, claim, 3)
+    assert (response.status_code, (await body(response))["code"]) == (404, "no_such_file")
+
+
+async def test_a_missing_copy_is_410_and_a_signing_failure_503(files_world):
+    claim = await files_claim(files_world)
+    del files_world.bucket.objects[f"external_tasks/usr-1/{claim['task_id']}/1-Tom's plan.docx"]
+    gone = await file_call(files_world, claim, 1)
+    assert (gone.status_code, (await body(gone))["code"]) == (410, "file_gone")
+    files_world.bucket.fail_sign = True
+    failed = await file_call(files_world, claim, 2)
+    assert (failed.status_code, (await body(failed))["code"]) == (503, "link_unavailable")
+
+
+async def test_a_file_request_without_the_lease_header_or_a_key_is_refused(files_world):
+    claim = await files_claim(files_world)
+    assert (await file_call(files_world, claim, 1, lease_id="")).status_code == 400
+    response = await files_world.call("GET", f"/tasks/{claim['task_id']}/files/1",
+                                      headers={api.LEASE_HEADER: claim["lease_id"]})
+    assert response.status_code == 401
+    assert files_world.bucket.signed == []
+
+
+async def test_the_file_route_logs_its_status_never_the_link(files_world, logs):
+    claim = await files_claim(files_world)
+    url = (await body(await file_call(files_world, claim, 1)))["url"]
+    text = "\n".join(logs.lines)
+    assert "[TaskAPI] file " in text and url not in text and "Tom's plan" not in text

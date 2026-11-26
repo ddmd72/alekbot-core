@@ -8,19 +8,21 @@ What each shape leaves out is the contract:
 - `TaskView` (owner `get`) carries the result and the failure reason as raw stored text: the
   Smart tool wraps them (`wrap_untrusted(store=workspace)` after `EXTERNAL_REMINDER`); nothing here wraps;
 - `WorkerTaskSummary` (worker listings) carries the lease's expiry but never its id;
+- `TaskFileLink` (a worker's file link) carries the signed link, and nothing says where the file came from;
 - `MintedKey` carries the raw key once; nothing stores or returns it again.
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
-from .external_task import ExternalTask, ExternalTaskStatus, TaskFailureCode
+from .external_task import ExternalTask, ExternalTaskStatus, TaskFailureCode, TaskFile
 
 
 @dataclass(frozen=True)
 class CreatedTask:
     """`code` is set for a held task only: the raw confirmation code for `$task send <code>`, returned this once.
-    `title`, `text` and `note` are the stored (normalised) forms the receipt quotes in full."""
+    `title`, `text` and `note` are the stored (normalised) forms the receipt quotes in full; `files` the copies the
+    task carries, which the receipt lists by name and size."""
     task_id: str
     status: ExternalTaskStatus
     label: str
@@ -28,6 +30,7 @@ class CreatedTask:
     text: str
     note: str
     code: Optional[str] = None
+    files: Tuple[TaskFile, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,13 +70,28 @@ class WorkerTaskSummary:
 
 @dataclass(frozen=True)
 class ClaimedTask:
-    """What a claim hands the worker: provenance fields first, then the text as its own field (§5.4)."""
+    """What a claim hands the worker: provenance fields first, then the text as its own field (§5.4). `files` are the
+    task's copies; a surface shows their number, name, type and size and never their storage key or a link (§5.12)."""
     task_id: str
     created_at: datetime
     lease_id: str
     lease_until: datetime
     title: str
     text: str
+    files: Tuple[TaskFile, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskFileLink:
+    """`get_task_file`'s answer (§5.12): a signed GET link to one copy, valid `ttl_seconds`, with what the claim showed
+    of the file. Minted fresh on every call; never stored or logged."""
+    task_id: str
+    number: int
+    name: str
+    mime: str
+    size: int
+    url: str
+    ttl_seconds: int
 
 
 @dataclass(frozen=True)

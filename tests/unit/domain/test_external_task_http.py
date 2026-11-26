@@ -41,3 +41,12 @@ def test_an_ipv6_address_is_kept_whole():
 @pytest.mark.parametrize("header", [None, "", " ", "203.0.113.9,", "a/b", "x" * 65, "ünï"])
 def test_a_missing_or_odd_entry_counts_under_one_shared_name(header):
     assert client_address(header) == UNKNOWN_ADDRESS
+
+
+@pytest.mark.parametrize("reason,status", [
+    (R.NO_SUCH_FILE, 404),       # a file number the task does not carry
+    (R.FILE_GONE, 410),          # the copy is no longer stored: asking again will not help
+    (R.LINK_UNAVAILABLE, 503),   # signing failed: asking again will
+])
+def test_each_file_link_refusal_has_its_status(reason, status):
+    assert status_for(reason) == status

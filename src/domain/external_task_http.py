@@ -22,6 +22,9 @@ _STATUS = {
     TaskRefusal.ALREADY_FINAL: 409,
     TaskRefusal.TOO_LARGE: 413,
     TaskRefusal.INVALID_TEXT: 400,
+    TaskRefusal.NO_SUCH_FILE: 404,
+    TaskRefusal.FILE_GONE: 410,
+    TaskRefusal.LINK_UNAVAILABLE: 503,
 }
 _ADDRESS = re.compile(r"[A-Za-z0-9.:_-]{1,64}")
 UNKNOWN_ADDRESS = "unknown"   # no usable header: one shared bucket, so a caller who hides its address is limited together

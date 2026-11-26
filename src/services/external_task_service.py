@@ -2,10 +2,10 @@
 
 Public interface:
     ExternalTaskService(tasks, workers, queue, users, inactive_users, *, digest_key, clock, new_id, random_bytes,
-                        cipher=None, webhook=None, own_hosts=())
+                        wake=None, files=None)
 
     Owner side (Smart tools, `$task send`), user id closed over by the caller:
-        .create(user_id, worker_label, title, text, origin, *, entry, note) -> CreatedTask
+        .create(user_id, worker_label, title, text, origin, *, entry, note, files=()) -> CreatedTask
         .confirm(user_id, code) -> TaskSummary
         .is_owner(user_id, task_id) -> bool                              (the Slack Send button's owner check)
         .list_tasks(user_id, status=None, worker_label=None) -> List[TaskSummary]
@@ -16,6 +16,7 @@ Public interface:
         .list_for_worker(principal) -> List[WorkerTaskSummary]
         .claim(principal) -> Optional[ClaimedTask]                       (None: no task)
         .renew(principal, task_id, lease_id) -> LeaseGrant
+        .get_task_file(principal, task_id, lease_id, number) -> TaskFileLink   (a fresh signed link, §5.12)
         .submit(principal, task_id, lease_id, text) -> SubmitReceipt
         .release(principal, task_id, lease_id) -> None
         .fail(principal, task_id, lease_id, reason) -> None
@@ -66,16 +67,22 @@ Logs: `[TaskQueue] <op> user=<8> worker=<fingerprint> task=<id>`; never a task t
 reason, a key, a code, a wake-up URL or a header.
 
 A task's note is the owner's side only: no worker operation returns it (`ClaimedTask`, `WorkerTaskSummary`).
+
+Task files (§5.12, D15) go through `ExternalTaskFiles`: at create every reference is resolved before anything is stored,
+then copied under the task's id; a claim hands the worker the files' numbers, names, types and sizes; `get_task_file`
+gives the lease holder a fresh signed link per call. A file never outlives the right to it: once the task is final the
+link answer is `not_found`, and the copies are deleted by the media bucket's age rule, not here.
 """
 from __future__ import annotations
 
 import base64
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Callable, Collection, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Tuple
 
 from ..domain.external_task import (
     CLAIM_BATCH,
+    FILE_LINK_TTL_S,
     CLAIM_ROUNDS,
     HOLD_CODE_BYTES,
     HOLD_CODE_DIGEST_PURPOSE,
@@ -118,7 +125,7 @@ from ..domain.external_task_jobs import (
     wake_key,
 )
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
-from ..domain.external_task_rules import TaskTransition
+from ..domain.external_task_rules import TaskTransition, file_refusal
 from ..domain.external_task_text import (
     is_valid_label,
     prepare_description,
@@ -135,6 +142,7 @@ from ..domain.external_task_views import (
     LeaseGrant,
     MintedKey,
     SubmitReceipt,
+    TaskFileLink,
     TaskSummary,
     TaskView,
     WorkerTaskSummary,
@@ -162,6 +170,8 @@ from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from .external_task_files import ExternalTaskFiles
+    from .external_task_wake_kit import WakeKit
     from .inactive_user_check import InactiveUserCheck
 
 _S = ExternalTaskStatus
@@ -194,10 +204,11 @@ class ExternalTaskService:
     def __init__(self, tasks: ExternalTaskStore, workers: ExternalWorkerStore, queue: TaskQueue,
                  users: UserRepository, inactive_users: "InactiveUserCheck", *, digest_key: bytes,
                  clock: Callable[[], datetime] = _utcnow, new_id: Callable[[], str] = _new_id,
-                 random_bytes: Callable[[int], bytes] = secrets.token_bytes, cipher: Optional[CipherPort] = None,
-                 webhook: Optional[OutboundWebhookPort] = None, own_hosts: Collection[str] = ()) -> None:
-        """`cipher`, `webhook` and `own_hosts` serve the wake-up: without the cipher or the webhook a target cannot be
-        stored (`wake_unavailable`) and no ping is sent; `own_hosts` are the bot's own host names (lowercase)."""
+                 random_bytes: Callable[[int], bytes] = secrets.token_bytes, wake: Optional["WakeKit"] = None,
+                 files: Optional["ExternalTaskFiles"] = None) -> None:
+        """`wake` serves the wake-up (`WakeKit`): without it, or without its cipher or webhook, a target cannot be
+        stored (`wake_unavailable`) and no ping is sent. `files` serves task files (§5.12): without it a create that
+        names files is refused (`files_unavailable`) and no file link is given."""
         if not digest_key:
             raise ValueError("the external task queue needs a digest key")
         self._tasks = tasks
@@ -209,9 +220,10 @@ class ExternalTaskService:
         self._clock = clock
         self._new_id = new_id
         self._random_bytes = random_bytes
-        self._cipher = cipher
-        self._webhook = webhook
-        self._own_hosts = frozenset(h.lower() for h in own_hosts)
+        self._cipher: Optional[CipherPort] = wake.cipher if wake is not None else None
+        self._webhook: Optional[OutboundWebhookPort] = wake.webhook if wake is not None else None
+        self._own_hosts = frozenset(h.lower() for h in (wake.own_hosts if wake is not None else ()))
+        self._files = files
 
     # -- checks ---------------------------------------------------------------------------------------------------
 
@@ -345,12 +357,18 @@ class ExternalTaskService:
     # -- owner side -----------------------------------------------------------------------------------------------
 
     async def create(self, user_id: str, worker_label: str, title: str, text: str, origin: TaskOrigin, *,
-                     entry: TaskEntry, note: str) -> CreatedTask:
+                     entry: TaskEntry, note: str, files: Sequence[str] = ()) -> CreatedTask:
         """`TaskEntry.CHAT`: `held` with a fresh confirmation code (stored as its keyed digest, returned once) and
         `hold_until = now + HOLD_S`, with the hold timer only; the owner confirms with `$task send`.
         `TaskEntry.REMINDER`: `queued`, with the deadline timer, and no code. The account is the worker's (bound at
         registration). `note` (the bot's return instructions) is required and stored with the entry; checked after the
-        title and the text."""
+        title and the text.
+
+        `files` are file references (§5.12): after every other check, each is resolved to its original bytes (all of
+        them before any is stored; one that does not resolve refuses the whole create with `TaskFileRefused` and
+        nothing is written), then each is copied once to the media bucket under the task's id, and the record keeps
+        the copies' number, name, type, size and key. The copies are written before the timer and the record: a
+        create that fails after them leaves copies no record names, which the bucket's age rule deletes."""
         await self._require_enabled(user_id)
         clean_title = prepare_title(title)
         clean_text = prepare_task_text(text)
@@ -361,12 +379,17 @@ class ExternalTaskService:
             raise ExternalTaskRefused(TaskRefusal.UNKNOWN_WORKER)
         if await self._tasks.count_open(user_id) >= MAX_OPEN_TASKS_PER_USER:
             raise ExternalTaskRefused(TaskRefusal.OPEN_TASKS_CAP)
+        if files and self._files is None:
+            raise ExternalTaskRefused(TaskRefusal.FILES_UNAVAILABLE)
+        resolved = await self._files.resolve_all(user_id, files) if self._files is not None and files else []
         now = self._clock()
         task = ExternalTask(task_id=self._new_id(), user_id=user_id, account_id=worker.account_id,
                             worker_id=worker.worker_id, label=worker.label, title=clean_title, text=clean_text,
                             origin=origin, status=_S.QUEUED, note=clean_note, entry=entry, created_at=now,
                             updated_at=now,
                             deadline_at=now + timedelta(seconds=TASK_MAX_AGE_S))
+        if resolved and self._files is not None:
+            task = task.model_copy(update={"files": await self._files.store_all(user_id, task.task_id, resolved)})
         code: Optional[str] = None
         held = entry is TaskEntry.CHAT
         if held:
@@ -380,11 +403,11 @@ class ExternalTaskService:
             await self._enqueue_deadline(task)
         await self._tasks.create(task)
         logger.info(f"[TaskQueue] create user={user_id[:8]} worker={fingerprint(worker.worker_id)} "
-                    f"task={task.task_id} status={task.status.value}")
+                    f"task={task.task_id} status={task.status.value} files={len(task.files)}")
         if not held:
             await self._wake_if_due(task, oldest_only=True)
         return CreatedTask(task_id=task.task_id, status=task.status, label=task.label, title=task.title,
-                           text=task.text, note=clean_note, code=code)
+                           text=task.text, note=clean_note, code=code, files=task.files)
 
     async def confirm(self, user_id: str, code: str) -> TaskSummary:
         """`$task send <code>`: the user's held task with that code, hold not run out, becomes `queued` and gets its
@@ -495,7 +518,8 @@ class ExternalTaskService:
                     logger.info(f"[TaskQueue] claim user={principal.user_id[:8]} "
                                 f"worker={fingerprint(principal.worker_id)} task={task.task_id} claims={task.claims}")
                     return ClaimedTask(task_id=task.task_id, created_at=task.created_at, lease_id=task.lease.lease_id,
-                                       lease_until=task.lease.until, title=task.title, text=task.text)
+                                       lease_until=task.lease.until, title=task.title, text=task.text,
+                                       files=task.files)
                 notice = TaskNotice.EXPIRED if task.status is _S.EXPIRED else TaskNotice.FAILED
                 logger.info(f"[TaskQueue] claim ended task={task.task_id} status={task.status.value}")
                 await self._enqueue_notice_logged(task, notice)
@@ -511,6 +535,38 @@ class ExternalTaskService:
         if until is None:      # a renewed lease always has an expiry; kept for the type
             raise ExternalTaskRefused(TaskRefusal.STALE_LEASE)
         return LeaseGrant(task_id=task.task_id, lease_id=lease_id, lease_until=until)
+
+    async def get_task_file(self, principal: WorkerPrincipal, task_id: str, lease_id: str,
+                            number: int) -> TaskFileLink:
+        """A fresh signed link to one of the task's files (§5.12), for the worker holding its lease. The lease is
+        checked as `renew` checks it (`file_refusal`: a final task is `not_found`, a lapsed lease `lease_expired`);
+        then `no_such_file` for a number the task does not carry, `file_gone` when the copy is no longer stored, and
+        `link_unavailable` when the storage or the signer failed (the worker asks again). Every call mints a new link;
+        nothing is written. Logs name the task and the file number only."""
+        await self._require_worker(principal)
+        task = await self._tasks.get(principal.user_id, task_id)
+        if task is None:
+            raise ExternalTaskRefused(TaskRefusal.NOT_FOUND)
+        refusal = file_refusal(task, worker_id=principal.worker_id, lease_id=lease_id, now=self._clock())
+        if refusal is not None:
+            raise ExternalTaskRefused(refusal)
+        task_file = task.file(number)
+        if task_file is None:
+            raise ExternalTaskRefused(TaskRefusal.NO_SUCH_FILE)
+        if self._files is None:
+            logger.error(f"[TaskQueue] file link task={task_id} file={number}: no file backend wired")
+            raise ExternalTaskRefused(TaskRefusal.LINK_UNAVAILABLE)
+        try:
+            url = await self._files.link(task_file)
+        except Exception as exc:
+            logger.error(f"[TaskQueue] file link failed task={task_id} file={number} error={type(exc).__name__}")
+            raise ExternalTaskRefused(TaskRefusal.LINK_UNAVAILABLE) from exc
+        if url is None:
+            logger.info(f"[TaskQueue] file gone task={task_id} file={number}")
+            raise ExternalTaskRefused(TaskRefusal.FILE_GONE)
+        logger.info(f"[TaskQueue] file link worker={fingerprint(principal.worker_id)} task={task_id} file={number}")
+        return TaskFileLink(task_id=task_id, number=task_file.number, name=task_file.name, mime=task_file.mime,
+                            size=task_file.size, url=url, ttl_seconds=FILE_LINK_TTL_S)
 
     async def submit(self, principal: WorkerPrincipal, task_id: str, lease_id: str, text: str) -> SubmitReceipt:
         """Normalise and cap the text (§5.9), then one transaction: `done` and the create-only result record. The same

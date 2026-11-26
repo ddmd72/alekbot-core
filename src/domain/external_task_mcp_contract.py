@@ -10,7 +10,9 @@ No tool takes a user, an account, a worker or a label: each comes from the verif
 
 Result keys:
 - the claim, in its order: `CLAIMED` (task id, created time, lease id, lease end), `WRITTEN_BY` (who wrote the brief),
-  `TITLE`, `TASK_TEXT` (the line after which the task text follows as written);
+  `TITLE`, for a task with files `FILES_HEAD` and one `FILE_LINE` per file (number, name, type, size; no link),
+  `TASK_TEXT` (the line after which the task text follows as written);
+- `FILE_LINK` (`get_task_file`: one file's signed link, its lifetime, and the file's number, name, type and size);
 - `NO_TASK` (a claim that found nothing: a success, never an error);
 - the listing: `LIST_HEAD`, one `LIST_QUEUED` or `LIST_LEASED` line per task, `LIST_EMPTY`;
 - the lease and result answers: `RENEWED`, `SUBMITTED` (a replay of the same result answers the same), `RELEASED`,
@@ -37,8 +39,10 @@ RENEW_LEASE = "renew_lease"
 SUBMIT_TASK_RESULT = "submit_task_result"
 RELEASE_TASK = "release_task"
 FAIL_TASK = "fail_task"
+GET_TASK_FILE = "get_task_file"
 
-TOOL_NAMES: Tuple[str, ...] = (LIST_TASKS, CLAIM_TASK, RENEW_LEASE, SUBMIT_TASK_RESULT, RELEASE_TASK, FAIL_TASK)
+TOOL_NAMES: Tuple[str, ...] = (LIST_TASKS, CLAIM_TASK, RENEW_LEASE, SUBMIT_TASK_RESULT, RELEASE_TASK, FAIL_TASK,
+                               GET_TASK_FILE)
 
 TOOL_PARAMETERS: Mapping[str, Tuple[str, ...]] = MappingProxyType({
     LIST_TASKS: (),
@@ -47,6 +51,7 @@ TOOL_PARAMETERS: Mapping[str, Tuple[str, ...]] = MappingProxyType({
     SUBMIT_TASK_RESULT: ("task_id", "lease_id", "result"),
     RELEASE_TASK: ("task_id", "lease_id"),
     FAIL_TASK: ("task_id", "lease_id", "reason"),
+    GET_TASK_FILE: ("task_id", "lease_id", "file"),
 })
 
 # The one tool that changes nothing (`TokenTextFastMCP.read_only_tools`).
@@ -73,12 +78,16 @@ FAILED = "FAILED"
 ID_REQUIRED = "ID_REQUIRED"
 RATE_LIMITED = "RATE_LIMITED"
 REFUSED = "REFUSED"
+FILES_HEAD = "FILES_HEAD"
+FILE_LINE = "FILE_LINE"
+FILE_LINK = "FILE_LINK"
 
 # The refusals a worker tool can meet with a line of their own. `not_enabled` and `worker_revoked` answer `REFUSED`;
 # `account_locked` answers the lock text every MCP resource uses (`ACCOUNT_LOCKED_TOOL_ERROR`).
 WORKER_REFUSALS: Tuple[TaskRefusal, ...] = (
     TaskRefusal.NOT_FOUND, TaskRefusal.STALE_LEASE, TaskRefusal.LEASE_EXPIRED, TaskRefusal.RENEW_CAP,
-    TaskRefusal.ALREADY_SUBMITTED, TaskRefusal.ALREADY_FINAL, TaskRefusal.TOO_LARGE, TaskRefusal.INVALID_TEXT)
+    TaskRefusal.ALREADY_SUBMITTED, TaskRefusal.ALREADY_FINAL, TaskRefusal.TOO_LARGE, TaskRefusal.INVALID_TEXT,
+    TaskRefusal.NO_SUCH_FILE, TaskRefusal.FILE_GONE, TaskRefusal.LINK_UNAVAILABLE)
 
 
 def text_key_of_refusal(code: TaskRefusal) -> str:
@@ -89,7 +98,8 @@ def text_key_of_refusal(code: TaskRefusal) -> str:
 REFUSAL_KEYS: Tuple[str, ...] = tuple(text_key_of_refusal(code) for code in WORKER_REFUSALS)
 
 LINE_KEYS: Tuple[str, ...] = (CLAIMED, WRITTEN_BY, TITLE, TASK_TEXT, NO_TASK, LIST_HEAD, LIST_QUEUED, LIST_LEASED,
-                              LIST_EMPTY, RENEWED, SUBMITTED, RELEASED, FAILED, ID_REQUIRED, RATE_LIMITED, REFUSED)
+                              LIST_EMPTY, RENEWED, SUBMITTED, RELEASED, FAILED, ID_REQUIRED, RATE_LIMITED, REFUSED,
+                              FILES_HEAD, FILE_LINE, FILE_LINK)
 
 REQUIRED_RESULT_KEYS: FrozenSet[str] = frozenset({*LINE_KEYS, *REFUSAL_KEYS})
 
@@ -105,6 +115,9 @@ RESULT_PLACEHOLDERS: Mapping[str, FrozenSet[str]] = MappingProxyType({
     FAILED: frozenset({"task_id"}),
     ID_REQUIRED: frozenset({"parameter"}),
     RATE_LIMITED: frozenset({"seconds"}),
+    FILES_HEAD: frozenset({"count"}),
+    FILE_LINE: frozenset({"number", "name", "mime", "size"}),
+    FILE_LINK: frozenset({"task_id", "number", "name", "mime", "size", "url", "seconds"}),
     **{key: frozenset({"code"}) for key in REFUSAL_KEYS},
     text_key_of_refusal(TaskRefusal.TOO_LARGE): frozenset({"code", "max_bytes"}),
 })

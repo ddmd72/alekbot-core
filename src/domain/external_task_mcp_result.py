@@ -6,7 +6,8 @@ only picks the keys, fills their placeholders and orders the lines. The one text
 the account lock's, `ACCOUNT_LOCKED_TOOL_ERROR`, which every MCP resource answers alike.
 
 The claim puts code-written provenance first (`CLAIMED`: task id, created time, lease id and end; then `WRITTEN_BY`),
-then the title, then `TASK_TEXT` and the task text as written, from the next line to the end: the owner's brief, plain.
+then the title, then the task's files when it has any (`FILES_HEAD`, one `FILE_LINE` each, never a link), then
+`TASK_TEXT` and the task text as written, from the next line to the end: the owner's brief, plain.
 
 `is_error` is MCP's "the call did not do its operation": every refusal, an empty id and a rate limit. A claim that found
 no task did its operation and is not an error. `status` names the answer for the span and the log line only (a code,
@@ -21,7 +22,7 @@ from typing import Mapping, Optional, Sequence
 from . import external_task_mcp_contract as contract
 from .external_task import RESULT_MAX_BYTES, ExternalTaskStatus
 from .external_task_refusal import TaskRefusal
-from .external_task_views import ClaimedTask, LeaseGrant, SubmitReceipt, WorkerTaskSummary
+from .external_task_views import ClaimedTask, LeaseGrant, SubmitReceipt, TaskFileLink, WorkerTaskSummary
 from .mcp import ACCOUNT_LOCKED_TOOL_ERROR
 
 OK = "ok"
@@ -46,14 +47,26 @@ def _ok(text: str, status: str = OK) -> TaskToolAnswer:
 
 
 def claimed(results: Mapping[str, str], task: Optional[ClaimedTask]) -> TaskToolAnswer:
-    """A claim's answer: the claimed task in provenance-then-content order, or `NO_TASK`."""
+    """A claim's answer: the claimed task in provenance-then-content order, or `NO_TASK`. A task with files lists them
+    after the title, one line each (number, name, type, size), with no link: `get_task_file` gives one (§5.12)."""
     if task is None:
         return _ok(results[contract.NO_TASK], NO_TASK)
     head = results[contract.CLAIMED].format(task_id=task.task_id, created_at=_when(task.created_at),
                                             lease_id=task.lease_id, lease_until=_when(task.lease_until))
-    lines = [head, results[contract.WRITTEN_BY], results[contract.TITLE].format(title=task.title),
-             results[contract.TASK_TEXT], task.text]
+    lines = [head, results[contract.WRITTEN_BY], results[contract.TITLE].format(title=task.title)]
+    if task.files:
+        lines.append(results[contract.FILES_HEAD].format(count=len(task.files)))
+        lines += [results[contract.FILE_LINE].format(number=f.number, name=f.name, mime=f.mime, size=f.size)
+                  for f in task.files]
+    lines += [results[contract.TASK_TEXT], task.text]
     return _ok("\n".join(lines))
+
+
+def file_link(results: Mapping[str, str], link: TaskFileLink) -> TaskToolAnswer:
+    """`get_task_file`'s answer: the fresh signed link, how long it is valid, and the file it opens."""
+    return _ok(results[contract.FILE_LINK].format(task_id=link.task_id, number=link.number, name=link.name,
+                                                  mime=link.mime, size=link.size, url=link.url,
+                                                  seconds=link.ttl_seconds))
 
 
 def listed(results: Mapping[str, str], tasks: Sequence[WorkerTaskSummary]) -> TaskToolAnswer:

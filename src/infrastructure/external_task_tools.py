@@ -17,7 +17,10 @@ What the models read and what the owner reads are different channels:
 
 The brief is the orchestrator's: given the instruction (`commission`), a create whose text is not a part of it, after
 whitespace is normalised on both sides, is refused with `ERROR_NOT_THE_BRIEF` and creates nothing. The task's note is
-the specialist's own text, written from the instruction, so it is not checked against it.
+the specialist's own text, written from the instruction, so it is not checked against it. The task's files (§5.12)
+are held to the instruction like the brief: every reference in `files` must appear in the instruction (`ERROR_FILE_NOT_NAMED`, naming it), so
+the specialist attaches what the orchestrator named and nothing else; a reference the service cannot resolve refuses the
+whole create with one tool error naming it (`ERROR_FILE_UNRESOLVED`).
 
 A label that does not exist, a task of another user and a missing task all get the same `Tool error:` line, so nothing
 reveals whether a task exists.
@@ -37,7 +40,8 @@ from ..domain.agent import DeliveryItem
 from ..domain.external_task import HOLD_S, ExternalTaskStatus, TaskFailureCode, TaskOrigin
 from ..domain.external_task_entry import TaskEntry
 from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, receipt_data
-from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
+from ..domain.external_task_files import size_label
+from ..domain.external_task_refusal import ExternalTaskRefused, TaskFileRefused, TaskRefusal
 from ..domain.external_task_text import prepare_task_text, prepare_title
 from ..domain.external_task_texts import (
     CANCEL_DESCRIPTION,
@@ -46,7 +50,15 @@ from ..domain.external_task_texts import (
     ERROR_ARGUMENTS,
     ERROR_BRIEF_TOO_LONG,
     ERROR_FAILED,
+    ERROR_FILE_NOT_NAMED,
+    ERROR_FILE_UNRESOLVED,
+    ERROR_FILES_ARGUMENT,
+    ERROR_FILES_CAP,
+    ERROR_FILES_TOO_LARGE,
+    ERROR_FILES_UNAVAILABLE,
     ERROR_INVALID_TEXT,
+    FILE_REASON_NOT_FOUND,
+    FILE_REASON_READER,
     ERROR_NOT_FOUND,
     ERROR_NOT_THE_BRIEF,
     ERROR_NOTE_TOO_LONG,
@@ -64,6 +76,8 @@ from ..domain.external_task_texts import (
     LIST_WORKERS_DESCRIPTION,
     NOTE_CANCEL_FINAL,
     NOTE_CANCELLED,
+    NOTE_FILE_ITEM,
+    NOTE_FILES,
     NOTE_GET_CODE,
     NOTE_GET_HEAD,
     NOTE_GET_NO_RESULT,
@@ -77,6 +91,7 @@ from ..domain.external_task_texts import (
     NOTE_WORKERS_HEADER,
     NOTE_WORKERS_NONE,
     create_description,
+    FILES_PARAMETER_TEXT,
     NOTE_PARAMETER_TEXT,
     STATUS_PARAMETER_TEXT,
     TASK_ID_PARAMETER_TEXT,
@@ -101,6 +116,9 @@ _REFUSAL_LINES: Dict[TaskRefusal, str] = {
     TaskRefusal.ACCOUNT_LOCKED: ERROR_UNAVAILABLE,
     TaskRefusal.OPEN_TASKS_CAP: ERROR_OPEN_CAP,
     TaskRefusal.INVALID_TEXT: ERROR_INVALID_TEXT,
+    TaskRefusal.FILES_CAP: ERROR_FILES_CAP,
+    TaskRefusal.FILES_TOO_LARGE: ERROR_FILES_TOO_LARGE,
+    TaskRefusal.FILES_UNAVAILABLE: ERROR_FILES_UNAVAILABLE,
 }
 
 
@@ -148,6 +166,7 @@ def build_create_external_task_declaration(workers: Sequence[ExternalWorker], *,
                 "title": {"type": "string", "description": TITLE_PARAMETER_TEXT},
                 "text": {"type": "string", "description": TEXT_PARAMETER_TEXT},
                 "note": {"type": "string", "description": NOTE_PARAMETER_TEXT},
+                "files": {"type": "array", "items": {"type": "string"}, "description": FILES_PARAMETER_TEXT},
             },
             "required": ["worker", "title", "text", "note"],
         },
@@ -220,6 +239,27 @@ def _too_large(tool_call: ToolCall, title: str, text: str) -> ToolResult:
     return _error(tool_call, ERROR_NOTE_TOO_LONG)
 
 
+def _files_arg(args: Dict[str, Any]) -> Optional[List[str]]:
+    """The `files` argument: absent or null is no file; a list of non-empty strings is kept as given (trimmed); anything
+    else is None (a malformed argument)."""
+    value = args.get("files")
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        return None
+    return [v.strip() for v in value]
+
+
+def _first_unnamed(files: Sequence[str], commission: Optional[str]) -> Optional[str]:
+    """The first reference that does not appear in the instruction, whitespace aside (§5.12: the specialist attaches
+    what the orchestrator named and nothing else); None when every one does, or when there is no instruction to check
+    (the handler tested alone)."""
+    if commission is None:
+        return None
+    instruction = _normalised(commission)
+    return next((ref for ref in files if _normalised(ref) not in instruction), None)
+
+
 def make_create_handler(service: "ExternalTaskService", user_id: str, origin: TaskOrigin, *,
                         commission: Optional[str] = None, entry: TaskEntry = TaskEntry.CHAT) -> LocalToolHandler:
     """`entry` is set by the agent from the run's context, never by the model. A create in a chat turn always waits for
@@ -235,11 +275,21 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
         worker, title, text, note = (_text_arg(args, k) for k in ("worker", "title", "text", "note"))
         if worker is None or title is None or text is None or note is None:
             return _error(tool_call, ERROR_ARGUMENTS)
+        files = _files_arg(args)
+        if files is None:
+            return _error(tool_call, ERROR_FILES_ARGUMENT)
         if commission is not None and not _is_the_brief(text, commission):
             logger.info("[external_task_tools] create refused: the text is not the brief")
             return _error(tool_call, ERROR_NOT_THE_BRIEF)
+        unnamed = _first_unnamed(files, commission)
+        if unnamed is not None:
+            logger.info("[external_task_tools] create refused: a file reference is not in the instruction")
+            return _error(tool_call, ERROR_FILE_NOT_NAMED.format(ref=unnamed))
         try:
-            created = await service.create(user_id, worker, title, text, origin, entry=entry, note=note)
+            created = await service.create(user_id, worker, title, text, origin, entry=entry, note=note, files=files)
+        except TaskFileRefused as exc:
+            reason = FILE_REASON_READER.format(line=exc.line) if exc.line else FILE_REASON_NOT_FOUND
+            return _error(tool_call, ERROR_FILE_UNRESOLVED.format(ref=exc.ref, reason=reason))
         except ExternalTaskRefused as exc:
             if exc.reason is TaskRefusal.TOO_LARGE:
                 return _too_large(tool_call, title, text)
@@ -250,6 +300,9 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
             result = NOTE_QUEUED.format(task_id=created.task_id, worker=created.label, title=created.title)
         else:
             result = NOTE_PENDING.format(task_id=created.task_id, worker=created.label, hours=HOLD_S // 3600)
+        if created.files:
+            result += " " + NOTE_FILES.format(files="; ".join(
+                NOTE_FILE_ITEM.format(number=f.number, name=f.name, size=size_label(f.size)) for f in created.files))
         return ToolResult(
             name=tool_call.name, result_str=result,
             delivery_items=[DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))],

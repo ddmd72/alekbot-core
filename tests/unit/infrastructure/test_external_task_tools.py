@@ -4,13 +4,35 @@ Assertions are on what the stores hold, on the text the model reads (`ToolResult
 the owner's channel gets. Alex Doe is `usr-1` with the worker `research`.
 """
 import re
+from datetime import datetime, timezone
 
 import pytest
 
 from src.domain.agent import DeliveryItem
-from src.domain.external_task import HOLD_CODE_DIGEST_PURPOSE, HOLD_S, MAX_OPEN_TASKS_PER_USER, ExternalTaskStatus
+from src.domain.exceptions import FileNotResolved
+from src.domain.external_task import (
+    HOLD_CODE_DIGEST_PURPOSE,
+    HOLD_S,
+    MAX_FILES_PER_TASK,
+    MAX_OPEN_TASKS_PER_USER,
+    ExternalTaskStatus,
+)
 from src.domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY
-from src.domain.external_task_texts import ERROR_NOT_FOUND, ERROR_UNAVAILABLE, NOTE_PENDING
+from src.domain.external_worker import ExternalWorker
+from src.domain.external_task_texts import (
+    ERROR_FILE_NOT_NAMED,
+    ERROR_FILE_UNRESOLVED,
+    ERROR_FILES_ARGUMENT,
+    ERROR_FILES_CAP,
+    ERROR_FILES_UNAVAILABLE,
+    ERROR_NOT_FOUND,
+    ERROR_UNAVAILABLE,
+    FILE_REASON_NOT_FOUND,
+    FILE_REASON_READER,
+    FILES_PARAMETER_TEXT,
+    NOTE_FILES,
+    NOTE_PENDING,
+)
 from src.domain.llm import ToolCall
 from src.domain.secret_digest import keyed_digest
 from src.domain.untrusted_text import EXTERNAL_REMINDER
@@ -25,6 +47,7 @@ from src.infrastructure.external_task_tools import (
     make_list_handler,
 )
 from tests.support.external_task_world import DIGEST_KEY, NOTE, ORIGIN, TEXT, TITLE, USER_ID, ExternalTaskWorld
+from tests.support.task_file_fakes import CERTIFICATE_REF, PLAN_REF
 
 S = ExternalTaskStatus
 
@@ -321,3 +344,88 @@ async def test_with_one_worker_the_worker_parameter_names_it_without_asking_for_
     description = build_create_external_task_declaration(await one.service.list_workers(USER_ID))[
         "parameters"]["properties"]["worker"]["description"]
     assert description.splitlines()[1:] == ["- research"] and "the instruction names" not in description
+
+
+# --- task files (EXTERNAL_TASK_QUEUE_RFC §5.12) ----------------------------------------------------------------------
+
+FILES_INSTRUCTION = f"Hand this to research with {PLAN_REF} and {CERTIFICATE_REF}: {TEXT}"
+
+
+@pytest.fixture
+async def files_world():
+    return await ExternalTaskWorld(files=True).seed(("research",))
+
+
+async def create_with(world, files, commission=FILES_INSTRUCTION):
+    handler = make_create_handler(world.service, USER_ID, ORIGIN, commission=commission)
+    return await handler(call("create_external_task", **create_args(files=files)))
+
+
+def test_the_create_declaration_takes_optional_file_references():
+    moment = datetime(2026, 11, 26, tzinfo=timezone.utc)
+    decl = build_create_external_task_declaration([ExternalWorker(
+        worker_id="wrk-1", user_id=USER_ID, account_id="acc-1", label="research", created_at=moment,
+        updated_at=moment)])
+    files = decl["parameters"]["properties"]["files"]
+    assert files == {"type": "array", "items": {"type": "string"}, "description": FILES_PARAMETER_TEXT}
+    assert "files" not in decl["parameters"]["required"]
+
+
+async def test_files_named_in_the_instruction_are_attached_listed_to_the_model_and_in_the_receipt(files_world):
+    result = await create_with(files_world, [PLAN_REF, CERTIFICATE_REF])
+
+    assert not result.failed
+    [task] = files_world.tasks.tasks.values()
+    assert [(f.number, f.name) for f in task.files] == [(1, "Tom's plan.docx"), (2, "birth-certificate.pdf")]
+    assert result.result_str.endswith(" " + NOTE_FILES.format(files="1. Tom's plan.docx (2.0 KB); "
+                                                                     "2. birth-certificate.pdf (4.0 KB)"))
+    assert result.delivery_items[0].data["files"] == [{"name": "Tom's plan.docx", "size": 2048},
+                                                      {"name": "birth-certificate.pdf", "size": 4096}]
+
+
+async def test_a_reference_absent_from_the_instruction_is_refused_before_anything_is_read(files_world):
+    result = await create_with(files_world, [PLAN_REF, "drive:p1:item-other"])
+
+    assert result.failed and result.result_str == ERROR_FILE_NOT_NAMED.format(ref="drive:p1:item-other")
+    assert files_world.tasks.tasks == {} and files_world.source.resolved == [] and files_world.bucket.objects == {}
+
+
+async def test_a_reference_the_service_cannot_resolve_is_one_error_naming_it(files_world):
+    files_world.source.answers[CERTIFICATE_REF] = FileNotResolved("[Tool note: the attachment is gone.]")
+    result = await create_with(files_world, [PLAN_REF, CERTIFICATE_REF])
+
+    assert result.failed and result.result_str == ERROR_FILE_UNRESOLVED.format(
+        ref=CERTIFICATE_REF, reason=FILE_REASON_READER.format(line="[Tool note: the attachment is gone.]"))
+    assert files_world.tasks.tasks == {} and files_world.bucket.objects == {}
+
+
+async def test_a_file_not_found_gets_the_plain_reason(files_world):
+    missing = "workspace:references/Tom's plan.docx"
+    result = await create_with(files_world, [missing], commission=f"{FILES_INSTRUCTION} and {missing}")
+    assert result.failed and result.result_str == ERROR_FILE_UNRESOLVED.format(ref=missing,
+                                                                               reason=FILE_REASON_NOT_FOUND)
+
+
+@pytest.mark.parametrize("files", ["drive:p1:item-plan", [PLAN_REF, 3], [""], {"ref": PLAN_REF}])
+async def test_a_malformed_files_argument_is_a_tool_error(files_world, files):
+    result = await create_with(files_world, files)
+    assert result.failed and result.result_str == ERROR_FILES_ARGUMENT and files_world.tasks.tasks == {}
+
+
+async def test_too_many_files_get_the_cap_line(files_world):
+    refs = [f"drive:p1:item-{n}" for n in range(MAX_FILES_PER_TASK + 1)]
+    result = await create_with(files_world, refs, commission=" ".join([TEXT, *refs]))
+    assert result.failed and result.result_str == ERROR_FILES_CAP and files_world.tasks.tasks == {}
+
+
+async def test_without_a_file_backend_a_create_with_files_says_so(world):
+    result = await create_with(world, [PLAN_REF])
+    assert result.failed and result.result_str == ERROR_FILES_UNAVAILABLE and world.tasks.tasks == {}
+
+
+async def test_a_null_files_argument_attaches_nothing_and_adds_no_line(files_world):
+    result = await create_with(files_world, None)
+    [task] = files_world.tasks.tasks.values()
+    assert task.files == () and files_world.source.resolved == []
+    assert result.result_str == NOTE_PENDING.format(task_id=task.task_id, worker="research", hours=HOLD_S // 3600)
+    assert "files" not in result.delivery_items[0].data
