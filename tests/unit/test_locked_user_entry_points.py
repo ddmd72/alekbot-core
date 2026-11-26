@@ -109,7 +109,7 @@ ROUTE_ROWS: Dict[Tuple[str, str], str] = {
     **{(m, f"/external-tasks/v1{rule}"): "external_task_api" for m, rule in (
         ("GET", "/tasks"), ("POST", "/claim"), ("POST", "/tasks/<task_id>/renew"),
         ("POST", "/tasks/<task_id>/result"), ("POST", "/tasks/<task_id>/release"),
-        ("POST", "/tasks/<task_id>/fail"))},
+        ("POST", "/tasks/<task_id>/fail"), ("GET", "/tasks/<task_id>/files/<int:number>"))},
     **{(m, rule): "cabinet_sessions" for m, rule in (
         ("GET", "/auth/me"), ("POST", "/auth/link-oauth"), ("GET", "/auth/connect/<kind>"),
         ("GET", "/auth/connect/callback"), ("GET", "/mcp/consent"), ("POST", "/mcp/consent"), ("GET", "/cabinet/docs"),

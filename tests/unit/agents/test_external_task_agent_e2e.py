@@ -114,5 +114,5 @@ async def test_a_created_task_stores_copies_of_the_files_the_instruction_names()
     assert llm.unanswered == 0 and llm.pending() == 0
 
 def test_the_scripted_calls_use_every_declared_field():
-    assert unused("external_tasks", "create_external_task", [CREATE]) == []
+    assert unused("external_tasks", "create_external_task", [CREATE, CREATE_WITH_FILES]) == []
     assert unused("external_tasks", "cancel_external_task", [cancel("t-1")]) == []

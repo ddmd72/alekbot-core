@@ -82,7 +82,7 @@ async def world():
 
 async def test_an_oauth_token_lists_the_tools(world):
     assert {t["name"] for t in await world.list_tools(world.token)} == {
-        "list_tasks", "claim_task", "renew_lease", "submit_task_result", "release_task", "fail_task"}
+        "list_tasks", "claim_task", "renew_lease", "submit_task_result", "release_task", "fail_task", "get_task_file"}
 
 
 async def test_an_oauth_token_works_as_its_worker_only(world):
