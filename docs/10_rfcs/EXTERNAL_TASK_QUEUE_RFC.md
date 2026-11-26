@@ -89,8 +89,8 @@ specified.
 
 **Implementation notes (step 6, task files).** The build differs from §5.12 and §7 as follows; the body is kept as
 specified.
-- Refusal codes the body does not name. Worker side: `no_such_file` (`404`: a number the task does not carry, or a
-  `file` that is no number) and `link_unavailable` (`503`: the bucket or the signer failed, §7's retryable answer);
+- Refusal codes the body does not name. Worker side: `no_such_file` (`404`: a number the task does not carry, or, on MCP, a
+  `file` that is no number; on REST such a path is the router's plain `404`) and `link_unavailable` (`503`: the bucket or the signer failed, §7's retryable answer);
   `file_gone` is `410`. Create side: `files_cap`, `files_too_large`, `files_unavailable` (a server built without the
   media bucket) and `file_unresolved`, the one tool error naming the reference with the resolver's own line.
 - REST takes the lease id in an `X-Lease-Id` header: the route is a GET, and a URL is logged by the platform.
