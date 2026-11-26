@@ -237,7 +237,8 @@ async def test_the_review_loop_runs_only_the_review_tools(world):
     answer = requests[1].messages[-1].parts[0].tool_response
     assert answer["name"] == "create_fact" and "Unknown tool: create_fact" in answer["response"]["result"]
     tools = requests[0].tools
-    assert [t["name"] for t in tools] == ["update_fact", "ask_owner", "count_words"]
+    # Reviewer edit (RFC §4.7, profile free replies): the review's fourth tool, `answer_profile_question`
+    assert [t["name"] for t in tools] == ["update_fact", "ask_owner", "answer_profile_question", "count_words"]
 
 
 async def test_max_turns_caps_the_review_loop_and_the_stats(world):

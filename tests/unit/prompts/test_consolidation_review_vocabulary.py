@@ -14,6 +14,7 @@ from src.agents.consolidation_agent import _REVIEW_HEADER, ConsolidationAgent
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_review_basis import BasisKind
 from src.domain.fact_review_question import QuestionKind
+from src.domain.profile_question_message import FIXED_OPTIONS
 from tests.support import prompt_vocabulary as pv
 from tests.support.prompt_render import render_static, rendered_token_ids
 
@@ -55,8 +56,13 @@ SCHEMA_NAMES = _schema_names()
 # keys (`_REVIEW_HEADER`), the final report's keys (`_reported_language`), the field the review never sends and the
 # token's own `outcome_order` block, which the checklist refers to. P2 revised: `dated_plan_passed` left the checklist;
 # its history column's value `own_text` joined it, and the ask's kinds are the domain's QuestionKind values.
+# Reviewer edit (fact profile RFC §4.7, profile free replies): the message's `profile_question` field
+# (`_profile_question_view`) and the ids of the fixed options it shows (`FIXED_OPTIONS`), which `answer_profile_question`
+# takes as its answer.
+PROFILE_OPTION_IDS = {option_id for ids in FIXED_OPTIONS.values() for option_id in ids}
 MESSAGE_WORDS = {"stale_since", "timed_out", "reply_at", "asked_on", "neighbour_says", "own_text",
-                 "message_language", "reported_date", "outcome_order"} | set(get_args(QuestionKind))
+                 "message_language", "reported_date", "outcome_order", "profile_question"} | set(get_args(QuestionKind)) \
+    | PROFILE_OPTION_IDS
 
 
 def test_the_profile_uses_the_review_blueprint_and_exactly_the_two_tokens():

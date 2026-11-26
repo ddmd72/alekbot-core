@@ -11,6 +11,7 @@ from src.domain.fact_review_after_pass import after_pass
 from src.domain.fact_review_ask import AskRequest
 from src.domain.fact_review_language import CANONICAL_LABELS, labels_digest, language_to_store
 from src.domain.fact_review_outcome import ReviewDecision
+from src.domain.fact_review_profile_answer import ProfileAnswerRequest
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_reasons import is_revive_reason, queued_reason
 from src.domain.fact_review_result import FactReviewResult, decode_review_result, encode_review_result
@@ -96,6 +97,7 @@ def test_the_result_round_trips_through_its_plain_form():
     result = FactReviewResult(
         outcomes=(decision("f1"),), asks=(AskRequest("f2", "archive", fallback_date=NOW.date(), noise=True),),
         kept=("f3",), message_language="pt", labels={"k": "v"},
+        profile_answers=(ProfileAnswerRequest("pq-person", "pick2", "Tom Baker"),),
     )
 
     encoded = encode_review_result(result)
@@ -107,6 +109,8 @@ def test_the_result_round_trips_through_its_plain_form():
         "asks": [{"fact_id": "f2", "fallback": "archive", "fallback_date": NOW.date(), "noise": True,
                   "question": "still_true", "texts": {}, "folds": []}],
         "kept": ["f3"], "message_language": "pt", "labels": {"k": "v"}, "translations": [], "invoices": [],
+        # Reviewer edit (fact profile RFC §4.7): the result's new field, encoded as a list like translations and invoices
+        "profile_answers": [{"question_id": "pq-person", "answer": "pick2", "quote": "Tom Baker"}],
     }
     assert decode_review_result(encoded) == result
 

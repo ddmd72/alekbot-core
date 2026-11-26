@@ -1,6 +1,7 @@
 """The owner's words to a profile question, read by code and recorded (fact profile RFC §4.7, PR 5e): a place, a person
 and a date reply is recorded in the account's answers store and closes the question (owner, no answer kind, source
-`words`); a reply that is none of the forms read leaves the question open with nothing recorded and no `reply_text`. On the
+`words`); a reply that is none of the forms read leaves the question open with nothing recorded in the answers store and
+its words recorded as the question's `reply_text` for the review model. On the
 review world with the real review store. Invented cast."""
 from typing import Optional
 
@@ -131,23 +132,25 @@ async def test_a_date_in_a_form_the_derivation_reads_is_recorded(text, start, en
     await closed_by_words(world, "pq-date")
 
 
-@pytest.mark.parametrize("kind, text, note", [
-    ("place", "Shelbyville, Italy 2", UIMessage.MEMORY_PROFILE_NOT_READ),
-    ("place", "Jamie", UIMessage.MEMORY_PROFILE_NOT_READ),
-    ("person", "Doe", UIMessage.MEMORY_PROFILE_NOT_READ),
-    ("person", "Clara", UIMessage.MEMORY_PROFILE_NOT_READ),
-    ("date", "2026-13", UIMessage.MEMORY_PROFILE_DATE_NOT_READ),
-    ("date", "Oct 2026", UIMessage.MEMORY_PROFILE_DATE_NOT_READ),
+# Reviewer edit (profile free replies, RFC §4.7): words that are no form code reads are recorded for the review model
+# and noted (`MEMORY_REPLY_NOTED`), no longer answered with the form that is read.
+@pytest.mark.parametrize("kind, text", [
+    ("place", "Shelbyville, Portugal 2"),
+    ("place", "Robin"),
+    ("person", "Doe"),
+    ("person", "Lukas"),
+    ("date", "2026-13"),
+    ("date", "Oct 2026"),
 ])
-async def test_words_that_are_not_a_form_read_leave_the_question_open_and_name_the_form(kind, text, note):
+async def test_words_that_are_not_a_form_read_leave_the_question_open_and_are_recorded_for_the_review(kind, text):
     world, store = ReviewWorld(), Answers()
     await ask(world, kind)
 
     answer = await reply(world, service(world, store), text, f"pq-{kind}")
 
-    assert answer == ack(world, note)
+    assert answer == ack(world, UIMessage.MEMORY_REPLY_NOTED)
     doc = world.question_docs[f"pq-{kind}"]
-    assert doc["status"] == "asked" and doc["reply_text"] is None and store.recorded == []
+    assert doc["status"] == "asked" and doc["reply_text"] == text and store.recorded == []
 
 
 async def test_a_first_answer_wins_a_later_reply_to_the_same_point_changes_nothing():
@@ -162,7 +165,7 @@ async def test_a_first_answer_wins_a_later_reply_to_the_same_point_changes_nothi
     assert len(store.recorded) == 1 and store.recorded[0].geonameid == "1000"  # type: ignore[union-attr]
 
 
-async def test_a_place_or_a_person_reply_without_the_atlas_or_the_list_is_not_read_but_a_date_is():
+async def test_a_place_or_a_person_reply_without_the_atlas_or_the_list_goes_to_the_review_but_a_date_is_read():
     world, store = ReviewWorld(), Answers()
     await ask(world, "place")
     await ask(world, "person", quoted_text=DAUGHTER)
@@ -173,7 +176,10 @@ async def test_a_place_or_a_person_reply_without_the_atlas_or_the_list_is_not_re
     person = await reply(world, svc, "Jamie", "pq-person")
     date = await reply(world, svc, "2026", "pq-date")
 
-    assert place == person == ack(world, UIMessage.MEMORY_PROFILE_NOT_READ)
+    # Reviewer edit (RFC §4.7): unread words are recorded for the review and noted, no longer "not read"
+    assert place == person == ack(world, UIMessage.MEMORY_REPLY_NOTED)
+    assert world.question_docs["pq-place"]["reply_text"] == "Rome, Italy"
+    assert world.question_docs["pq-person"]["reply_text"] == "Jamie"
     assert date == ack(world, UIMessage.MEMORY_ANSWER_NOTED) and len(store.recorded) == 1
 
 

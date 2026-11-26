@@ -28,8 +28,9 @@ def properties_of(schema, path=""):
             yield from properties_of(prop["items"], f"{here}[]")
 
 
-def test_the_review_offers_exactly_its_three_tools():
-    assert sorted(review_tools()) == ["ask_owner", "count_words", "update_fact"]
+def test_the_review_offers_exactly_its_four_tools():
+    # Reviewer edit (RFC §4.7, profile free replies): `answer_profile_question` joins the review's tools
+    assert sorted(review_tools()) == ["answer_profile_question", "ask_owner", "count_words", "update_fact"]
 
 
 def test_the_consolidation_passes_keep_their_tools_and_an_unknown_kind_is_refused():
@@ -40,7 +41,7 @@ def test_the_consolidation_passes_keep_their_tools_and_an_unknown_kind_is_refuse
         ConsolidationAgent._get_tool_declarations(None, "janitor")    # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("tool", ["update_fact", "ask_owner", "count_words"])
+@pytest.mark.parametrize("tool", ["update_fact", "ask_owner", "answer_profile_question", "count_words"])
 def test_every_property_of_a_review_tool_is_described(tool):
     schema = review_tools()[tool]
     assert schema["description"].strip()
@@ -50,7 +51,7 @@ def test_every_property_of_a_review_tool_is_described(tool):
     assert missing == []
 
 
-@pytest.mark.parametrize("tool", ["update_fact", "ask_owner"])
+@pytest.mark.parametrize("tool", ["update_fact", "ask_owner", "answer_profile_question"])
 def test_no_review_tool_advertises_a_constraint_its_parser_would_refuse(tool):
     found = [(path, key) for path, prop in properties_of(review_tools()[tool]["parameters"]) for key in _CONSTRAINTS if key in prop]
     assert found == []
