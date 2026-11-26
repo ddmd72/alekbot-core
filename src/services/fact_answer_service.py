@@ -32,6 +32,7 @@ from ..domain.fact_review_answers import (
     DECIDING_ANSWERS, answer_closes_fact, answer_fits, answer_updates, digit_answer, option_answer, option_id,
 )
 from ..domain.fact_review_language import OPTION_KEYS, fact_question_message, is_review_text
+from ..domain.fact_review_profile_answer import profile_answer_refusal, shown_option_ids
 from ..domain.fact_review_question import (
     ANSWER_COUNTERS, FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion, QuestionKind,
 )
@@ -418,6 +419,39 @@ class FactAnswerService(ChoiceHandlerPort):
         UI language; the labels are read once."""
         labels = await self._texts.ui_labels(user_id)
         return {kind: [(a, labels[OPTION_KEYS[a]]) for a in DECIDING_ANSWERS[kind]] for kind in dict.fromkeys(kinds)}
+
+    async def answer_by_review(self, question: FactReviewQuestion, answer: str, at: datetime) -> bool:
+        """Record the review model's answer to a profile question's own point, from the owner's words, as the owner's
+        answer, and close the question (the review's close on his words, source `review`, shown as noted).
+
+        `question` is the question as stored now: the pass's answer is checked again against it
+        (`profile_answer_refusal`), so a question that closed or changed since the pass began records nothing. The answer
+        is an option id the question showed (`apply_option`) or a date (`apply_words`), recorded by the same store as
+        his own pick. Only an applied record closes the question; a refused or failed one closes nothing, WARNING, and the
+        question times out later. True when the answer was recorded and the question closed."""
+        if self._profile_answers is None:
+            logger.warning(f"[FactAnswer] question {question.question_id}: no profile answers are wired; review answer dropped")
+            return False
+        words = question.reply_text or ""
+        refusal = profile_answer_refusal(question, answer, words, at)  # the words are his own: only the answer is checked
+        if refusal is not None:
+            logger.warning(f"[FactAnswer] question {question.question_id}: review answer not recorded: {refusal}")
+            return False
+        try:
+            applied = await self._profile_answers.apply_option(question, answer, at)
+            if applied is not ProfileApply.APPLIED and question.question == "date":
+                applied = await self._profile_answers.apply_words(question, answer, at)
+        except Exception as exc:
+            logger.warning(f"[FactAnswer] question {question.question_id}: review answer not recorded: {type(exc).__name__}")
+            return False
+        if applied is not ProfileApply.APPLIED:
+            logger.warning(f"[FactAnswer] question {question.question_id}: review answer not recorded: not read")
+            return False
+        resolution = answer if answer in shown_option_ids(question) else "date"  # never the owner's words or a date value
+        logger.info(
+            f"[FactAnswer] question {question.question_id}: review answer recorded ({question.question} question, {resolution})"
+        )
+        return await self._close(question, ClosedBy.REVIEW, None, "review", UIMessage.MEMORY_ANSWER_NOTED, as_utc(at))
 
     async def close_question(
         self,

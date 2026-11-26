@@ -853,10 +853,9 @@ def _reply_refusal(subject: FactEntity, basis: ReviewBasis, question: Optional[F
         return "basis.question_id: the id of the question about this fact in the batch"
     if not question.reply_text:
         return "basis.question_id names a question with no recorded reply from the owner"
-    quote = _squash(basis.quote or "")
-    if not quote:
+    if not _squash(basis.quote or ""):
         return "basis.quote: words copied from the owner's reply"
-    if quote not in _squash(question.reply_text):
+    if not quote_in_reply(basis.quote or "", question.reply_text):
         return "basis.quote is not in the owner's reply; copy words from it"
     return None
 
@@ -922,6 +921,13 @@ def fold_refusal(fold_id: str, why: FoldRefusal) -> str:
 
 def _squash(text: str) -> str:
     return " ".join(text.casefold().split())
+
+
+def quote_in_reply(quote: str, reply: str) -> bool:
+    """Whether `quote` is words of the owner's `reply`: not empty, and contained in it once both are case-folded and their
+    white space is squashed to single spaces. The one containment rule of every tool that quotes a reply."""
+    squashed = _squash(quote)
+    return bool(squashed) and squashed in _squash(reply)
 
 
 _QUESTION_KINDS: Final[tuple[str, ...]] = get_args(LifecycleKind)

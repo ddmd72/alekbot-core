@@ -21,6 +21,8 @@ STATUS_FAILED = "failed"
 STATUS_NOT_FOUND = "not_found"
 # An `ask_owner` the review pass accepted and holds (nothing is written by the call).
 STATUS_ASKED = "asked"
+# An `answer_profile_question` the review pass accepted and holds (the answer is recorded after the pass).
+STATUS_ANSWER_HELD = "answer_held"
 
 # Key of an `update_fact` result that archived its fact beside a new history fact: the id of that new fact.
 HISTORY_FACT_ID = "history_fact_id"
@@ -35,8 +37,11 @@ REFUSED_EXPIRY = "expiry"
 REFUSED_BASIS = "basis"
 REFUSED_SCOPE = "scope"
 REFUSED_ASK = "ask"
+# An `answer_profile_question` the review pass refused: like a basis or an ask, the question stays as it was.
+REFUSED_PROFILE_ANSWER = "profile_answer"
 _REVIEW_OUTCOMES: Dict[str, str] = {
     REFUSED_BASIS: OUTCOME_REVIEW_REFUSAL, REFUSED_ASK: OUTCOME_REVIEW_REFUSAL, REFUSED_SCOPE: OUTCOME_SCOPE_REFUSAL,
+    REFUSED_PROFILE_ANSWER: OUTCOME_REVIEW_REFUSAL,
 }
 
 

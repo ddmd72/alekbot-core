@@ -10,6 +10,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple, get_args
 from .fact_review_ask import AskRequest
 from .fact_review_invoice import InvoiceRequest
 from .fact_review_outcome import ReviewDecision, ReviewOutcome
+from .fact_review_profile_answer import ProfileAnswerRequest
 from .fact_review_quote_translation import QuoteTranslation
 
 _OUTCOMES = frozenset(get_args(ReviewOutcome))
@@ -21,7 +22,8 @@ class FactReviewResult:
     `kept`: the ids of the batch facts with neither. `message_language` and `labels`: as the pass's final report gave
     them (mirror mode only), None when absent. `translations`: the validated translations of the batch facts' texts into
     the message language (empty when none was wanted or given). `invoices`: the routine invoices the pass rewrote as
-    history with `payment` texts, in batch order."""
+    history with `payment` texts, in batch order. `profile_answers`: the answers the pass held to profile questions' own
+    points, each from the owner's words, one per question."""
 
     outcomes: Tuple[ReviewDecision, ...] = ()
     asks: Tuple[AskRequest, ...] = ()
@@ -30,6 +32,7 @@ class FactReviewResult:
     labels: Optional[Mapping[str, str]] = None
     translations: Tuple[QuoteTranslation, ...] = ()
     invoices: Tuple[InvoiceRequest, ...] = ()
+    profile_answers: Tuple[ProfileAnswerRequest, ...] = ()
 
 
 def encode_review_result(result: FactReviewResult) -> Dict[str, Any]:
@@ -43,6 +46,7 @@ def encode_review_result(result: FactReviewResult) -> Dict[str, Any]:
         "labels": dict(result.labels) if result.labels is not None else None,
         "translations": [asdict(t) for t in result.translations],
         "invoices": [asdict(i) for i in result.invoices],
+        "profile_answers": [asdict(a) for a in result.profile_answers],
     }
 
 
@@ -58,6 +62,7 @@ def decode_review_result(raw: Optional[Mapping[str, Any]]) -> FactReviewResult:
         asks = tuple(_ask(entry) for entry in raw.get("asks") or ())
         translations = tuple(QuoteTranslation(**entry) for entry in raw.get("translations") or ())
         invoices = tuple(InvoiceRequest(**entry) for entry in raw.get("invoices") or ())
+        profile_answers = tuple(ProfileAnswerRequest(**entry) for entry in raw.get("profile_answers") or ())
     except (TypeError, ValueError) as error:
         raise ValueError(f"the review result is not valid: {error}") from error
     unknown = sorted({d.outcome for d in outcomes} - _OUTCOMES)
@@ -73,7 +78,8 @@ def decode_review_result(raw: Optional[Mapping[str, Any]]) -> FactReviewResult:
     if language is not None and not isinstance(language, str):
         raise ValueError("the review result's message_language is a text")
     return FactReviewResult(
-        outcomes, asks, kept, language, dict(labels) if labels is not None else None, translations, invoices
+        outcomes, asks, kept, language, dict(labels) if labels is not None else None, translations, invoices,
+        profile_answers,
     )
 
 

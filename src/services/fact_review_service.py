@@ -33,6 +33,7 @@ from ..domain.fact_review_digest import (
 from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from ..domain.fact_review_language import language_to_store
 from ..domain.fact_review_invoice import InvoiceRequest
+from ..domain.fact_review_profile_answer import ProfileAnswerRequest
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
 from ..domain.fact_review_quote_translation import QuoteTranslation
 from ..domain.fact_review_reasons import fallback_reason, superseded_reason
@@ -948,6 +949,24 @@ class FactReviewService:
 
     # ------------------------------------------------------------------------------------------------ step 11
 
+    async def _record_answers(
+        self, account_id: str, requests: Sequence[ProfileAnswerRequest], answered: Sequence[str], now: datetime,
+    ) -> None:
+        """The pass's answers to profile questions (`after_pass.answered`): each is checked again against the question as
+        stored now and recorded as the owner's own answer, and the question closes on that record
+        (`FactAnswerService.answer_by_review`). A question that is gone or closed, or an answer that is refused or fails,
+        closes nothing: the question times out later, and nothing is applied."""
+        wanted = {request.question_id: request for request in requests if request.question_id in answered}
+        if not wanted:
+            return
+        stored = {q.question_id: q for q in await self._review_store.get_questions(list(wanted))}
+        for question_id, request in wanted.items():
+            question = stored.get(question_id)
+            if question is None or question.account_id != account_id or not question.is_open:
+                logger.warning(f"[FactReview] profile question {question_id}: not open any more; answer not recorded")
+                continue
+            await self._answer_service.answer_by_review(question, request.answer, now)
+
     async def _after_pass(
         self,
         user_id: str,
@@ -974,6 +993,7 @@ class FactReviewService:
         revived = list(plan.revived)
         for question in plan.closes:
             await self._answer_service.close_question(question, ClosedBy.REVIEW, source=review_close_source(question))
+        await self._record_answers(account_id, result.profile_answers, plan.answered, now)
         settled = await self._fallbacks(account_id, [question for _, question in plan.fallbacks], now, zone, writes)
         for name, value in settled.counts.items():
             counts[name] = counts.get(name, 0) + value

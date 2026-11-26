@@ -285,6 +285,32 @@ _ASK_TEXT_PROPERTIES: Dict[str, Any] = {
     },
 }
 
+_ANSWER_PROFILE_QUESTION_SCHEMA: Dict[str, Any] = {
+    "name": "answer_profile_question",
+    "description": (
+        "Record the owner's own answer to a profile question's point, from the words he replied with. Code files the "
+        "fact under the place, person or date the answer names, for good, and that point is never asked again; the "
+        "answer is recorded as if he had picked it himself. Only for a profile_question whose reply settles which "
+        "place, person or date is meant; one call per question. Code checks the answer against what the question "
+        "offered and the quote against his reply, and tells you when it refuses."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "question_id": {"type": "string", "description": "the question_id of the profile_question the owner replied to"},
+            "answer": {
+                "type": "string",
+                "description": (
+                    "what his words settle: the id of one of the profile_question's options, or, for a date "
+                    "question, a date as YYYY, YYYY-MM or YYYY-MM-DD, or two of one precision joined by a dash"
+                ),
+            },
+            "quote": {"type": "string", "description": "the owner's words that settle it, copied from his reply"},
+        },
+        "required": ["question_id", "answer", "quote"],
+    },
+}
+
 _ASK_OWNER_SCHEMA: Dict[str, Any] = {
     "name": "ask_owner",
     "description": (
@@ -535,6 +561,7 @@ _PASS_TOOLS: Dict[str, PassTool] = {
     "merge_facts": PassTool.MERGE,
     "count_words": PassTool.COUNT,
     "ask_owner": PassTool.ASK,
+    "answer_profile_question": PassTool.ANSWER,
 }
 
 # Which tools a pass offers: the consolidation passes', the review's three (Facts S4 §3.5), or the memory inbox
@@ -701,7 +728,7 @@ _REVIEW_HEADER = (
     "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
     "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
     "facts nearest to it) and, when the owner was asked about it, its `question` (whether it still holds) or its "
-    "`profile_question` (which place, person or date its words mean), each with any `reply`.\n\n"
+    "`profile_question` (which place, person or date its words mean; its point is answered with `answer_profile_question`), each with any `reply`.\n\n"
     "Facts under review:"
 )
 
@@ -1675,6 +1702,7 @@ class ConsolidationAgent(BaseAgent):
             labels=labels,
             translations=translations,
             invoices=tuple(scope.invoices()),
+            profile_answers=tuple(scope.profile_answers()),
         )
         total_duration = time.time() - start_time
         logger.info(
@@ -2519,7 +2547,7 @@ class ConsolidationAgent(BaseAgent):
     ) -> List[ToolResponse]:
         """Execute fact management tools via FactManagementPort (`fact_management`, else the agent's own).
 
-        With a `review_scope` (the review pass) only the review's tools run: `update_fact` and `ask_owner` go to the
+        With a `review_scope` (the review pass) only the review's tools run: `update_fact`, `ask_owner` and `answer_profile_question` go to the
         scope, `count_words` stays the agent's own, and any other tool is unknown. With a `triage_scope` (the inbox
         triage) `record_candidate`, `discard_submissions` and `count_words` (against the candidates' limit) go to the
         scope, `search_existing_facts` stays the agent's own, and any other tool is unknown.
@@ -2536,8 +2564,10 @@ class ConsolidationAgent(BaseAgent):
         async def _execute_one(tool_call: ToolCall) -> ToolResponse:
             logger.info(f"🔧 [ConsolidationAgent] Executing tool: {tool_call.name}")
             try:
-                if review_scope is not None and tool_call.name in ("update_fact", "ask_owner"):
-                    if tool_call.name == "update_fact":
+                if review_scope is not None and tool_call.name in ("update_fact", "ask_owner", "answer_profile_question"):
+                    if tool_call.name == "answer_profile_question":
+                        result = await review_scope.answer_profile_question(tool_call.args)
+                    elif tool_call.name == "update_fact":
                         args = tool_call.args
                         if "updates" in args:  # a top-level expiry moves into updates, as on the other passes
                             args = {**args, "updates": _with_top_level_expiry(args, "updates")}
@@ -2693,8 +2723,8 @@ class ConsolidationAgent(BaseAgent):
         """
         Build tool declarations for ConsolidationAgent v3, from module constants only.
 
-        `pass_kind="review"`: the review's three tools (Facts S4 §3.5): `update_fact` (with `basis` and `history`, no
-        `reported_date`), `ask_owner` and `count_words`, as fresh copies (an adapter may rewrite a schema in place).
+        `pass_kind="review"`: the review's four tools (Facts S4 §3.5): `update_fact` (with `basis` and `history`, no
+        `reported_date`), `ask_owner`, `answer_profile_question` and `count_words`, as fresh copies (an adapter may rewrite a schema in place).
         `pass_kind="triage"`: the memory inbox triage's four (MCP_MEMORY_SUBMISSIONS_RFC §7.4): `search_existing_facts`,
         `count_words` against the candidates' limit, `record_candidate` and `discard_submissions`, as fresh copies.
 
@@ -2710,6 +2740,7 @@ class ConsolidationAgent(BaseAgent):
         if pass_kind == "review":
             return [
                 copy.deepcopy(_REVIEW_UPDATE_SCHEMA), copy.deepcopy(_ASK_OWNER_SCHEMA),
+                copy.deepcopy(_ANSWER_PROFILE_QUESTION_SCHEMA),
                 _count_words_tool(_REVIEW_COUNT_WORDS_DESCRIPTION),
             ]
         if pass_kind == "triage":

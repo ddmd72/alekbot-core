@@ -59,6 +59,7 @@ class PassTool(StrEnum):
     MERGE = "merge"
     COUNT = "count"
     ASK = "ask"
+    ANSWER = "answer"
     OTHER = "other"
 
 

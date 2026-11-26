@@ -27,7 +27,9 @@ _OUTCOME_COUNTERS: Mapping[ReviewOutcome, CounterField] = MappingProxyType({
 @dataclass(frozen=True)
 class AfterPass:
     """`decided`: the batch facts with an outcome (their `offers` entries go, `offers_removed`). `closes`: the open questions about them,
-    closed by the review. `fallbacks`: the timed-out candidates the pass left undecided, each with its timed-out
+    closed by the review, but not the answered ones. `answered`: the ids of the profile questions whose point the pass
+    answered from the owner's words (a batch fact's question): they close on the record of that answer, not here.
+    `fallbacks`: the timed-out candidates the pass left undecided, each with its timed-out
     lifecycle question. `asks`: each held ask with its batch fact as the pass was given it. `revived`: the documents the pass
     revived (the revive alert reads them). `counts`: the pass's numbers (`reviewed` is the batch; `closed_by_reply` the
     closes on the owner's words; `to_history` the rewrites as history, also counted as `rewritten`); a queued question
@@ -35,6 +37,7 @@ class AfterPass:
 
     decided: Tuple[str, ...] = ()
     closes: Tuple[FactReviewQuestion, ...] = ()
+    answered: Tuple[str, ...] = ()
     fallbacks: Tuple[Tuple[FactEntity, FactReviewQuestion], ...] = ()
     asks: Tuple[Tuple[FactEntity, AskRequest], ...] = ()
     revived: Tuple[str, ...] = ()
@@ -65,7 +68,11 @@ def after_pass(
     decided = tuple(dict.fromkeys(d.fact_id for d in outcomes))
     asked = {a.fact_id for a in result.asks}
     about = questions_about(batch, questions)
-    closes = tuple(q for q in about if q.fact_id in decided)
+    answered = tuple(dict.fromkeys(
+        a.question_id for a in result.profile_answers
+        if any(q.question_id == a.question_id and q.is_profile for q in about)
+    ))
+    closes = tuple(q for q in about if q.fact_id in decided and q.question_id not in answered)
     fallbacks = tuple(
         (by_id[q.fact_id], q) for q in about
         if q.is_timed_out(now) and not q.is_profile and q.fact_id not in decided and q.fact_id not in asked
@@ -76,10 +83,11 @@ def after_pass(
         counts[counter] = counts.get(counter, 0) + 1
         if decision.as_history:
             counts[CounterField.TO_HISTORY] = counts.get(CounterField.TO_HISTORY, 0) + 1
-    counts[CounterField.CLOSED_BY_REPLY] = sum(1 for q in closes if q.reply_text)
+    counts[CounterField.CLOSED_BY_REPLY] = sum(1 for q in closes if q.reply_text) + len(answered)
     return AfterPass(
         decided=decided,
         closes=closes,
+        answered=answered,
         fallbacks=fallbacks,
         asks=tuple((by_id[a.fact_id], a) for a in result.asks if a.fact_id in by_id),
         revived=tuple(d.written_id for d in outcomes if d.outcome == "revived"),
