@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.exceptions import LLMClientError, LLMRateLimitError
+from src.domain.exceptions import LLMClientError, LLMRateLimitError, LLMRefusalError
 from src.ports.llm_port import LLMPort
 from src.services.alerting_llm_proxy import AlertingLLMProxy
 
@@ -70,6 +70,20 @@ class TestAlertOnClientError:
         assert "400" in text
         assert "claude-sonnet-4-6" in text
         assert "credit balance too low" in text
+
+    @pytest.mark.asyncio
+    async def test_refusal_is_named_not_shown_as_a_missing_status(self):
+        proxy, inner, alert_fn = _make(
+            inner_side_effect=LLMRefusalError("refusal (category=reasoning_extraction): blocked")
+        )
+
+        with pytest.raises(LLMRefusalError):
+            await proxy.generate_content(_request("claude-sonnet-5-5"))
+
+        text = alert_fn.await_args[0][0]
+        assert text.startswith("🚨 LLM refusal — model=claude-sonnet-5-5")
+        assert "category=reasoning_extraction" in text
+        assert "HTTP None" not in text
 
     @pytest.mark.asyncio
     async def test_alert_delivery_failure_is_swallowed(self):

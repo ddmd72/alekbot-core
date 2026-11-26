@@ -11,11 +11,12 @@ token_id: CONSOLIDATION_EXAMPLES
 uploaded_by: local_script
 ---
 
+purpose: "Worked cases showing how the steps and rules decide a real conversation. A walkthrough is the deliberation of one case, to be done in your own thinking; it is not a format to write out. What a case leaves behind is its tool calls and its report (output)."
+
 example_1_update_weight: {
     conversation: "USER: I weighed 64 kg yesterday"
 
-    reasoning: '''
-    <thinking>
+    walkthrough: '''
     STEP 1 - EXTRACT:
     - Candidate: "User's weight is 64 kg (Oct 21, 2026)"
 
@@ -69,7 +70,6 @@ example_1_update_weight: {
 
     STEP 8 - REPORT:
     Action: UPDATE weight fact with new measurement
-    </thinking>
     '''
 
     output: {
@@ -86,8 +86,7 @@ example_1_update_weight: {
 example_2_create_new_habit: {
     conversation: "USER: I started swimming in the evenings, 45 minutes every day"
 
-    reasoning: '''
-    <thinking>
+    walkthrough: '''
     STEP 1 - EXTRACT:
     - Candidate: "User started evening swimming practice (45 min daily)"
 
@@ -139,7 +138,6 @@ example_2_create_new_habit: {
 
     STEP 8 - REPORT:
     Action: CREATE new swimming habit fact
-    </thinking>
     '''
 
     output: {
@@ -159,8 +157,7 @@ example_3_discard_echo: {
     USER: Yes, that's right.
     '''
 
-    reasoning: '''
-    <thinking>
+    walkthrough: '''
     STEP 1 - EXTRACT:
     - Candidate: "User confirms weight is 67kg"
 
@@ -198,7 +195,6 @@ example_3_discard_echo: {
 
     STEP 8 - REPORT:
     Action: DISCARD (echo trap)
-    </thinking>
     '''
 
     output: {
@@ -222,8 +218,7 @@ example_3b_memory_review_reply: {
         ASSISTANT: Noted — I'll take it into account.
         '''
 
-        reasoning: '''
-        <thinking>
+        walkthrough: '''
         STEP 1 - EXTRACT:
         - The first USER part is the frame of the question: written by the system, not by the owner: nothing to extract
         - The ASSISTANT question quotes a stored fact: an echo, DISCARD
@@ -272,7 +267,6 @@ example_3b_memory_review_reply: {
 
         STEP 8 - REPORT:
         Action: CREATE the corrected value; the quoted fact is left to the memory review
-        </thinking>
         '''
 
         output: {
@@ -294,7 +288,7 @@ example_3b_memory_review_reply: {
         ASSISTANT: Thank you, recorded.
         '''
 
-        reasoning: "The reply is the digit 2 and nothing else: it adds nothing, and the memory review applies it to the quoted fact. The question pair is an echo. No tool call."
+        walkthrough: \"The reply is the digit 2 and nothing else: it adds nothing, and the memory review applies it to the quoted fact. The question pair is an echo. No tool call."
 
         output: {
             "operations": [
@@ -315,7 +309,7 @@ example_3b_memory_review_reply: {
         USER: 2
         '''
 
-        reasoning: "The last message has no [Reply to memory review q=<id>] marker, so it is not an answer: the ordinary rules apply. A bare digit states no fact (Trivial_Exclusions), and the question pair stays an echo. No tool call."
+        walkthrough: \"The last message has no [Reply to memory review q=<id>] marker, so it is not an answer: the ordinary rules apply. A bare digit states no fact (Trivial_Exclusions), and the question pair stays an echo. No tool call."
 
         output: {
             "operations": [
@@ -335,7 +329,7 @@ example_3b_memory_review_reply: {
         ASSISTANT: Прийнято — я це врахую.
         '''
 
-        reasoning: "The question is in the owner's language, so its quote is the stored fact translated. A search for the user's gym training returns gym-88, \"User trains at the FitLife gym on Main Street.\": the same fact in English, so it is the quoted fact, whatever language the quote is in. It belongs to the memory review, which applies the answer: leave gym-88 untouched (no update_fact call, no invalidation, no extension). \"it's Iron Temple now\" is a correction naming the true value: create \"User trains at the Iron Temple gym\" only, as in case_1_correction."
+        walkthrough: \"The question is in the owner's language, so its quote is the stored fact translated. A search for the user's gym training returns gym-88, \"User trains at the FitLife gym on Main Street.\": the same fact in English, so it is the quoted fact, whatever language the quote is in. It belongs to the memory review, which applies the answer: leave gym-88 untouched (no update_fact call, no invalidation, no extension). \"it's Iron Temple now\" is a correction naming the true value: create \"User trains at the Iron Temple gym\" only, as in case_1_correction."
 
         output: {
             "operations": [
@@ -352,8 +346,7 @@ example_3b_memory_review_reply: {
 example_4_merge_car_details: {
     conversation: "USER: My car has tinted windows"
 
-    reasoning: '''
-    <thinking>
+    walkthrough: '''
     STEP 1 - EXTRACT:
     - Candidate: "User's car has tinted windows"
 
@@ -426,7 +419,6 @@ example_4_merge_car_details: {
 
     STEP 8 - REPORT:
     Action: MERGE 3 car facts + new details into comprehensive fact
-    </thinking>
     '''
 
     output: {

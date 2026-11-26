@@ -13,7 +13,7 @@ Why here and not in an agent: ``LLMClientError`` is non-retryable and non-failov
 proxy is the single chokepoint every agent's LLM call passes through, so one hook
 covers them all.
 
-Throttle: identical alerts (keyed by HTTP status) are suppressed within
+Throttle: identical alerts (keyed by HTTP status, or "refusal") are suppressed within
 ``throttle_seconds`` so a provider outage hitting many background tasks does not
 flood Slack. In-process state — fine for the single-instance Cloud Run deployment.
 """
@@ -22,7 +22,7 @@ import asyncio
 from typing import Awaitable, Callable, Dict, Tuple
 import time
 
-from ..domain.exceptions import LLMClientError
+from ..domain.exceptions import LLMClientError, LLMRefusalError
 from ..domain.native_format import NativeFormat
 from ..domain.user import PerformanceTier
 from ..ports.llm_port import (
@@ -67,7 +67,8 @@ class AlertingLLMProxy(LLMPort):
         Any failure to deliver the alert is swallowed — alerting must never mask or
         replace the original LLMClientError that the caller is about to receive.
         """
-        key = str(error.http_status)
+        # A refusal arrives as HTTP 200 and carries no status: name it, never "HTTP None".
+        key = "refusal" if isinstance(error, LLMRefusalError) else f"client error (HTTP {error.http_status})"
         now = self._clock()
         async with self._lock:
             last = self._last_alert.get(key)
@@ -77,7 +78,7 @@ class AlertingLLMProxy(LLMPort):
 
         model = getattr(request, "model_name", None) or "unknown"
         text = (
-            f"🚨 LLM client error (HTTP {error.http_status}) — model={model}\n"
+            f"🚨 LLM {key} — model={model}\n"
             f"{error}"
         )
         try:
