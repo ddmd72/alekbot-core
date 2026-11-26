@@ -59,7 +59,8 @@ def _run(body: str):
     script = (_DOM % {"en": json.dumps(_dict("en")), "uk": json.dumps(_dict("uk"))}) + sources + \
         "\n(async () => {\n" + body + \
         "\n})().then((out) => process.stdout.write(JSON.stringify(out)), (e) => { console.error(e); process.exit(1); });"
-    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+    # stdin, not `-e`: the script carries two full string dictionaries, past Linux's per-argument limit (CI).
+    out = subprocess.run(["node", "-"], input=script, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
