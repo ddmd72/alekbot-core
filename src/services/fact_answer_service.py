@@ -12,9 +12,9 @@ existing answer for a closed one.
 
 A profile question (kind place, person or date, fact profile RFC §4.7) is answered by the same two doors, never through
 `apply` (that is the lifecycle path: it writes a fact): a digit or a button picks an option that
-`ProfileQuestionAnswers` records, the words are read by code only, and a reply that is neither is not applied: the
-question stays open and the owner is told which form is read. Nothing of a profile question's reply is recorded on the
-question for the review.
+`ProfileQuestionAnswers` records, and words are read by code first. Words code cannot read are recorded on the question
+for the review (`record_reply`), as a lifecycle question's words are: the review model reads them on its next run and
+decides on the fact; the question stays open, its buttons live.
 """
 from datetime import datetime, timezone
 import asyncio
@@ -32,6 +32,7 @@ from ..domain.fact_review_answers import (
     DECIDING_ANSWERS, answer_closes_fact, answer_fits, answer_updates, digit_answer, option_answer, option_id,
 )
 from ..domain.fact_review_language import OPTION_KEYS, fact_question_message, is_review_text
+from ..domain.fact_review_profile_answer import profile_answer_refusal, shown_option_ids
 from ..domain.fact_review_question import (
     ANSWER_COUNTERS, FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion, QuestionKind,
 )
@@ -334,10 +335,12 @@ class FactAnswerService(ChoiceHandlerPort):
         self, question: FactReviewQuestion, user_id: str, account_id: str, text: str, now: datetime,
     ) -> Optional[str]:
         """The owner's reply to a profile question. Closed: the existing already-answered path. Not delivered: left to
-        conversation. Otherwise the reply is a digit that picks an option, or words read by code; an applied answer
-        closes the question (owner, no answer kind, source `digit` or `words`); a reply that is neither is counted
-        (`profile_reply_not_read`), answered with the form that is read, and the question stays open and untouched. The
-        words are never recorded on the question (`record_reply` is not called). The pair is appended as for any reply."""
+        conversation. Otherwise code reads first: a digit that picks an option, or words read by code; an applied answer
+        closes the question (owner, no answer kind, source `digit` or `words`). A reply code cannot read is recorded for the
+        review (`record_reply`), as a lifecycle question's words are: refused by the store, it is left to conversation
+        (None); recorded on the current question, the slot is given up and the next question released. It is counted
+        (`profile_reply_not_read`) and acknowledged `MEMORY_REPLY_NOTED`; the question stays open. The pair is appended as
+        for any reply."""
         if not question.is_open:
             labels = await self._texts.labels_for(user_id, account_id)
             await self._count(account_id, now, {CounterField.ALREADY_ANSWERED: 1})
@@ -363,9 +366,14 @@ class FactAnswerService(ChoiceHandlerPort):
                 await self._count(account_id, now, {CounterField.PROFILE_ANSWERED: 1})
                 note = UIMessage.MEMORY_ANSWER_NOTED
             else:
+                recorded = await self._review_store.record_reply(question.question_id, text, now)
+                if recorded is ReplyRecord.REFUSED:
+                    logger.info(f"[FactAnswer] question {question.question_id}: the reply was not recorded; left to conversation")
+                    return None
+                if recorded is ReplyRecord.RELEASED:
+                    await self._release_next(question)
                 await self._count(account_id, now, {CounterField.PROFILE_REPLY_NOT_READ: 1})
-                note = (UIMessage.MEMORY_PROFILE_DATE_NOT_READ if question.question == "date"
-                        else UIMessage.MEMORY_PROFILE_NOT_READ)
+                note = UIMessage.MEMORY_REPLY_NOTED
             reply = labels[note.value]
         await self._append_reply(question, reply_part(question.question_id, text), reply)
         logger.info(f"[FactAnswer] question {question.question_id}: profile reply taken and acknowledged")
@@ -411,6 +419,39 @@ class FactAnswerService(ChoiceHandlerPort):
         UI language; the labels are read once."""
         labels = await self._texts.ui_labels(user_id)
         return {kind: [(a, labels[OPTION_KEYS[a]]) for a in DECIDING_ANSWERS[kind]] for kind in dict.fromkeys(kinds)}
+
+    async def answer_by_review(self, question: FactReviewQuestion, answer: str, at: datetime) -> bool:
+        """Record the review model's answer to a profile question's own point, from the owner's words, as the owner's
+        answer, and close the question (the review's close on his words, source `review`, shown as noted).
+
+        `question` is the question as stored now: the pass's answer is checked again against it
+        (`profile_answer_refusal`), so a question that closed or changed since the pass began records nothing. The answer
+        is an option id the question showed (`apply_option`) or a date (`apply_words`), recorded by the same store as
+        his own pick. Only an applied record closes the question; a refused or failed one closes nothing, WARNING, and the
+        question times out later. True when the answer was recorded and the question closed."""
+        if self._profile_answers is None:
+            logger.warning(f"[FactAnswer] question {question.question_id}: no profile answers are wired; review answer dropped")
+            return False
+        words = question.reply_text or ""
+        refusal = profile_answer_refusal(question, answer, words, at)  # the words are his own: only the answer is checked
+        if refusal is not None:
+            logger.warning(f"[FactAnswer] question {question.question_id}: review answer not recorded: {refusal}")
+            return False
+        try:
+            applied = await self._profile_answers.apply_option(question, answer, at)
+            if applied is not ProfileApply.APPLIED and question.question == "date":
+                applied = await self._profile_answers.apply_words(question, answer, at)
+        except Exception as exc:
+            logger.warning(f"[FactAnswer] question {question.question_id}: review answer not recorded: {type(exc).__name__}")
+            return False
+        if applied is not ProfileApply.APPLIED:
+            logger.warning(f"[FactAnswer] question {question.question_id}: review answer not recorded: not read")
+            return False
+        resolution = answer if answer in shown_option_ids(question) else "date"  # never the owner's words or a date value
+        logger.info(
+            f"[FactAnswer] question {question.question_id}: review answer recorded ({question.question} question, {resolution})"
+        )
+        return await self._close(question, ClosedBy.REVIEW, None, "review", UIMessage.MEMORY_ANSWER_NOTED, as_utc(at))
 
     async def close_question(
         self,

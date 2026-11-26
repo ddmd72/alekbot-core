@@ -688,9 +688,10 @@ step that raises is logged and changes nothing of the run's result.
 - **Profile questions:** an open point is asked through the review's own channel as a `FactReviewQuestion` of kind `place`,
   `person` or `date` (§5.6), after lifecycle questions, at most one per owner-local day, until `PROFILE_OPEN_CAP` are
   open. The daily review run creates them after its profile step (`FactProfileService.run(..., collect_points=True)`) and
-  closes one whose point is gone. A digit or a button picks an option; a reply in words is read by code only
-  (`src/domain/profile_reply_words.py`), never by a model. The store's list reads return lifecycle questions unless a
-  reader names `scope="profile"` or `"all"`.
+  closes one whose point is gone. A digit or a button picks an option; a reply in words is read by code first
+  (`src/domain/profile_reply_words.py`), and words code cannot read go to the review model (§5.6, "Profile questions in
+  the review"). The store's list reads return lifecycle questions unless a reader names `scope="profile"`, `"all"` or
+  `"review"`.
 - **Failures:** an `invalid` or `refused` reply writes only a failure count; the third failure on one fingerprint abandons
   the fact until its content changes. An `unavailable` reply is an outage: no failure is written, the rest waits.
 - **After any written profile** the step refreshes the baseline once.
@@ -1059,27 +1060,30 @@ lease (the one consolidation holds, so the two never write at once; busy → the
 3. *Timeouts, in code* (`_timeouts`). A question sent `QUESTION_TIMEOUT` ago is closed by silence. If its fact is still the
    same document: when the owner answered in words the review has not read, or a fact created since looks like an answer
    (one of the nearest current facts), the fact goes to the model once; otherwise the question's **fallback** applies at
-   once. A fact closed or rewritten meanwhile closes the question `resolved_elsewhere`.
+   once. A fact closed or rewritten meanwhile closes the question `resolved_elsewhere`. A timed-out *profile* question
+   has no fallback: with words the review has not read and its fact still standing it stays open for this run's pass,
+   otherwise it closes `timeout` and records nothing.
 4. *Kept twice* (`_kept_twice`). A stale fact the model left undecided `MAX_OFFERS` times gets a code question and is
    queued; code never revives a fact on its own. For a `date` fact that question is `happened` with fallback `history`; any
    other fact keeps `still_true` with `revive`.
 5. *Selection* (`select_batch`). Up to `REVIEW_BATCH` facts: first those with a reply in words not yet read and the
    timed-out candidates, then the stale facts, offered least first and the longest stale first. A fact with an open question
-   is left out.
+   is left out. A fact whose profile question carries the owner's words is selected like one with a reply in words.
 6. *The model pass* (`ConsolidationAgent._handle_review_stale_facts`, task `review_stale_facts`, label `review`; nothing
    selected means no model call). Profile `consolidation_review` (tokens `CONSOLIDATION_TAXONOMY` and
    `CONSOLIDATION_LIFECYCLE`), no conversation (the baseline is in the prompt like on every pass). It sees, per fact, built by code: the text, domain, expiry,
    `reported`, `stale_since`, earlier versions, its nearest current neighbours and, when there is one, its question with
-   the owner's reply. Every listed fact must end with exactly one outcome, decided by the first rule that applies:
+   the owner's reply, and, when its profile question carries the owner's words, its `profile_question` (kind, the words it
+   asks about, the options the owner was shown, the reply, whether it timed out). Every listed fact must end with exactly one outcome, decided by the first rule that applies:
    **supersede** (a current fact says the same), **revive** (a reply or other evidence says it still holds), **history**
    (its date passed: rewritten as what happened, what was planned and did not happen, or planned with an unknown outcome),
    **archive** (the owner's reply says it is over), **invalidate** (it was never true), else **ask**. A fact the pass cannot
    decide and has already asked about is *left*.
-7. *The tools* are three (`ConsolidationAgent._get_tool_declarations("review")`): `update_fact` (with `basis`, `history`,
-   `as_history`, `payment`), `ask_owner` and `count_words`; no search, create or merge.
+7. *The tools* are four (`ConsolidationAgent._get_tool_declarations("review")`): `update_fact` (with `basis`, `history`,
+   `as_history`, `payment`), `ask_owner`, `answer_profile_question` and `count_words`; no search, create or merge.
    `src/infrastructure/fact_review_scope.py::FactReviewScope` (one `asyncio.Lock`, so calls apply in the order written)
    routes them and refuses what `src/domain/fact_review_rules.py` refuses, each refusal naming the argument and its fix and
-   tagged `basis`, `scope` or `ask`; a refused call writes nothing:
+   tagged `basis`, `scope`, `ask` or `profile_answer`; a refused call writes nothing:
    - **scope**: a fact outside the batch, or one that already has a result in this pass;
    - **basis** (`basis_refusal`): an invalidate or a rewrite needs evidence (another current fact, never a version of the
      same fact) or the owner's reply with a quote copied from it; **an archive needs the owner's reply**; **a revive needs
@@ -1094,8 +1098,14 @@ lease (the one consolidation holds, so the two never write at once; busy → the
      answer (one line, no `[`, at most 40 words, not the fact's stored text) and a `fallback`: `revive` (`still_true` only),
      `history` (the question's "unknown" text written as history; the fallback of `happened` and `renewed`, the only one of
      `paid`) or `archive` (only with `noise: true`). `folds` names other batch facts that are parts of the same plan: one
-     question for all. Noise never archives anything on its own; it only sets what silence does.
-8. *After the pass* (`_after_pass`). Outcomes remove the fact's offer and close its question `review`. Each ask makes the
+     question for all. Noise never archives anything on its own; it only sets what silence does;
+   - **profile answer** (`profile_answer_refusal`): `answer_profile_question(question_id, answer, quote)` takes an open
+     profile question of this pass that has the owner's words, one call per question; the quote must be in those words
+     (the rule of a reply quote), and the answer one of the options the question showed or, for a date question, an ISO
+     year, year-month or date or a range of two of one precision. Its refusals begin `Tool error:` and name what is
+     accepted.
+8. *After the pass* (`_after_pass`). Outcomes remove the fact's offer and close its question `review`; a profile question
+   the pass answered closes on the record of its answer instead (below). Each ask makes the
    fact `current` again under its precondition (`stale_since` cleared, the expiry as stored) and creates a `queued`
    question that takes its place in line from the fact's `stale_since`; the folds are superseded by the asked fact only after
    the ask is queued. Each routine invoice's history version gets a `paid` **digest question** (never sent in chat,
@@ -1105,6 +1115,20 @@ lease (the one consolidation holds, so the two never write at once; busy → the
    counters; post the revive alert (a fact revived `REVIVE_ALERT` times within `REVIVE_WINDOW`); mark the run. **A failed
    review pass** still sends the next question and the digest; its earlier writes stand; the run answers 200 `failed`, with
    no Cloud Tasks retry, and the janitor enqueues again the next day.
+
+**Profile questions in the review** (fact profile RFC §4.7). A profile question (kind `place`, `person` or `date`) is
+answered by a digit, a button or words code reads (`FactAnswerService`, `ProfileQuestionAnswers`). Words code cannot read
+are recorded on the question (`reply_text`) and acknowledged; the question stays open, and the next review pass shows
+the model the fact with its `profile_question` (the question store's `scope="review"`: lifecycle questions plus profile
+questions with words; a fact shows its earliest-queued profile question). The model may decide the fact on those words
+(`update_fact` on a `reply` basis with the profile question's id, which closes the question `review`) and may resolve the
+question's own point with `answer_profile_question`. An accepted answer is held by `FactReviewScope`; after the pass
+`FactReviewService._record_answers` checks it again against the question as stored then and
+`FactAnswerService.answer_by_review` records it in the account's profile answers exactly as the owner's own pick (the same
+option or date reading), and only when it is recorded closes the question `review` with the source `review`. A refused or
+failed record closes nothing and logs a WARNING; the question times out later. The profile step then re-derives the fact
+from the answer and never asks that point again. A timed-out profile question is never a fallback: silence changes
+nothing.
 
 **The fact is current while it waits.** A queued fact is an ordinary current fact for every reader and keeps its past
 `expires_at`; the janitor skips it while its question is open. A question never hides a fact, and an unanswered one never
@@ -1325,7 +1349,7 @@ deadlines: `docs/07_deployment/SCHEDULERS.md`. Wiring: `src/composition/memory_i
 | provider failover | none for consolidation: an outage fails the pass and the batch is retried later (owner ruling) | same-provider retries |
 | the janitor run fails (a query, the counters, a stale write) | one "🚨 Fact lifecycle run failed", the job answers 500; what was staled before is already out of the baseline | **no**: the next day's run (§5.5) |
 | a janitor stale write finds the fact changed; the breaker is tripped; a second run starts | counted `stale_conflicts` and skipped; nothing staled for that account and one 🚨; the run guard answers `busy` | the next run |
-| a review call is refused | the tool result says what to fix, tagged `basis`, `scope` or `ask`; nothing is written; **a revive without evidence or a reply is never written** | the model fixes the call or leaves the fact |
+| a review call is refused | the tool result says what to fix, tagged `basis`, `scope`, `ask` or `profile_answer`; nothing is written; **a revive without evidence or a reply is never written** | the model fixes the call or leaves the fact |
 | the review pass fails | 200 `failed`, `last_failed_at` set, the next send and the digest still run, writes already made stand | no Cloud Tasks retry; the janitor enqueues again |
 | a review run finds the lease taken | it enqueues itself again, later, under a name made of the account and the lease bucket | yes |
 | an owner's answer finds the fact changed, or its write conflicts | `changed` or `conflict`: nothing written, the owner is told, the question stays open | the owner may answer again |

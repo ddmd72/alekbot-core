@@ -18,6 +18,7 @@ from ..domain.fact_review_basis import ReviewBasis, parse_history, parse_payment
 from ..domain.fact_review_batch import ReviewBatch
 from ..domain.fact_review_invoice import InvoiceRequest
 from ..domain.fact_review_outcome import ReviewDecision, review_outcome
+from ..domain.fact_review_profile_answer import ProfileAnswerRequest, TOOL_ERROR, profile_answer_refusal
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_quote_translation import HISTORY_TEXT_KEY, written_text_key
 from ..domain.fact_review_reasons import evidence_moment, review_reason
@@ -46,7 +47,9 @@ from ..domain.fact_review_rules import (
 from ..domain.fact_tool_result import (
     REFUSED_ASK,
     REFUSED_BASIS,
+    REFUSED_PROFILE_ANSWER,
     REFUSED_SCOPE,
+    STATUS_ANSWER_HELD,
     STATUS_ASKED,
     STATUS_FAILED,
     expiry_refusal_tags,
@@ -85,12 +88,17 @@ class FactReviewScope:
         self._by_lineage: Dict[str, FactEntity] = {f.lineage_id: f for f in batch.facts}
         self._lineage_of: Dict[str, str] = {f.id: f.lineage_id for f in batch.facts}
         self._left: Dict[str, FactEntity] = dict(self._by_lineage)  # lineage -> the document the pass expects there
-        self._open_by_fact = {q.fact_id: q for q in batch.questions if q.is_open}
+        # A fact's open question; its lifecycle one when it has both kinds (a profile question carrying the owner's words
+        # still holds the fact for this pass, and its id is found through `_questions` for a basis reply).
+        self._open_by_fact = {
+            q.fact_id: q for q in sorted(batch.questions, key=lambda q: not q.is_profile) if q.is_open
+        }
         self._questions = {q.question_id: q for q in batch.questions}
         self._decisions: Dict[str, ReviewDecision] = {}
         self._asks: Dict[str, AskRequest] = {}
         self._folded: Dict[str, str] = {}  # a folded lineage -> the lineage of the ask that folds it
         self._invoices: Dict[str, InvoiceRequest] = {}
+        self._profile_answers: Dict[str, ProfileAnswerRequest] = {}  # question id -> the answer this pass holds
         self._written: Dict[str, str] = {}  # translation key -> a text this pass wrote (history, ask and payment texts)
 
     async def update_fact(self, args: Mapping[str, Any]) -> Dict[str, Any]:
@@ -107,6 +115,13 @@ class FactReviewScope:
         refused): refused with a tagged text, or held. The folds are held with it."""
         async with self._lock:
             return await self._ask(args)
+
+    async def answer_profile_question(self, args: Mapping[str, Any]) -> Dict[str, Any]:
+        """One `answer_profile_question(question_id, answer, quote)`: the owner's words settle which place, person or date
+        a profile question's point means. Refused with a tagged text (the question is not in this pass, it already has an
+        answer held, or the domain's `profile_answer_refusal`), or held; code records it after the pass."""
+        async with self._lock:
+            return self._answer_profile(args)
 
     def kept(self) -> List[FactEntity]:
         """The batch facts with no result in this pass: neither written, asked about nor folded into an ask."""
@@ -126,6 +141,10 @@ class FactReviewScope:
     def invoices(self) -> List[InvoiceRequest]:
         """The routine invoices this pass rewrote as history with a `payment`, in batch order."""
         return [self._invoices[f.lineage_id] for f in self._batch.facts if f.lineage_id in self._invoices]
+
+    def profile_answers(self) -> List[ProfileAnswerRequest]:
+        """The accepted answers to profile questions, in the order they were accepted."""
+        return list(self._profile_answers.values())
 
     def written_texts(self) -> Dict[str, str]:
         """The texts this pass wrote, by translation key (`<fact_id>:<text key>`, `written_text_key`): the history text of
@@ -255,6 +274,32 @@ class FactReviewScope:
         self._left[lineage] = written
         self._lineage_of[written.id] = lineage
 
+    # ------------------------------------------------------------------------------------------------ answer_profile_question
+
+    def _answer_profile(self, args: Mapping[str, Any]) -> Dict[str, Any]:
+        question_id, answer, quote = (args.get(name) for name in ("question_id", "answer", "quote"))
+        if not all(isinstance(value, str) and value.strip() for value in (question_id, answer, quote)):
+            return refused_result(
+                question_id if isinstance(question_id, str) else None, REFUSED_PROFILE_ANSWER,
+                f"{TOOL_ERROR}question_id, answer and quote are each a text",
+            )
+        question = self._questions.get(question_id)
+        if question is None or not question.is_profile:
+            return refused_result(
+                question_id, REFUSED_PROFILE_ANSWER,
+                f"{TOOL_ERROR}question_id names no profile question of this pass",
+            )
+        if question_id in self._profile_answers:
+            return refused_result(
+                question_id, REFUSED_PROFILE_ANSWER,
+                f"{TOOL_ERROR}this question already has an answer held in this pass; it takes one",
+            )
+        refusal = profile_answer_refusal(question, answer.strip(), quote, self._now)
+        if refusal is not None:
+            return refused_result(question_id, REFUSED_PROFILE_ANSWER, refusal)
+        self._profile_answers[question_id] = ProfileAnswerRequest(question_id, answer.strip(), quote)
+        return {"question_id": question_id, "status": STATUS_ANSWER_HELD, "message": PROFILE_ANSWER_HELD}
+
     # ------------------------------------------------------------------------------------------------ ask_owner
 
     async def _ask(self, args: Mapping[str, Any]) -> Dict[str, Any]:
@@ -342,6 +387,7 @@ class FactReviewScope:
         return await self._facts.get_fact_by_id(fact_id)
 
 
+PROFILE_ANSWER_HELD = "Tool note: the answer is held; code records it as the owner's own answer after this pass"
 RENEWAL_EXPIRY_NOTE = "the expiry of a renewal is the confirmed window, set by code"
 
 

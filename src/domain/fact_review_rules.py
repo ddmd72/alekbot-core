@@ -133,16 +133,20 @@ def open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
 
 # ------------------------------------------------------------------------------------------------ the queue
 
-# Which questions a read returns: the stale-fact (lifecycle) questions, the profile ones, or both. Every reader that
+# Which questions a read returns: the stale-fact (lifecycle) questions, the profile ones, both, or what the review model
+# is given (`review`: the lifecycle questions and the profile questions with the owner's words recorded). Every reader that
 # treats a question as a stale fact in the review's hands reads `lifecycle`; the claim, the reply and button lookup, the
-# review's housekeeping and the janitor's `review_due` read `all`.
-QuestionScope = Literal["lifecycle", "profile", "all"]
+# review's housekeeping and the janitor's `review_due` read `all`; the review's batch and the closes after its pass read
+# `review`.
+QuestionScope = Literal["lifecycle", "profile", "all", "review"]
 
 
 def in_scope(question: FactReviewQuestion, scope: QuestionScope) -> bool:
     """Whether `question` belongs to a read of `scope`."""
     if scope == "all":
         return True
+    if scope == "review":
+        return not question.is_profile or question.reply_text is not None
     return question.is_profile == (scope == "profile")
 
 
@@ -849,10 +853,9 @@ def _reply_refusal(subject: FactEntity, basis: ReviewBasis, question: Optional[F
         return "basis.question_id: the id of the question about this fact in the batch"
     if not question.reply_text:
         return "basis.question_id names a question with no recorded reply from the owner"
-    quote = _squash(basis.quote or "")
-    if not quote:
+    if not _squash(basis.quote or ""):
         return "basis.quote: words copied from the owner's reply"
-    if quote not in _squash(question.reply_text):
+    if not quote_in_reply(basis.quote or "", question.reply_text):
         return "basis.quote is not in the owner's reply; copy words from it"
     return None
 
@@ -920,6 +923,13 @@ def _squash(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
+def quote_in_reply(quote: str, reply: str) -> bool:
+    """Whether `quote` is words of the owner's `reply`: not empty, and contained in it once both are case-folded and their
+    white space is squashed to single spaces. The one containment rule of every tool that quotes a reply."""
+    squashed = _squash(quote)
+    return bool(squashed) and squashed in _squash(reply)
+
+
 _QUESTION_KINDS: Final[tuple[str, ...]] = get_args(LifecycleKind)
 
 
@@ -937,14 +947,15 @@ def ask_refusal(
 ) -> Optional[str]:
     """Why the owner may not be asked about this fact now, as the text the model reads, or None.
 
-    `open_question`: the fact's open question, if any. One that has timed out is a candidate sent back to the model once;
-    its fallback applies, so it is not asked again. P2-3: `question` is the kind asked and `texts` the outcome texts the
+    `open_question`: the fact's open question, if any (its lifecycle one when it has both kinds). A lifecycle one that has
+    timed out is a candidate sent back to the model once; its fallback applies, so it is not asked again. A profile one
+    has no fallback: it holds the fact as any open question does. P2-3: `question` is the kind asked and `texts` the outcome texts the
     review writes now, exactly the kind's (`TEXT_KEYS`), each one a text the review may write (`written_text_problem`).
     `revive` is the fallback of a `still_true` question; `history` of a `happened`, `renewed` or `paid` one; `archive` only
     with `noise`, never for `paid`. A `date` fact is asked `happened`, `renewed` or `paid`, or `still_true` as noise.
     `fallback_date` is retired. `tz` is the owner's zone (no rule reads it since `fallback_date` went)."""
     if open_question is not None:
-        if open_question.is_timed_out(now):
+        if open_question.is_timed_out(now) and not open_question.is_profile:
             return "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it"
         return "ask_owner: this fact already has an open question; leave it"
     refusal = _ask_shape_refusal(fact, fallback, fallback_date, noise, question)

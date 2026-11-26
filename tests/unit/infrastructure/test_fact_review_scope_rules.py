@@ -16,6 +16,7 @@ from src.domain.fact_review_batch import ReviewBatch
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_lifecycle_world import FUTURE, NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.profile_question_builders import profile_question
 from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Lisbon"
@@ -404,6 +405,21 @@ async def test_a_timed_out_candidate_is_not_asked_again(world):
     assert scope.asks() == [] and [f.id for f in scope.kept()] == [fact]
 
 
+async def test_a_replied_profile_question_holds_its_fact_with_no_fallback_and_its_lifecycle_question_comes_first(world):
+    fact = await world.seed("Doe owns the Q3 budget at Acme")
+    profile = profile_question("person", QuestionStatus.UNANSWERED, fact_id=fact, account_id=ACC, user_id=USER,
+                               asked_at=NOW - timedelta(days=15)).with_reply("Lukas Weber owns it, not me", REPLY_AT)
+    scope = await scope_of(world, fact, questions=[profile])
+
+    res = await scope.ask_owner({"fact_id": fact, "fallback": "revive"})
+
+    assert res["refused"] == "ask" and res["message"] == "ask_owner: this fact already has an open question; leave it"
+    lifecycle = asked(fact, asked_at=NOW - timedelta(days=15))
+    both = await scope_of(world, fact, questions=[lifecycle, profile])
+    assert (await both.ask_owner({"fact_id": fact, "fallback": "revive"}))["message"] == (
+        "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it")
+
+
 async def test_twenty_asks_in_one_pass_are_all_accepted(world):
     facts = [await stale(world, f"fact {n}") for n in range(20)]
     scope = await scope_of(world, *facts)
@@ -412,3 +428,65 @@ async def test_twenty_asks_in_one_pass_are_all_accepted(world):
 
     assert [r["status"] for r in results] == ["asked"] * 20
     assert [a.fact_id for a in scope.asks()] == facts and scope.kept() == []
+
+
+# ------------------------------------------------------------------------------------------------ answer_profile_question
+
+MEETING = "Doe owns the Q3 budget at Acme"
+ALEX_WORDS = "It is me, Alex"
+
+
+def person_question(fact: str, **over):
+    return profile_question("person", QuestionStatus.UNANSWERED, fact_id=fact, account_id=ACC, user_id=USER,
+                            **over).with_reply(ALEX_WORDS, REPLY_AT)
+
+
+async def test_a_profile_answer_is_held_with_its_words_and_exposed_to_the_result(world):
+    fact = await world.seed(MEETING)
+    scope = await scope_of(world, fact, questions=[person_question(fact)])
+
+    res = await scope.answer_profile_question({"question_id": "pq-person", "answer": "pick1", "quote": "me, Alex"})
+
+    assert res["status"] == "answer_held" and "refused" not in res
+    assert [(a.question_id, a.answer, a.quote) for a in scope.profile_answers()] == [
+        ("pq-person", "pick1", "me, Alex")]
+    assert [f.id for f in scope.kept()] == [fact]                 # the answer is no result for the fact itself
+
+
+async def test_a_second_answer_for_the_same_question_is_refused_and_the_first_stands(world):
+    fact = await world.seed(MEETING)
+    scope = await scope_of(world, fact, questions=[person_question(fact)])
+    await scope.answer_profile_question({"question_id": "pq-person", "answer": "pick1", "quote": "me, Alex"})
+
+    res = await scope.answer_profile_question({"question_id": "pq-person", "answer": "pick2", "quote": "Alex"})
+
+    assert res["refused"] == "profile_answer" and res["message"].startswith("Tool error:")
+    assert [a.answer for a in scope.profile_answers()] == ["pick1"]
+
+
+async def test_a_question_outside_this_pass_or_not_a_profile_question_is_refused(world):
+    fact = await world.seed(MEETING)
+    lifecycle = asked(fact, asked_at=NOW - timedelta(days=1))
+    scope = await scope_of(world, fact, questions=[lifecycle])
+
+    other = await scope.answer_profile_question({"question_id": "pq-person", "answer": "pick1", "quote": "x"})
+    not_profile = await scope.answer_profile_question({"question_id": lifecycle.question_id, "answer": "pick1", "quote": "x"})
+
+    assert other["refused"] == not_profile["refused"] == "profile_answer"
+    assert scope.profile_answers() == []
+
+
+@pytest.mark.parametrize("args", [
+    {"question_id": "pq-person", "answer": "pick3", "quote": "me, Alex"},     # not a shown option
+    {"question_id": "pq-person", "answer": "keep", "quote": "me, Alex"},      # a place option on a person question
+    {"question_id": "pq-person", "answer": "pick1", "quote": "Lukas Weber owns"},         # not in the owner's words
+    {"question_id": "pq-person", "answer": "pick1"},                                 # no quote
+])
+async def test_the_domains_refusal_holds_nothing(world, args):
+    fact = await world.seed(MEETING)
+    scope = await scope_of(world, fact, questions=[person_question(fact)])
+
+    res = await scope.answer_profile_question(args)
+
+    assert res["refused"] == "profile_answer" and res["message"].startswith("Tool error:")
+    assert scope.profile_answers() == []

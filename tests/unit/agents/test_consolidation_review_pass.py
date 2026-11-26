@@ -19,6 +19,7 @@ from src.domain.fact_domains import Domain
 from src.domain.fact_review_language import CANONICAL_LABELS, LABEL_KEYS
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_task import FactReviewTask, ReviewItem, encode_review_task
+from src.domain.local_time import local_moment
 from src.domain.pass_actor import PassActor
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
@@ -30,6 +31,7 @@ from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_p2_labels import RU_P2_LABELS, RU_PROFILE_LABELS
+from tests.support.profile_question_builders import doe_point, profile_question
 from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Lisbon"
@@ -406,6 +408,36 @@ async def test_each_fact_line_is_built_from_the_view_with_versions_neighbours_an
         "question_id": "q1", "kind": "still_true", "asked_on": open_question.asked_at.astimezone(ZoneInfo(TZ)).date().isoformat(),
         "fallback": "revive", "timed_out": False, "reply": "still do", "reply_at": "2026-10-22T08:30:00+01:00",
     }
+
+
+async def test_a_profile_question_with_the_owners_words_shows_beside_the_question_and_backs_a_rewrite(world):
+    text = "Doe owns the Q3 budget at Acme"
+    fact = await world.seed(text, expiry_kind=ExpiryKind.HORIZON, ttl_days=60, reported_date=NOW - timedelta(days=10),
+                            expires_at=NOW + timedelta(days=50))
+    lifecycle = build_question(QuestionStatus.ASKED, question_id="q-life", fact_id=fact, account_id=ACC, user_id=USER)
+    profile = profile_question("person", QuestionStatus.UNANSWERED, fact_id=fact, account_id=ACC, user_id=USER,
+                               quoted_text=text, asked_at=NOW - timedelta(days=2)
+                               ).with_reply("Lukas Weber owns it, not me", NOW - timedelta(hours=1))
+    rewrite = {"fact_id": fact, "updates": {"state": "current", "content": "Lukas Weber owns the Q3 budget at Acme", "expiry": HORIZON},
+               "basis": {"kind": "reply", "question_id": "pq-person", "quote": "Lukas Weber owns"}}
+    agent = _agent(world, [_tools(("update_fact", rewrite)), REPORT])
+
+    response = await _run(agent, await _task(world, fact, questions=(profile, lifecycle)))
+
+    line = _line(_user_text(agent))
+    assert list(line)[-2:] == ["question", "profile_question"]
+    assert line["question"]["question_id"] == "q-life" and "fallback" in line["question"]
+    assert line["profile_question"] == {
+        "question_id": "pq-person", "kind": "person", "about": "Doe",
+        "options": [{"id": "pick1", "label": "Alex Doe"}, {"id": "pick2", "label": doe_point().options[1].label},
+                    {"id": "not_listed", "label": "Not on my list"}, {"id": "dont_know", "label": "Don't remember"}],
+        "reply": "Lukas Weber owns it, not me", "reply_at": local_moment(NOW - timedelta(hours=1), TZ).isoformat(timespec="seconds"),
+        "timed_out": False,
+    }
+    assert response.status == AgentStatus.SUCCESS, response.error
+    (decided,) = response.result["outcomes"]
+    assert (decided["fact_id"], decided["outcome"], decided["basis_kind"]) == (fact, "rewritten", "reply")
+    assert world.docs[decided["written_id"]]["text"] == "Lukas Weber owns the Q3 budget at Acme"
 
 
 # ------------------------------------------------------------------------------------------------ the report

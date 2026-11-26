@@ -1,6 +1,6 @@
 """The profile question on the review record (fact profile RFC §4.7): the validator ties kind, origin, open point, fallback
 and texts together both ways, a lifecycle question stays as it was, an owner close of a profile question carries no answer
-kind, and its words are never recorded on it. Invented cast."""
+kind, and the words code could not read are recorded on it for the review. Invented cast."""
 import pytest
 
 from src.domain.exceptions import QuestionTransitionError
@@ -94,18 +94,24 @@ def test_an_option_label_fits_a_button():
         OpenPointOption(id="pick1", label="x" * 76, value="1")
 
 
-# ------------------------------------------------------------------------------------------------ no reply text
+# ------------------------------------------------------------------------------------------------ the reply text
 
-def test_a_profile_question_never_has_a_reply_text():
-    with pytest.raises(ValueError, match="never has a reply_text"):
-        profile_question("place", QuestionStatus.ASKED, reply_text="Rome, Italy", reply_at=NOW)
+# Reviewer edit (profile free replies, decision profile_question_free_replies.md, RFC §4.7): a profile question now
+# carries the words code could not read as a `reply_text`, under the same rules as a lifecycle question's.
+def test_a_profile_question_has_a_reply_text_only_as_a_lifecycle_one_does():
+    replied = profile_question("place", QuestionStatus.ASKED, reply_text="Rome, Italy", reply_at=NOW)
+    assert (replied.reply_text, replied.reply_at, replied.is_profile) == ("Rome, Italy", NOW, True)
+    with pytest.raises(ValueError, match="reply_text and reply_at go together"):
+        profile_question("place", QuestionStatus.ASKED, reply_text="Rome, Italy")
+    with pytest.raises(ValueError):
+        profile_question("place", QuestionStatus.QUEUED, reply_text="Rome, Italy", reply_at=NOW)   # never asked
 
 
-def test_with_reply_is_refused_for_a_profile_question_and_still_works_for_a_lifecycle_one():
-    asked = profile_question("place", QuestionStatus.ASKED)
-    with pytest.raises(QuestionTransitionError, match="profile question"):
-        asked.with_reply("Rome, Italy", NOW)
-    assert lifecycle_question(QuestionStatus.ASKED).with_reply("still true", NOW).reply_text == "still true"
+def test_with_reply_records_a_profile_questions_words_as_a_lifecycle_questions():
+    profile = profile_question("place", QuestionStatus.ASKED).with_reply("Rome, Italy", NOW)
+    lifecycle = lifecycle_question(QuestionStatus.ASKED).with_reply("still true", NOW)
+    assert (profile.reply_text, profile.reply_at, profile.status) == ("Rome, Italy", NOW, QuestionStatus.ASKED)
+    assert (lifecycle.reply_text, lifecycle.reply_at) == ("still true", NOW)
 
 
 # ------------------------------------------------------------------------------------------------ the owner close
@@ -146,3 +152,30 @@ def test_a_timeout_or_elsewhere_close_of_a_profile_question_carries_nothing(by):
     closed = profile_question("person", QuestionStatus.ASKED).closed(by, NOW)
     assert closed.answer is None and closed.answer_source is None and closed.is_profile
 
+
+
+# ------------------------------------------------------------------------------------------------ words for the review
+
+def test_a_profile_question_takes_the_words_code_could_not_read_as_a_lifecycle_one_does():
+    asked = profile_question("person", QuestionStatus.ASKED)
+
+    replied = asked.with_reply("Lukas Weber owns it, not me", NOW)
+    more = replied.with_reply("it is the Q3 budget at Acme", NOW)
+
+    assert (replied.reply_text, replied.reply_at, replied.reply_not_shown) == ("Lukas Weber owns it, not me", NOW, True)
+    assert more.reply_text == "Lukas Weber owns it, not me\nit is the Q3 budget at Acme"
+    assert more.offered(NOW).reply_not_shown is False
+    with pytest.raises(QuestionTransitionError):
+        profile_question("person", QuestionStatus.QUEUED).with_reply("Tom Baker", NOW)   # never asked: no reply
+
+
+def test_the_review_closes_a_replied_profile_question_on_its_words():
+    replied = profile_question("place", QuestionStatus.UNANSWERED).with_reply(
+        "that is the Q3 budget at Acme", NOW)
+
+    closed = replied.offered(NOW).closed(ClosedBy.REVIEW, NOW, None, "review")
+
+    assert (closed.status, closed.closed_by, closed.answer, closed.answer_source) == (
+        QuestionStatus.CLOSED, ClosedBy.REVIEW, None, "review")
+    with pytest.raises(QuestionTransitionError, match="reply_text"):
+        profile_question("place", QuestionStatus.ASKED).closed(ClosedBy.REVIEW, NOW, None, "review")

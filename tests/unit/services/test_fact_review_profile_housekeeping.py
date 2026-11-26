@@ -184,3 +184,93 @@ async def test_the_daily_run_sends_a_queued_profile_question_under_its_own_frame
     state = await world.review_store.get_state(ACC)
     assert (state.current_question_id, state.profile_claimed_on) == ("pq-place", date(2026, 10, 23))
     assert (await day_row(world)).questions_sent == 1
+
+
+# ------------------------------------------------------------------------------------------------ the owner's words
+
+MEETING = "Doe owns the Q3 budget at Acme"
+CORRECTED = "Lukas Weber owns the Q3 budget at Acme"
+WORDS = "Lukas Weber owns it, not me"
+
+
+async def replied_profile(world: ReviewWorld, fact_id: str, asked_at=NOW - timedelta(days=3)):
+    """An unanswered person question about `fact_id` with the owner's words recorded through the store."""
+    await profile(world, "person", fact_id=fact_id, quoted_text=MEETING, asked_at=asked_at)
+    await world.review_store.record_reply("pq-person", WORDS, NOW - timedelta(hours=1))
+
+
+async def test_the_review_scope_reads_a_replied_profile_question_and_leaves_an_unreplied_one():
+    world = ReviewWorld()
+    await replied_profile(world, "f-meeting")
+    await profile(world, "place", QuestionStatus.UNANSWERED)
+    await world.put_question(lifecycle_question(account_id=ACC, user_id=USER, question_id="q-life"))
+
+    assert sorted(q.question_id for q in await world.review_store.questions_for_account(ACC, scope="review")) == [
+        "pq-person", "q-life"]
+    assert [q.question_id for q in await world.review_store.questions_for_account(ACC)] == ["q-life"]
+
+
+async def test_the_owners_words_bring_the_fact_to_the_model_and_its_rewrite_closes_the_question_by_review():
+    world = ReviewWorld()
+    fact = await world.seed(MEETING)
+    await replied_profile(world, fact)
+    await world.seed_state(account_id=ACC)
+    rig = Rig(world)
+
+    async def play(task, scope):
+        assert task.profile_question_for(fact).reply_text == WORDS and task.question_for(fact) is None
+        result = await scope.update_fact({
+            "fact_id": fact, "updates": {"state": "current", "content": CORRECTED, "expiry": {"kind": "none"}},
+            "basis": {"kind": "reply", "question_id": "pq-person", "quote": "Lukas Weber owns"}})
+        assert result["status"] == "updated", result
+    rig.agent.play = play
+
+    assert await rig.run() == {"status": "completed"}
+
+    [task] = rig.agent.tasks
+    assert [item.fact.id for item in task.items] == [fact]
+    closed = await stored_question(world, "pq-person")
+    assert (closed.status, closed.closed_by, closed.answer, closed.answer_source) == (
+        QuestionStatus.CLOSED, ClosedBy.REVIEW, None, "review")
+    assert closed.offered_at == NOW
+    assert world.docs[fact]["state"] == "superseded"
+    assert [d["text"] for d in world.docs.values() if d.get("state") == "current"] == [CORRECTED]
+    row = await day_row(world)
+    assert (row.closed_by_reply, row.rewritten, row.timed_out) == (1, 1, 0)
+
+
+async def test_a_timed_out_profile_question_the_model_leaves_is_no_fallback_and_closes_on_the_next_run():
+    world = ReviewWorld()
+    fact = await world.seed(MEETING)
+    await replied_profile(world, fact, asked_at=NOW - QUESTION_TIMEOUT - timedelta(hours=1))
+    await world.seed_state(account_id=ACC)
+    before = dict(world.docs[fact])
+    rig = Rig(world)
+
+    assert await rig.run() == {"status": "completed"}
+
+    [task] = rig.agent.tasks
+    assert [item.fact.id for item in task.items] == [fact]
+    assert world.docs[fact] == before                               # never archived: a profile question has no fallback
+    kept = await stored_question(world, "pq-person")
+    assert kept.is_open and kept.offered_at == NOW
+    row = await day_row(world)
+    assert row is None or (row.timed_out, row.archived_by_review) == (0, 0)
+
+    assert await rig.run() == {"status": "completed"}               # read once: the next housekeeping times it out
+
+    assert (await stored_question(world, "pq-person")).closed_by is ClosedBy.TIMEOUT
+    assert world.docs[fact] == before and len(rig.agent.tasks) == 1
+
+
+async def test_a_timed_out_profile_question_with_unread_words_whose_fact_is_gone_closes_at_once():
+    world = ReviewWorld()
+    await replied_profile(world, "f-gone", asked_at=NOW - QUESTION_TIMEOUT - timedelta(hours=1))
+    await world.seed_state(account_id=ACC)
+    rig = Rig(world)
+
+    assert await rig.run() == {"status": "completed"}
+
+    closed = await stored_question(world, "pq-person")
+    assert closed.closed_by is ClosedBy.TIMEOUT and closed.reply_text == WORDS and closed.offered_at is None
+    assert rig.agent.routed == []

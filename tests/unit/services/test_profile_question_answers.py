@@ -1,7 +1,7 @@
 """The owner's answers to profile questions (fact profile RFC §4.7, PR 5d): a digit or a button records the answer in the
 account's store and closes the question (owner, no answer kind, source `digit` or `button`), the next question is released,
-words are not read yet (the question stays open, nothing is recorded, no `reply_text`), and a profile question never reaches
-`apply`. On the review world with the real review store and a recording answers store. Invented cast."""
+words code cannot read are recorded on the question for the review (it stays open, nothing is recorded in the answers
+store), and a profile question never reaches `apply`. On the review world with the real review store and a recording answers store. Invented cast."""
 import logging
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
@@ -241,50 +241,105 @@ async def test_a_click_on_a_closed_profile_question_shows_it_closed_and_writes_n
 
 # ------------------------------------------------------------------------------------------------ words
 
-async def test_words_are_not_read_yet_the_question_is_still_asked_and_nothing_is_recorded():
+# Reviewer edits (profile free replies, decision profile_question_free_replies.md, RFC §4.7): words code cannot read are
+# no longer dropped with a "not understood" form; they are recorded on the question as its `reply_text`, acknowledged
+# `MEMORY_REPLY_NOTED` for every kind, the current slot is given up, and the review model reads them on its next pass.
+
+async def test_words_code_cannot_read_on_a_place_question_are_recorded_and_the_question_is_still_asked():
     world, store = ReviewWorld(), Answers()
     await world.seed_state(account_id=ACC, current_question_id="pq-place")
     await ask(world, "place")
 
     text = await reply(world, service(world, store), "Rome, Italy", "pq-place")
 
-    assert text == ack(world, UIMessage.MEMORY_PROFILE_NOT_READ)
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED)
     kept = world.question_docs["pq-place"]
-    assert kept["status"] == "asked" and kept["reply_text"] is None and kept["reply_at"] is None
-    assert store.recorded == [] and next_tasks(world) == []
-    assert (await world.review_store.get_state(ACC)).current_question_id == "pq-place"
+    assert kept["status"] == "asked" and kept["reply_text"] == "Rome, Italy" and kept["reply_at"] == world.now
+    assert store.recorded == []
+    assert next_tasks(world) == [{"task_type": "fact_review", "user_id": USER, "account_id": ACC, "mode": "next"}]
+    assert (await world.review_store.get_state(ACC)).current_question_id is None
     row = await day_row(world)
     assert row.profile_reply_not_read == 1 and row.profile_answered == 0 and row.replies_in_words == 0
     assert await history(world) == [("user", reply_part("pq-place", "Rome, Italy")), ("model", text)]
 
 
-async def test_a_date_question_tells_the_form_that_is_read():
+async def test_a_date_questions_words_are_noted_as_any_kinds():
     world, store = ReviewWorld(), Answers()
     await ask(world, "date")
 
     text = await reply(world, service(world, store), "October 2026", "pq-date")
 
-    assert text == ack(world, UIMessage.MEMORY_PROFILE_DATE_NOT_READ)
-    assert text != ack(world, UIMessage.MEMORY_PROFILE_NOT_READ)
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED)
+    kept = world.question_docs["pq-date"]
+    assert (kept["status"], kept["reply_text"]) == ("asked", "October 2026") and store.recorded == []
 
 
-async def test_a_digit_beyond_the_options_is_words_and_not_read():
+async def test_a_digit_beyond_the_options_is_words_and_recorded_for_the_review():
     world, store = ReviewWorld(), Answers()
     await ask(world, "place")
 
     text = await reply(world, service(world, store), "9", "pq-place")
 
-    assert text == ack(world, UIMessage.MEMORY_PROFILE_NOT_READ) and store.recorded == []
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED) and store.recorded == []
+    kept = world.question_docs["pq-place"]
+    assert (kept["status"], kept["reply_text"]) == ("asked", "9")
 
 
-async def test_the_not_read_reply_never_reaches_the_review_model():
+async def test_the_unread_reply_reaches_the_review_model():
     world, store = ReviewWorld(), Answers()
     await ask(world, "person")
 
     await reply(world, service(world, store), "the one from Lisbon", "pq-person")
 
-    unread = [q for q in await world.review_store.questions_for_account(ACC, scope="all") if q.reply_not_shown]
-    assert unread == []
+    unread = [(q.question_id, q.reply_text) for q in await world.review_store.questions_for_account(ACC, scope="review")
+              if q.reply_not_shown]
+    assert unread == [("pq-person", "the one from Lisbon")]
+
+
+async def test_words_code_cannot_read_are_recorded_for_the_review_and_release_the_next_question():
+    world, store = ReviewWorld(), Answers()
+    await world.seed_state(account_id=ACC, current_question_id="pq-person")
+    await ask(world, "person")
+
+    text = await reply(world, service(world, store), "Lukas Weber owns it, not me", "pq-person")
+
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED)
+    kept = world.question_docs["pq-person"]
+    assert (kept["status"], kept["reply_text"], kept["offered_at"]) == ("asked", "Lukas Weber owns it, not me", None)
+    assert store.recorded == []
+    assert (await world.review_store.get_state(ACC)).current_question_id is None
+    assert next_tasks(world) == [{"task_type": "fact_review", "user_id": USER, "account_id": ACC, "mode": "next"}]
+    row = await day_row(world)
+    assert (row.profile_reply_not_read, row.profile_answered, row.replies_in_words) == (1, 0, 0)
+    assert await history(world) == [("user", reply_part("pq-person", "Lukas Weber owns it, not me")), ("model", text)]
+    unread = [q.question_id for q in await world.review_store.questions_for_account(ACC, scope="review")
+              if q.reply_not_shown]
+    assert unread == ["pq-person"]
+
+
+async def test_words_on_a_question_that_is_not_current_are_recorded_and_release_nothing():
+    world, store = ReviewWorld(), Answers()
+    await world.seed_state(account_id=ACC, current_question_id="q-other")
+    await ask(world, "date", QuestionStatus.UNANSWERED)
+
+    text = await reply(world, service(world, store), "the day of the Q3 budget", "pq-date")
+
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED)
+    assert world.question_docs["pq-date"]["reply_text"] == "the day of the Q3 budget"
+    assert next_tasks(world) == [] and (await world.review_store.get_state(ACC)).current_question_id == "q-other"
+
+
+async def test_words_the_review_was_already_shown_are_not_recorded_and_left_to_conversation():
+    world, store = ReviewWorld(), Answers()
+    await ask(world, "person")
+    await world.review_store.record_reply("pq-person", "Lukas Weber owns", NOW - timedelta(hours=2))
+    assert await world.review_store.mark_offered("pq-person", NOW - timedelta(hours=1))
+
+    text = await reply(world, service(world, store), "and Tom too", "pq-person")
+
+    assert text is None
+    assert world.question_docs["pq-person"]["reply_text"] == "Lukas Weber owns" and await history(world) == []
+    assert (await day_row(world)) is None or (await day_row(world)).profile_reply_not_read == 0
 
 
 # ------------------------------------------------------------------------------------------------ the other doors

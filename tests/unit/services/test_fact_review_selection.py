@@ -31,6 +31,7 @@ from src.domain.user import UserBotConfig, UserProfile
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.fact_review_scope import FactReviewScope
 from src.services.fact_answer_service import FactAnswerService
+from src.services.profile_question_answers import ProfileQuestionAnswers
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_owner_channel import FactReviewOwnerChannel
@@ -123,13 +124,14 @@ class ScriptedAgent:
         result = FactReviewResult(
             outcomes=tuple(scope.decisions()), asks=tuple(scope.asks()), kept=tuple(f.id for f in scope.kept()),
             message_language=self.language if task.mirror else None, labels=self.labels if task.mirror else None,
+            profile_answers=tuple(scope.profile_answers()),
         )
         return AgentResponse.success(message.task_id, message.recipient, encode_review_result(result))
 
 
 class Rig:
     def __init__(self, world: ReviewWorld, clock: Optional[Callable[[], datetime]] = None,
-                 service_class: type = FactReviewService) -> None:
+                 service_class: type = FactReviewService, profile_answers: Optional[ProfileQuestionAnswers] = None) -> None:
         self.world = world
         self.agent = ScriptedAgent(world)
         accounts, users = Accounts(), Users()
@@ -139,7 +141,7 @@ class Rig:
         answers = FactAnswerService(
             fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
             task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
-            owner_zones=zones, clock=world.clock,
+            owner_zones=zones, clock=world.clock, profile_answers=profile_answers,
             bio_cache=world.bio,
         )
         self.service = service_class(

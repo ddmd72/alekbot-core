@@ -76,9 +76,15 @@ def neighbours_of(fact: FactEntity, nearest: Sequence[FactEntity]) -> List[FactE
 
 
 def questions_about(facts: Iterable[FactEntity], questions: Iterable[FactReviewQuestion]) -> Tuple[FactReviewQuestion, ...]:
-    """The open questions about these facts: the questions a pass over them is given."""
+    """The open questions about these facts: the questions a pass over them is given, and the ones it may close. A fact
+    shows one profile question (the earliest queued): another profile question about the same fact is not shown, so it
+    is neither offered nor closed by this pass and waits for a later one."""
     ids = {f.id for f in facts}
-    return tuple(q for q in questions if q.is_open and q.fact_id in ids)
+    about = [q for q in questions if q.is_open and q.fact_id in ids]
+    first_profile: Dict[str, FactReviewQuestion] = {}
+    for q in sorted((q for q in about if q.is_profile), key=lambda q: (q.queue_key, q.queued_at, q.question_id)):
+        first_profile.setdefault(q.fact_id, q)
+    return tuple(q for q in about if not q.is_profile or first_profile[q.fact_id] is q)
 
 
 def _text_only(fact: FactEntity) -> FactEntity:
@@ -88,7 +94,8 @@ _LANGUAGE_CODE = re.compile(r"[a-z]{2}")  # `fact_review_language` imports this 
 
 
 class FactReviewTask(BaseModel):
-    """`items`: the batch, as read when the pass began. `questions`: the open questions about its facts. `mirror`: the
+    """`items`: the batch, as read when the pass began. `questions`: the open questions about its facts (the lifecycle
+    ones and the profile ones with the owner's words). `mirror`: the
     owner's response language mirrors his messages, so the pass reports their language (and, for a language without UI
     strings, the labels); `owner_messages` (oldest first) belong to that mode only and are held to
     `owner_messages_block`. `now` is the run's one instant, which the pass uses for every decision it makes (none: the
@@ -132,8 +139,13 @@ class FactReviewTask(BaseModel):
         return ReviewBatch(tuple(item.fact for item in self.items), self.questions)
 
     def question_for(self, fact_id: str) -> Optional[FactReviewQuestion]:
-        """The open question about the fact, if there is one."""
-        return next((q for q in self.questions if q.fact_id == fact_id and q.is_open), None)
+        """The open lifecycle question about the fact (whether it still holds), if there is one."""
+        return next((q for q in self.questions if q.fact_id == fact_id and q.is_open and not q.is_profile), None)
+
+    def profile_question_for(self, fact_id: str) -> Optional[FactReviewQuestion]:
+        """The open profile question about the fact (which place, person or date its words mean), if there is one: one
+        carrying the owner's words, the only kind the batch is given."""
+        return next((q for q in self.questions if q.fact_id == fact_id and q.is_open and q.is_profile), None)
 
 
 def encode_review_task(task: FactReviewTask) -> Dict[str, Any]:
