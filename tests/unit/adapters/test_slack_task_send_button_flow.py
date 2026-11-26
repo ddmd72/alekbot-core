@@ -60,7 +60,8 @@ class Flow:
         language = FakeLanguageService()
         language.preferences[USER_ID] = (LanguageCode.EN, False)
         iam = IAMService(user_repo=world.users, account_repo=AsyncMock(),
-                         whitelist_repo=FakeWhitelistRepo(emails=("alex@example.com", "other@example.com")))
+                         whitelist_repo=FakeWhitelistRepo(emails=("alex@example.com", "other@example.com")),
+                         cabinet_url="https://main.example.test/cabinet")
         send = ExternalTaskSendChoice(world.service, language, FileLocalizationAdapter())
         self.chat = ConversationHandler(
             coordinator=MagicMock(), agent_factory=MagicMock(),
