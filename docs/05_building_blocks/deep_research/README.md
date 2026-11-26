@@ -14,6 +14,10 @@ covers:
 -->
 # Deep Research
 
+**Status: hidden.** No model is offered the `deep_research` intent (its descriptor is `internal=True`) and Smart's
+profile carries no deep-research protocol, so no run starts from a chat turn. The code below stays as built, for a
+later system skill to call. Decision record: [`deep_research_specialist_hidden.md`](../../04_solution_strategy/decisions/deep_research_specialist_hidden.md).
+
 ## Purpose
 
 Deep research is a long, expensive, autonomous investigation: the model searches and reads the web for tens of

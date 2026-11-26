@@ -325,7 +325,8 @@ DEEP_RESEARCH_AGENT = AgentDescriptor(
             ),
         },
     },
-    internal=False,
+    # Hidden from every model until a system skill replaces it (decisions/deep_research_specialist_hidden.md).
+    internal=True,
 )
 
 TASKS = AgentDescriptor(

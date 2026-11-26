@@ -33,7 +33,7 @@ MAX_KEYS_PER_WORKER = 3                 # set at implementation review; unrevoke
 LABEL_MAX_CHARS = 32                    # set at implementation review
 LABEL_PATTERN = r"[a-z0-9][a-z0-9_-]*"  # set at implementation review; labels are also the Smart tool's enum
 LEASE_S = 900                           # set at implementation review; one lease, and one renewal's extension
-MAX_RENEWALS_PER_TASK = 8               # set at implementation review; within one lease
+MAX_RENEWALS_PER_TASK = 16              # owner 2026-11-26: deep research runs for an hour and more; within one lease
 MAX_CLAIMS_PER_TASK = 5                 # set at implementation review; releases and expiries count through their claims
 HOLD_S = 86_400                         # set at implementation review; how long a held task waits for `$task send`
 TASK_MAX_AGE_S = 7 * 86_400             # set at implementation review; deadline_at = created_at + this
