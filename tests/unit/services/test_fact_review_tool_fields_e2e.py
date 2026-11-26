@@ -15,14 +15,20 @@ from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig
 from src.domain.consolidation import consolidation_agent_id
 from src.domain.entities import ExpiryKind
+from src.domain.fact_review_question import ClosedBy, QuestionStatus
 from src.domain.fact_write_context import as_utc
 from src.domain.llm import LLMRequest, LLMResponse
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.services.profile_question_answers import ProfileQuestionAnswers
+from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
+from tests.support.profile_question_builders import profile_question
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.scripted_llm import RoutedLLM, execution_context, tool_results, tools
 from tests.support.tool_e2e import StubPromptBuilder
 from tests.support.tool_fields import unused
+from tests.unit.services.test_profile_question_answers import Answers
+from tests.unit.services.test_fact_review_profile_housekeeping import MEETING
 from tests.unit.services.test_fact_review_selection import USER, Rig, asked, current, evidence, open_questions, stale
 
 REVIEW = "SYSTEM MAINTENANCE — STALE FACT REVIEW"
@@ -111,6 +117,10 @@ def ASK_PAID(fact_id: str) -> Dict[str, Any]:
     return {"fact_id": fact_id, "question": "paid", "texts": dict(FINE_TEXTS), "fallback": "history"}
 
 
+def ANSWER_PROFILE(question_id: str) -> Dict[str, Any]:
+    return {"question_id": question_id, "answer": "pick1", "quote": "me, Alex"}
+
+
 def ASK_NOISE(fact_id: str) -> Dict[str, Any]:
     return {"fact_id": fact_id, "question": "still_true", "fallback": "archive", "noise": True}
 
@@ -132,9 +142,9 @@ class ReviewPass:
         return None  # an unexpected pass: the fake raises ScriptExhausted
 
 
-def rig(world: ReviewWorld, script: ReviewPass) -> Rig:
+def rig(world: ReviewWorld, script: ReviewPass, profile_answers: Any = None) -> Rig:
     """The selection test's rig with a real coordinator holding a real consolidation agent over the scripted model."""
-    r = Rig(world)
+    r = Rig(world, profile_answers=profile_answers)
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id=consolidation_agent_id(USER), agent_type="consolidation"),
         execution_context=execution_context(script.llm, "consolidation"),
@@ -297,3 +307,31 @@ def test_the_scripted_calls_use_every_declared_field():
     asks = [ASK_HAPPENED("f", "a", "b"), ASK_RENEWED("f"), ASK_PAID("f"), ASK_NOISE("f")]
     assert unused("consolidation_review", "update_fact", updates) == []
     assert unused("consolidation_review", "ask_owner", asks) == []
+
+
+async def test_a_profile_answer_is_recorded_as_the_owners_and_closes_its_question():
+    """`answer_profile_question`: `question_id` names the question that closes, `answer` is the option recorded, and
+    `quote` is a verification input (it must be words of the owner's reply), never stored."""
+    world, store = ReviewWorld(), Answers()
+    fact = await world.seed(MEETING)
+    draft = profile_question("person", QuestionStatus.UNANSWERED, account_id=ACC, user_id=USER, fact_id=fact,
+                             quoted_text=MEETING)
+    await world.put_question(draft)
+    await world.review_store.record_reply(draft.question_id, "It is me, Alex", NOW - timedelta(hours=1))
+    await world.seed_state(account_id=ACC)
+    script = ReviewPass()
+    script.turns.append(tools(("answer_profile_question", ANSWER_PROFILE(draft.question_id))))
+
+    assert await rig(world, script, ProfileQuestionAnswers(store)).run() == {"status": "completed"}
+
+    (result,) = results(script.llm, "answer_profile_question")
+    assert result["status"] == "answer_held", result
+    (recorded,) = store.recorded
+    assert (recorded.resolution, recorded.name) == ("entry", "Alex Doe")
+    closed = (await world.review_store.get_questions([draft.question_id]))[0]
+    assert (closed.closed_by, closed.answer_source) == (ClosedBy.REVIEW, "review")
+    script_spent(script.llm)
+
+
+def test_the_scripted_calls_use_every_declared_profile_answer_field():
+    assert unused("consolidation_review", "answer_profile_question", [ANSWER_PROFILE("q")]) == []

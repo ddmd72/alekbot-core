@@ -349,14 +349,15 @@ corrects the profile by code, without a model call.
 review's queue, current-question slot, primary channel, session pair, message ref, reply intake and buttons — no second
 channel. What differs is stated in the record, so no reader has to guess: origin `profile`, no texts, delivery `chat`,
 fallback `none` (silence changes nothing; a lifecycle question can never take `none` and a profile question can take
-nothing else), never a `reply_text` (the owner's words are never offered to the review model), `quoted_text` the newest
+nothing else), a `reply_text` only for words code could not read (§ "Words" below), `quoted_text` the newest
 current fact naming the point, an `open_point` with the key, the printed words, the atlas reason and the options shown,
 and an id derived from the account and the key, so one point is never queued twice. Every reader that treats a question
-as a stale fact in the review's hands (held facts and the pool, the review batch and the review model's view, the pass's
-closes, fallbacks, kept-twice, the digest, the Cabinet queue) reads lifecycle questions only: the store's list reads
-return lifecycle questions unless a reader names another scope. Only the claim, the reply and button lookup, the
-review's housekeeping (a stuck send, an asked question that becomes unanswered, a timeout) and the janitor's
-`review_due` read both.
+as a stale fact in the review's hands (held facts and the pool, fallbacks, kept-twice, the digest, the Cabinet queue)
+reads lifecycle questions only: the store's list reads return lifecycle questions unless a reader names another scope.
+The claim, the reply and button lookup, the review's housekeeping (a stuck send, an asked question that becomes
+unanswered, a timeout) and the janitor's `review_due` read both (`all`). The review's batch and the closes after its pass
+read the `review` scope: the lifecycle questions and the profile questions that carry the owner's words. A fact shows
+the model at most one profile question per pass, the earliest queued.
 
 **Order and rate.** Lifecycle questions go first (a stale fact is wrong in answers now; a profile gap costs recall).
 At most one profile question is claimed per owner-local day, inside the shared daily cap, and at most three are open.
@@ -373,14 +374,19 @@ on my list" and "don't remember". Date: the candidate dates (the points read fro
 ISO form), then "don't remember"; the question states the ISO form it reads, and a reply in words names another date. A
 digit or a button picks an option.
 
-**Words, read by code only.** A place reply of a city and a known country, a city the atlas places in one row, or a
-country that names one shown option; a person reply of a name or form of a shown entry; a date reply in one of the
-forms the derivation already accepts from the profiler (a year, a year and month, a full date, a range of two of
-these joined by a hyphen, a dash or `to`), read by the same parser. Anything else is not
-applied: the question stays open, the owner is told what form is read, and nothing is recorded for the review model. No
-model reads a reply: the question states the form, replies are short, and a failed read costs one more reply; a model
-would add a prompt, its contract tests, a failure path and a cost per reply. If the counters ever show replies that
-code cannot read, the rule for a model is at most one cheap-tier call per owner reply, only after code failed to read it.
+**Words: code reads first, the review model reads the rest.** A place reply of a city and a known country, a city the
+atlas places in one row, or a country that names one shown option; a person reply of a name or form of a shown entry; a
+date reply in one of the forms the derivation already accepts from the profiler (a year, a year and month, a full date,
+a range of two of these joined by a hyphen, a dash or `to`), read by the same parser. A reply code reads is applied at
+once. Words it cannot read are recorded on the question (`reply_text`) and acknowledged; the question stays open and its
+buttons live. The next review pass shows the model the fact with its `profile_question` (kind, the words it asks about, the
+options shown, the reply). The model may decide the fact on those words (a correction, never true, over), as on any
+reply, and may resolve the question's own point with `answer_profile_question(question_id, answer, quote)`: an option the
+question showed, or for a date question an ISO value. Code validates it with the readers above (the quote must be in the
+words, the answer one the question offers), records it as the owner's own answer, and closes the question `review`; if the
+record is refused or fails, nothing closes and the question times out later. A timed-out profile question is never a
+fallback: it is read once with its words and then closes `timeout`. Decision record:
+`docs/04_solution_strategy/decisions/profile_question_free_replies.md`.
 
 **Where answers live.** `{prefix}profile_answers`, one document per account (doc id `{account_id}`): `places [{key,
 city, country, resolution, geonameid, question_id, answered_at}]` and `people [{key, lineage_id, mention, resolution,
@@ -388,7 +394,9 @@ name, question_id, answered_at}]`. Place resolutions: `atlas` (the row the owner
 atlas lacks, city and country as printed or typed), `unknown`. Person resolutions: `entry` (an entry's name), `not_listed`,
 `unknown`. Port `ProfileAnswerRepository` (`get`, `record` — a transaction, the first answer for a key wins). Per account
 and never in the repository atlas (the repository is public), not on the account document, not in the confirmed list
-(OD-13 b). Written only from the owner's answer; the profiler, the consolidator and the review pass never write it. A
+(OD-13 b). Written only from the owner's answer: his pick, words code reads, or words the review pass resolves through
+`answer_profile_question` (recorded exactly as his own pick, from his own quoted words); the profiler and the consolidator
+never write it. A
 document that does not parse ends the profile step, as the list does (§4.5): deriving without it would undo answers.
 A timeout (14 days) writes nothing; the derived id keeps the point from being asked again while the closed question is
 kept (90 days), after which an unanswered point may be asked once more. "Don't remember" records `unknown`: never
