@@ -12,6 +12,7 @@ import pytest
 from quart import Quart
 
 from src.services.external_task_service import ExternalTaskService
+from src.services.external_task_wake_kit import WakeKit
 from src.services.inactive_user_check import InactiveUserCheck
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
@@ -29,8 +30,8 @@ class WakeSite(Site):
         self.service = ExternalTaskService(
             self.tasks, self.workers, self.queue, self.users, InactiveUserCheck(self.users),
             digest_key=bytes(range(32)), clock=lambda: datetime.now(timezone.utc), new_id=self._new_id,
-            random_bytes=self._random_bytes, cipher=AesGcmTestCipher() if cipher else None, webhook=self.webhook,
-            own_hosts=("svc.example.org",))
+            random_bytes=self._random_bytes, wake=WakeKit(cipher=AesGcmTestCipher() if cipher else None,
+                                                          webhook=self.webhook, own_hosts=("svc.example.org",)))
         self.app = Quart("workers-wake")
         self.app.register_blueprint(create_user_cabinet_blueprint(
             invite_service=MagicMock(), cabinet_sessions=self.kit.verifier, user_repo=MagicMock(),

@@ -27,6 +27,7 @@ from src.domain.wake_refusal import WakeRefusal, WakeTargetRefused
 from src.domain.wake_target import WakeTarget, wake_aad
 from src.ports.outbound_webhook_port import OutboundWebhookPort
 from src.services.external_task_service import ExternalTaskService
+from src.services.external_task_wake_kit import WakeKit
 from src.services.inactive_user_check import InactiveUserCheck
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.unit.services.test_external_task_service import DIGEST_KEY, ORIGIN, TEXT, TITLE, World as TaskWorld
@@ -55,8 +56,8 @@ class World(TaskWorld):
         self.service = ExternalTaskService(
             self.tasks, self.workers, self.queue, self.users, InactiveUserCheck(self.users), digest_key=DIGEST_KEY,
             clock=lambda: self.now, new_id=self._new_id, random_bytes=self._random_bytes,
-            cipher=self.cipher if cipher else None, webhook=self.webhook if webhook else None,
-            own_hosts=("SVC.example.org",))
+            wake=WakeKit(cipher=self.cipher if cipher else None, webhook=self.webhook if webhook else None,
+                         own_hosts=("SVC.example.org",)))
 
     async def target(self, worker_id: Optional[str] = None) -> None:
         await self.service.save_wake_target("usr-1", worker_id or self.research.worker_id, URL, HEADERS)
