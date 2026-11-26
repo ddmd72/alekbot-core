@@ -19,6 +19,9 @@ that path.
 - **The help text** (`src/utils/capabilities.py`) no longer lists deep research.
 - **Longer leases on the queue.** `MAX_RENEWALS_PER_TASK` 8 → 16: a worker renewing every 8 minutes keeps a task for
   about 2.4 hours instead of about 80 minutes, because a deep research run is allowed to take an hour and more.
+- **Longer briefs on the queue** (owner, same day). `TASK_TEXT_MAX_CHARS` 3 000 → 10 000: a research brief with its
+  question, scope and the owner's situation outgrew 3 000 characters, and the cap had no measured basis (the receipt is a
+  file, not a chat message).
 
 ## Rejected
 
