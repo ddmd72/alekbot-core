@@ -150,6 +150,10 @@ Owner decisions. This RFC specifies them; it does not argue them again.
   instruction: the worker's name and the whole brief, or which task to read or cancel. The brief reaches the worker
   word for word, enforced in code. Smart's own surface is one short intent line. Why, and the alternatives:
   `docs/04_solution_strategy/decisions/external_task_specialist.md`.
+- **D15 Task files (2026-11-26).** A task may carry files: the assistant names them by reference, the queue copies their
+  original bytes when the task is created, the receipt lists them, and the worker fetches each one by a short-lived
+  link it asks for while it holds the lease. The worker sees only what was attached, never where it came from, and
+  nobody has to clean up: the storage deletes the copies by age (§5.12).
 
 **Engineering decisions of the review round (2026-11-23).** These close the questions the first draft left open.
 
@@ -341,7 +345,8 @@ The security review's fixes are folded into §5–§7 and are not listed again h
 - No knowledge in code of what any task is about (D1).
 - No push of task content to a worker.
 - No file or binary results in the first version (§5.9).
-- No worker access to memory, drive, mail or other tasks through this surface.
+- No worker access to memory, drive, mail or other tasks through this surface. A task's own files (§5.12) are copies
+  the user confirmed with the task, not access to the places they came from.
 - No scheduling of tasks by the bot itself: a task exists only because the user asked in a chat turn.
 - No voice hand-off: Lelik neither creates nor reads tasks (D11).
 - No task status in background runs (E2).
@@ -932,12 +937,59 @@ These are named constants in `src/domain/external_task.py`. The numbers are set 
 | `HOLD_S` | how long a held task waits for `$task send` |
 | `TASK_MAX_AGE_S` | `deadline_at` |
 | `RETENTION_S` | `purge_after` after a final state |
+| `MAX_FILES_PER_TASK`, `TASK_FILES_MAX_BYTES` | files on one task; each file also within the send cap of `resolve_file` |
+| `FILE_LINK_TTL_S` | one file link (§5.12) |
 | `CLAIMS_PER_WINDOW`, `SUBMITS_PER_WINDOW`, `CALLS_PER_WINDOW`, `RATE_WINDOW_S` | per key, and per OAuth grant on MCP |
 | `UNAUTHORIZED_PER_ADDRESS_PER_WINDOW`, `UNAUTHORIZED_GLOBAL_PER_WINDOW` | `401` answers before the `429` |
 | `WAKE_TIMEOUT_S`, `WAKE_HEADERS_MAX`, `WAKE_HEADER_BYTES_MAX` | wake-up, DNS included |
 
 The rate counters are fixed-window counts in a store that every instance sees. The store is chosen at implementation.
 An in-process counter is not enough, because Cloud Run runs several instances.
+
+### 5.12 Task files (D15)
+
+**Why.** A brief is text, and the work often needs the material the user already has: a document, a spreadsheet, a page
+of earlier results. Copying it into the brief fails on size and on any binary format, and loses the original. Giving
+the worker access to where the material lives (the drive, the workspace) breaks the queue's boundary: the worker would
+see everything there, not what it was given, and a shared folder needs someone to clean it. So a task carries copies of
+exactly the files it was given, and the worker reaches them only through the task.
+
+**Attaching.** `create_external_task` gains an optional `files` argument: a list of file references, each one of the
+kinds `classify_ref` knows (workspace, drive, chat, email attachment, delivered, skill). Each reference must appear in
+the specialist's instruction, as the brief must (`ERROR_NOT_THE_BRIEF`), so the specialist attaches what Smart named and
+nothing else. Before the task is stored, each reference is resolved by `FileConversionService.resolve_file(ref,
+user_id, action="send")`: the original bytes, with the caps and refusals of sending a file to the user (an email
+attachment's active-kind check included). Nothing is parsed or converted. A reference that does not resolve refuses
+the whole create with one tool error naming it: a task never leaves with part of its files.
+
+**Storing.** Each file is written once to the private media bucket at `external_tasks/{user_id}/{task_id}/{n}-{name}`
+(`MediaStoragePort.store`; the name sanitised). The task record keeps `files`: for each, its number, name, MIME type,
+size and storage key. The copy is taken at create, so what the worker gets is what the user confirmed, even if the
+source changes later.
+
+**What the user sees.** The receipt lists each file by name and size after the note, so the confirmation covers the
+files as well as the text. A held task's files are as invisible to workers as the task.
+
+**What the worker gets.**
+- The claim answer adds one line per file: number, name, type and size. It carries no link.
+- `get_task_file(task_id, lease_id, file)` (MCP; REST `GET /external-tasks/v1/tasks/{task_id}/files/{n}` with the
+  lease id) checks the lease as `renew` does (`lease_refusal`, and a lapsed lease is refused) and answers a signed GET
+  URL for that one object (`MediaStoragePort.generate_signed_url`, valid `FILE_LINK_TTL_S`) with the name and size.
+- Every call mints a fresh link. A link never has to outlive one download: a worker that needs a file again, an hour
+  later or after a restart, asks again, for as long as it holds the lease. The lease is the right to the files; once the
+  task is final, the tool answers as for a missing task.
+- The worker downloads the file and decides how to read it. The queue never interprets a file.
+
+**Life and cleanup.** The copies are not deleted with the task record (a Firestore TTL cannot delete storage objects,
+and a sweeper is a second moving part). The media bucket gets a lifecycle rule for the `external_tasks/` prefix:
+delete at `TASK_MAX_AGE_S` plus one day, so every copy outlives every use of its task (a task never outlives its
+deadline) and none outlives it by more than a day. The rule is set with the deployment (`docs/07_deployment/README.md`).
+Until it is set, the bucket's default age rule (30 days) applies.
+
+**Signing.** The main service's runtime identity signs, as for `/f/` links (signBlob on itself, already granted).
+
+**Not in scope.** Files in a worker's result; text extraction; adding files to an existing task; files after a task is
+final.
 
 ## 6. Security and threat model
 
@@ -1027,6 +1079,16 @@ Tenancy comes from the credential only (§5.7). Not-yours and missing tasks get 
 the user, and `$task send` matches a code only among that user's held tasks. A test per surface shows that a task of
 user B, or of worker B of the same user, is unreachable with A's credential.
 
+### 6.6 Task files
+
+- A file leaves only with its task: after the user's confirmation (a chat create) or from a reminder the user set,
+  exactly like the brief. The receipt names every file.
+- The specialist cannot attach what Smart did not name: each reference must appear in its instruction.
+- A link is a bearer URL to one object for `FILE_LINK_TTL_S`, minted only for the worker holding the task's lease.
+  Logs name the task and the file number, never the link, the name or the key.
+- A file is the user's own material; to the worker it is data for the work, as the brief's quoted material is (§6.1).
+  Nothing a worker returns is affected.
+
 ## 7. Failure modes
 
 | Failure | Behaviour |
@@ -1037,6 +1099,9 @@ user B, or of worker B of the same user, is unreachable with A's credential.
 | Long work outruns the lease | The worker renews (E1) up to `MAX_RENEWALS_PER_TASK`. After that the lease runs out, and a submit still succeeds until another claim takes the task. |
 | Lease timer lost | The next claim recovers the expired lease lazily (§5.2). The deadline still bounds the task. |
 | Deadline timer refused while the user was locked | The claim expires a candidate past `deadline_at` instead of handing it out (§5.2). |
+| An attached file does not resolve at create | The whole create is refused with one tool error naming the file; nothing is stored (§5.12). |
+| A file's copy is gone when the worker asks (lifecycle, manual delete) | `get_task_file` answers `file_gone`; the worker goes on without it. |
+| Signing a file link fails | A retryable error answer; the worker asks again. |
 | A held task is never confirmed | The hold timer expires it silently. No worker ever saw it, and no wake-up left. |
 | Wake-up endpoint down (5xx, timeout) | Cloud Tasks retries within its bounds, then gives up. The task stays queued for polling or the next ping. The deadline still applies. |
 | Wake-up refused by the guard, or 4xx | Final. One notice to the user naming the worker and a `WakeRefusal` code. The task stays queued. |
@@ -1136,7 +1201,11 @@ Each step is one or more PRs and is usable on its own.
    - `save_to_primary` into the Inbox's bot-named results subfolder, gated by `can_save_to_primary`.
    - `is_external_results_path`, mapping that subfolder to `external_content` in every drive render: specialist and
      connector, search, passages and open.
-6. **At implementation**: the building block README (`docs/05_building_blocks/external_task_queue/README.md`) with a
+6. **Task files** (D15, §5.12).
+   - `files` on the record and the specialist's tool, the reference check against the instruction, the copies, the receipt lines.
+   - The claim lines, `get_task_file` on MCP and REST, the two text tokens, the limits.
+   - The bucket lifecycle rule for `external_tasks/`.
+7. **At implementation**: the building block README (`docs/05_building_blocks/external_task_queue/README.md`) with a
    living-doc header, a row in the root `CLAUDE.md` map, and this RFC's status.
 
 ## 10. Open questions
