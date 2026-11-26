@@ -133,15 +133,19 @@ final pass; `POST /api/user/memory-inbox/<id>/confirm` takes the edited fields (
 403 `other_user`, 404 `not_found`, 409 `not_waiting`); `POST .../<id>/reject` takes none. The routes never write a fact:
 a confirmed candidate reaches memory through the consolidator's final pass. Without the inbox they answer 501.
 
-Below the card, whenever Memory is unlocked, a settings block ("From your assistants \u2014 settings") holds two things
-(owner decision 2026-11-25). **Triage frequency:** a select, every day, every 2 or 3 days, or once a week, saved on
-change; `GET`/`PUT /api/user/memory-inbox/settings` read and write `config.memory_inbox_triage_interval_days` (only 1, 2,
+The memory inbox's settings are not in the Memory section: one row, "Memory from assistants", sits in Settings →
+Connections after Microsoft To Do (owner decision 2026-11-26; the first design, a block in Memory behind the facts PIN,
+broke the brand sheet and was dropped). Its collapsed value reads "<frequency> · <n apps>" (frequency only with no app;
+blank while the read fails). Opened, it holds two things. **Triage frequency:** a segmented control, every day, 2 days,
+3 days or a week, saved at once (a refused save puts the previous segment back and toasts); `GET`/`PUT /api/user/memory-inbox/settings` read and write `config.memory_inbox_triage_interval_days` (only 1, 2,
 3 or 7, else 400 `invalid_interval`), and the daily sweep reads it at its next run. **Connected apps:** the apps holding
-a live `memory_submit` grant (name, granted, last refresh), each with a "Revoke access" button behind a confirm;
+a live `memory_submit` grant (name, connected date), each with a "Revoke" link behind a confirm;
 `GET /api/user/memory-inbox/apps` lists them through `MCPAuthorizationService.resource_grants`, and
 `DELETE /api/user/memory-inbox/apps/<grant_id>` revokes one (404 `not_found` unless it is one of that user's inbox grants,
 so a task-queue grant is never reachable here). A revoke refuses the app's next submission at once; the owner reconnects
-it in the app's connector settings. The block is cleared when the tab locks.
+it in the app's connector settings. The four settings and apps routes are behind the sign-in only, not the facts PIN
+(connection settings, not facts); the candidate routes keep the PIN. The code is `cabinet-settings.js::loadInbox`, read
+in parallel with the other Settings reads.
 
 ### Memory-review questions
 

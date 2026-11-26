@@ -143,19 +143,6 @@
             <div id="memory-inbox-body" class="c-mem-q-body"></div>
           </div>
 
-          <!-- The memory inbox's settings: how often the triage may run, and the apps connected to it -->
-          <div id="memory-inbox-settings" class="c-group c-mini hidden">
-            <div class="c-row-title" id="inbox-settings-title"></div>
-            <div class="c-mini-s">
-              <label for="inbox-interval" id="inbox-interval-label"></label>
-              <select id="inbox-interval" class="c-input" onchange="saveInboxInterval()"></select>
-              <span class="c-hint" id="inbox-interval-note" role="status"></span>
-            </div>
-            <div class="c-mini-s" id="inbox-apps-title"></div>
-            <div id="inbox-apps"></div>
-            <p class="c-hint" id="inbox-apps-hint"></p>
-          </div>
-
           <!-- The review questions, collapsed into one row that opens to them -->
           <div id="memory-review" class="c-group c-mem-q hidden">
             <button type="button" class="c-row" id="memory-review-row" aria-expanded="false" onclick="toggleMemoryReview()">
@@ -369,6 +356,22 @@
                 </button>
                 <div class="c-row-body hidden" id="srow-todo-body">
                   <div class="c-stack" id="tasks-container"></div>
+                </div>
+              </div>
+              <div class="c-item">
+                <button type="button" class="c-row" id="srow-inbox" aria-expanded="false" aria-controls="srow-inbox-body" onclick="toggleSettingsRow('inbox')">
+                  <span class="c-row-title" id="settings-inbox-title">Memory from assistants</span><span class="c-row-value" id="settings-inbox-value"></span>
+                  <svg class="c-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
+                <div class="c-row-body hidden" id="srow-inbox-body">
+                  <p class="c-hint" id="settings-inbox-interval">How often to sort</p>
+                  <div class="c-seg" role="group" aria-labelledby="settings-inbox-interval">
+                    <button type="button" id="inbox-days-1" aria-pressed="false" onclick="setInboxInterval(1)">Every day</button>
+                    <button type="button" id="inbox-days-2" aria-pressed="false" onclick="setInboxInterval(2)">2 days</button>
+                    <button type="button" id="inbox-days-3" aria-pressed="false" onclick="setInboxInterval(3)">3 days</button>
+                    <button type="button" id="inbox-days-7" aria-pressed="false" onclick="setInboxInterval(7)">Week</button>
+                  </div>
+                  <div class="c-stack" id="inbox-apps"></div>
                 </div>
               </div>
               <div class="c-item hidden" id="settings-workers-item">

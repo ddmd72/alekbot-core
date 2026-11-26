@@ -161,6 +161,12 @@
         "#settings-voice-desc": "settings.voice.desc",
         "#settings-connections-label": "settings.connections",
         "#settings-platforms-title": "settings.platforms_title",
+        "#settings-inbox-title": "settings.inbox_title",
+        "#settings-inbox-interval": "settings.inbox_interval",
+        "#inbox-days-1": "settings.inbox_d1",
+        "#inbox-days-2": "settings.inbox_d2",
+        "#inbox-days-3": "settings.inbox_d3",
+        "#inbox-days-7": "settings.inbox_d7",
         "#settings-drives-title": "nav.drives",
         "#settings-workers-title": "workers.title",
         "#workers-desc": "workers.desc",
@@ -250,7 +256,7 @@
         "#workers-label-input": "workers.label_placeholder", "#workers-description-input": "workers.description_placeholder" });
 
       // Every row that opens a body: the button is #srow-<id>, the body #srow-<id>-body.
-      const SETTINGS_ROWS = ["account", "tz", "city", "uilang", "reply", "voice", "platforms", "mail", "todo", "workers",
+      const SETTINGS_ROWS = ["account", "tz", "city", "uilang", "reply", "voice", "platforms", "mail", "todo", "inbox", "workers",
         "pin", "devices", "passkeys", "lost", "team"];
       let _openSettingsRow = "";
 
@@ -370,6 +376,7 @@
             document.getElementById("location-input").value = _settingsLocation;
           }
         } catch { /* silent */ }
+        loadInbox();   // its own read, in parallel with the rest: a failed one leaves the row's value blank
         await loadLanguage();
         await loadVoiceLanguages();
         await loadDeepResearch();
@@ -474,6 +481,85 @@
           button.setAttribute("aria-pressed", on ? "true" : "false");
         }
         renderSettingsValues();
+      }
+
+      /* ── Memory from assistants (Connections row) ────── */
+      // How often the sorting of what outside assistants submit may run, and the apps allowed to submit
+      // (MCP_MEMORY_SUBMISSIONS_RFC §8.2). The frequency saves at once; a revoke asks first. A read that failed leaves
+      // the state null: the row's value is blank and the body shows no apps, Settings is not affected.
+      let _inboxDays = null;
+      let _inboxApps = null;
+      const INBOX_CHOICES = [1, 2, 3, 7];
+
+      async function loadInbox() {
+        try {
+          const [s, a] = await Promise.all([
+            authFetch(`${API}/api/user/memory-inbox/settings`, { credentials: "include" }),
+            authFetch(`${API}/api/user/memory-inbox/apps`, { credentials: "include" }),
+          ]);
+          _inboxDays = s.ok ? (await s.json()).triage_interval_days : null;
+          _inboxApps = a.ok ? (await a.json()).apps || [] : null;
+        } catch {
+          _inboxDays = null;
+          _inboxApps = null;
+        }
+        renderInbox();
+      }
+
+      function renderInbox() {
+        for (const days of INBOX_CHOICES) {
+          const button = document.getElementById(`inbox-days-${days}`);
+          button.classList.toggle("on", days === _inboxDays);
+          button.setAttribute("aria-pressed", days === _inboxDays ? "true" : "false");
+        }
+        const apps = _inboxApps || [];
+        const parts = [];
+        if (_inboxDays !== null && INBOX_CHOICES.includes(_inboxDays)) parts.push(t(`settings.inbox_every_${_inboxDays}`));
+        if (parts.length && apps.length) parts.push(plural("settings.inbox_apps", apps.length));
+        setSettingsValue("settings-inbox-value", parts.join(" · "));
+        document.getElementById("inbox-apps").innerHTML = _inboxApps === null ? "" : apps.length
+          ? apps.map((app) => {
+              const when = app.granted_at ? new Date(app.granted_at).toLocaleDateString(_currentLang, { dateStyle: "medium" }) : "";
+              return `<div class="c-mini">
+            <div class="c-mini-main"><div class="c-mini-t">${escapeHtml(app.client_name)}</div><div class="c-mini-s">${escapeHtml(`${t("settings.inbox_connected")} ${when}`.trim())}</div></div>
+            <button type="button" class="c-lnk c-lnk-danger" data-grant="${escapeHtml(app.grant_id)}" onclick="revokeInboxApp(this.dataset.grant)">${t("settings.inbox_revoke")}</button>
+          </div>`;
+            }).join("")
+          : `<div class="c-mini-s">${t("settings.inbox_none")}</div>`;
+      }
+
+      // A segment saves at once; a refused save puts the previous one back.
+      async function setInboxInterval(days) {
+        const before = _inboxDays;
+        _inboxDays = days;
+        renderInbox();
+        try {
+          const res = await authFetch(`${API}/api/user/memory-inbox/settings`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ triage_interval_days: days }),
+          });
+          if (!res.ok) throw new Error();
+          _inboxDays = (await res.json()).triage_interval_days;
+        } catch {
+          _inboxDays = before;
+          showToast(t("settings.inbox_failed"), "error");
+        }
+        renderInbox();
+      }
+
+      async function revokeInboxApp(grantId) {
+        if (!confirm(t("settings.inbox_revoke_confirm"))) return;
+        try {
+          const res = await authFetch(`${API}/api/user/memory-inbox/apps/${encodeURIComponent(grantId)}`,
+            { method: "DELETE", credentials: "include" });
+          if (!res.ok) throw new Error();
+          showToast(t("settings.inbox_revoked"), "success");
+        } catch {
+          showToast(t("settings.inbox_failed"), "error");
+        }
+        await loadInbox();
       }
 
       /* ── Voice message languages ──────────────────────── */
