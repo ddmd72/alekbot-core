@@ -83,6 +83,7 @@
           loadGmailStatus();
           loadTasksStatus();
           loadExternalWorkers();
+          renderInbox();   // from what it read: the language alone needs no new read
         }
         if (changed && active && active.id === "section-drives") loadDriveStatus();
         if (changed && active && active.id === "section-home") loadHome();

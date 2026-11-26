@@ -208,8 +208,8 @@ queue's `revoke_worker` and then `revoke_worker_grants`: the route calls both se
 MCP components before the Cabinet blueprint so the Cabinet gets this service; a failed build leaves the bot up without
 MCP and the card lists no grants.
 
-**The memory inbox's grants** (`src/web/cabinet_memory_inbox.py`, MCP_MEMORY_SUBMISSIONS_RFC §8.2). The Memory section's
-"Connected apps" lists them through `MCPAuthorizationService.resource_grants(user_id, MCPResource.MEMORY_INBOX)`: the
+**The memory inbox's grants** (`src/web/cabinet_memory_inbox.py`, MCP_MEMORY_SUBMISSIONS_RFC §8.2). The Settings → Connections row
+"Memory from assistants" lists them through `MCPAuthorizationService.resource_grants(user_id, MCPResource.MEMORY_INBOX)`: the
 tokens read by `list_resource_grants` (equality filters `user_id`, `resource`, `revoked_at` null; expiry in code), kept
 when they carry `memory_submit`, shaped as `worker_grants` (one entry per `grant_id`). Revoke
 (`DELETE /api/user/memory-inbox/apps/<grant_id>`, resolved among those grants only) calls `revoke_grant`; the inbox tool

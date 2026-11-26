@@ -395,6 +395,10 @@ waiting for memory. No undo in this RFC: after "True" the owner corrects through
   (the live `memory_submit` grants through `MCPAuthorizationService.resource_grants`, the port's `list_resource_grants`; a
   grant not among them answers 404). The inbox tool re-checks its grant on every call, so a revoke refuses the next one at
   once. No limit, backlog rule or triage change came with it.
+- **Delta 2026-11-26, owner: the place is Settings → Connections, with no PIN.** The settings and apps surface is one
+  row, "Memory from assistants", in Settings → Connections (CABINET_REDESIGN_RFC §5.1), not a block in Memory; the four
+  routes drop `facts_unlock_required` (connection settings, not facts) and keep `auth_required`. The candidate routes keep
+  the PIN.
 - The routes live in their own blueprint module beside `cabinet_external_workers.py`, not in the 2,200-line
   `user_cabinet_app.py`.
 
@@ -498,7 +502,7 @@ that coupling.
   `fact_review_interval_days` (`src/domain/user.py:258`; `review_interval`, `interval_elapsed`,
   `src/domain/fact_review_rules.py:406-420`). A daily run a few minutes later than yesterday's is never skipped.
 - **Delta 2026-11-25, owner: frequency choice in the Cabinet.** The owner picks the interval (1, 2, 3 or 7 days) in the
-  Memory section (§8.2); the sweep reads it unchanged and a write takes effect at its next run.
+  Settings → Connections row (§8.2); the sweep reads it unchanged and a write takes effect at its next run.
 - **Only when something arrived:** the sweep enqueues only for users with `received` submissions.
 - **The run** (new `MemoryInboxService`, `src/services/`): rechecks the interval (a redelivered or hand-sent task), takes
   the account's memory-write lease (`lease_until`, the run timeout; `src/domain/memory_write_lease.py`) — the account
