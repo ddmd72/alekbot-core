@@ -15,6 +15,7 @@ from src.domain.fact_review_task import (
     encode_review_task,
     owner_messages_block,
 )
+from tests.support.profile_question_builders import profile_question
 from tests.support.review_rule_builders import question
 
 UTC = timezone.utc
@@ -84,6 +85,16 @@ def test_the_question_of_a_fact_is_its_open_one():
     assert t.question_for("f1") is None
     t = task(questions=(closed, question(QuestionStatus.ASKED, question_id="q3", fact_id="f1")))
     assert t.question_for("f1").question_id == "q3" and t.question_for("n1") is None
+
+
+def test_a_fact_with_both_kinds_open_shows_its_lifecycle_question_and_its_profile_question_apart():
+    lifecycle = question(QuestionStatus.ASKED, question_id="q3", fact_id="f1")
+    profile = profile_question("person", QuestionStatus.ASKED, fact_id="f1").with_reply("the one at Acme", AT)
+    t = task(questions=(profile, lifecycle))
+    assert t.question_for("f1") is lifecycle and t.profile_question_for("f1") is profile
+    only_profile = task(questions=(profile,))
+    assert only_profile.question_for("f1") is None and only_profile.profile_question_for("f1") is profile
+    assert task().profile_question_for("f1") is None
 
 
 def test_owner_messages_belong_to_mirror_mode():

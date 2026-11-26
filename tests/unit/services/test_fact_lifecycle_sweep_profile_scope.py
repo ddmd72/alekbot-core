@@ -32,6 +32,20 @@ async def test_a_queued_profile_question_makes_the_review_due_for_the_queue(capl
     assert any("review enqueued for account" in r.getMessage() and "(queue)" in r.getMessage() for r in caplog.records)
 
 
+async def test_a_profile_question_with_words_the_review_has_not_read_makes_the_review_due_for_the_reply(caplog):
+    world = ReviewWorld()
+    await reviewed_recently(world)
+    await world.put_question(profile_question(
+        "person", QuestionStatus.UNANSWERED, account_id=ACC, user_id=USER, asked_at=world.now - timedelta(days=2)))
+    await world.review_store.record_reply("pq-person", "Lukas Weber owns it, not me", world.now - timedelta(hours=1))
+
+    with caplog.at_level(logging.INFO):
+        result = await run(world)
+
+    assert result["review_enqueued"] == 1 and len(review_tasks(world)) == 1
+    assert any("review enqueued for account" in r.getMessage() and "(reply)" in r.getMessage() for r in caplog.records)
+
+
 async def test_without_a_queued_profile_question_nothing_is_enqueued_for_a_reviewed_account():
     world = ReviewWorld()
     await reviewed_recently(world)

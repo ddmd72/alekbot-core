@@ -50,9 +50,10 @@ class FactReviewStore(ABC):
     async def questions_for_account(self, account_id: str, scope: QuestionScope = "lifecycle") -> List[FactReviewQuestion]:
         """The account's open questions of `scope`: `account_id ==` and `status in [queued, pending, asked, unanswered]`,
         then `in_scope`. The default is the lifecycle questions, the stale facts in the review's hands: every reader that
-        treats a question as one (held facts and the pool, the review batch, the pass's closes, the digest, the Cabinet
+        treats a question as one (held facts and the pool, the timeouts and kept-twice facts, the digest, the Cabinet
         queue) stays as it was and never sees a profile question; a reader that needs the others names `profile` or
-        `all`. Unordered: queue order is `queue_order`'s. No transaction."""
+        `all`, and the review's batch and the closes after its pass name `review` (the lifecycle questions and the profile
+        questions with the owner's words recorded). Unordered: queue order is `queue_order`'s. No transaction."""
 
     @abstractmethod
     async def timeout_histories(self, account_id: str) -> List[FactReviewQuestion]:

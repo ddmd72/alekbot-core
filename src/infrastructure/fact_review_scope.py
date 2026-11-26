@@ -85,7 +85,11 @@ class FactReviewScope:
         self._by_lineage: Dict[str, FactEntity] = {f.lineage_id: f for f in batch.facts}
         self._lineage_of: Dict[str, str] = {f.id: f.lineage_id for f in batch.facts}
         self._left: Dict[str, FactEntity] = dict(self._by_lineage)  # lineage -> the document the pass expects there
-        self._open_by_fact = {q.fact_id: q for q in batch.questions if q.is_open}
+        # A fact's open question; its lifecycle one when it has both kinds (a profile question carrying the owner's words
+        # still holds the fact for this pass, and its id is found through `_questions` for a basis reply).
+        self._open_by_fact = {
+            q.fact_id: q for q in sorted(batch.questions, key=lambda q: not q.is_profile) if q.is_open
+        }
         self._questions = {q.question_id: q for q in batch.questions}
         self._decisions: Dict[str, ReviewDecision] = {}
         self._asks: Dict[str, AskRequest] = {}

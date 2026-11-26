@@ -404,9 +404,10 @@ class FactReviewService:
             tally.add(timeouts)
             tally.add(await self._kept_twice(user_id, account_id, state, questions, now, zone, writes))
             await self._settle_digest(account_id, questions, now)
-            # Steps 6 and 7 close and create questions and change offers: the batch is chosen from what is stored now.
+            # Steps 6 and 7 close and create questions and change offers: the batch is chosen from what is stored now,
+            # with the profile questions that carry the owner's words (`review`): their facts go to the model too.
             state = await self._review_store.get_state(account_id)
-            questions = await self._review_store.questions_for_account(account_id)
+            questions = await self._review_store.questions_for_account(account_id, scope="review")
             batch = await self._select(account_id, state, questions, timeouts.candidates, now)
             failed = deferred = False
             if batch:  # step 9: nothing selected, no model call
@@ -444,7 +445,9 @@ class FactReviewService:
         A send claimed today is left alone: it may still be running. These moves are the same for every question, a profile
         one included (it reads `scope="all"`); a profile question past its timeout is then closed `timeout`, and nothing
         else is written for it: a timeout records no answer, and the id derived from its point keeps the point from being
-        asked again while the closed question is kept. Writes no fact."""
+        asked again while the closed question is kept. A timed-out profile question with words the review has not read
+        whose fact still stands is kept open for this run's pass, which reads them; once read, or once its fact moved on,
+        it closes here. Writes no fact."""
         state = await self._review_store.get_state(account_id) or FactReviewState(account_id=account_id)
         questions: List[FactReviewQuestion] = []
         for question in await self._review_store.questions_for_account(account_id, scope="all"):
@@ -459,6 +462,10 @@ class FactReviewService:
                     logger.warning(f"[FactReview] question {question.question_id} not marked unanswered: it changed")
         for question in questions:
             if question.is_profile and question.is_timed_out(now):
+                if question.reply_not_shown and await self._asked_fact(account_id, question, "timed out") is not None:
+                    logger.info(f"[FactReview] profile question {question.question_id} timed out with words the review "
+                                "has not read; kept for this run's pass")
+                    continue
                 if await self._answer_service.close_question(question, ClosedBy.TIMEOUT):
                     logger.info(f"[FactReview] profile question {question.question_id} timed out; closed, nothing recorded")
 
@@ -961,7 +968,7 @@ class FactReviewService:
         if response is None:
             return _StepResult()
         result = decode_review_result(response.result)
-        plan = after_pass(batch, await self._review_store.questions_for_account(account_id), result, now)
+        plan = after_pass(batch, await self._review_store.questions_for_account(account_id, scope="review"), result, now)
         await self._store_translations(account_id, result.translations, now)
         counts = dict(plan.counts)
         revived = list(plan.revived)

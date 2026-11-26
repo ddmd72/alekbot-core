@@ -133,16 +133,20 @@ def open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
 
 # ------------------------------------------------------------------------------------------------ the queue
 
-# Which questions a read returns: the stale-fact (lifecycle) questions, the profile ones, or both. Every reader that
+# Which questions a read returns: the stale-fact (lifecycle) questions, the profile ones, both, or what the review model
+# is given (`review`: the lifecycle questions and the profile questions with the owner's words recorded). Every reader that
 # treats a question as a stale fact in the review's hands reads `lifecycle`; the claim, the reply and button lookup, the
-# review's housekeeping and the janitor's `review_due` read `all`.
-QuestionScope = Literal["lifecycle", "profile", "all"]
+# review's housekeeping and the janitor's `review_due` read `all`; the review's batch and the closes after its pass read
+# `review`.
+QuestionScope = Literal["lifecycle", "profile", "all", "review"]
 
 
 def in_scope(question: FactReviewQuestion, scope: QuestionScope) -> bool:
     """Whether `question` belongs to a read of `scope`."""
     if scope == "all":
         return True
+    if scope == "review":
+        return not question.is_profile or question.reply_text is not None
     return question.is_profile == (scope == "profile")
 
 
@@ -937,14 +941,15 @@ def ask_refusal(
 ) -> Optional[str]:
     """Why the owner may not be asked about this fact now, as the text the model reads, or None.
 
-    `open_question`: the fact's open question, if any. One that has timed out is a candidate sent back to the model once;
-    its fallback applies, so it is not asked again. P2-3: `question` is the kind asked and `texts` the outcome texts the
+    `open_question`: the fact's open question, if any (its lifecycle one when it has both kinds). A lifecycle one that has
+    timed out is a candidate sent back to the model once; its fallback applies, so it is not asked again. A profile one
+    has no fallback: it holds the fact as any open question does. P2-3: `question` is the kind asked and `texts` the outcome texts the
     review writes now, exactly the kind's (`TEXT_KEYS`), each one a text the review may write (`written_text_problem`).
     `revive` is the fallback of a `still_true` question; `history` of a `happened`, `renewed` or `paid` one; `archive` only
     with `noise`, never for `paid`. A `date` fact is asked `happened`, `renewed` or `paid`, or `still_true` as noise.
     `fallback_date` is retired. `tz` is the owner's zone (no rule reads it since `fallback_date` went)."""
     if open_question is not None:
-        if open_question.is_timed_out(now):
+        if open_question.is_timed_out(now) and not open_question.is_profile:
             return "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it"
         return "ask_owner: this fact already has an open question; leave it"
     refusal = _ask_shape_refusal(fact, fallback, fallback_date, noise, question)

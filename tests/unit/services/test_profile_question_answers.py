@@ -287,6 +287,52 @@ async def test_the_not_read_reply_never_reaches_the_review_model():
     assert unread == []
 
 
+async def test_words_code_cannot_read_are_recorded_for_the_review_and_release_the_next_question():
+    world, store = ReviewWorld(), Answers()
+    await world.seed_state(account_id=ACC, current_question_id="pq-person")
+    await ask(world, "person")
+
+    text = await reply(world, service(world, store), "Lukas Weber owns it, not me", "pq-person")
+
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED)
+    kept = world.question_docs["pq-person"]
+    assert (kept["status"], kept["reply_text"], kept["offered_at"]) == ("asked", "Lukas Weber owns it, not me", None)
+    assert store.recorded == []
+    assert (await world.review_store.get_state(ACC)).current_question_id is None
+    assert next_tasks(world) == [{"task_type": "fact_review", "user_id": USER, "account_id": ACC, "mode": "next"}]
+    row = await day_row(world)
+    assert (row.profile_reply_not_read, row.profile_answered, row.replies_in_words) == (1, 0, 0)
+    assert await history(world) == [("user", reply_part("pq-person", "Lukas Weber owns it, not me")), ("model", text)]
+    unread = [q.question_id for q in await world.review_store.questions_for_account(ACC, scope="review")
+              if q.reply_not_shown]
+    assert unread == ["pq-person"]
+
+
+async def test_words_on_a_question_that_is_not_current_are_recorded_and_release_nothing():
+    world, store = ReviewWorld(), Answers()
+    await world.seed_state(account_id=ACC, current_question_id="q-other")
+    await ask(world, "date", QuestionStatus.UNANSWERED)
+
+    text = await reply(world, service(world, store), "the day of the Q3 budget", "pq-date")
+
+    assert text == ack(world, UIMessage.MEMORY_REPLY_NOTED)
+    assert world.question_docs["pq-date"]["reply_text"] == "the day of the Q3 budget"
+    assert next_tasks(world) == [] and (await world.review_store.get_state(ACC)).current_question_id == "q-other"
+
+
+async def test_words_the_review_was_already_shown_are_not_recorded_and_left_to_conversation():
+    world, store = ReviewWorld(), Answers()
+    await ask(world, "person")
+    await world.review_store.record_reply("pq-person", "Lukas Weber owns", NOW - timedelta(hours=2))
+    assert await world.review_store.mark_offered("pq-person", NOW - timedelta(hours=1))
+
+    text = await reply(world, service(world, store), "and Tom too", "pq-person")
+
+    assert text is None
+    assert world.question_docs["pq-person"]["reply_text"] == "Lukas Weber owns" and await history(world) == []
+    assert (await day_row(world)) is None or (await day_row(world)).profile_reply_not_read == 0
+
+
 # ------------------------------------------------------------------------------------------------ the other doors
 
 async def test_a_reply_to_a_closed_profile_question_is_already_answered():

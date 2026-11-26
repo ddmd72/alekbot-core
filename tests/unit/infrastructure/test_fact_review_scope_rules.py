@@ -16,6 +16,7 @@ from src.domain.fact_review_batch import ReviewBatch
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_lifecycle_world import FUTURE, NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.profile_question_builders import profile_question
 from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Lisbon"
@@ -402,6 +403,21 @@ async def test_a_timed_out_candidate_is_not_asked_again(world):
     assert res["refused"] == "ask"
     assert res["message"] == "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it"
     assert scope.asks() == [] and [f.id for f in scope.kept()] == [fact]
+
+
+async def test_a_replied_profile_question_holds_its_fact_with_no_fallback_and_its_lifecycle_question_comes_first(world):
+    fact = await world.seed("Doe owns the Q3 budget at Acme")
+    profile = profile_question("person", QuestionStatus.UNANSWERED, fact_id=fact, account_id=ACC, user_id=USER,
+                               asked_at=NOW - timedelta(days=15)).with_reply("Lukas Weber owns it, not me", REPLY_AT)
+    scope = await scope_of(world, fact, questions=[profile])
+
+    res = await scope.ask_owner({"fact_id": fact, "fallback": "revive"})
+
+    assert res["refused"] == "ask" and res["message"] == "ask_owner: this fact already has an open question; leave it"
+    lifecycle = asked(fact, asked_at=NOW - timedelta(days=15))
+    both = await scope_of(world, fact, questions=[lifecycle, profile])
+    assert (await both.ask_owner({"fact_id": fact, "fallback": "revive"}))["message"] == (
+        "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it")
 
 
 async def test_twenty_asks_in_one_pass_are_all_accepted(world):

@@ -22,6 +22,7 @@ from src.domain.fact_review_task import (
     MAX_NEIGHBOURS, owner_message_texts, questions_about, review_item,
 )
 from src.domain.llm import Message, MessagePart
+from tests.support.profile_question_builders import profile_question
 from tests.support.review_rule_builders import NOW, fact, question
 
 # Distinct letter texts; past 26 keys (35 since fact profile 5d) the letter repeats, never running into control characters.
@@ -198,6 +199,31 @@ def test_the_questions_about_a_batch_are_its_open_ones():
     closed = question(QuestionStatus.CLOSED, question_id="q3", fact_id="f1")
 
     assert [q.question_id for q in questions_about([fact("f1")], [open_one, other, closed])] == ["q1"]
+
+
+def test_a_fact_shows_one_profile_question_the_earliest_queued_beside_its_lifecycle_one():
+    lifecycle = question(QuestionStatus.ASKED, question_id="q1", fact_id="f1")
+    person = profile_question("person", QuestionStatus.ASKED, fact_id="f1", queue_key=NOW - timedelta(days=3))
+    place = profile_question("place", QuestionStatus.ASKED, fact_id="f1", queue_key=NOW - timedelta(days=1))
+
+    about = questions_about([fact("f1")], [place, lifecycle, person])
+
+    assert [q.question_id for q in about] == ["q1", "pq-person"]
+
+
+def test_a_timed_out_profile_question_is_never_a_fallback_and_closes_only_with_a_decision():
+    batch = [fact("f1", state=FactState.CURRENT)]
+    replied = profile_question("person", QuestionStatus.UNANSWERED, fact_id="f1", asked_at=NOW - timedelta(days=15)
+                               ).with_reply("Lukas Weber owns it, not me", NOW - timedelta(days=1))
+
+    left = after_pass(batch, [replied], FactReviewResult(kept=("f1",)), NOW)
+    decided = after_pass(batch, [replied], FactReviewResult(outcomes=(decision("f1", "rewritten"),)), NOW)
+
+    assert replied.is_timed_out(NOW)
+    assert (left.fallbacks, left.closes) == ((), ())
+    assert [q.question_id for q in decided.closes] == ["pq-person"] and decided.fallbacks == ()
+    assert decided.counts[CounterField.CLOSED_BY_REPLY] == 1
+    assert review_close_source(replied) == "review"
 
 
 def test_the_owners_texts_are_his_parts_oldest_first():

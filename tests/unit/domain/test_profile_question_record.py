@@ -146,3 +146,30 @@ def test_a_timeout_or_elsewhere_close_of_a_profile_question_carries_nothing(by):
     closed = profile_question("person", QuestionStatus.ASKED).closed(by, NOW)
     assert closed.answer is None and closed.answer_source is None and closed.is_profile
 
+
+
+# ------------------------------------------------------------------------------------------------ words for the review
+
+def test_a_profile_question_takes_the_words_code_could_not_read_as_a_lifecycle_one_does():
+    asked = profile_question("person", QuestionStatus.ASKED)
+
+    replied = asked.with_reply("Lukas Weber owns it, not me", NOW)
+    more = replied.with_reply("it is the Q3 budget at Acme", NOW)
+
+    assert (replied.reply_text, replied.reply_at, replied.reply_not_shown) == ("Lukas Weber owns it, not me", NOW, True)
+    assert more.reply_text == "Lukas Weber owns it, not me\nit is the Q3 budget at Acme"
+    assert more.offered(NOW).reply_not_shown is False
+    with pytest.raises(QuestionTransitionError):
+        profile_question("person", QuestionStatus.QUEUED).with_reply("Tom Baker", NOW)   # never asked: no reply
+
+
+def test_the_review_closes_a_replied_profile_question_on_its_words():
+    replied = profile_question("place", QuestionStatus.UNANSWERED).with_reply(
+        "that is the Q3 budget at Acme", NOW)
+
+    closed = replied.offered(NOW).closed(ClosedBy.REVIEW, NOW, None, "review")
+
+    assert (closed.status, closed.closed_by, closed.answer, closed.answer_source) == (
+        QuestionStatus.CLOSED, ClosedBy.REVIEW, None, "review")
+    with pytest.raises(QuestionTransitionError, match="reply_text"):
+        profile_question("place", QuestionStatus.ASKED).closed(ClosedBy.REVIEW, NOW, None, "review")

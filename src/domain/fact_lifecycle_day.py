@@ -37,7 +37,7 @@ class CounterField(StrEnum):
     FOLDED = "folded"
     FALLBACKS_NOT_APPLIED = "fallbacks_not_applied"
     PROFILE_ANSWERED = "profile_answered"
-    PROFILE_REPLY_NOT_READ = "profile_reply_not_read"
+    PROFILE_REPLY_NOT_READ = "profile_reply_not_read"  # code could not read a profile reply: handed to the review
 
 
 # The counters of the memory review and its answers: every counter but the expiry tool errors, which the expiry path counts.

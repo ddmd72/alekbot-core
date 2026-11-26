@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from src.domain.fact_review_rules import (
     in_scope, lifecycle_only, next_in_queue, profile_may_go, profile_question_id, queue_order,
 )
+from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_state import FactReviewState
 from tests.support.profile_question_builders import NOW, profile_question
 from tests.support.review_rule_builders import question as lifecycle_question
@@ -55,6 +56,14 @@ def test_the_scopes_of_a_read():
     assert [in_scope(q, "profile") for q in (profile, lifecycle)] == [True, False]
     assert [in_scope(q, "all") for q in (profile, lifecycle)] == [True, True]
     assert lifecycle_only([profile, lifecycle]) == [lifecycle]
+
+
+def test_the_review_scope_is_the_lifecycle_questions_and_the_profile_ones_with_the_owners_words():
+    lifecycle = lifecycle_question()
+    unreplied = profile_question("person", QuestionStatus.ASKED)
+    replied = unreplied.with_reply("Alex Doe, me", NOW)
+    shown = replied.offered(NOW)
+    assert [in_scope(q, "review") for q in (lifecycle, unreplied, replied, shown)] == [True, False, True, True]
 
 
 def test_the_profile_question_id_is_stable_distinct_and_fits_a_frame():

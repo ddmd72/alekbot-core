@@ -69,6 +69,7 @@ from ..domain.fact_review_language import (
 )
 from ..domain.fact_review_quote_translation import MAX_TRANSLATION_CHARS, report_translations, translations_wanted
 from ..domain.fact_review_question import FactReviewQuestion
+from ..domain.profile_question_message import FIXED_OPTIONS, PROFILE_OPTION_KEYS
 from ..domain.fact_review_result import FactReviewResult, encode_review_result
 from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
 from ..domain.fact_words import MAX_FACT_WORDS, word_count
@@ -683,8 +684,8 @@ def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) ->
 
 _REVIEW_HEADER = (
     "SYSTEM MAINTENANCE — STALE FACT REVIEW\n\n"
-    "The facts below are stale: their expiry passed and the owner has not said them again. Decide each one by the first "
-    "of these that applies:\n"
+    "Each fact below is stale (its expiry passed and the owner has not said it again) or is one the owner was asked about, "
+    "back for his reply or for a question that timed out. Decide each one by the first of these that applies:\n"
     "(1) a current fact states the same thing: supersede it by that fact;\n"
     "(2) the reply or evidence says it still holds: revive it with that basis (rewrite its text if the text changed);\n"
     "(3) its date has passed: rewrite it as history (basis evidence or reply, or date_passed when its own text already "
@@ -699,7 +700,8 @@ _REVIEW_HEADER = (
     "| outcome=<…>.\n\n"
     "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
     "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
-    "facts nearest to it) and, when the owner was asked about it, its `question` with any `reply`.\n\n"
+    "facts nearest to it) and, when the owner was asked about it, its `question` (whether it still holds) or its "
+    "`profile_question` (which place, person or date its words mean), each with any `reply`.\n\n"
     "Facts under review:"
 )
 
@@ -744,8 +746,12 @@ def _review_language_instruction() -> str:
     )
 
 
-def _review_line(item: ReviewItem, question: Optional[FactReviewQuestion], tz: str, now: datetime) -> Dict[str, Any]:
-    """One batch fact as the review sees it: its `fact_view` with the review's own fields."""
+def _review_line(
+    item: ReviewItem, question: Optional[FactReviewQuestion], tz: str, now: datetime,
+    profile_question: Optional[FactReviewQuestion] = None,
+) -> Dict[str, Any]:
+    """One batch fact as the review sees it: its `fact_view` with the review's own fields, its open lifecycle `question`
+    and its open `profile_question` (one carrying the owner's words), each when there is one."""
     fact = item.fact
     view = fact_view(fact, tz)
     line: Dict[str, Any] = {
@@ -778,7 +784,32 @@ def _review_line(item: ReviewItem, question: Optional[FactReviewQuestion], tz: s
             "reply": question.reply_text,
             "reply_at": local_moment(question.reply_at, tz).isoformat(timespec="seconds") if question.reply_at else None,
         }
+    if profile_question is not None:
+        line["profile_question"] = _profile_question_view(profile_question, tz, now)
     return line
+
+
+def _profile_question_view(question: FactReviewQuestion, tz: str, now: datetime) -> Dict[str, Any]:
+    """A profile question as the review reads it: its kind, the words of the fact it asks about, the options the owner
+    was shown (the candidates with their code-built labels, then the kind's fixed answers in English) and his reply. It
+    has no fallback: silence changes nothing."""
+    point = question.open_point
+    if point is None:
+        raise ValueError(f"profile question {question.question_id} has no open point")
+    options = [{"id": option.id, "label": option.label} for option in point.options]
+    options += [
+        {"id": option_id, "label": CANONICAL_LABELS[PROFILE_OPTION_KEYS[option_id]]}
+        for option_id in FIXED_OPTIONS[question.question]
+    ]
+    return {
+        "question_id": question.question_id,
+        "kind": question.question,
+        "about": point.printed,
+        "options": options,
+        "reply": question.reply_text,
+        "reply_at": local_moment(question.reply_at, tz).isoformat(timespec="seconds") if question.reply_at else None,
+        "timed_out": question.is_timed_out(now),
+    }
 
 
 def _report_object(text: str) -> Optional[Dict[str, Any]]:
@@ -2462,11 +2493,13 @@ class ConsolidationAgent(BaseAgent):
         now: datetime,
     ) -> str:
         """The review pass's user message (Facts S4 §3.4): the header, one JSON line per batch fact (its `fact_view`, its
-        earlier versions, its nearest current facts and its open question), then, in mirror mode, the owner's messages,
+        earlier versions, its nearest current facts and its open questions), then, in mirror mode, the owner's messages,
         and the language or translation instruction when there is one. No question budget and no question text: code writes and sends the questions."""
         lines = [_REVIEW_HEADER, ""]
         for i, item in enumerate(batch.items, 1):
-            lines.append(f"{i}. {json.dumps(_review_line(item, batch.question_for(item.fact.id), timezone, now), ensure_ascii=False)}")
+            line = _review_line(item, batch.question_for(item.fact.id), timezone, now,
+                                batch.profile_question_for(item.fact.id))
+            lines.append(f"{i}. {json.dumps(line, ensure_ascii=False)}")
         if batch.mirror:
             lines += ["", f"owner_messages (his latest messages, oldest first, verbatim): "
                           f"{json.dumps(list(owner_messages), ensure_ascii=False)}"]

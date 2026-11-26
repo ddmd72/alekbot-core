@@ -2,7 +2,8 @@
 
 Life of a question: `queued` -> (`claimed`) `pending` -> (`appended`, `posted`) -> `asked` -> `unanswered` -> `closed`.
 A profile question (kind `place`, `person` or `date`, fact profile RFC §4.7) lives the same life through the same channel;
-what differs is stated in the record (origin `profile`, an `open_point`, fallback `none`, no texts, never a `reply_text`).
+what differs is stated in the record (origin `profile`, an `open_point`, fallback `none`, no texts). Its owner's words that code
+cannot read are recorded as a `reply_text`, as a lifecycle question's are, for the review model to read.
 Every move is a method here that returns a new, validated question or raises `QuestionTransitionError`; the store only
 applies the result in its transaction. A `pending` question that has a message ref, or a `posted_at` (the post is known
 to have succeeded; the ref write that follows it may have been lost), was delivered (`delivered`), whatever happened to
@@ -64,7 +65,8 @@ TEXT_KEYS: Final[Mapping[Tuple[QuestionKind, QuestionDelivery], Tuple[str, ...]]
 DIGEST_QUESTION_DAYS: Final = timedelta(days=90)
 # Where an answer came from. `review` is the review applying the owner's words.
 AnswerSource = Literal["digit", "button", "cabinet", "review", "words"]
-# The sources a profile question's owner close may carry; `words` is a reply read by code (never by the review).
+# The sources a profile question's owner close may carry; `words` is a reply read by code. Words code cannot read are a
+# `reply_text` the review reads, and a review close on them has the source `review`.
 PROFILE_ANSWER_SOURCES: Final[frozenset[str]] = frozenset({"digit", "button", "words"})
 
 # The owner's answer sources, each with the day counter its answer adds to. A source outside this map is not the owner's.
@@ -214,8 +216,6 @@ class FactReviewQuestion(BaseModel):
                     "an asked or unanswered question has asked_at, session_id, appended_at and a message_ref or posted_at")
 
     def _check_reply(self) -> None:
-        if self.is_profile and self.reply_text is not None:
-            raise ValueError("a profile question never has a reply_text: the owner's words are read by code only")
         if (self.reply_text is None) != (self.reply_at is None):
             raise ValueError("reply_text and reply_at go together")
         if self.reply_text is not None and self.asked_at is None:
@@ -354,8 +354,8 @@ class FactReviewQuestion(BaseModel):
 
     def with_reply(self, text: str, at: datetime) -> Self:
         """The owner's words, added to those already recorded (joined by a new line) up to `MAX_REPLY_CHARS`; what does
-        not fit is dropped, and words that add nothing leave the question as it is."""
-        self._require(not self.is_profile, "with_reply (a profile question's words are read by code)")
+        not fit is dropped, and words that add nothing leave the question as it is. A profile question takes the words
+        code could not read, the same way."""
         self._require(self.status in SENT_STATUSES and self.offered_at is None, "with_reply")
         words = text.strip()
         if not words:

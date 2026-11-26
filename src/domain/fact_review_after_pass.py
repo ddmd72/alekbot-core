@@ -28,7 +28,7 @@ _OUTCOME_COUNTERS: Mapping[ReviewOutcome, CounterField] = MappingProxyType({
 class AfterPass:
     """`decided`: the batch facts with an outcome (their `offers` entries go, `offers_removed`). `closes`: the open questions about them,
     closed by the review. `fallbacks`: the timed-out candidates the pass left undecided, each with its timed-out
-    question. `asks`: each held ask with its batch fact as the pass was given it. `revived`: the documents the pass
+    lifecycle question. `asks`: each held ask with its batch fact as the pass was given it. `revived`: the documents the pass
     revived (the revive alert reads them). `counts`: the pass's numbers (`reviewed` is the batch; `closed_by_reply` the
     closes on the owner's words; `to_history` the rewrites as history, also counted as `rewritten`); a queued question
     and an applied fallback are counted when they land."""
@@ -57,8 +57,9 @@ def after_pass(
 ) -> AfterPass:
     """The work after a pass over `batch` that returned `result`; `questions`: the account's open questions now.
 
-    A timed-out candidate is a batch fact whose open question has timed out at `now` (its fact went to the model once,
-    S4-D19). An outcome or an ask about a fact outside the batch is ignored: the pass decides only its batch."""
+    A timed-out candidate is a batch fact whose open lifecycle question has timed out at `now` (its fact went to the model
+    once, S4-D19). A profile question has no fallback (silence changes nothing): left undecided, it stays open until
+    housekeeping times it out, and is never a fallback. An outcome or an ask about a fact outside the batch is ignored: the pass decides only its batch."""
     by_id = {f.id: f for f in batch}
     outcomes = [d for d in result.outcomes if d.fact_id in by_id]
     decided = tuple(dict.fromkeys(d.fact_id for d in outcomes))
@@ -67,7 +68,7 @@ def after_pass(
     closes = tuple(q for q in about if q.fact_id in decided)
     fallbacks = tuple(
         (by_id[q.fact_id], q) for q in about
-        if q.is_timed_out(now) and q.fact_id not in decided and q.fact_id not in asked
+        if q.is_timed_out(now) and not q.is_profile and q.fact_id not in decided and q.fact_id not in asked
     )
     counts: Dict[CounterField, int] = {CounterField.REVIEWED: len(batch), CounterField.KEPT: len(result.kept)}
     for decision in outcomes:
