@@ -28,6 +28,12 @@ def test_deployed_settings_use_their_url_and_the_prod_suffix():
     assert topology.cabinet_memory_url == "https://main.example.test/cabinet?tab=memory"
 
 
+def test_the_cabinet_link_is_on_the_services_own_host():
+    topology = build_deploy_topology({"CLOUD_RUN_SERVICE_URL": "https://main.example.test"}, _env(False))
+
+    assert topology.cabinet_url == "https://main.example.test/cabinet"
+
+
 def test_an_empty_url_is_the_same_as_none():
     assert build_deploy_topology({"CLOUD_RUN_SERVICE_URL": ""}, _env(True)).service_url == "http://localhost:8080"
 

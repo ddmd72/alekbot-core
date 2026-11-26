@@ -38,6 +38,16 @@ def env(monkeypatch):
     return EnvironmentConfig()
 
 
+@pytest.mark.parametrize("platform", ["telegram", "slack", "web"])
+def test_the_onboarding_reply_links_the_cabinet_url_it_is_given(env, platform):
+    identity = build_identity({}, EvalDb(), env, auth_config=AUTH, digest_key=b"d",  # type: ignore[arg-type]
+                              cabinet_url="https://main.example.test/cabinet")
+
+    reply = identity.iam_service.get_rejection_message(platform=platform, reason="not_registered")
+
+    assert "https://main.example.test/cabinet" in reply
+
+
 def test_the_repositories_are_shared_and_the_sign_in_runs_over_the_auth_config(env):
     db = EvalDb()
 
