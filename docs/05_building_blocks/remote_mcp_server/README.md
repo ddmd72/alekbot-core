@@ -52,7 +52,8 @@ One authorization server fronts four protected resources, each its own FastMCP a
   own drive operations. Nothing that writes is registered. What a call may see is each drive's *connector access*
   (set in the Cabinet; unset means nothing).
 - **tasks**, `/tasks-mcp`, scope `external_tasks`: the external task queue's worker tools (`list_tasks`, `claim_task`,
-  `renew_lease`, `submit_task_result`, `release_task`, `fail_task`), thin handlers over `ExternalTaskService`. It takes
+  `renew_lease`, `submit_task_result`, `release_task`, `fail_task`, and `get_task_file`, a short-lived signed link to one
+  of the task's files for the lease holder), thin handlers over `ExternalTaskService`. It takes
   worker keys (a CLI client or a script sends one as the bearer) and OAuth access tokens bound to one worker picked at
   consent (a claude.ai custom connector) (`EXTERNAL_TASK_QUEUE_RFC.md` §5.4). The queue itself is
   [`external_task_queue`](../external_task_queue/README.md).
