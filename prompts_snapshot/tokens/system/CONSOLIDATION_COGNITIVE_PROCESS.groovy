@@ -10,15 +10,11 @@ source_file: firestore_utils/uploads/CONSOLIDATION_COGNITIVE_PROCESS.json
 token_id: CONSOLIDATION_COGNITIVE_PROCESS
 uploaded_by: local_script
 ---
-instruction: "Execute ALL steps sequentially. Think SLOWLY and DELIBERATELY. Use <thinking> tags to explain reasoning."
+purpose: "These steps are the order in which a batch of conversation becomes memory. What you write is stored as facts that every later answer to the owner is built on, so a wrong or duplicated fact costs more than a slow decision. This is a background job: nobody waits for it, and care beats speed."
 
-execution_context: "This is a BACKGROUND JOB. User does not wait for your response. PRIORITIZE QUALITY (tokens, reasoning depth) over SPEED. Generate as many reasoning tokens as needed for confident decisions."
+where_the_work_happens: "Weigh each step in your own thinking. Nothing reads prose written between tool calls: the memory changes only through the tool calls, and the final report is the only text that is used. So the turns before the end carry tool calls, the final answer is the report alone, and the deliberation behind both stays in your thinking."
 
-reasoning_depth: {
-    minimum: "Steps 2-7 must be executed for EACH candidate fact. Steps 1 and 8 are batch-level (run once per session)."
-    format: "Step 1: [Extract all], Step 2: [Classify], Step 3: [Search], Step 4: [Analyze], Step 5: [Decide], Step 6: [Execute], Step 7: [Verify], Step 8: [Report all]"
-    instruction: "Use <thinking> tags extensively. Show your work."
-}
+coverage: "Steps 2-7 run for EACH candidate fact. Steps 1 and 8 run once per batch."
 
 steps: [
     "1. EXTRACT: Parse conversation → list of candidate facts",
@@ -33,7 +29,6 @@ steps: [
     "   - Add context (time period, trigger event)",
 
     "3. SEARCH: For EACH candidate:",
-    "   <thinking>",
     "   Generate multi-vector search query:",
     "   ",
     "   1. KEYWORDS (5-10 words):",
@@ -57,7 +52,6 @@ steps: [
     "   Keywords: [\"Bo\", \"name\", \"secret\", \"personal\", \"family\", \"reserved\", \"nickname\"]",
     "   Primary: \"User real secret name Bo strictly reserved family personal\"",
     "   Alternative: \"Bo nickname preference family only Alex public name difference\"",
-    "   </thinking>",
     "   ",
     "   Call: search_existing_facts(",
     "       keywords=[\"Bo\", \"name\", \"secret\", \"personal\", \"family\", \"reserved\"],",
@@ -68,18 +62,15 @@ steps: [
     "   requirement: You must call search_existing_facts as many times as many condidates you have. One per EACH candidate. Exapmle: when you have 5 candidates you must call search_existing_facts 5 times",
 
     "4. ANALYZE: For EACH candidate + search results:",
-    "   <thinking>",
     "   Compare candidate to top 3 search results:",
     "   - Similarity score > 0.95 → EXACT duplicate → likely DISCARD. When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along → extend it with update_fact(fact_id, updates={reported_date: <the message's time>}); if the link is unclear (a break is possible) → CREATE a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD. A reply to a memory-review question never extends the fact it quotes: Domain_Scope.memory_review_reply. Cluster and rulebook reviews never extend a fact",
     "   - Similarity 0.80-0.95 + same metric → likely UPDATE (time series or enrichment)",
     "   - Similarity 0.80-0.95 + different aspect → likely CREATE",
     "   - Similarity < 0.80 → likely CREATE",
     "   - Multiple high-similarity results for same entity → likely MERGE",
-    "   Output: tentative operation + fact_id (if UPDATE/MERGE) + reasoning.",
-    "   </thinking>",
+    "   Result: a tentative operation, plus the fact_id for UPDATE/MERGE.",
 
     "5. DECIDE: Choose final operation for EACH candidate:",
-    "   <thinking>",
     "   Step A — Apply conflict_resolution rules FIRST (they override heuristics):",
     "   - Negation detected? → INVALIDATED or ARCHIVED (see Negation_And_Invalidation)",
     "   - Core identity contradiction? → CREATE (separate observation, not UPDATE)",
@@ -99,7 +90,6 @@ steps: [
     "   ",
     "   IMPORTANT: DISCARD is a DECISION, not a tool call.",
     "   When you decide to DISCARD, you simply don't create/update the fact.",
-    "   </thinking>",
 
     "6. EXECUTE: Call appropriate tool:",
     "   - UPDATE: call update_fact(fact_id, updates); a change of content, tags or metadata carries expiry",
