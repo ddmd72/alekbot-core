@@ -53,8 +53,8 @@ class MediaStreamHandler:
             return
         try:
             await asyncio.wait_for(close(code), timeout=2.0)
-        except Exception:
-            pass
+        except Exception as exc:   # the peer may already be gone; the socket is dropped either way
+            logger.debug(f"[MediaStream] close({code}) did not complete: {type(exc).__name__}")
 
     async def handle_connection(self, ws) -> None:
         if self._unstarted >= self._max_unstarted:
