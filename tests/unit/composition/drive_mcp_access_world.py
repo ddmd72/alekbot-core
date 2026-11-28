@@ -61,6 +61,9 @@ class Auth:
         return VerifiedAccessToken(token=token, client_id="client-1", user_id=USER, account_id="acc-1",
                                    scopes=["drive_read"], resource=DRIVE, expires_at=4_102_444_800)
 
+    async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+        return True
+
 
 class Conversion:
     """Answers a planted file's text; records each opened ref."""

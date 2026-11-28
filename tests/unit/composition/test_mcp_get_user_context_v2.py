@@ -61,7 +61,17 @@ class Resolver:
         return self.agent
 
 
+async def _granted(user_id, grant_id):
+    return True
+
+
 def _components(resolver):
+    components = _build_components(resolver)
+    components.authorization_service.grant_allowed = _granted   # the grant re-check is tested on its own
+    return components
+
+
+def _build_components(resolver):
     return build_mcp_components(
         db_client=MagicMock(), env_config=MagicMock(), auth_config=_auth_config(), memory_search=resolver,
         cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
@@ -225,6 +235,7 @@ class TestAccountLock:
             db_client=MagicMock(), env_config=MagicMock(), auth_config=_auth_config(), memory_search=resolver,
             cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=store.users,
             whitelist_repo=FakeWhitelistRepo())
+        components.authorization_service.grant_allowed = _granted   # the grant re-check is tested on its own
         return components.fastmcp._tool_manager.get_tool(FACTS_TOOL), agent, store
 
     async def test_a_locked_users_call_is_the_lock_tool_error_and_searches_nothing(self):

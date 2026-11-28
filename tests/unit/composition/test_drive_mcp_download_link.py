@@ -44,6 +44,9 @@ class GidAuth:
                                    scopes=["drive_read"], resource=DRIVE, expires_at=4_102_444_800,
                                    grant_id=self.grant)
 
+    async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+        return grant_id == GRANT
+
 
 class ScanConversion(Conversion):
     """A scanned PDF answers as `DocumentService` does for the connector: no text, the reader skipped."""
