@@ -122,3 +122,19 @@ async def test_without_localization_or_when_the_file_fails_no_receipt_is_posted(
     assert await _service(Bot("", []), broken).post_task_receipt("usr-1", "acc-1", QUEUED) is False
     assert broken.posts == []                                   # no message without its file
 
+
+
+async def test_a_receipt_that_cannot_be_rendered_is_not_posted_and_its_text_is_not_logged(monkeypatch):
+    import src.services.user_notification_service as module
+    errors = []
+
+    def cannot_render(data, strings):
+        raise ValueError(f"cannot render {TEXT}")
+
+    monkeypatch.setattr(module, "render_external_task_receipt", cannot_render)
+    monkeypatch.setattr(module.logger, "error", errors.append)
+    channel = Channel()
+    assert await _service(Bot("", []), channel).post_task_receipt("usr-1", "acc-1", QUEUED) is False
+    assert channel.posts == []                                  # nothing is posted
+    [logged] = errors
+    assert "ValueError" in logged and TEXT not in logged and TITLE not in logged
