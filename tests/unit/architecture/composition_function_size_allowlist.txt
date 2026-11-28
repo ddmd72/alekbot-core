@@ -2,6 +2,6 @@
 # Line: <path>::<qualified function name>  # <length ceiling>  # <reason>
 # Only growth past the ceiling fails; a shrink that stays over 150 lines passes (lower the line when you can).
 # A line whose offence is gone (150 lines or fewer, or the function is gone) fails: delete it.
-main.py::main  # 632  # composition-root refactor (assessment D6)
+main.py::main  # 628  # composition-root refactor (assessment D6)
 src/composition/service_container.py::ServiceContainer.__init__  # 394  # composition-root refactor (assessment D6)
 src/composition/user_agent_factory.py::UserAgentFactory._create_and_cache_agents  # 340  # composition-root refactor (assessment D6)

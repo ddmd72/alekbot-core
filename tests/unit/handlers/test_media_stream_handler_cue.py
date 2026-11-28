@@ -6,6 +6,9 @@ import pytest
 from src.domain.voice_audio_frame import AudioFrame
 from src.handlers.media_stream_handler import MediaStreamHandler
 
+# Tickets are minted as `str(uuid.uuid4())`; the handler refuses any other shape.
+TICKET = "3f2c9d5e-0d4b-4b8e-9a51-1c2d3e4f5a6b"
+
 
 class FakeTwilioWs:
     def __init__(self, messages: list[dict]):
@@ -40,7 +43,7 @@ class CueSendingSessionService:
 @pytest.mark.asyncio
 async def test_cue_frame_is_sent_as_media_without_a_mark():
     ws = FakeTwilioWs([
-        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}},
+        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}},
         {"event": "stop"},
     ])
     service = CueSendingSessionService()

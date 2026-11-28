@@ -33,6 +33,15 @@ from src.composition.voice_resume_setup import build_voice_resume_service
 from src.web.drive_link_app import create_drive_link_blueprint
 
 
+def build_voice_media_room(config):
+    """The web call's SFU adapter, or None when the Cloudflare credentials or the relay stream URL are not configured."""
+    if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
+            and config.get("VOICE_RELAY_STREAM_URL"):
+        from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
+        return CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"])
+    return None
+
+
 async def main():
     """Main function to start the bot with clean dependency injection."""
 
@@ -410,12 +419,7 @@ async def main():
                 # The web call's SFU (Cabinet web call below), built only when the web call is configured. The
                 # webhook gets it too: a phone dial ends the user's running web call through it
                 # (VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4).
-                voice_media_room = None
-                if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
-                        and config.get("VOICE_RELAY_STREAM_URL"):
-                    from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
-                    voice_media_room = CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"],
-                                                            config["CLOUDFLARE_SFU_APP_SECRET"])
+                voice_media_room = build_voice_media_room(config)
 
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(
@@ -430,6 +434,8 @@ async def main():
                         cipher=app.cipher,
                         digest_key=app.digest_key,
                         media_room=voice_media_room,
+                        # Local runs keep the request's own host (no base); Cloud Run uses the known public base.
+                        public_base_url=app.deploy_topology.service_url if os.environ.get("K_SERVICE") else "",
                     )
                 )
                 logger.info(

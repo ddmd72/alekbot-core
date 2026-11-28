@@ -22,7 +22,16 @@ from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.services.voice_session_service import VoiceSessionService
 from src.domain.secret_digest import fingerprint
+from src.handlers.sfu_stream_handler import is_ticket_shaped
 from src.utils.logger import logger
+
+# Twilio sends `start` right after the upgrade; a socket that has not sent a valid one by then is closed.
+START_TIMEOUT_S = 5.0
+# Sockets that have not yet sent a valid `start` (the phone path's counterpart of `_MAX_UNAUTHENTICATED` in
+# `call_control_handler.py`).
+_MAX_UNSTARTED = 32
+_CLOSE_POLICY = 1008
+_CLOSE_TRY_LATER = 1013
 
 
 class MediaStreamHandler:
@@ -30,10 +39,43 @@ class MediaStreamHandler:
     call ticket from the `start` event's `customParameters` and drives
     `VoiceSessionService.handle_call` for the lifetime of the stream."""
 
-    def __init__(self, session_service: VoiceSessionService) -> None:
+    def __init__(self, session_service: VoiceSessionService, *, start_timeout_s: float = START_TIMEOUT_S,
+                 max_unstarted: int = _MAX_UNSTARTED) -> None:
         self._session_service = session_service
+        self._start_timeout_s = start_timeout_s
+        self._max_unstarted = max_unstarted
+        self._unstarted = 0
+
+    @staticmethod
+    async def _close(ws, code: int) -> None:
+        close = getattr(ws, "close", None)
+        if close is None:
+            return
+        try:
+            await asyncio.wait_for(close(code), timeout=2.0)
+        except Exception as exc:   # the peer may already be gone; the socket is dropped either way
+            logger.debug(f"[MediaStream] close({code}) did not complete: {type(exc).__name__}")
 
     async def handle_connection(self, ws) -> None:
+        if self._unstarted >= self._max_unstarted:
+            logger.warning(f"media stream: rejected a socket, {self._unstarted} already waiting for start")
+            await self._close(ws, _CLOSE_TRY_LATER)
+            return
+        self._unstarted += 1
+        waiting = True
+
+        def leave_waiting() -> None:
+            nonlocal waiting
+            if waiting:
+                waiting = False
+                self._unstarted -= 1
+
+        try:
+            await self._serve(ws, leave_waiting)
+        finally:
+            leave_waiting()
+
+    async def _serve(self, ws, leave_waiting) -> None:
         stream_sid = None
         ticket = None
         inbound_queue: "asyncio.Queue" = asyncio.Queue()
@@ -113,15 +155,49 @@ class MediaStreamHandler:
         # "start" event ever arrived); awaiting an already-done task a second time is
         # not a risk here since cleanup now only ever happens once, in this block.
         call_task: "asyncio.Future | None" = None
+
+        async def frames() -> AsyncIterator:
+            # A valid `start` must arrive within `start_timeout_s` of the upgrade, whatever else is sent meanwhile
+            # (a socket that never speaks, or only sends other frames, is closed); after it the stream lasts as long
+            # as the call.
+            iterator = ws.__aiter__()
+            deadline = asyncio.get_running_loop().time() + self._start_timeout_s
+            while True:
+                try:
+                    if call_task is None:
+                        remaining = max(deadline - asyncio.get_running_loop().time(), 0.0)
+                        raw = await asyncio.wait_for(iterator.__anext__(), timeout=remaining)
+                    else:
+                        raw = await iterator.__anext__()
+                except StopAsyncIteration:
+                    return
+                yield raw
+
         try:
-            async for raw in ws:
-                msg = json.loads(raw)
-                event = msg.get("event")
+            async for raw in frames():
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    msg = None
+                event = msg.get("event") if isinstance(msg, dict) else None
                 if event == "start":
-                    stream_sid = msg["start"]["streamSid"]
-                    ticket = msg["start"]["customParameters"]["ticket"]
+                    if call_task is not None:
+                        continue  # a second `start` never replaces the running call
+                    start = msg.get("start")
+                    params = start.get("customParameters") if isinstance(start, dict) else None
+                    candidate = params.get("ticket") if isinstance(params, dict) else None
+                    sid = start.get("streamSid") if isinstance(start, dict) else None
+                    if not isinstance(candidate, str) or not is_ticket_shaped(candidate) or not isinstance(sid, str):
+                        logger.warning("media stream: start without a well-formed ticket, closed")
+                        await self._close(ws, _CLOSE_POLICY)
+                        return
+                    stream_sid = sid
+                    ticket = candidate
+                    leave_waiting()
                     call_task = asyncio.ensure_future(run_call(ticket))
                 elif event == "media":
+                    if call_task is None:
+                        continue  # audio before `start` is dropped, never queued
                     await inbound_queue.put(AudioFrame(
                         encoding="audio/pcmu",
                         sample_rate_hz=8000,
@@ -132,6 +208,9 @@ class MediaStreamHandler:
                     playback.record_played(msg["mark"]["name"])
                 elif event == "stop":
                     break
+        except asyncio.TimeoutError:
+            logger.info(f"media stream: no start within {self._start_timeout_s:.0f}s, closed")
+            await self._close(ws, _CLOSE_POLICY)
         except Exception as exc:
             # A redacted traceback instead of exc_info: the error may come from the session open, whose text can
             # carry a URL, a header or a call's token (LELIK_VOICE_MCP_RFC §5.4).

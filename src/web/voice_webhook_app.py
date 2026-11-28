@@ -45,6 +45,7 @@ origination raises, both are released and an alert posted. If no status ever
 arrives, the short TTLs release everything within `_TICKET_TTL_S`.
 """
 import asyncio
+import os
 import uuid
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
@@ -87,6 +88,8 @@ _PHONE_REPLACE_CLOSE_S = 1.5
 # signal, or fails at the carrier produces no answer webhook at all, so this
 # route is the only thing that can release the ticket and the marker before
 # `one_call_ttl_s` (default 3600s) expires.
+# One Slack/ops alert per unbound number per day.
+_UNBOUND_ALERT_TTL_S = 86400
 _TERMINAL_CALL_STATUSES = frozenset({"completed", "no-answer", "busy", "failed", "canceled"})
 
 def create_voice_webhook_blueprint(
@@ -103,6 +106,7 @@ def create_voice_webhook_blueprint(
     cipher,
     digest_key: bytes,
     media_room=None,
+    public_base_url: str = "",
     replace_wait_s: float = _PHONE_REPLACE_WAIT_S,
     replace_poll_s: float = _PHONE_REPLACE_POLL_S,
     replace_close_s: float = _PHONE_REPLACE_CLOSE_S,
@@ -121,6 +125,11 @@ def create_voice_webhook_blueprint(
     `media_room` is the web call's SFU (the one the web-call blueprint gets): a phone dial closes a running web call's
     media legs through it. None where the web call is not deployed; a web call's marker is then only waited for and
     taken over.
+
+    `public_base_url` is the service's own public base (the one `answer_url` is built from, no trailing slash): the URL
+    handed to the signature verifier is built from it, never from a request header. Empty means a local run, where the
+    request's own scheme and host are used; on Cloud Run (`K_SERVICE` set) an empty base makes every signature check
+    fail.
     """
     bp = Blueprint("voice_webhook", __name__)
     call_setup = VoiceCallSetupService(ephemeral_store, alert_sink, lelik_agent_provider, digest_key=digest_key,
@@ -176,7 +185,7 @@ def create_voice_webhook_blueprint(
         opened only after this check passes.
         """
         signature = request.headers.get("X-Twilio-Signature", "")
-        if await signature_verifier(_external_url(), dict(form), signature):
+        if await signature_verifier(_external_url(public_base_url), dict(form), signature):
             return None
         logger.warning(f"voice webhook: rejected unsigned/invalid request to {request.path}")
         return Response("forbidden", status=403)
@@ -191,8 +200,12 @@ def create_voice_webhook_blueprint(
 
         profile = await user_repository.get_user_by_platform_id("phone", caller)
         if profile is None:
-            logger.info(f"voice auth: rejected dial from unbound number {caller}")
-            await alert_sink.post(f"Voice: refused dial from unbound number {caller}")
+            caller_fp = fingerprint(caller)
+            logger.info(f"voice auth: rejected dial from unbound number fp={caller_fp}")
+            # One alert per number per day: the marker is claimed atomically, a repeat dial only logs.
+            if await ephemeral_store.set_if_absent(f"voice_unbound_alert:{caller_fp}", {"alerted": True},
+                                                   ttl_s=_UNBOUND_ALERT_TTL_S):
+                await alert_sink.post(f"Voice: refused dial from an unbound number (fp={caller_fp})")
             return _twiml_reject()
 
         # Checked before the marker: a dial that is refused anyway must not end a running web call.
@@ -512,27 +525,31 @@ def _pending_key(inbound_call_sid: str) -> str:
     return f"voice_pending_callback:{inbound_call_sid}"
 
 
-def _external_url() -> str:
+def _external_url(public_base_url: str = "") -> str:
     """The absolute URL Twilio computed its signature over.
 
     Cloud Run terminates TLS at its front end and forwards plain HTTP to the
-    container, and hypercorn here is started with no forwarded-header trust
-    (`main.py`: bare `HypercornConfig()` with only `bind`/`use_reloader`/
-    `accesslog`/`errorlog` set), so `request.url` reports `http://...` and would
-    never match the `https://...` URL Twilio signed. Rebuild it from the
-    `X-Forwarded-*` headers Cloud Run does set, falling back to the request's
-    own scheme/host for local dev.
+    container, so `request.url` reports `http://...` and would never match the
+    `https://...` URL Twilio signed. The URL is therefore rebuilt from the
+    service's own public base (`public_base_url`), plus the request's path and
+    query; no request header chooses the host. Without a base the request's own
+    scheme and host are used, but only for a local run (`K_SERVICE` unset);
+    on Cloud Run an empty base yields an empty URL, which no signature matches.
 
     The query string is included deliberately: it carries the callback reference, and
     Twilio's HMAC covers the full URL, so a swapped `ref` invalidates the
     signature.
     """
+    query = request.query_string.decode()
+    tail = f"{request.path}" + (f"?{query}" if query else "")
+    if public_base_url:
+        return f"{public_base_url.rstrip('/')}{tail}"
+    if os.environ.get("K_SERVICE"):
+        logger.error("voice webhook: no public base URL configured, signature check cannot pass")
+        return ""
     proto = (request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
              or request.scheme)
-    host = (request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
-            or request.host)
-    query = request.query_string.decode()
-    return f"{proto}://{host}{request.path}" + (f"?{query}" if query else "")
+    return f"{proto}://{request.host}{tail}"
 
 
 def _twiml_reject() -> Response:

@@ -342,7 +342,7 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
 # =============================================================================
 
 
-def _signed_app(*, ephemeral_store, signature_verifier=None):
+def _signed_app(*, ephemeral_store, signature_verifier=None, public_base_url=""):
     """Blueprint wired the way main.py wires it, for the Twilio-facing seams."""
     app = Quart(__name__)
     app.register_blueprint(create_voice_webhook_blueprint(
@@ -353,7 +353,8 @@ def _signed_app(*, ephemeral_store, signature_verifier=None):
         lelik_agent_provider=_persona_factory()[0],
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=signature_verifier or AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32
+        relay_stream_url="wss://relay.example.com/", cipher=_CIPHER, digest_key=b"k" * 32,
+        public_base_url=public_base_url,
     ))
     return app
 
@@ -527,8 +528,8 @@ async def test_signature_verifier_receives_the_full_external_url_including_query
     """Twilio's HMAC covers the URL it POSTed to, and the callback reference
     lives in that query string — so the verifier must be handed the external `https://`
     URL with the query intact, not Cloud Run's internal `http://` view of it.
-    Hypercorn here trusts no forwarded headers (main.py builds a bare
-    `HypercornConfig`), so the scheme has to come from `X-Forwarded-Proto`.
+    The scheme and host come from the service's public base (main.py passes it);
+    a forwarded host is never trusted (`test_voice_webhook_trusted_url.py`).
     """
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
@@ -537,15 +538,12 @@ async def test_signature_verifier_receives_the_full_external_url_including_query
 
     client = _signed_app(
         ephemeral_store=ephemeral_store, signature_verifier=verifier,
+        public_base_url="https://main.example.com",
     ).test_client()
     await client.post(
         f"/voice/answer?ref={ref}",
         form={"CallSid": "CA1", "AnsweredBy": "human"},
-        headers={
-            "X-Twilio-Signature": "sig-abc",
-            "X-Forwarded-Proto": "https",
-            "X-Forwarded-Host": "main.example.com",
-        },
+        headers={"X-Twilio-Signature": "sig-abc"},
     )
 
     url, form_params, signature = verifier.await_args.args

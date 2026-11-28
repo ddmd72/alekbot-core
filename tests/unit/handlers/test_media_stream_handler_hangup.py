@@ -6,6 +6,9 @@ import pytest
 
 from src.handlers.media_stream_handler import MediaStreamHandler
 
+# Tickets are minted as `str(uuid.uuid4())`; the handler refuses any other shape.
+TICKET = "3f2c9d5e-0d4b-4b8e-9a51-1c2d3e4f5a6b"
+
 
 class ClosableTwilioWs:
     def __init__(self, messages):
@@ -36,7 +39,7 @@ class EndsAtOnceSessionService:
 
 @pytest.mark.asyncio
 async def test_stream_is_closed_when_the_session_ends():
-    ws = ClosableTwilioWs([{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}])
+    ws = ClosableTwilioWs([{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}}])
 
     await MediaStreamHandler(session_service=EndsAtOnceSessionService()).handle_connection(ws)
 
