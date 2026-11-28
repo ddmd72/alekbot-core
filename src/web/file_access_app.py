@@ -40,6 +40,7 @@ from ..services.file_access_token_service import (
     FileAccessTokenExpired,
     FileAccessTokenInvalid,
 )
+from ..domain.secret_digest import fingerprint
 from ..utils.logger import logger
 from .cabinet_auth import CabinetSessionVerifier
 
@@ -98,13 +99,13 @@ def create_file_access_blueprint(
             if not await media_storage.exists(access.key):
                 # The token outlived the object (the bucket's lifecycle deleted it): gone, not an outage. A video
                 # key gets the same answer instead of a landing page whose player has nothing to play.
-                logger.info("[FileAccess] %s is no longer stored", access.key)
+                logger.info("[FileAccess] %s is no longer stored", _who(access))
                 return Response("This file has expired.", status=410)
             if access.key.startswith(_VIDEO_KEY_PREFIX):
                 return Response(_video_landing_page(token, access.key), mimetype="text/html")
             signed = await media_storage.generate_signed_url(access.key, _SIGNED_URL_TTL)
         except Exception as e:  # noqa: BLE001
-            logger.error("[FileAccess] signing failed for %s: %s", access.key, e, exc_info=True)
+            logger.error("[FileAccess] signing failed for %s: %s", _who(access), e, exc_info=True)
             return Response("File temporarily unavailable.", status=503)
 
         return redirect(signed)
@@ -119,10 +120,10 @@ def create_file_access_blueprint(
             data = await media_storage.fetch(access.key)
         except FileNotFoundError:
             # The token outlived the object (the bucket's lifecycle deleted it): gone, not an outage.
-            logger.info("[FileAccess] raw: %s is no longer stored", access.key)
+            logger.info("[FileAccess] raw: %s is no longer stored", _who(access))
             return Response("This file has expired.", status=410)
         except Exception as e:  # noqa: BLE001
-            logger.error("[FileAccess] raw fetch failed for %s: %s", access.key, e, exc_info=True)
+            logger.error("[FileAccess] raw fetch failed for %s: %s", _who(access), e, exc_info=True)
             return Response("File temporarily unavailable.", status=503)
 
         filename = access.key.rsplit("/", 1)[-1]
@@ -154,6 +155,11 @@ def create_file_access_blueprint(
         return Response(data, mimetype="video/mp4", headers=headers)
 
     return bp
+
+
+def _who(access: FileAccessToken) -> str:
+    """The log label of a token's object: the owner's id prefix and a fingerprint of the key (never the key)."""
+    return f"user={access.user_id[:8]} key={fingerprint(access.key)}"
 
 
 def _video_landing_page(token: str, key: str) -> str:

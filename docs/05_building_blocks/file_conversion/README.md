@@ -77,9 +77,10 @@ index does not come through `open`: it builds its own `ReadRequest` with `CALLER
    requesting user; `_download_by_ref`). A drive ref goes through `DriveConnectionService` and the access policy's READ
    check before any download or any text that prints its path (`_drive_item`). Store errors propagate; the callers map
    them.
-3. Size: a drive file and an email part are checked on metadata before download; chat and delivered bytes are
-   downloaded first and capped by the document service. A workspace text file is capped by `OPEN_FILE_MAX_TEXT_BYTES`
-   and decoded as UTF-8 in `_open` itself, and a skill ref is read by the skill resolver: neither reaches the document
+3. Size: a drive file, an email part and a workspace file are checked on metadata before download (a workspace text
+   file against `OPEN_FILE_MAX_TEXT_BYTES`, a workspace binary file against the document service's `MAX_FILE_BYTES`);
+   chat and delivered bytes are downloaded first and capped by the document service. A workspace text file is
+   decoded as UTF-8 in `_open` itself, and a skill ref is read by the skill resolver: neither reaches the document
    service. A drive text file is streamed up to
    `MAX_TEXT_EXPORT_BYTES`.
 4. Every other file's bytes go to `DocumentService.read` as a `ReadRequest` (bytes and plain values only, `store` = the ref kind).

@@ -17,6 +17,7 @@ The numbers below are the RFC's proposals (§5.4, §6.3, §7, §9, §10); the ow
 One module holds every record, enum and limit of the inbox on purpose (a waiver of the one-public-class rule): they are
 one frozen vocabulary that the store, the MCP tool, triage, the final pass, the rhythm and the Cabinet all build against.
 """
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -93,6 +94,7 @@ MAX_ITEMS_PER_CALL: Final[int] = 20
 MAX_INFORMATION_CHARS: Final[int] = 1000
 MAX_WHEN_CHARS: Final[int] = 200
 RECEIVED_PER_DAY: Final[int] = 100          # per user per owner-local day; items past it are not stored
+RECEIVED_PER_CLIENT_PER_DAY: Final[int] = 50  # per registered client within that total, so one client leaves room
 CANDIDATE_MAX_WORDS: Final[int] = 60        # by `word_count`; refused with its count, never cut
 ANSWER_WINDOW: Final[timedelta] = timedelta(days=30)
 TRIAGE_BATCH: Final[int] = 40
@@ -441,29 +443,39 @@ class InboxState:
     final_attempts: int = 0
     last_final_at: Optional[datetime] = None
     received_day: Optional[Tuple[str, int]] = None
+    received_by_client: Mapping[str, int] = field(default_factory=dict)  # client_key -> items stored that day
 
     def to_record(self) -> Dict[str, Any]:
         return {
             "user_id": self.user_id, "last_triage_at": self.last_triage_at,
             "last_triage_failed_at": self.last_triage_failed_at, "final_due_at": self.final_due_at,
             "final_attempts": self.final_attempts, "last_final_at": self.last_final_at,
-            "received_day": None if self.received_day is None else {"day": self.received_day[0],
-                                                                     "count": self.received_day[1]},
+            "received_day": None if self.received_day is None else {
+                "day": self.received_day[0], "count": self.received_day[1],
+                **({"clients": dict(self.received_by_client)} if self.received_by_client else {}),
+            },
         }
 
     @classmethod
     def from_record(cls, user_id: str, raw: Mapping[str, Any]) -> "InboxState":
         day = raw.get("received_day")
         received_day: Optional[Tuple[str, int]] = None
+        clients: Dict[str, int] = {}
         if day is not None:
             if not isinstance(day, Mapping):
                 raise ValueError("received_day is not a map")
             received_day = (_text(day, "day"), _count(day, "count"))
+            raw_clients = day.get("clients")
+            if raw_clients is not None:
+                if not isinstance(raw_clients, Mapping):
+                    raise ValueError("received_day clients is not a map")
+                clients = {str(key): _count(raw_clients, str(key)) for key in raw_clients}
         return cls(
             user_id=user_id, last_triage_at=_optional_time(raw, "last_triage_at"),
             last_triage_failed_at=_optional_time(raw, "last_triage_failed_at"),
             final_due_at=_optional_time(raw, "final_due_at"), final_attempts=_count(raw, "final_attempts"),
             last_final_at=_optional_time(raw, "last_final_at"), received_day=received_day,
+            received_by_client=clients,
         )
 
 
@@ -542,6 +554,11 @@ def _optional_text(raw: Mapping[str, Any], name: str) -> Optional[str]:
     return value
 
 
+def client_key(client_id: str) -> str:
+    """The state map's key of a registered client: a short digest, so any id is a safe field name."""
+    return hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:16]
+
+
 def _count(raw: Mapping[str, Any], name: str) -> int:
     value = raw.get(name, 0)
     if value is None:
@@ -576,7 +593,7 @@ def _enum(kind: Any, raw: Mapping[str, Any], name: str) -> Any:
 
 __all__: List[str] = [
     "Basis", "SubmissionStatus", "CandidateStatus", "DiscardReason", "RelationKind", "FinalOutcomeKind", "AnswerResult",
-    "MAX_ITEMS_PER_CALL", "MAX_INFORMATION_CHARS", "MAX_WHEN_CHARS", "RECEIVED_PER_DAY", "CANDIDATE_MAX_WORDS",
+    "MAX_ITEMS_PER_CALL", "MAX_INFORMATION_CHARS", "MAX_WHEN_CHARS", "RECEIVED_PER_DAY", "RECEIVED_PER_CLIENT_PER_DAY", "client_key", "CANDIDATE_MAX_WORDS",
     "ANSWER_WINDOW", "TRIAGE_BATCH", "TRIAGE_SHOWN_CAP", "TRIAGE_PASSES", "TRIAGE_MAX_OFFERS", "FINAL_DELAY",
     "FINAL_BACKSTOP_GRACE", "FINAL_BATCH", "FINAL_MAX_ATTEMPTS", "SAID_WHEN_LOOKBACK", "DEFAULT_TRIAGE_INTERVAL_DAYS",
     "OWNER_FIELD_NAMES", "purge_after_of", "check_owner_fields", "parse_basis_strict", "owner_day", "triage_interval",

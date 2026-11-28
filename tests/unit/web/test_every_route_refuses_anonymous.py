@@ -23,6 +23,7 @@ import httpx
 import pytest
 from quart import Quart
 
+from tests.support.active_users import ActiveUsers
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_drive_link_store import FirestoreDriveLinkStore
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
@@ -246,7 +247,8 @@ def _geo_mark(p: Probe):
     service = GeoMarkService(
         links=FirestoreEphemeralStore(p.db(), "p7_geo_mark_links"), geocoder=None, sessions=p.wire("sessions"),
         channels=p.wire("channels"), task_queue=p.wire("task_queue"), users=p.wire("users"),
-        localization=FileLocalizationAdapter(), digest_key=b"k" * 32, base_url="https://app.example")
+        localization=FileLocalizationAdapter(), digest_key=b"k" * 32, base_url="https://app.example",
+        inactive_users=ActiveUsers())
     return create_geo_mark_blueprint(service), {}
 
 

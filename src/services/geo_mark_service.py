@@ -14,7 +14,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable, Dict, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 from src.domain.geo_mark import (
     LINK_DIGEST_PURPOSE, LINK_ID_PATTERN, LINK_TTL_S, GeoFix, GeoLinkBinding, GeoMark, GeoPlace,
@@ -34,6 +34,9 @@ from src.ports.session_store import SessionStore
 from src.ports.task_queue import TaskQueue
 from src.ports.user_repository import UserRepository
 from src.utils.logger import logger
+
+if TYPE_CHECKING:
+    from src.services.inactive_user_check import InactiveUserCheck
 
 TURN_DEADLINE_S = 1800
 LINK_PATH = "/geo/"
@@ -71,6 +74,7 @@ class GeoMarkService:
     def __init__(self, *, links: EphemeralStore, geocoder: Optional[ReverseGeocodingPort], sessions: SessionStore,
                  channels: NotificationChannelFactoryPort, task_queue: TaskQueue, users: UserRepository,
                  localization: LocalizationPort, digest_key: bytes, base_url: str,
+                 inactive_users: "InactiveUserCheck",
                  clock: Callable[[], datetime] = _utcnow) -> None:
         self._links = links
         self._geocoder = geocoder
@@ -82,6 +86,8 @@ class GeoMarkService:
         self._digest_key = digest_key
         self._base_url = base_url.rstrip("/")
         self._clock = clock
+        # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8), read fresh per redeem.
+        self._inactive_users = inactive_users
 
     # ------------------------------------------------------------------ marks
 
@@ -137,6 +143,8 @@ class GeoMarkService:
         if binding is None:
             logger.info("[GeoMark] link gone: link=%s", fingerprint(digest))
             return GeoRedeem(GeoRedeemStatus.GONE)
+        if await self._refused(binding.user_id):
+            return GeoRedeem(GeoRedeemStatus.GONE)
         mark = await self.locate(fix)
         zone = await self._zone(binding.user_id)
         confirmation = self._confirmation(mark, zone, binding.language)
@@ -170,6 +178,17 @@ class GeoMarkService:
         return {message.value: self._localization.get_ui_string(lang, message) for message in PAGE_MESSAGES}
 
     # ------------------------------------------------------------------ internals
+
+    async def _refused(self, user_id: str) -> bool:
+        """True for an inactive user (the account lock), read fresh; an unreadable user is refused too (fails closed)."""
+        try:
+            inactive = await self._inactive_users.is_inactive(user_id)
+        except Exception as exc:
+            logger.error("[GeoMark] user unreadable for user=%s, link refused: %s", user_id[:8], type(exc).__name__)
+            return True
+        if inactive:
+            logger.warning("[GeoMark] user=%s is inactive (account lock): link refused", user_id[:8])
+        return inactive
 
     def _digest(self, raw_id: str) -> str:
         return keyed_digest(self._digest_key, LINK_DIGEST_PURPOSE, raw_id)

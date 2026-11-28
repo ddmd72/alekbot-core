@@ -64,7 +64,8 @@ bot (`slack_integration/README.md` § Slash command).
    (`geo_fix`). All checks (origin, JSON content type, body cap, `GeoFix.parse`) run before the link is taken, so a
    refused request leaves the link usable for the page's retry.
 5. `GeoMarkService.redeem_link` takes the record once (`get_and_delete`), runs `locate`, posts the one-line confirmation
-   to the bound Slack channel, then branches:
+   to the bound Slack channel, then branches (an inactive user, read fresh through `InactiveUserCheck`, gets the same
+   answer as a gone link before anything is located or posted):
    - **No text:** `_save_pair` appends the user/model pair (mark text, confirmation) to the session. No LLM turn.
    - **Text:** enqueues the `geo_mark_turn` worker task with the link digest as `dedup_key`. If the enqueue fails the
      pair is appended instead and the page says the question was not sent.

@@ -21,6 +21,7 @@ from google.api_core.exceptions import GoogleAPIError, NotFound, PreconditionFai
 
 from ..domain.exceptions import WorkspaceConflict
 from ..domain.workspace import (
+    refuse_if_over,
     SCRATCH_FOLDER,
     WorkspaceBlob,
     WorkspaceDeleteMeta,
@@ -84,8 +85,9 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
     async def list(self, user_id: str, prefix: str, include_versions: bool = False) -> List[WorkspaceEntry]:
         return await self._off_loop(self._list_sync, user_id, prefix, include_versions)
 
-    async def read(self, user_id: str, path: str, generation: Optional[int] = None) -> WorkspaceBlob:
-        return await self._off_loop(self._read_sync, user_id, path, generation)
+    async def read(self, user_id: str, path: str, generation: Optional[int] = None,
+                   max_bytes: Optional[int] = None) -> WorkspaceBlob:
+        return await self._off_loop(self._read_sync, user_id, path, generation, max_bytes)
 
     async def put(self, user_id: str, path: str, data: bytes, meta: WorkspaceWriteMeta,
                   if_generation_match: int) -> WorkspaceEntry:
@@ -102,12 +104,14 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
         blobs = self._get_client().list_blobs(self._bucket_name, prefix=key, versions=include_versions)
         return [self._entry(user_id, b) for b in blobs if not exact or b.name == key]
 
-    def _read_sync(self, user_id: str, path: str, generation: Optional[int]) -> WorkspaceBlob:
+    def _read_sync(self, user_id: str, path: str, generation: Optional[int],
+                   max_bytes: Optional[int]) -> WorkspaceBlob:
         key = self._key(user_id, path)
         bucket = self._bucket()
         blob = bucket.get_blob(key, generation=generation)  # GET 1: metadata
         if blob is None:
             raise FileNotFoundError(path)
+        refuse_if_over(path, int(blob.size or 0), max_bytes)  # the metadata is known before any media byte is fetched
         try:
             data = bucket.blob(key, generation=blob.generation).download_as_bytes()  # GET 2: media, that version
         except NotFound as e:

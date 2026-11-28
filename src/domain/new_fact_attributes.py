@@ -13,6 +13,7 @@ from .exceptions import FactExpiryError
 from .fact_expiry import EXPIRY_IGNORED_ON_CLOSE, EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry, parse_expiry
 from .fact_lifecycle import CLOSING_STATES, expiry_pinned, required_decision
 from .fact_write_context import FactWriteContext, decide_expiry
+from .pass_actor import PassActor
 
 # Unknown type names fall back to EVENT, as the write service always did.
 _TYPE_BY_NAME = {member.value: member for member in FactType}
@@ -45,13 +46,16 @@ class NewFactAttributes:
     notes: Tuple[str, ...] = ()
 
 
-def parse_new_fact(fact_data: Mapping[str, Any], timezone_name: Optional[str] = None) -> NewFactAttributes:
+def parse_new_fact(
+    fact_data: Mapping[str, Any], timezone_name: Optional[str] = None, actor: Optional[PassActor] = None,
+) -> NewFactAttributes:
     """Validate one fact dict before any embedding or write. Raises ValueError with a message the model can act on.
 
     `content` wins over `text`. State SUPERSEDED is refused: a document must not be born closed with no successor.
     State STALE is refused: only the system marks a fact stale. An `expiry` is optional here (the caller decides when
     it is required); one sent with a state that closes the fact is dropped, with a note. A non-dict `metadata` is ignored.
-    `timezone_name` (the owner's zone) lets `reported_date` be the consolidator's own conversation stamp.
+    `timezone_name` (the owner's zone) lets `reported_date` be the consolidator's own conversation stamp. `actor`: the
+    pass writing the fact; one that `may_set_directive` false gets `directive=False` whatever was sent.
     """
     content = fact_data.get("content") or fact_data.get("text")
     if not isinstance(content, str) or not content.strip():
@@ -85,7 +89,7 @@ def parse_new_fact(fact_data: Mapping[str, Any], timezone_name: Optional[str] = 
         tags=tags,
         type=_TYPE_BY_NAME.get(type_name.lower(), FactType.EVENT),
         metadata=metadata if isinstance(metadata, dict) else {},
-        directive=_parse_directive(fact_data.get("directive")),
+        directive=_parse_directive(fact_data.get("directive")) and (actor is None or actor.may_set_directive),
         temporal_class=(
             parse_enum(TemporalClass, "temporal_class", fact_data["temporal_class"])
             if fact_data.get("temporal_class")

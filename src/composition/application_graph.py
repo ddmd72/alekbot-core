@@ -355,7 +355,7 @@ def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, c
         config, db_client, config["ENVIRONMENT_CONFIG"], digest_key=boot.digest_key,
         service_url=boot.deploy_topology.service_url, session_store=container.session_store,
         channel_factory=notifications.channel_factory, task_queue=ops.task_queue, user_repo=identity.user_repo,
-        localization_port=languages.localization_port)
+        localization_port=languages.localization_port, inactive_users=identity.inactive_users)
     chat = ChatServices(
         coordinator=coordinator,
         agent_factory=agents.factory,

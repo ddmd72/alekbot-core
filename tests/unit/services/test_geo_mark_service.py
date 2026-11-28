@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pytest
 
+from tests.support.active_users import ActiveUsers
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.domain.geo_mark import LINK_DIGEST_PURPOSE, LINK_TTL_S, GeoFix, GeoLinkBinding, GeoMark, GeoPlace, GeoSource
@@ -100,7 +101,7 @@ class World:
         self.service = GeoMarkService(
             links=self.links, geocoder=self.geocoder, sessions=self.sessions, channels=self.channels,
             task_queue=self.queue, users=self.users, localization=FileLocalizationAdapter(), digest_key=DIGEST_KEY,
-            base_url=BASE_URL, clock=lambda: NOW)
+            base_url=BASE_URL, inactive_users=ActiveUsers(), clock=lambda: NOW)
 
     def docs(self) -> Dict[str, dict]:
         return self.db.collection(LINKS).docs
@@ -382,7 +383,8 @@ class TestLocate:
         w = World()
         service = GeoMarkService(
             links=w.links, geocoder=None, sessions=w.sessions, channels=w.channels, task_queue=w.queue,
-            users=w.users, localization=FileLocalizationAdapter(), digest_key=DIGEST_KEY, base_url=BASE_URL)
+            users=w.users, localization=FileLocalizationAdapter(), digest_key=DIGEST_KEY, base_url=BASE_URL,
+            inactive_users=ActiveUsers())
         assert await service.locate(_fix()) == GeoMark(_fix(), None)
 
     async def test_a_raising_geocoder_gives_no_address(self):
@@ -412,3 +414,35 @@ async def test_no_log_line_holds_the_position_the_address_or_the_question(caplog
 
     assert any("[GeoMark]" in r.getMessage() for r in caplog.records)
     _no_position_or_address(caplog)
+
+
+class _Lock:
+    def __init__(self, inactive: bool = False, raises: bool = False) -> None:
+        self.inactive, self.raises = inactive, raises
+
+    async def is_inactive(self, user_id: str) -> bool:
+        if self.raises:
+            raise RuntimeError("firestore blinked")
+        return self.inactive
+
+
+class TestRedeemOfALockedUser:
+
+    @pytest.mark.parametrize("text", ["", QUESTION])
+    @pytest.mark.parametrize("lock", [_Lock(inactive=True), _Lock(raises=True)])
+    async def test_an_inactive_or_unreadable_user_gets_gone_and_nothing_is_written(self, text, lock):
+        w = World()
+        w.service._inactive_users = lock
+        raw_id = await w.issue(text)
+
+        result = await w.service.redeem_link(raw_id, _fix())
+
+        assert result.status is GeoRedeemStatus.GONE
+        assert await w.history() == [] and w.posted() == [] and w.tasks.worker_tasks() == []
+
+    async def test_an_active_user_redeems_as_before(self):
+        w = World()
+        w.service._inactive_users = _Lock()
+        raw_id = await w.issue()
+
+        assert (await w.service.redeem_link(raw_id, _fix())).status is GeoRedeemStatus.SAVED

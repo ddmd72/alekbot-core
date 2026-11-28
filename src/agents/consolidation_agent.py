@@ -2600,9 +2600,9 @@ class ConsolidationAgent(BaseAgent):
 
                     logger.info(
                         f"   🔍 search_existing_facts("
-                        f"keywords={keywords[:3]}{'...' if len(keywords) > 3 else ''}, "
-                        f"primary='{primary_query[:40]}...', "
-                        f"alternative='{alternative_query[:40] if alternative_query else 'N/A'}...', "
+                        f"keywords={len(keywords)}, "
+                        f"primary_chars={len(primary_query)}, "
+                        f"alternative_chars={len(alternative_query) if alternative_query else 0}, "
                         f"limit={limit})"
                     )
 

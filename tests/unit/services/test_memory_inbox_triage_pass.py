@@ -28,6 +28,7 @@ from tests.support.memory_inbox_store import inbox_store
 UTC = timezone.utc
 AT = datetime(2026, 11, 25, 9, 0, tzinfo=UTC)
 CLIENT = SubmittingClient(client_id="c1", client_name="Claude")
+OTHER = SubmittingClient(client_id="cli-x", client_name="Other")  # one client's day holds half the user's day
 GYM = "Alex plays tennis on Sundays"
 
 
@@ -89,10 +90,10 @@ class World:
             store=self.inbox.repo, coordinator=self.coordinator, ensure_agents=ensure, clock=lambda: AT,
             new_scope=lambda ids, account_id: MemoryInboxTriageScope(ids, account_id, self.facts.repo))
 
-    async def receive(self, count: int, day: int = 0) -> List[str]:
+    async def receive(self, count: int, day: int = 0, client: SubmittingClient = CLIENT) -> List[str]:
         drafts = [SubmissionDraft(information=f"{GYM} ({n})", basis=Basis.SAID, said_when="", happens_when="")
                   for n in range(count)]
-        await self.inbox.repo.add_submissions("u1", "a1", CLIENT, drafts, AT - timedelta(days=10 - day),
+        await self.inbox.repo.add_submissions("u1", "a1", client, drafts, AT - timedelta(days=10 - day),
                                               f"2026-11-{15 + day}")
         return [s.submission_id for s in await self.inbox.repo.received("u1", 500)]
 
@@ -103,7 +104,8 @@ class World:
 
 async def test_up_to_three_batches_of_forty_then_the_rest_waits():
     world = World()
-    await world.receive(100)
+    await world.receive(50)
+    await world.receive(50, client=OTHER)
     await world.receive(30, day=1)
     outcome = await world.run()
     assert (outcome.status, outcome.passes, outcome.submissions, outcome.discarded, outcome.left) == \

@@ -329,6 +329,16 @@ class WorkspaceRefused(Exception):
         self.reason = reason
 
 
+class WorkspaceFileTooLarge(WorkspaceRefused):
+    """A stored workspace file is over the size a read allows; nothing was downloaded. `size` is the stored size,
+    `limit` the cap that applied."""
+
+    def __init__(self, message: str, size: int, limit: int) -> None:
+        super().__init__(message, reason="caps")
+        self.size = size
+        self.limit = limit
+
+
 class WorkspaceConflict(Exception):
     """A generation precondition failed (HTTP 412): another run wrote or deleted the object since it was read."""
 

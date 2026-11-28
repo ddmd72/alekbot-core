@@ -5,7 +5,7 @@ states the write may reach, whether an unanswered date refusal is a loss and whi
 three label lists (the agent's, the stats', the write rules' `not model_dates`); they are rows here and nowhere else.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Dict, Final, FrozenSet, Optional
 
@@ -72,6 +72,12 @@ class PassActor(StrEnum):
         return _ROWS[self].refusal_wording
 
     @property
+    def may_set_directive(self) -> bool:
+        """False = a fact this pass creates is never a standing directive, whatever the model sent: the mail pass reads
+        text written by third parties, and a directive steers every later answer."""
+        return _ROWS[self].may_set_directive
+
+    @property
     def closing_reason(self) -> Optional[str]:
         """The trail reason of an in-place state change the caller gave none for; None = the caller must give one (the
         review and the owner, whose reasons are code-built and always passed in)."""
@@ -88,12 +94,15 @@ class _Row:
     closing_reason: Optional[str]
     one_result_per_fact: bool = False
     refusals_counter: CounterField = CounterField.EXPIRY_TOOL_ERRORS
+    may_set_directive: bool = True
 
 
 _CONVERSATION = _Row(
     model_dates=True, floors_due_horizon=False, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=False,
     refusal_wording=RefusalWording.STAGE1, closing_reason="model",
 )
+# The mail pass writes by the conversation's rules, but what it reads is mail: its facts are never directives.
+_EMAIL = replace(_CONVERSATION, may_set_directive=False)
 # A cleanup pass has a model that can answer a refusal, and the fact it holds is stored memory: dropping it is a loss.
 _CLEANUP = _Row(
     model_dates=False, floors_due_horizon=True, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=True,
@@ -117,7 +126,7 @@ _OWNER = _Row(
 
 _ROWS: Final[Dict[PassActor, _Row]] = {
     PassActor.STAGE1: _CONVERSATION,
-    PassActor.EMAIL: _CONVERSATION,
+    PassActor.EMAIL: _EMAIL,
     PassActor.STAGE2A: _CLEANUP,
     PassActor.STAGE2B: _CLEANUP,
     PassActor.CLUSTER: _CLEANUP,

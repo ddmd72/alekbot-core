@@ -252,3 +252,15 @@ async def test_the_create_path_floors_a_due_horizon_for_every_actor_whose_row_fl
 async def test_the_create_path_refuses_a_due_horizon_for_an_actor_whose_row_does_not_floor(store, label):
     res = await create_with_a_due_horizon(store, FactWriteContext.for_pass(PassActor(label), "UTC"))
     assert (res["status"], res["refused"]) == ("failed", "expiry")
+
+
+def test_only_the_mail_pass_never_sets_a_directive():
+    assert {a for a in PassActor if not a.may_set_directive} == {PassActor.EMAIL}
+
+
+@pytest.mark.parametrize("actor, expected", [(PassActor.EMAIL, False), (PassActor.STAGE1, True),
+                                             (PassActor.INBOX, True), (None, True)])
+def test_a_new_fact_directive_follows_the_pass(actor, expected):
+    from src.domain.new_fact_attributes import parse_new_fact
+    attrs = parse_new_fact({"content": "Suggest only vegetarian recipes.", "directive": True}, None, actor)
+    assert attrs.directive is expected

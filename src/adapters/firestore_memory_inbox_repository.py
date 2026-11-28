@@ -26,6 +26,7 @@ from ..domain.memory_inbox import (
     ANSWER_WINDOW,
     FINAL_DELAY,
     FINAL_MAX_ATTEMPTS,
+    RECEIVED_PER_CLIENT_PER_DAY,
     RECEIVED_PER_DAY,
     TRIAGE_MAX_OFFERS,
     AddReceipt,
@@ -44,6 +45,7 @@ from ..domain.memory_inbox import (
     SubmissionStatus,
     SubmittingClient,
     TriageDecisions,
+    client_key,
     purge_after_of,
 )
 from ..ports.memory_inbox_repository import MemoryInboxRepository
@@ -71,8 +73,13 @@ class FirestoreMemoryInboxRepository(MemoryInboxRepository):
         async def body(transaction: Any) -> AddReceipt:
             snap = await state_ref.get(transaction=transaction)
             state = self._the_state(user_id, snap)
-            count = state.received_day[1] if state.received_day is not None and state.received_day[0] == day else 0
-            kept = list(drafts)[:max(RECEIVED_PER_DAY - count, 0)]
+            today = state.received_day is not None and state.received_day[0] == day
+            count = state.received_day[1] if state.received_day is not None and today else 0
+            clients = dict(state.received_by_client) if today else {}
+            key = client_key(client.client_id)
+            mine = clients.get(key, 0)
+            room = min(RECEIVED_PER_DAY - count, RECEIVED_PER_CLIENT_PER_DAY - mine)
+            kept = list(drafts)[:max(room, 0)]
             for draft in kept:
                 submission = Submission(
                     submission_id="", user_id=user_id, account_id=account_id, status=SubmissionStatus.RECEIVED,
@@ -82,8 +89,11 @@ class FirestoreMemoryInboxRepository(MemoryInboxRepository):
                 )
                 transaction.create(self._inbox.document(), submission.to_record())
             if kept:
-                transaction.set(state_ref, {"user_id": user_id, "received_day": {"day": day, "count": count + len(kept)}},
-                                merge=True)
+                clients[key] = mine + len(kept)
+                # The day's map is replaced whole (a new day drops the old clients' counts).
+                transaction.set(state_ref, {"user_id": user_id, "received_day": {
+                    "day": day, "count": count + len(kept), "clients": clients}},
+                                merge=["user_id", "received_day"])
             return AddReceipt(stored=len(kept), over_day=len(drafts) - len(kept))
 
         return await self._in_transaction(body, f"submissions of user {user_id[:8]}")
@@ -366,7 +376,7 @@ class FirestoreMemoryInboxRepository(MemoryInboxRepository):
         try:
             return await run(self._db.transaction())
         except Exception as exc:
-            logger.error(f"❌ [MemoryInboxStore] transaction on {what} failed: {type(exc).__name__}: {exc}")
+            logger.error(f"❌ [MemoryInboxStore] transaction on {what} failed: {type(exc).__name__}")
             raise
 
 

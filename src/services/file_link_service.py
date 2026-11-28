@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..domain.file_access import DEFAULT_FILE_LINK_TTL, EMAIL_REVIEW_FILE_LINK_TTL
+from ..domain.secret_digest import fingerprint
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -59,7 +60,7 @@ class FileLinkService:
         ttl = EMAIL_REVIEW_FILE_LINK_TTL if gated else DEFAULT_FILE_LINK_TTL
         token = self._tokens.mint(key=key, user_id=user_id, ttl_seconds=ttl, gated=gated)
         logger.info(
-            "FileLinkService: link for '%s' (user=%s, gated=%s, ttl=%ds)",
-            key, user_id[:8] if user_id else "?", gated, ttl,
+            "FileLinkService: link for key=%s (user=%s, gated=%s, ttl=%ds)",
+            fingerprint(key), user_id[:8] if user_id else "?", gated, ttl,
         )
         return f"{self._base_url}/f/{token}"
