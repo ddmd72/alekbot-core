@@ -111,7 +111,7 @@ async def test_a_one_time_fire_ticked_twice_concurrently_enqueues_once(prod_grap
 
 async def _auto_index_user(graph: Any) -> None:
     """`u1` with Gmail auto-indexing at 09:00 Berlin and Gmail credentials (the fan-out lists users by provider)."""
-    await graph.app.user_repo.update_user(UserProfile(
+    await graph.app.user_repo.create_user(UserProfile(
         user_id="u1", account_id="a1",
         config=UserBotConfig(timezone="Europe/Berlin", gmail_auto_index=True, gmail_auto_index_hour=9)))
     await graph.app.worker_handler._email_indexing._oauth.save(creds("u1", "gmail"))

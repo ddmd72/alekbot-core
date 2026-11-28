@@ -136,7 +136,7 @@ class TestCallback:
     async def test_sign_in_never_redirects_off_site(self):
         w = World()
         await w.seed()
-        await w.users.update_user(UserProfile(user_id="user-a", account_id="account-a", external_user_id="google|sub-1"))
+        await w.users.create_user(UserProfile(user_id="user-a", account_id="account-a", external_user_id="google|sub-1"))
         login = await w.client.get("/auth/login/google?next=https://evil.example/phish")
         assert login.status_code == 302
         stored = {c.name: c.value for c in w.client.cookie_jar}  # what login set; the browser replays it
@@ -227,7 +227,7 @@ class TestLinkOauth:
     async def test_identity_linked_to_another_user_is_400_and_neither_user_changes(self):
         w = World()
         await w.seed()
-        await w.users.update_user(UserProfile(user_id="user-b", account_id="account-b", external_user_id="google|sub-1"))
+        await w.users.create_user(UserProfile(user_id="user-b", account_id="account-b", external_user_id="google|sub-1"))
         before = w.user_docs()
         resp = await self._post(w, token=access_token("user-a", "account-a"))
         assert resp.status_code == 400
