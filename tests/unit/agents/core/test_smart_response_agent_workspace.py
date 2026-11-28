@@ -41,6 +41,7 @@ def _agent(workspace_service, skills=(), list_skills=None):
     builder.build_for_agent = AsyncMock(return_value="SYSTEM_PROMPT")
     coordinator = MagicMock()
     coordinator.get_available_intents_for = MagicMock(return_value=[])
+    coordinator.available_intents_for = AsyncMock(return_value=[])
     resolver = MagicMock(spec=TaskExecutionResolver)
     resolver.resolve.return_value = None
     skill_service = MagicMock()

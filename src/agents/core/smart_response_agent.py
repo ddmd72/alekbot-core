@@ -13,7 +13,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
 
 from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import SMART
@@ -526,7 +526,8 @@ class SmartResponseAgent(BaseAgent):
             offer_external_tasks = bool(
                 prompt_user_id and task_entry(message.context) is not None
                 and not self._reached_by_delegation(message) and self.user_config.external_tasks_enabled)
-            tools = self._get_tool_declarations(offer_external_tasks)
+            offered, turned_off = await self._offered_intents(offer_external_tasks, prompt_user_id)
+            tools = self._get_tool_declarations(offer_external_tasks, offered, turned_off)
             local_tools = None
             if skills:
                 tools.append(build_use_skill_tool_declaration())
@@ -799,15 +800,39 @@ class SmartResponseAgent(BaseAgent):
             return None
         return await self.history_summary_service.summarize_model_response(response_text)
 
-    def _get_tool_declarations(self, offer_external_tasks: bool = False) -> List[Dict[str, Any]]:
-        """Build tool declarations for LLM API. Available intents injected from AgentRegistry; the external task
-        specialist's internal intent is added only when `offer_external_tasks` (Smart's gate held)."""
+    async def _offered_intents(
+        self, offer_external_tasks: bool, user_id: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """The intents the delegate tool offers this user: Smart's own offer without the intents turned off on the
+        user's profile, plus the external task specialist's internal intent when `offer_external_tasks` (Smart's gate
+        held) and that intent is available to the user too. Also whether the profile removed an intent of Smart's own offer
+        (the declaration then says so; the external task offer is another gate and does not count). A courtesy only:
+        `handle_delegation` is the enforcement."""
+        if not self.coordinator:
+            return [], False
+        intents = await self.coordinator.available_intents_for(self._descriptor, user_id)
+        turned_off = len(intents) < len(self.coordinator.get_available_intents_for(self._descriptor))
+        if offer_external_tasks and await self.coordinator.is_intent_available(Intent.WORK_WITH_EXTERNAL_TASKS, user_id):
+            intents = [*intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
+        return intents, turned_off
+
+    def _get_tool_declarations(
+        self,
+        offer_external_tasks: bool = False,
+        available_intents: Optional[List[Dict[str, Any]]] = None,
+        turned_off: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Build tool declarations for LLM API. `available_intents` is `_offered_intents` of the turn; omitted, every
+        intent of the registry is offered (no user: the eval script). `turned_off`: the user's profile removed an intent
+        (`_offered_intents`)."""
         if not self.coordinator:
             return [self._build_delegate_tool_declaration([])]
-        available_intents = self.coordinator.get_available_intents_for(self._descriptor)
-        if offer_external_tasks:
-            available_intents = [*available_intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
-        return [self._build_delegate_tool_declaration(available_intents)]
+        if available_intents is None:
+            available_intents = self.coordinator.get_available_intents_for(self._descriptor)
+            if offer_external_tasks:
+                available_intents = [
+                    *available_intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
+        return [self._build_delegate_tool_declaration(available_intents, turned_off)]
 
     def _summarize_history(self, history: List[Message]) -> str:
         """Summarize message history for debugging."""

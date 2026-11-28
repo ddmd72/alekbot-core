@@ -250,6 +250,11 @@ class UserBotConfig(BaseModel):
     tools_enabled: List[str] = ["search_memory", "ask_web_search_agent"]
     is_paranoid_mode: bool = False  # Disables vector search, enables encryption
 
+    # Per-intent availability override at this level (USER: UserProfile.config, ACCOUNT:
+    # BillingAccount.account_defaults): only differences from the inherited value are stored; an absent intent
+    # inherits (domain/config_resolution.py).
+    intent_access: Dict[str, bool] = Field(default_factory=dict)
+
     # Consolidation Overrides
     consolidation_threshold: Optional[int] = None
     consolidation_batch_size: Optional[int] = None

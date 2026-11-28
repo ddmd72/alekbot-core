@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Protocol
 from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
+from ..domain.config_resolution import EffectiveConfig
 from ..domain.document_open import Prefetched
 from ..domain.document_open_texts import conversion_alert, open_failed_note
 from ..domain.document_read import INTERACTIVE_OPEN_S
@@ -72,6 +73,7 @@ class AgentCoordinator:
         file_ref_resolver: Optional[FileRefResolver] = None,
         agent_factory: Optional[AgentFactoryPort] = None,
         alert_sink: Optional[AlertSinkPort] = None,
+        effective_config: Optional[Callable[[str], Awaitable[EffectiveConfig]]] = None,
     ):
         """
         Initialize coordinator.
@@ -91,6 +93,8 @@ class AgentCoordinator:
             alert_sink: Optional ops sink for delegation-loop alerts. Without it a
                         refused cycle is still refused, but only to the logs — and a
                         loop is exactly the failure nobody notices in logs.
+            effective_config: Optional async callable(user_id) -> EffectiveConfig (ConfigurationService.effective_for):
+                              the user's per-intent availability. Without it every intent is available.
         """
         self.agents: Dict[str, BaseAgent] = {}
         self._registry = registry
@@ -98,6 +102,7 @@ class AgentCoordinator:
         self._file_ref_resolver = file_ref_resolver
         self._agent_factory = agent_factory
         self._alert_sink = alert_sink
+        self._effective_config = effective_config
         logger.info("🎯 AgentCoordinator initialized")
 
     def set_agent_factory(self, factory: AgentFactoryPort) -> None:
@@ -412,6 +417,11 @@ class AgentCoordinator:
                 suggestions=[i["name"] for i in self._registry.get_available_intents()]
             )
 
+        user_id = context.get("user_id", "")
+        if not await self.is_intent_available(intent, user_id):
+            logger.info(f"Intent '{intent}' is turned off on the profile of user {user_id[:8]}; refused (from {calling_agent_id})")
+            return AgentResponse.intent_unavailable(intent, task_id="delegation", agent_id="coordinator")
+
         chain: List[str] = list(context.get(self.CALL_CHAIN_KEY) or [])
         refusal = await self._refuse_if_looping(manifest.agent_id, chain, calling_agent_id)
         if refusal is not None:
@@ -697,6 +707,20 @@ class AgentCoordinator:
         if self._registry is None:
             return []
         return self._registry.get_available_intents_for(descriptor)
+
+    async def is_intent_available(self, intent: str, user_id: str) -> bool:
+        """Whether `intent` is available on the user's profile; True when no effective configuration is wired."""
+        if self._effective_config is None:
+            return True
+        return (await self._effective_config(user_id)).is_intent_available(intent)
+
+    async def available_intents_for(self, descriptor: AgentDescriptor, user_id: str) -> List[Dict[str, str]]:
+        """get_available_intents_for(descriptor) without the intents turned off on the user's profile (one read)."""
+        intents = self.get_available_intents_for(descriptor)
+        if self._effective_config is None:
+            return intents
+        effective = await self._effective_config(user_id)
+        return [item for item in intents if effective.is_intent_available(item["name"])]
 
     def get_execution_mode(self, intent: str) -> Optional[ExecutionMode]:
         """

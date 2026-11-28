@@ -62,6 +62,7 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     )
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
+    coordinator.available_intents_for = AsyncMock(return_value=[])
     coordinator.get_available_intents = MagicMock(return_value=[
         {"name": "search_memory", "description": "Search biographical facts"},
         {"name": "search_web_light", "description": "Lightweight web search"},

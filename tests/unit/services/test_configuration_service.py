@@ -3,11 +3,21 @@ Unit tests for ConfigurationService (OAuth Multi-Tenant Session 6).
 
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 """
+import logging
+from types import SimpleNamespace
+
 import pytest
 
+from src.adapters.firestore_account_repo import FirestoreAccountRepository
+from src.adapters.firestore_user_repo import FirestoreUserRepository
+from src.domain.config_resolution import SystemConfig
 from src.services.configuration_service import ConfigurationService
+from src.ports.account_repository import AccountRepository
+from src.ports.user_repository import UserRepository
+from unittest.mock import MagicMock
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
+from tests.support.firestore_eval import EvalDb
 
 
 # ============================================================================
@@ -16,7 +26,7 @@ from src.domain.billing import BillingAccount, AccountTier
 @pytest.fixture
 def config_service():
     """Create ConfigurationService instance."""
-    return ConfigurationService()
+    return ConfigurationService(user_repo=MagicMock(spec=UserRepository), account_repo=MagicMock(spec=AccountRepository), system=SystemConfig(intent_access={}))
 
 
 @pytest.fixture
@@ -608,3 +618,109 @@ class TestGetMaxVideoDuration:
         assert config_service.get_max_video_duration(
             _cfg(max_video_duration_s=20), account_defaults=_cfg(max_video_duration_s=15)
         ) == 20
+
+
+# ============================================================================
+# effective_for: the three levels read from the real user and account stores
+# ============================================================================
+class _Stores:
+    """The real user and account repositories on one evaluating Firestore fake, under the service."""
+
+    def __init__(self) -> None:
+        self.db = EvalDb()
+        self.accounts = FirestoreAccountRepository(self.db, "accounts")
+        self.users = FirestoreUserRepository(
+            self.db, SimpleNamespace(domain_users_collection="users", is_production=False), self.accounts)
+        self.service = ConfigurationService(user_repo=self.users, account_repo=self.accounts, system=SYSTEM_ACCESS)
+
+    async def add_account(self, account_defaults=None) -> None:
+        await self.accounts.create_account(BillingAccount(account_id="acc-1", account_defaults=account_defaults))
+
+    async def add_user(self, user_id="usr-1", account_id="acc-1", **access: bool) -> None:
+        await self.users.create_user(UserProfile(
+            user_id=user_id, account_id=account_id, config=UserBotConfig(intent_access=access)))
+
+
+SYSTEM_ACCESS = SystemConfig(intent_access={"tutor_chat": True, "generate_image": True, "generate_video": False})
+
+
+def _boom(*_args, **_kwargs):
+    raise ConnectionError("backend unavailable")
+
+
+class TestEffectiveFor:
+
+    async def test_the_user_level_wins_over_the_account_defaults_per_intent(self):
+        stores = _Stores()
+        await stores.add_account(UserBotConfig(intent_access={"tutor_chat": False, "generate_image": False}))
+        await stores.add_user(tutor_chat=True)
+
+        got = await stores.service.effective_for("usr-1")
+
+        assert dict(got.intent_access) == {"tutor_chat": True, "generate_image": False, "generate_video": False}
+
+    async def test_a_second_member_of_the_account_inherits_its_defaults(self):
+        stores = _Stores()
+        await stores.add_account(UserBotConfig(intent_access={"generate_video": True}))
+        await stores.add_user(user_id="usr-2")
+
+        assert (await stores.service.effective_for("usr-2")).is_intent_available("generate_video") is True
+
+    async def test_an_account_id_without_an_account_document_is_no_account_level(self):
+        stores = _Stores()
+        await stores.add_user(generate_image=False)
+
+        got = await stores.service.effective_for("usr-1")
+
+        assert dict(got.intent_access) == {"tutor_chat": True, "generate_image": False, "generate_video": False}
+
+    async def test_an_account_without_defaults_is_no_account_level(self):
+        stores = _Stores()
+        await stores.add_account(account_defaults=None)
+        await stores.add_user(generate_video=True)
+
+        assert dict((await stores.service.effective_for("usr-1")).intent_access) == {
+            "tutor_chat": True, "generate_image": True, "generate_video": True}
+
+    async def test_a_user_without_an_account_id_reads_no_account(self, monkeypatch):
+        stores = _Stores()
+        await stores.add_user(account_id=None, tutor_chat=False)
+        monkeypatch.setattr(stores.accounts.accounts_collection, "document", _boom)
+
+        got = await stores.service.effective_for("usr-1")
+
+        assert dict(got.intent_access) == {"tutor_chat": False, "generate_image": True, "generate_video": False}
+
+    async def test_an_unknown_user_gets_the_system_defaults(self):
+        stores = _Stores()
+        await stores.add_account(UserBotConfig(intent_access={"tutor_chat": False}))
+
+        assert dict((await stores.service.effective_for("usr-9")).intent_access) == dict(SYSTEM_ACCESS.intent_access)
+
+    @pytest.mark.parametrize("store", ["users", "accounts"])
+    async def test_a_failed_read_gets_the_system_defaults_and_one_warning(self, store, monkeypatch, caplog):
+        stores = _Stores()
+        await stores.add_account(UserBotConfig(intent_access={"generate_image": False}))
+        await stores.add_user(tutor_chat=False)
+        collection = stores.users.users_col if store == "users" else stores.accounts.accounts_collection
+        monkeypatch.setattr(collection, "document", _boom)
+
+        with caplog.at_level(logging.WARNING):
+            got = await stores.service.effective_for("usr-1")
+
+        assert dict(got.intent_access) == dict(SYSTEM_ACCESS.intent_access)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "usr-1" in warnings[0].getMessage() and "ConnectionError" in warnings[0].getMessage()
+
+    async def test_every_call_reads_the_stores_afresh(self):
+        stores = _Stores()
+        await stores.add_account(UserBotConfig())
+        await stores.add_user()
+        assert (await stores.service.effective_for("usr-1")).is_intent_available("tutor_chat") is True
+
+        await stores.add_account(UserBotConfig(intent_access={"tutor_chat": False}))
+        assert (await stores.service.effective_for("usr-1")).is_intent_available("tutor_chat") is False
+
+        await stores.add_user(tutor_chat=True)
+        assert (await stores.service.effective_for("usr-1")).is_intent_available("tutor_chat") is True

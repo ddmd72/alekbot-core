@@ -39,6 +39,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentMessage, AgentResponse, AgentIntent, AgentStatus
+from src.domain.config_resolution import EffectiveConfig, SystemConfig, resolve
+from src.domain.user import UserBotConfig
 from src.domain.document_open import Prefetched
 from src.domain.document_open_texts import open_failed_note
 from src.infrastructure.agent_coordinator import AgentCoordinator
@@ -473,3 +475,59 @@ class TestGetExecutionMode:
 
     def test_no_registry_is_none(self):
         assert AgentCoordinator(registry=None).get_execution_mode("search_memory") is None
+
+
+# ---------------------------------------------------------------------------
+# is_intent_available() / available_intents_for(): the user's per-intent availability
+# ---------------------------------------------------------------------------
+
+class _EffectiveConfigs:
+    """effective_for over fixed per-user levels, counting the reads."""
+
+    def __init__(self, **users: dict) -> None:
+        self.system = SystemConfig(intent_access={"search_memory": True, "tutor_chat": True})
+        self.users = users
+        self.calls: list = []
+
+    async def __call__(self, user_id: str) -> EffectiveConfig:
+        self.calls.append(user_id)
+        return resolve(self.system, None, UserBotConfig(intent_access=self.users.get(user_id, {})))
+
+
+def _two_intent_registry() -> AgentRegistry:
+    registry = AgentRegistry()
+    registry.register(AgentDescriptor(agent_id="memory", capabilities={"search_memory": ExecutionMode.SYNC}))
+    registry.register(AgentDescriptor(agent_id="tutor", capabilities={"tutor_chat": ExecutionMode.SYNC}))
+    return registry
+
+
+class TestIntentAvailability:
+
+    async def test_without_an_effective_config_every_intent_is_available(self):
+        coord = AgentCoordinator(registry=_two_intent_registry())
+        orchestrator = AgentDescriptor(agent_id="orch")
+
+        assert await coord.is_intent_available("tutor_chat", "usr-1") is True
+        assert [i["name"] for i in await coord.available_intents_for(orchestrator, "usr-1")] == [
+            "search_memory", "tutor_chat"]
+
+    async def test_an_intent_turned_off_for_the_user_is_unavailable_to_that_user_only(self):
+        configs = _EffectiveConfigs(**{"usr-1": {"tutor_chat": False}})
+        coord = AgentCoordinator(registry=_two_intent_registry(), effective_config=configs)
+
+        assert await coord.is_intent_available("tutor_chat", "usr-1") is False
+        assert await coord.is_intent_available("search_memory", "usr-1") is True
+        assert await coord.is_intent_available("tutor_chat", "usr-2") is True
+        assert configs.calls == ["usr-1", "usr-1", "usr-2"]
+
+    async def test_available_intents_for_filters_the_declared_intents_with_one_read(self):
+        configs = _EffectiveConfigs(**{"usr-1": {"tutor_chat": False}})
+        coord = AgentCoordinator(registry=_two_intent_registry(), effective_config=configs)
+        orchestrator = AgentDescriptor(agent_id="orch")
+
+        got = await coord.available_intents_for(orchestrator, "usr-1")
+
+        assert [i["name"] for i in got] == ["search_memory"]
+        assert configs.calls == ["usr-1"]
+        assert [i["name"] for i in await coord.available_intents_for(orchestrator, "usr-2")] == [
+            "search_memory", "tutor_chat"]

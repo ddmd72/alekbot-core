@@ -152,6 +152,7 @@ async def _smart_with_real_engine(smart_agent, mock_llm_port, ack):
     mock_llm_port.generate_content = AsyncMock(side_effect=turns)
     coord = smart_agent.coordinator
     coord.get_available_intents_for = MagicMock(return_value=[])
+    coord.available_intents_for = AsyncMock(return_value=[])
     coord.get_execution_mode = MagicMock(return_value=ExecutionMode.SYNC)
     coord.handle_delegation = AsyncMock(return_value=AgentResponse.success(
         task_id="t", agent_id="deep_research", result=ack))

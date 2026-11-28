@@ -46,7 +46,7 @@ def _agent():
     agent.coordinator.handle_delegation = AsyncMock(
         return_value=AgentResponse.success(task_id="t", agent_id="x", result="done")
     )
-    agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+    agent.coordinator.available_intents_for = AsyncMock(return_value=[])
     agent._on_delegation = MagicMock()
     return agent
 

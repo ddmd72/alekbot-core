@@ -85,6 +85,7 @@ def mock_prompt_builder():
 def mock_coordinator():
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
+    coordinator.available_intents_for = AsyncMock(return_value=[])
     return coordinator
 
 
@@ -441,6 +442,7 @@ class TestExecuteEdgeCases:
             return_value=AgentResponse.success(task_id="t1", agent_id="a1", result="r")
         )
         smart_agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+        smart_agent.coordinator.available_intents_for = AsyncMock(return_value=[])
 
         mock_llm_port.generate_content = AsyncMock(
             return_value=build_llm_response("", [tool_call])
@@ -534,6 +536,7 @@ class TestExecuteEdgeCases:
         delegation_response.history_context = {"email_search_context": [{"you_searched": "invoice"}]}
         smart_agent.coordinator.handle_delegation = AsyncMock(return_value=delegation_response)
         smart_agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+        smart_agent.coordinator.available_intents_for = AsyncMock(return_value=[])
 
         mock_llm_port.generate_content = AsyncMock(side_effect=[
             build_llm_response("", [tool_call]),
@@ -564,6 +567,7 @@ class TestDeliverResponseTool:
             return_value=build_llm_response("", [deliver_call])
         )
         smart_agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+        smart_agent.coordinator.available_intents_for = AsyncMock(return_value=[])
         response = await smart_agent.execute(create_query_message("complex"))
         assert response.status == AgentStatus.SUCCESS
         assert response.result.text == "Here is your answer."
@@ -582,6 +586,7 @@ class TestDeliverResponseTool:
             return_value=build_llm_response("", [deliver_call])
         )
         smart_agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+        smart_agent.coordinator.available_intents_for = AsyncMock(return_value=[])
         response = await smart_agent.execute(create_query_message("table query"))
         assert response.status == AgentStatus.SUCCESS
         assert response.result.structured_data is not None
@@ -964,6 +969,7 @@ class TestDelegationLoopAdvanced:
         delegation_response.metadata = {"structured_data": rich}
         smart_agent.coordinator.handle_delegation = AsyncMock(return_value=delegation_response)
         smart_agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+        smart_agent.coordinator.available_intents_for = AsyncMock(return_value=[])
 
         mock_llm_port.generate_content = AsyncMock(side_effect=[
             build_llm_response("", [tool_call]),
@@ -1054,6 +1060,7 @@ class TestRawContentInDelegationLoop:
         delegation_resp = AgentResponse.success(task_id="t1", agent_id="a1", result="ok")
         smart_agent.coordinator.handle_delegation = AsyncMock(return_value=delegation_resp)
         smart_agent.coordinator.get_available_intents_for = MagicMock(return_value=[])
+        smart_agent.coordinator.available_intents_for = AsyncMock(return_value=[])
 
         mock_llm_port.generate_content = AsyncMock(side_effect=[
             first_response,

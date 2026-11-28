@@ -121,9 +121,11 @@ class DomainResearcherAgent(BaseAgent):
             # Build tool declarations (empty if no coordinator/registry)
             tools = None
             if self.coordinator:
-                available = self.coordinator.get_available_intents_for(self._descriptor)
+                available = await self.coordinator.available_intents_for(
+                    self._descriptor, self.user_id or message.context.get("user_id"))
+                turned_off = len(available) < len(self.coordinator.get_available_intents_for(self._descriptor))
                 if available:
-                    tools = [self._build_delegate_tool_declaration(available)]
+                    tools = [self._build_delegate_tool_declaration(available, turned_off)]
 
             base_request = LLMRequest(
                 model_name=self.model_name,

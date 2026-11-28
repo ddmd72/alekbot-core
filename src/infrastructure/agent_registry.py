@@ -17,7 +17,7 @@ Specialists register their descriptor in agent_manifest.py (registered by build_
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from ..domain.companion_config import CompanionConfig
 from ..utils.logger import logger
@@ -124,9 +124,24 @@ class AgentDescriptor:
     # a delete would first download the file it deletes (USER_DRIVE_RFC §4.4).
     prefetch_file_ref: bool = True
 
+    # Per-intent availability (domain/config_resolution.py): the SYSTEM default of every intent of this agent.
+    available_by_default: bool = True
+    # False only for plumbing another agent calls as a step of its own work (denying it breaks the caller rather than
+    # removing a feature); `internal` (not shown to models) is not this rule.
+    access_gated: bool = True
+
 
 # Backward-compatible alias — existing callers using AgentManifest continue to work.
 AgentManifest = AgentDescriptor
+
+
+def system_intent_defaults(descriptors: Iterable[AgentDescriptor]) -> Dict[str, bool]:
+    """The SYSTEM level of per-intent availability: every intent of every gated descriptor → its default."""
+    return {
+        intent: descriptor.available_by_default
+        for descriptor in descriptors if descriptor.access_gated
+        for intent in descriptor.capabilities
+    }
 
 
 class AgentRegistry:

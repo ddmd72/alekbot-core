@@ -72,6 +72,24 @@ async def test_the_coordinator_holds_the_billing_agent(prod_graph):
 
 
 @pytest.mark.slow
+async def test_the_coordinator_reads_intent_availability_from_the_graphs_user_and_account_stores(prod_graph):
+    from src.domain.user import UserBotConfig
+    from tests.support.prod_graph import ACCOUNT_ID, USER_ID
+    app = prod_graph.app
+    assert await app.coordinator.is_intent_available("tutor_chat", USER_ID) is True
+
+    account = await app.account_repo.get_account(ACCOUNT_ID)
+    account.account_defaults = UserBotConfig(intent_access={"tutor_chat": False, "generate_image": False})
+    await app.account_repo.update_account(account)
+    user = await app.user_repo.get_user(USER_ID)
+    user.config = UserBotConfig(intent_access={"generate_image": True})
+    await app.user_repo.create_user(user)
+
+    assert await app.coordinator.is_intent_available("tutor_chat", USER_ID) is False
+    assert await app.coordinator.is_intent_available("generate_image", USER_ID) is True
+
+
+@pytest.mark.slow
 async def test_claude_is_the_only_deep_research_provider_registered(prod_graph):
     registry = prod_graph.app.agent_factory.job_registry
 

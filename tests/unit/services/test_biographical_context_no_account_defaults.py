@@ -10,6 +10,9 @@ import pytest
 from src.domain.settings import SearchConfig
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.configuration_service import ConfigurationService
+from src.domain.config_resolution import SystemConfig
+from src.ports.account_repository import AccountRepository
+from src.ports.user_repository import UserRepository
 from tests.unit.services.test_biographical_context_explicit_limits import _LimitHonouringRepo, _plain
 from tests.unit.services.test_biographical_context_service import make_fact
 
@@ -24,7 +27,7 @@ def _account_repo(account):
 async def test_refresh_without_account_defaults_builds_the_cache_at_system_limits(account):
     n = SearchConfig().DEFAULT_BIOGRAPHICAL_CACHE_LIMIT + 5
     service = BiographicalContextService(
-        _LimitHonouringRepo(_plain(n)), config_service=ConfigurationService(), account_repo=_account_repo(account))
+        _LimitHonouringRepo(_plain(n)), config_service=ConfigurationService(user_repo=MagicMock(spec=UserRepository), account_repo=MagicMock(spec=AccountRepository), system=SystemConfig(intent_access={})), account_repo=_account_repo(account))
 
     result = await service.refresh_context("acc-123")
 
@@ -35,7 +38,7 @@ async def test_system_principles_limit_applies_without_account_defaults():
     limit = SearchConfig().DEFAULT_PRINCIPLES_CACHE_LIMIT
     facts = [make_fact(f"principle {i}", tags=["mindset"]) for i in range(limit + 4)]
     service = BiographicalContextService(
-        _LimitHonouringRepo(facts), config_service=ConfigurationService(),
+        _LimitHonouringRepo(facts), config_service=ConfigurationService(user_repo=MagicMock(spec=UserRepository), account_repo=MagicMock(spec=AccountRepository), system=SystemConfig(intent_access={})),
         account_repo=_account_repo(MagicMock(account_defaults=None)))
 
     result = await service.refresh_context("acc-123")

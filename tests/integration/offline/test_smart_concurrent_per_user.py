@@ -168,6 +168,7 @@ def smart_agent_with_concurrent_providers():
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
     coordinator.get_available_intents_for = MagicMock(return_value=[])
+    coordinator.available_intents_for = AsyncMock(return_value=[])
 
     return SmartResponseAgent(
         config=config,

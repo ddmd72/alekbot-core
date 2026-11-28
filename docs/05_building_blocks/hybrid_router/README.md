@@ -103,8 +103,12 @@ Smart agent directly (`src/services/execute_reminder_task.py`).
 
 1. The orchestrating LLM sees one delegation tool, `delegate_to_specialist` (`DELEGATE_TOOL_NAME`), with an intent
    argument, the terminal tool `deliver_response`, and, for Smart, local tools (skills, workspace, memory proposals;
-   `SmartResponseAgent._run`). The intents offered are `AgentRegistry.get_available_intents_for(descriptor)`:
-   every non-internal intent when `allowed_intents is None` (Quick and Smart both). Smart adds one internal intent
+   `SmartResponseAgent._run`). The intents offered are `AgentCoordinator.available_intents_for(descriptor, user_id)`:
+   `AgentRegistry.get_available_intents_for(descriptor)` (every non-internal intent when `allowed_intents is None`,
+   Quick and Smart both) minus the intents turned off on the user's profile. When that removed one, the tool
+   declaration ends with a sentence saying the intents missing from the list are turned off; when it removed all of
+   them, the list reads "none: every specialist is turned off for this user" and the tool is still declared
+   (`src/domain/intent_access_texts.py`). Smart adds one internal intent
    itself, the task specialist's `work_with_external_tasks`, only on the owner's own interactive turn or a run of one
    of the owner's reminders (`task_entry`, `src/domain/external_task_entry.py`), never when Smart is reached by
    delegation, and only for a user with the external task queue switched on
@@ -115,8 +119,11 @@ Smart agent directly (`src/services/execute_reminder_task.py`).
    an empty remap and the same fan-out: `search_web` also dispatches `maps_query` in parallel
    (`src/infrastructure/agent_manifest.py::SEARCH_WEB_MAPS_FANOUT`). The merged tool result labels each section and
    carries the reconciliation hint. The first intent is primary: its failure is shown to the LLM. A failed secondary is
-   skipped silently.
-4. A failed single delegation returns `Tool note: ...` to the LLM so it can correct its input; the loop is bounded by
+   skipped silently. A turned-off primary dispatches nothing; a turned-off secondary is dropped before dispatch, and
+   with none left the primary runs as a plain single dispatch.
+4. A failed single delegation returns `Tool note: ...` to the LLM so it can correct its input; a refusal for a turned-off
+   intent returns `Tool error: <intent> is turned off for this user; ...` without that line, since retrying cannot
+   help (`CONFIG_OVERRIDE_HIERARCHY_RFC.md` §3.4). The loop is bounded by
    `QUICK.max_delegation_turns` / `SMART.max_delegation_turns` (`src/infrastructure/agent_config.py`); under a turn
    clock Smart is bounded by `clock.max_loop_turns` instead (`src/domain/turn_clock.py`). Exhausting the turns returns
    `DelegationResult(failed=True)`; both agents turn that into `TURN_CAP_ERROR`.

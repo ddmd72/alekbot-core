@@ -42,6 +42,7 @@ def _make_handler():
 
     coordinator = MagicMock()
     coordinator._registry = _make_registry()
+    coordinator.is_intent_available = AsyncMock(return_value=True)
 
     handler = ConversationHandler(
         coordinator=coordinator,

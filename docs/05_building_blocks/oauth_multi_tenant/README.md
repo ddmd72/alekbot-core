@@ -157,7 +157,9 @@ records a deliberate disconnect. The drive's notice runs in the drive fan-out in
 `domain/reconnect_policy.py::r1_due`, `reconnect_needed`.
 
 **Configuration inheritance** (`services/configuration_service.py::ConfigurationService`). The limit getters
-(for example `get_semantic_search_limit`) resolve user override, then `account_defaults`, then the system default.
+(for example `get_semantic_search_limit`) resolve user override, then `account_defaults`, then the system default. `ConfigurationService.effective_for(user_id)`
+resolves per-intent availability (`UserBotConfig.intent_access`) over the same levels, read fresh on every call
+(`CONFIG_OVERRIDE_HIERARCHY_RFC.md` §3.3).
 
 ## Invariants and traps
 

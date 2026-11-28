@@ -20,7 +20,7 @@ import secrets
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 
-from ..domain.agent import AgentStatus, DeliveryItem
+from ..domain.agent import AgentErrorCode, AgentResponse, AgentStatus, DeliveryItem
 from ..domain.email_open_texts import (
     LIVE_MAILBOX_NOT_CONNECTED_NOTE,
     LIVE_MAILBOX_UNAVAILABLE_NOTE,
@@ -1022,7 +1022,7 @@ class DelegationEngine:
         if fanout_spec and fanout_spec.intents:
             return await self._dispatch_with_fanout(
                 tool_call, intent, fanout_spec, query,
-                delegation_context, calling_agent_id,
+                delegation_context, calling_agent_id, max_retries,
             )
 
         return await self._dispatch_to_coordinator(
@@ -1075,6 +1075,8 @@ class DelegationEngine:
                 "⚠️ [DelegationEngine] Delegation intent='%s' rejected: %s",
                 intent, response.error,
             )
+            if response.error_code is AgentErrorCode.INTENT_UNAVAILABLE:
+                return self._intent_unavailable_result(tool_call, response)
             return ToolResult(
                 name=tool_call.name,
                 result_str=(
@@ -1091,6 +1093,11 @@ class DelegationEngine:
             failed=True,
         )
 
+    @staticmethod
+    def _intent_unavailable_result(tool_call: ToolCall, response: AgentResponse) -> ToolResult:
+        """A refusal the model cannot fix by retrying: no 'correct your input' line."""
+        return ToolResult(name=tool_call.name, result_str=f"Tool error: {response.error}", failed=True)
+
     # ------------------------------------------------------------------ #
     # Fan-out dispatch                                                     #
     # ------------------------------------------------------------------ #
@@ -1103,12 +1110,9 @@ class DelegationEngine:
         query: str,
         delegation_context: Dict[str, Any],
         calling_agent_id: str,
+        max_retries: int,
     ) -> ToolResult:
         """Dispatch primary + secondary intents in parallel, merge results."""
-        logger.info(
-            "⚡ [DelegationEngine] Fan-out: %s + %s",
-            primary_intent, spec.intents,
-        )
 
         async def _delegate(intent: str):
             return await self._coordinator.handle_delegation(
@@ -1118,7 +1122,21 @@ class DelegationEngine:
                 calling_agent_id=calling_agent_id,
             )
 
-        all_intents = [primary_intent, *spec.intents]
+        user_id = delegation_context.get("user_id", "")
+        if not await self._coordinator.is_intent_available(primary_intent, user_id):
+            return self._intent_unavailable_result(tool_call, AgentResponse.intent_unavailable(
+                primary_intent, task_id="delegation", agent_id="coordinator",
+            ))
+
+        # The hint says every listed specialist answered: a turned-off secondary is dropped before it, not after.
+        secondaries = [i for i in spec.intents if await self._coordinator.is_intent_available(i, user_id)]
+        if not secondaries:
+            return await self._dispatch_to_coordinator(
+                tool_call, primary_intent, query, delegation_context, calling_agent_id, max_retries,
+            )
+        logger.info("⚡ [DelegationEngine] Fan-out: %s + %s", primary_intent, secondaries)
+
+        all_intents = [primary_intent, *secondaries]
         results = await asyncio.gather(
             *[_delegate(i) for i in all_intents],
             return_exceptions=True,

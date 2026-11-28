@@ -230,6 +230,7 @@ def _coordinator_with_search_web():
     coordinator.get_available_intents_for.return_value = [
         {"name": "search_web", "description": "Search the web.", "context_schema": {}},
     ]
+    coordinator.available_intents_for = AsyncMock(return_value=coordinator.get_available_intents_for.return_value)
     return coordinator
 
 

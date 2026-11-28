@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
-from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from ..domain.agent_note import NoteCreate, NoteUpdate
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.literal_notice import LiteralNotice, render_literal_notice
@@ -398,7 +398,7 @@ class NotesAgent(BaseAgent):
         # Build tool declarations: CRUD tools + delegation tool (if coordinator available)
         tools = list(_TOOL_DECLARATIONS)
         if self.coordinator:
-            available = self.coordinator.get_available_intents_for(self._descriptor)
+            available = await self.coordinator.available_intents_for(self._descriptor, user_id)
             if available:
                 tools.append(self._build_delegate_tool_declaration(available))
 
@@ -462,7 +462,10 @@ class NotesAgent(BaseAgent):
                         },
                         calling_agent_id=self.agent_id,
                     )
-                    result_text = str(delegate_response.result) if delegate_response.result else "No result"
+                    if delegate_response.status != AgentStatus.SUCCESS and delegate_response.error:
+                        result_text = f"Tool error: {delegate_response.error}"
+                    else:
+                        result_text = str(delegate_response.result) if delegate_response.result else "No result"
                     tool_results.append((tc, result_text))
                 else:
                     bind_now = binding if (binding is not None and tc.name in _BINDABLE and not guard.applied) else None

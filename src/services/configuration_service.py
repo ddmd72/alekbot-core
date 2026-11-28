@@ -8,8 +8,11 @@ RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 """
 from typing import Optional, Dict, Any, List
 
+from ..domain.config_resolution import EffectiveConfig, SystemConfig, resolve
 from ..domain.user import UserProfile, UserBotConfig
 from ..domain.billing import BillingAccount
+from ..ports.account_repository import AccountRepository
+from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 
@@ -37,6 +40,23 @@ class ConfigurationService:
     - Team account: Admin sets team defaults, members customize
     - Power users: Override specific settings without affecting others
     """
+
+    def __init__(self, *, user_repo: UserRepository, account_repo: AccountRepository, system: SystemConfig) -> None:
+        self._user_repo = user_repo
+        self._account_repo = account_repo
+        self._system = system
+
+    async def effective_for(self, user_id: str) -> EffectiveConfig:
+        """The user's configuration resolved over USER, ACCOUNT and SYSTEM (domain/config_resolution.py), read fresh on
+        every call. A read that fails resolves the SYSTEM defaults (owner decision: not fail-closed)."""
+        try:
+            user = await self._user_repo.get_user(user_id)
+            account = await self._account_repo.get_account(user.account_id) if user and user.account_id else None
+        except Exception as e:
+            logger.warning(f"⚙️ effective_for({user_id}): reading the configuration failed ({type(e).__name__}); "
+                           f"the SYSTEM defaults apply")
+            return resolve(self._system, None, None)
+        return resolve(self._system, account.account_defaults if account else None, user.config if user else None)
 
     def get_effective_config(
         self,
