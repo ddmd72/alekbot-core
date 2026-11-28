@@ -63,6 +63,7 @@ def _make_smart(ctx: AgentExecutionContext) -> SmartResponseAgent:
 
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
+    coordinator.available_intents_for = AsyncMock(return_value=[])
 
     return SmartResponseAgent(
         config=config,

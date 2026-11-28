@@ -116,6 +116,9 @@ async def test_the_key_never_rides_the_commission_context():
         def get_available_intents_for(self, *a, **k):
             return []
 
+        async def available_intents_for(self, *a, **k):
+            return []
+
     agent = _agent(llm, KeySource(KEY), coordinator=Coordinator())
     await agent.execute(smart_message("hi"))
     assert seen and not holds_key(seen[0]["context"]) and not holds_key(seen[0]["query"])

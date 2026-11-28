@@ -35,6 +35,8 @@ def _agent(channel=None, available=None):
         {"name": "search_memory", "description": "memory"},
         {"name": "search_web", "description": "web"},
     ]
+    coordinator.available_intents_for = AsyncMock(
+        return_value=coordinator.get_available_intents_for.return_value)
     coordinator.handle_delegation = AsyncMock(
         return_value=AgentResponse.success(task_id="t", agent_id="a", result="sunny, 24°C"),
     )

@@ -41,6 +41,8 @@ def _make_tutor(mock_prompt_builder, mock_assembler, llm_text="", with_tools=Tru
         tutor.coordinator.get_available_intents_for.return_value = [
             {"name": "search_web", "description": "Search.", "context_schema": {}},
         ]
+        tutor.coordinator.available_intents_for = AsyncMock(
+            return_value=tutor.coordinator.get_available_intents_for.return_value)
     return tutor
 
 

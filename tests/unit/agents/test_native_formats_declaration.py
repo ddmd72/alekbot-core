@@ -80,6 +80,8 @@ async def test_domain_researcher_declares_its_provider(monkeypatch):
     agent.coordinator = MagicMock()
     agent.coordinator.get_available_intents_for.return_value = [
         {"name": "search_web", "description": "Search.", "context_schema": {}}]
+    agent.coordinator.available_intents_for = AsyncMock(
+        return_value=agent.coordinator.get_available_intents_for.return_value)
     engine = FakeEngine(result(text="done"))
     monkeypatch.setattr(DR_MODULE, "DelegationEngine", engine)
     message = AgentMessage.create(

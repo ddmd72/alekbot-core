@@ -897,6 +897,7 @@ def _make_coordinator_quick_agent(quick_agent_config, mock_llm_port, mock_sessio
         resilience_port=InMemoryProviderResilience(),
     )
     coordinator = MagicMock()
+    coordinator.available_intents_for = AsyncMock(return_value=[])
     agent = QuickResponseAgent(
         config=quick_agent_config,
         execution_context=execution_context,
@@ -934,6 +935,7 @@ class TestDelegationLoopFull:
             )
         )
         coordinator.get_available_intents_for = MagicMock(return_value=[])
+        coordinator.available_intents_for = AsyncMock(return_value=[])
 
         mock_llm_port.generate_content = AsyncMock(side_effect=[
             _tool_llm_response("search_emails", "invoices"),
@@ -966,6 +968,7 @@ class TestMaxTurnsExhausted:
             return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok")
         )
         coordinator.get_available_intents_for = MagicMock(return_value=[])
+        coordinator.available_intents_for = AsyncMock(return_value=[])
 
         # Every LLM call returns a tool_call → loop never exits via response
         mock_llm_port.generate_content = AsyncMock(
