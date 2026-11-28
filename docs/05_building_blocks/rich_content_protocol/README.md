@@ -43,6 +43,9 @@ the user (`FileLinkService` mints the link), and it does not write memory.
   `channel_id` for Telegram is the chat id; the notification code also handles a Slack user id (`U...`).
 - **Stored html pages**: the private media bucket under `html/<uuid>-<filename>`
   (`RichContentService._store_html`). The key never reaches the user; the user gets a `/f/<token>` link.
+  A page delivered by a run with a storage class (the daily email review) is stored under that class's prefix
+  (`email_review/<user_id>/<uuid>-<filename>`), so its link is gated behind the Cabinet session with the short
+  lifetime, like every other file of that run.
 - Nothing else is stored: files and images are posted to the platform and kept nowhere here.
 
 ## Flows
