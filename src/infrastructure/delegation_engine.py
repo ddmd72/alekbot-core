@@ -1022,7 +1022,7 @@ class DelegationEngine:
         if fanout_spec and fanout_spec.intents:
             return await self._dispatch_with_fanout(
                 tool_call, intent, fanout_spec, query,
-                delegation_context, calling_agent_id,
+                delegation_context, calling_agent_id, max_retries,
             )
 
         return await self._dispatch_to_coordinator(
@@ -1110,12 +1110,9 @@ class DelegationEngine:
         query: str,
         delegation_context: Dict[str, Any],
         calling_agent_id: str,
+        max_retries: int,
     ) -> ToolResult:
         """Dispatch primary + secondary intents in parallel, merge results."""
-        logger.info(
-            "⚡ [DelegationEngine] Fan-out: %s + %s",
-            primary_intent, spec.intents,
-        )
 
         async def _delegate(intent: str):
             return await self._coordinator.handle_delegation(
@@ -1131,7 +1128,15 @@ class DelegationEngine:
                 primary_intent, task_id="delegation", agent_id="coordinator",
             ))
 
-        all_intents = [primary_intent, *spec.intents]
+        # The hint says every listed specialist answered: a turned-off secondary is dropped before it, not after.
+        secondaries = [i for i in spec.intents if await self._coordinator.is_intent_available(i, user_id)]
+        if not secondaries:
+            return await self._dispatch_to_coordinator(
+                tool_call, primary_intent, query, delegation_context, calling_agent_id, max_retries,
+            )
+        logger.info("⚡ [DelegationEngine] Fan-out: %s + %s", primary_intent, secondaries)
+
+        all_intents = [primary_intent, *secondaries]
         results = await asyncio.gather(
             *[_delegate(i) for i in all_intents],
             return_exceptions=True,
