@@ -159,7 +159,11 @@ name wins, and its content always comes from Firestore; otherwise the system bun
 ### Workspace: background writes
 
 A workspace file carries no provenance mark: a file the external task delivery stores is an ordinary workspace file,
-read, searched, edited, renamed and copied like any other (`view` and `grep` return its text as it is). Code that stores
+read, searched, edited, renamed and copied like any other (`view` and `grep` return its text as it is). The one
+exception is the inbox folder `scratch/inbox/` (`INBOX_PREFIX`, `is_outside_written` in `src/domain/workspace.py`):
+files there are written from outside the bot, so `view` (window, outline and old versions) and `grep` return their
+text inside the outside-content wrapper (`wrap_untrusted`, store `workspace`), keyed on the path alone; the header and
+notes the code adds stay outside the wrapper. Code that stores
 a file without a model turn uses `WorkspaceService.write_background(user_id, path, text, origin=...)`: it creates and
 never overwrites; a live file with the same origin is an earlier attempt of the same write (`REUSED`), a live file with
 another origin is left alone (`TAKEN`; the caller tries the next path), caps and size refusals raise `WorkspaceRefused`.
