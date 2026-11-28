@@ -766,3 +766,19 @@ def test_the_tunnel_app_refuses_a_non_tunnel_op(roots):
     work, out = roots
     with pytest.raises(ValueError):
         SandboxTunnelApp({SandboxOp.PARSE_EXTRACT: object()}, TokenGate(), Recycler(), {"work_root": str(work)})
+
+
+async def test_the_gate_runs_off_the_event_loop(rig, monkeypatch):
+    import threading
+    seen = []
+    original = TokenGate.authorize
+
+    def recording(self, authorization, op):
+        seen.append(threading.get_ident())
+        return original(self, authorization, op)
+
+    monkeypatch.setattr(TokenGate, "authorize", recording)
+    r = await rig()
+    anonymous = await r.call(token=None)
+    assert anonymous.status == 401
+    assert seen and seen[0] != threading.get_ident()

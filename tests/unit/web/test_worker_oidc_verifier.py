@@ -79,3 +79,35 @@ class TestVerifyWorkerOidc:
             side_effect=ValueError("Token has expired"),
         ):
             assert verify_worker_oidc("Bearer bad.jwt.token", _ACCEPTED) is False
+
+
+class TestTransitionAcceptanceLog:
+    _TRANSITION = "old-sa@my-project.iam.gserviceaccount.com"
+
+    def _verify(self, email, caplog):
+        import logging
+        caplog.set_level(logging.INFO)
+        with patch(
+            "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
+            return_value=_good_claims(email=email),
+        ):
+            return verify_worker_oidc(
+                "Bearer good.jwt.token", {_SA, self._TRANSITION}, transition_emails={self._TRANSITION})
+
+    def _lines(self, caplog):
+        return [r.getMessage() for r in caplog.records if "transition list" in r.getMessage()]
+
+    def test_a_call_accepted_through_the_transition_list_logs_one_info_line(self, caplog):
+        assert self._verify(self._TRANSITION, caplog) is True
+        lines = self._lines(caplog)
+        assert len(lines) == 1
+        assert self._TRANSITION not in lines[0]
+        assert [r.levelname for r in caplog.records if "transition list" in r.getMessage()] == ["INFO"]
+
+    def test_a_regular_acceptance_logs_no_transition_line(self, caplog):
+        assert self._verify(_SA, caplog) is True
+        assert self._lines(caplog) == []
+
+    def test_a_rejected_call_logs_no_transition_line(self, caplog):
+        assert self._verify("other@my-project.iam.gserviceaccount.com", caplog) is False
+        assert self._lines(caplog) == []

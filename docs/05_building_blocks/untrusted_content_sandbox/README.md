@@ -68,7 +68,7 @@ Configuration is environment only: `SANDBOX_URL` (own URL, the token audience), 
    environment name or `GOOGLE_APPLICATION_CREDENTIALS` (`src/domain/sandbox_startup_check.py::check_sandbox_environment`), an unknown
    family or recycle policy, `never` on Cloud Run, `abnormal` outside the light family, and caller groups that do not
    belong to the family.
-2. On Cloud Run it makes `/tmp` and `/dev/shm` root-only (`src/composition/sandbox_setup.py::close_shared_temp_dirs`; the platform mounts
+2. On Cloud Run it makes `/tmp`, `/dev/shm` and `/var/tmp` root-only (an image without `/var/tmp` is not refused) (`src/composition/sandbox_setup.py::close_shared_temp_dirs`; the platform mounts
    world-writable tmpfs over both and the engine uid would otherwise have memory outside every limit) and refuses to start
    when that does not hold. Off Cloud Run it touches nothing.
 3. It spawns `python sandbox_main.py --serve` (`make_spawn`) in its own process group with the write end of a pipe, and

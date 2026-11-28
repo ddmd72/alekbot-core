@@ -1,4 +1,4 @@
-"""On Cloud Run the supervisor closes the shared temp dirs (`/tmp`, `/dev/shm`) to the engine uid before the server
+"""On Cloud Run the supervisor closes the shared temp dirs (`/tmp`, `/dev/shm`, `/var/tmp`) to the engine uid before the server
 starts (decisions/sandbox_render_service.md); gen2 mounts its own world-writable tmpfs over both, whatever the image set.
 Off Cloud Run nothing is touched. Every test works on directories under `tmp_path`; the machine's `/tmp` is never touched."""
 import os
@@ -34,8 +34,8 @@ def _warnings(caplog):
     return [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
 
 
-def test_the_closed_set_is_tmp_and_dev_shm():
-    assert SHARED_TEMP_DIRS == ("/tmp", "/dev/shm")
+def test_the_closed_set_is_tmp_dev_shm_and_var_tmp():
+    assert SHARED_TEMP_DIRS == ("/tmp", "/dev/shm", "/var/tmp")
 
 
 def test_on_cloud_run_open_dirs_become_owner_only_and_owned_by_this_process(tmp_path):

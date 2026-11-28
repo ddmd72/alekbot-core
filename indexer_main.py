@@ -96,7 +96,7 @@ from src.services.drive_indexing_service import DriveIndexingService
 from src.utils.logger import logger, quiet_third_party_loggers
 
 quiet_third_party_loggers()
-from src.web.worker_oidc_verifier import parse_sa_emails  # noqa: E402  # quiet_third_party_loggers() must run first
+from src.web.worker_oidc_verifier import parse_sa_emails, transition_only_emails  # noqa: E402  # quiet_third_party_loggers() must run first
 from src.services.inactive_user_check import InactiveUserCheck  # noqa: E402  # quiet_third_party_loggers() must run first
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate  # noqa: E402  # quiet_third_party_loggers() must run first
 
@@ -113,7 +113,9 @@ def build_app() -> Quart:
     # Accepted: the drive invoker (falls back to the single legacy identity) plus the optional transition list.
     accepted = parse_sa_emails(drive_invoker or sa_email, os.environ.get("OIDC_TRANSITION_SA_EMAILS"))
     gate = worker_oidc_gate(accepted, indexer_audiences(os.environ.get("DRIVE_INDEXER_URL")),
-                            on_cloud_run=bool(os.environ.get("K_SERVICE")))
+                            on_cloud_run=bool(os.environ.get("K_SERVICE")),
+                            transition_emails=transition_only_emails(
+                                os.environ.get("OIDC_TRANSITION_SA_EMAILS"), drive_invoker or sa_email))
     # The credential store's cipher (SECRETS_AT_REST_RFC §2.6, I6): the indexer has no load_settings(), so the key
     # name comes from its environment; an empty one refuses the start, before any client is built.
     cipher = build_cipher(os.environ.get("KMS_CRYPTO_KEY"))

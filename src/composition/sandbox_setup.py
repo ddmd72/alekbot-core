@@ -71,7 +71,9 @@ DEFAULT_ENGINE_USER = "sandboxengine"
 _CLOUD_RUN_WORK_ROOT = "/work"
 _DEFAULT_BROWSER_CACHE_DIR = os.path.join("~", ".cache", "puppeteer")   # puppeteer's own default, expanded below
 # The platform's shared temp areas: closed to everyone but the root supervisor/server before any request.
-SHARED_TEMP_DIRS: Tuple[str, ...] = ("/tmp", "/dev/shm")
+SHARED_TEMP_DIRS: Tuple[str, ...] = ("/tmp", "/dev/shm", "/var/tmp")
+# Dirs among them that an image may not have: a missing one is skipped, anything else about it is still refused.
+_OPTIONAL_TEMP_DIRS: FrozenSet[str] = frozenset({"/var/tmp"})
 _SHARED_TEMP_MODE = 0o700
 
 
@@ -225,6 +227,9 @@ def close_shared_temp_dirs(
         return
     for path in paths:
         problem = _close_dir(path, fchmod)
+        if problem == "missing" and path in _OPTIONAL_TEMP_DIRS:
+            logger.info(f"[Sandbox] shared temp dir {path} is absent from the image: nothing to close")
+            continue
         if problem is not None:
             logger.error(f"[Sandbox] refusing to start: shared temp dir {path} not closed ({problem})")
             raise SandboxStartupError(f"shared temp dir {path} could not be closed to the engine user: {problem}")

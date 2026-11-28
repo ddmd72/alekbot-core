@@ -53,7 +53,6 @@ def build_notifications(config: dict, db_client: Any, env_config: EnvironmentCon
     resolves for a locked account (CABINET_DEVICE_SESSIONS_RFC §7.8)."""
     state_repo = FirestoreNotificationStateAdapter(db_client=db_client, env_config=env_config)
     bot_token = config["SLACK_BOT_TOKEN"]
-    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
     app = AsyncApp(token=bot_token)
 
     html_renderer = build_html_renderer(

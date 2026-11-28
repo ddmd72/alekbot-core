@@ -91,7 +91,15 @@ def test_the_gate_is_built_fail_closed_on_cloud_run():
     assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
                and any(isinstance(t, ast.Name) and t.id == "_worker_oidc_gate" for t in n.targets)]
     assert len(assigns) == 1
-    call = assigns[0].value
+    # reviewer edit, size ratchet: main() assigns the gate from `build_worker_oidc_gate(config)`, a module-level
+    # function of main.py whose only statement returns the `build_oidc_gate(...)` call checked below.
+    helper_call = assigns[0].value
+    assert isinstance(helper_call, ast.Call) and ast.unparse(helper_call) == "build_worker_oidc_gate(config)"
+    [helper] = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_worker_oidc_gate"]
+    body = [s for s in helper.body
+            if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str))]
+    assert len(body) == 1 and isinstance(body[0], ast.Return)
+    call = body[0].value
     assert isinstance(call, ast.Call) and ast.unparse(call.func) == "build_oidc_gate"
     keywords = {k.arg: ast.unparse(k.value) for k in call.keywords}
     assert keywords["on_cloud_run"] == "bool(os.getenv('K_SERVICE'))"

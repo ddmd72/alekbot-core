@@ -72,3 +72,10 @@ def test_slacks_rich_content_links_html_pages_through_the_given_link_service(bui
     """P11-G4-5 (O8): Slack's kit stores an html page in the media bucket and links it through `/f/<token>`."""
     kit = build().slack_kit
     assert kit.rich_content._storage_port is MEDIA and kit.rich_content._link_service is LINKS
+
+
+def test_no_part_of_the_bot_token_is_logged(build, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    build()
+    assert "xoxb-test" not in caplog.text

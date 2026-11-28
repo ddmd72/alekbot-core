@@ -224,6 +224,9 @@ relay; only the main service needs credentials, to mint SFU sessions.
    speech (the other person on an interpreter call) into Cloud Logging: list a user only while debugging, then empty the key
    and redeploy. The ids are never logged (the boot line gives only the count). The deploy sets it from the deploy-only key
    `VOICE_DEBUG_TRANSCRIPT_USERS_DEV`.
+8. **`ANTHROPIC_LOG`** (debug only, off by default; read with `os.getenv` in `src/utils/logger.py` and `claude_adapter.py`): when set, the
+   `anthropic` logger writes raw HTTP request and response payloads at DEBUG into Cloud Logging. Set it only while debugging
+   and unset it afterwards (`docs/05_building_blocks/observability_strategy/README.md`).
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
 (`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.
@@ -633,7 +636,7 @@ allowlist, no `.env`, no key file), `--no-allow-unauthenticated`, `--cpu-throttl
 instances cost nothing), an in-memory volume at `/work` (sized in `scripts/infrastructure/cloudbuild_sandbox_light.sh`
 for the largest request body, response windows and child file; changed by editing that script). The instance stays warm
 after a normal request and is recycled only after an abnormal one (`SANDBOX_RECYCLE=abnormal`, light only), and its
-supervisor closes `/tmp` and `/dev/shm` to the engine uid at start-up, refusing to start when that does not hold
+supervisor closes `/tmp`, `/dev/shm` and `/var/tmp` to the engine uid at start-up, refusing to start when that does not hold
 (`decisions/sandbox_render_service.md`). Both runtimes parse only through it: the deploy target refuses an empty
 `SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without `SANDBOX_PARSE_URL` (set from
 `_SANDBOX_LIGHT_URL`; `src/composition/sandbox_parse_setup.py::build_sandbox_parser`), locally too. Deploy the service

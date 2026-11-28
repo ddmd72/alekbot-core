@@ -226,7 +226,7 @@ class _TunnelCall:
             return
         op_text = str(self.scope.get("path", ""))[len("/v1/"):]
         headers = _headers(self.scope)
-        decision = app.gate.authorize(headers.get("authorization"), op_text)
+        decision = await asyncio.to_thread(app.gate.authorize, headers.get("authorization"), op_text)
         if not decision.allowed:
             code = 403 if decision.reason == "forbidden_op" else 401
             await self._refuse(code, SandboxStatus.ERROR, decision.reason or "unauthenticated")

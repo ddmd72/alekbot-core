@@ -43,7 +43,7 @@ OidcVerifier = Callable[[Optional[str]], Awaitable[bool]]
 
 
 def worker_oidc_gate(accepted_emails: Collection[str], audiences: Optional[Collection[str]] = None, *,
-                     on_cloud_run: bool = False) -> OidcVerifier:
+                     on_cloud_run: bool = False, transition_emails: Collection[str] = ()) -> OidcVerifier:
     """The indexer's `/worker` gate (RFC Δ21). With accepted identities: signature, an email in the set and,
     when given, an audience in `audiences`. Without any: open for local dev, closed on Cloud Run."""
     if isinstance(accepted_emails, str):
@@ -62,7 +62,11 @@ def worker_oidc_gate(accepted_emails: Collection[str], audiences: Optional[Colle
             return True
         return open_for_local_dev
 
+    transition = frozenset(transition_emails)
+
     async def verify(authorization: Optional[str]) -> bool:
+        if transition:
+            return verify_worker_oidc(authorization, accepted, audiences, transition_emails=transition)
         return verify_worker_oidc(authorization, accepted, audiences)
     return verify
 

@@ -172,7 +172,7 @@ def create_sandbox_blueprint(
     async def call(op: str) -> Response:
         ctx = _RequestState(op=_UNKNOWN_OP, started=time.monotonic())
 
-        decision = gate.authorize(request.headers.get("Authorization"), op)
+        decision = await asyncio.to_thread(gate.authorize, request.headers.get("Authorization"), op)
         if not decision.allowed:
             code = 403 if decision.reason == "forbidden_op" else 401
             return _refuse(ctx, code, SandboxStatus.ERROR, decision.reason or "unauthenticated")

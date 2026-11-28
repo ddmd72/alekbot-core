@@ -4,7 +4,7 @@ import signal
 import asyncio
 
 from src.config.settings import load_settings
-from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails
+from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails, transition_only_emails
 from src.web.twilio_signature_verifier import twilio_signature_gate
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
@@ -40,6 +40,38 @@ def build_voice_media_room(config):
         from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
         return CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"])
     return None
+
+
+def listen_address(on_cloud_run: bool) -> str:
+    """Cloud Run reaches the container on its interface; a local run listens on loopback only."""
+    return "0.0.0.0:8080" if on_cloud_run else "127.0.0.1:8080"
+
+
+def build_voice_control_plane_oidc_gate(config):
+    """Gate for the voice control plane: the invoker identity, the relay's runtime SA and the transition list."""
+    return build_oidc_gate(
+        parse_sa_emails(
+            config.get("SERVICE_ACCOUNT_EMAIL"),
+            config.get("VOICE_RELAY_SA_EMAIL"),
+            os.getenv("OIDC_TRANSITION_SA_EMAILS"),
+        ),
+        on_cloud_run=bool(os.getenv("K_SERVICE")),
+        label="Voice control plane",
+        transition_emails=transition_only_emails(
+            os.getenv("OIDC_TRANSITION_SA_EMAILS"),
+            config.get("SERVICE_ACCOUNT_EMAIL"), config.get("VOICE_RELAY_SA_EMAIL")),
+    )
+
+
+def build_worker_oidc_gate(config):
+    """Gate for /worker: SERVICE_ACCOUNT_EMAIL plus the optional transition list."""
+    return build_oidc_gate(
+        parse_sa_emails(config.get("SERVICE_ACCOUNT_EMAIL"), os.getenv("OIDC_TRANSITION_SA_EMAILS")),
+        on_cloud_run=bool(os.getenv("K_SERVICE")),
+        label="Worker",
+        transition_emails=transition_only_emails(
+            os.getenv("OIDC_TRANSITION_SA_EMAILS"), config.get("SERVICE_ACCOUNT_EMAIL")),
+    )
 
 
 async def main():
@@ -289,15 +321,7 @@ async def main():
                 # Accepted: the invoker identity, the relay's runtime SA (it posts here with its own
                 # metadata-server token) and the optional transition list (IAM migration). Empty set:
                 # closed on Cloud Run, open locally.
-                _voice_oidc_verifier = build_oidc_gate(
-                    parse_sa_emails(
-                        config.get("SERVICE_ACCOUNT_EMAIL"),
-                        config.get("VOICE_RELAY_SA_EMAIL"),
-                        os.getenv("OIDC_TRANSITION_SA_EMAILS"),
-                    ),
-                    on_cloud_run=bool(os.getenv("K_SERVICE")),
-                    label="Voice control plane",
-                )
+                _voice_oidc_verifier = build_voice_control_plane_oidc_gate(config)
 
                 async def _voice_twilio_signature_verifier(
                     url: str, form_params: dict, signature: str
@@ -519,11 +543,7 @@ async def main():
                 # Accepted /worker identities, computed once: SERVICE_ACCOUNT_EMAIL plus the optional
                 # transition list. Empty set: every call refused on Cloud Run (ERROR logged once, here),
                 # open locally (manual curl triggers).
-                _worker_oidc_gate = build_oidc_gate(
-                    parse_sa_emails(config.get("SERVICE_ACCOUNT_EMAIL"), os.getenv("OIDC_TRANSITION_SA_EMAILS")),
-                    on_cloud_run=bool(os.getenv("K_SERVICE")),
-                    label="Worker",
-                )
+                _worker_oidc_gate = build_worker_oidc_gate(config)
 
                 # /health, /favicon.ico and /worker (the gate above is injected)
                 main_app.register_blueprint(create_main_service_blueprint(
@@ -612,7 +632,7 @@ async def main():
                 async def start_shared_app():
                     logger.info("🚀 Starting shared app on port 8080...")
                     hypercorn_config = HypercornConfig()
-                    hypercorn_config.bind = ["0.0.0.0:8080"]
+                    hypercorn_config.bind = [listen_address(bool(os.getenv("K_SERVICE")))]
                     hypercorn_config.use_reloader = False
                     hypercorn_config.accesslog = None
                     hypercorn_config.errorlog = "-"

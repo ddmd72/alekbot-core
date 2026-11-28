@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm ca-c
 COPY requirements-sandbox.txt .
 RUN pip install --no-cache-dir -r requirements-sandbox.txt
 
-COPY docx_generator/package.json docx_generator/
-RUN cd docx_generator && npm install --omit=dev
+COPY docx_generator/package.json docx_generator/package-lock.json docx_generator/
+RUN cd docx_generator && npm ci --omit=dev
 
 # The HTML render engine: puppeteer (locked by package-lock.json, `npm ci`) drives chrome-headless-shell ONLY (no full
 # Chrome). `puppeteer browsers install` with no version installs the shell revision the INSTALLED puppeteer expects, into
@@ -55,7 +55,7 @@ COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recyc
 # /work: the mount point of the size-limited in-memory volume (Cloud Run gen2); the server creates per-request
 # directories there and hands each to the engine uid. /tmp is closed to everyone but root (the server's uid): a world-writable
 # /tmp would let the engine write unbounded data to instance memory outside RLIMIT_AS (the child's TMPDIR is its workdir).
-# Cloud Run mounts its own world-writable /tmp and /dev/shm over the image's, so the supervisor closes both at start
+# Cloud Run mounts its own world-writable /tmp and /dev/shm over the image's, so the supervisor closes those two and /var/tmp at start
 # (close_shared_temp_dirs in src/composition/sandbox_setup.py); this chmod still covers a local docker run.
 RUN mkdir -p /work && chmod 711 /work && chown root:root /tmp && chmod 0700 /tmp
 
