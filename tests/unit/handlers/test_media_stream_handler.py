@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock
 
 from src.handlers.media_stream_handler import MediaStreamHandler
 
+# Tickets are minted as `str(uuid.uuid4())`; the handler refuses any other shape.
+TICKET = "3f2c9d5e-0d4b-4b8e-9a51-1c2d3e4f5a6b"
+
 
 class FakeTwilioWs:
     def __init__(self, messages: list[dict]):
@@ -27,7 +30,7 @@ class FakeTwilioWs:
 @pytest.mark.asyncio
 async def test_handle_connection_extracts_ticket_and_drives_session_service():
     messages = [
-        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}},
+        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}},
         {"event": "media", "media": {"payload": "b64audio"}},
         {"event": "stop"},
     ]
@@ -39,7 +42,7 @@ async def test_handle_connection_extracts_ticket_and_drives_session_service():
 
     session_service.handle_call.assert_awaited_once()
     call = session_service.handle_call.await_args
-    assert call.kwargs["ticket"] == "t1"
+    assert call.kwargs["ticket"] == TICKET
 
 
 @pytest.mark.asyncio
@@ -56,7 +59,7 @@ async def test_handle_connection_cleans_up_on_clean_close_without_stop_event():
     turns that hang into a clear test failure instead of a silent timeout.
     """
     messages = [
-        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}},
+        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}},
         {"event": "media", "media": {"payload": "b64audio"}},
     ]
     ws = FakeTwilioWs(messages)
@@ -92,7 +95,7 @@ async def test_clear_outbound_audio_sends_twilio_clear_with_real_stream_sid():
     shape is `{"event": "clear", "streamSid": ...}` (validated live in
     scripts/voice/test_mulaw_relay_poc.py:168) and the streamSid must be the
     real one captured from the `start` event, not the ticket."""
-    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}]
+    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}}]
     ws = FakeTwilioWs(messages)
     captured: dict = {}
 
@@ -130,7 +133,7 @@ async def test_no_clear_frame_is_sent_when_no_start_event_ever_arrives():
 async def test_clear_outbound_audio_is_reusable_across_repeated_barge_ins():
     """One call can be interrupted many times, so the callback is not
     single-use - each invocation emits its own clear frame."""
-    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}]
+    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}}]
     ws = FakeTwilioWs(messages)
 
     class FakeSessionService:
@@ -155,7 +158,7 @@ async def test_every_outbound_chunk_is_followed_by_a_mark_named_by_byte_total():
     from src.domain.voice_audio_frame import AudioFrame
 
     chunk = base64.b64encode(b"\xff" * 160).decode()
-    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}]
+    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}}]
     ws = FakeTwilioWs(messages)
 
     class FakeSessionService:
@@ -202,7 +205,7 @@ async def test_echoed_marks_advance_the_playback_handed_to_the_session():
             return await super().__anext__()
 
     ws = SlowWs([
-        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}},
+        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": TICKET}}},
         {"event": "mark", "streamSid": "MZ1", "mark": {"name": "160"}},
     ])
     handler = MediaStreamHandler(session_service=FakeSessionService())

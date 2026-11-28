@@ -24,6 +24,7 @@ FILES = (
 LOG_METHODS = {"debug", "info", "warning", "error", "exception", "critical"}
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 T1 = "5f0c1a3e-8d2b-4c1f-9a7e-2b6d4e8f1a03"
+T2 = "3f2c9d5e-0d4b-4b8e-9a51-1c2d3e4f5a6b"   # the media stream refuses a ticket of any other shape
 
 
 def _outside_fingerprint(node: ast.AST) -> bool:
@@ -119,7 +120,7 @@ async def test_relay_logs_no_ticket(caplog):
     # media stream: an unknown ticket fails inside the handler and logs
     w = RelayWorld()
     with eval_transactions():
-        await w.stream("ticket-a1")
+        await w.stream(T2)
     # sfu: a call whose session raises logs "call failed" and "call closed"
     async def boom(_record):
         raise RuntimeError("provider down")
@@ -132,4 +133,4 @@ async def test_relay_logs_no_ticket(caplog):
     await egress.close()
     await ingest.close()
     await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=2)
-    _no_ticket_in(caplog, "ticket-a1", T1)
+    _no_ticket_in(caplog, T2, T1)

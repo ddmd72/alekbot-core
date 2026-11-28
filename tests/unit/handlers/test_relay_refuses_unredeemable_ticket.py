@@ -24,6 +24,9 @@ from tests.support.voice_tickets import ticket_key
 
 MAIN = "https://main.example.test"
 RELAY_TOKEN = "relay-oidc-token"
+# Ticket-shaped (minted as `str(uuid.uuid4())`) so the stream reaches the control plane; the shape check itself is
+# covered by `test_media_stream_start_guards.py`.
+TICKET = "3f2c9d5e-0d4b-4b8e-9a51-1c2d3e4f5a6b"
 
 
 class FakeTwilioWs:
@@ -89,7 +92,7 @@ class World:
 async def test_unknown_ticket_ends_the_call_before_a_session_opens():
     w = World()
     with eval_transactions():
-        ws = await w.stream("never-minted")
+        ws = await w.stream(TICKET)                    # well-formed, never minted
     assert ws.closed
     assert w.sessions_opened == [] and w.touched == []
 
@@ -97,11 +100,11 @@ async def test_unknown_ticket_ends_the_call_before_a_session_opens():
 async def test_redeemed_ticket_cannot_start_a_second_call():
     w = World()
     with eval_transactions():
-        await w.store.set(ticket_key("t1"), {"user_id": "u1", "account_id": "a1", "instructions": "x"}, ttl_s=300)
-        first = await w.http.post("/voice/session-config", json={"ticket": "t1"},
+        await w.store.set(ticket_key(TICKET), {"user_id": "u1", "account_id": "a1", "instructions": "x"}, ttl_s=300)
+        first = await w.http.post("/voice/session-config", json={"ticket": TICKET},
                                   headers={"Authorization": f"Bearer {RELAY_TOKEN}"})
         assert first.status_code == 200              # the legitimate relay redeemed it
-        ws = await w.stream("t1")                    # a replay of the same ticket
+        ws = await w.stream(TICKET)                    # a replay of the same ticket
     assert ws.closed
     assert w.sessions_opened == [] and w.touched == []
     assert w.db.collection("voice_tickets").docs == {}

@@ -90,6 +90,12 @@ learns it from the Twilio `start` event (phone) or the SFU's WebSocket URLs (web
 the session config. On the media sockets the relay authenticates nothing but that trade: an unknown or redeemed ticket
 fails `fetch_session_config` and the call ends before any provider session opens.
 
+The phone socket (`MediaStreamHandler`, every relay path other than `/sfu/*` and `/ctl`) is held to the same first-frame
+discipline as `/ctl`: a valid `start` must arrive within `START_TIMEOUT_S` of the upgrade (other frames do not extend it),
+at most `_MAX_UNSTARTED` sockets may be waiting for it (more are closed with 1013), and its ticket must be UUID-shaped
+(`is_ticket_shaped`) or the socket is closed before any control-plane call. A second `start` is ignored and `media` frames
+before `start` are dropped.
+
 The web start claims the marker with the store's atomic `set_if_absent` (`VoiceCallSetupService.claim`); `/voice/auth`
 claims inline the same way. `VoiceCallSetupService.prepare` then assembles the persona (`LelikAgent.session_config`)
 and writes the ticket and call-kind records. On failure it releases ticket and marker and alerts (an unsupported mode
@@ -112,7 +118,9 @@ is released by `WebCallMedia.close` directly.
 Caller ID is a claim and the callback is the test: the line's real subscriber is the one rung. So the inbound dial is
 never the call.
 
-1. `/voice/auth`: verifies the Twilio signature, resolves the number to a user (unbound number: reject and alert),
+1. `/voice/auth`: verifies the Twilio signature (over the URL built from the service's public base, `public_base_url`;
+   no request header chooses the host), resolves the number to a user (unbound number: reject; the log line and the alert carry `fingerprint(number)`, and the
+   alert goes out once per number per day through a `set_if_absent` marker),
    requires a `CallSid`, claims or replaces the marker, mints the ticket, parks the pending callback, says "Calling you
    back" and hangs up.
 2. `/voice/inbound-status`: on the inbound dial's terminal status claims the parked callback with `get_and_delete`
