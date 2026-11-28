@@ -11,7 +11,7 @@ from src.domain.voice_mode import VoiceMode
 from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, LELIK, Intent
 from src.infrastructure.agent_registry import system_intent_defaults
-from tests.support.intent_access_world import coordinator_denying, delegate_intents, delegate_tool
+from tests.support.denied_profile import coordinator_denying, delegate_intents, delegate_tool
 
 
 def _lelik(coordinator, provider="openai", native_web_search=False) -> LelikAgent:

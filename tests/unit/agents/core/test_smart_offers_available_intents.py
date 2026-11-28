@@ -5,7 +5,7 @@ from src.agents.core.smart_response_agent import _EXTERNAL_TASKS_OFFER
 from src.domain.agent import AgentStatus
 from src.domain.user import UserBotConfig
 from src.infrastructure.agent_manifest import SMART_RESPONSE, Intent
-from tests.support.intent_access_world import coordinator_denying, delegate_intents, delegate_tool
+from tests.support.denied_profile import coordinator_denying, delegate_intents, delegate_tool
 from tests.support.scripted_llm import ScriptedLLM, text
 from tests.support.tool_e2e import smart_message, smart_rig
 

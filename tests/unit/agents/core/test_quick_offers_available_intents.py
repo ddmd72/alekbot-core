@@ -7,7 +7,7 @@ from src.infrastructure.agent_manifest import QUICK_RESPONSE, Intent
 from src.ports.llm_port import ProviderCapabilities
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.ports.llm_port import AgentExecutionContext
-from tests.support.intent_access_world import coordinator_denying, delegate_intents, delegate_tool
+from tests.support.denied_profile import coordinator_denying, delegate_intents, delegate_tool
 from tests.support.scripted_llm import ScriptedLLM, text
 from tests.support.tool_e2e import EmptySessions, StubPromptBuilder
 

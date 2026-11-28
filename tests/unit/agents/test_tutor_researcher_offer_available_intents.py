@@ -10,7 +10,7 @@ from src.agents.domain_researcher_agent import DomainResearcherAgent
 from src.agents.tutor_agent import TutorAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.infrastructure.agent_manifest import DOMAIN_RESEARCHER, TUTOR, Intent
-from tests.support.intent_access_world import coordinator_denying, delegate_intents, delegate_tool
+from tests.support.denied_profile import coordinator_denying, delegate_intents, delegate_tool
 from tests.support.scripted_llm import ScriptedLLM, execution_context, text
 from tests.support.tool_e2e import StubPromptBuilder
 
