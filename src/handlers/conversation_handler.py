@@ -19,7 +19,7 @@ from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, R
 from ..domain.ui_messages import StatusType, UIMessage
 from ..domain.consolidation_run import ConsolidationRun
 from ..domain.language import LanguageCode
-from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
+from ..domain.agent import AgentErrorCode, AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
 from ..domain.long_turn import LongTurnStatus, RetryVerdict
 from ..domain.turn_clock import (
     CURRENT_TURN_CLOCK, HARD_STOP_MARGIN_S, LONG_TURN_BUDGET_S, TurnClock, render_late_answer_note,
@@ -1058,6 +1058,13 @@ class ConversationHandler(ConversationHandlerPort):
 
             if response.status != AgentStatus.SUCCESS:
                 await response_channel.send_status(StatusType.ERROR, thread_id=thread_id_for_reply)
+                if mode.is_bound and response.error_code is AgentErrorCode.INTENT_UNAVAILABLE:
+                    # The bound agent's intent is switched off for this user: without text the channel
+                    # would only show the error mark. The binding stays; `$agent off` is the way out.
+                    await response_channel.send_message(
+                        self._ui_string(context, UIMessage.AGENT_BOUND_TURN_REFUSED),
+                        thread_id=thread_id_for_reply,
+                    )
                 return
 
             response_payload = response.result
@@ -2009,6 +2016,13 @@ class ConversationHandler(ConversationHandlerPort):
         if intent is None:
             await response_channel.send_message(
                 f"Agent `{agent_type}` has no capabilities.", thread_id=context.thread_id,
+            )
+            return
+
+        if not await self.coordinator.is_intent_available(intent, context.user_id):
+            # Nothing is saved: a channel keeps whatever binding (or none) it had.
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.AGENT_BIND_REFUSED), thread_id=context.thread_id,
             )
             return
 

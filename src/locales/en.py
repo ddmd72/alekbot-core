@@ -275,6 +275,8 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_NOT_SAVED.value: "⚠️ The location was not saved. Please share it again.",
     UIMessage.GEO_UNAVAILABLE.value: "Location sharing is not available right now.",
     UIMessage.GEO_BOUND_CHANNEL.value: "Locations are saved only in a regular channel; this one is bound to an agent.",
+    UIMessage.AGENT_BIND_REFUSED.value: "This agent is not available on your profile. The channel stays as it was.",
+    UIMessage.AGENT_BOUND_TURN_REFUSED.value: "This channel's agent is not available on your profile any more. Send `$agent off` to return the channel to the main assistant.",
     UIMessage.GEO_DM_ONLY.value: "Locations can be shared only in your direct messages with me. Send $geo there.",
     UIMessage.GEO_USE_TELEGRAM_PIN.value: "In Telegram, share your location from the 📎 attachment menu: Location, then send your current location.",
     UIMessage.GEO_TELEGRAM_VENUE.value: "A place picked from the list is not saved as your location. To share where you are, send your current location.",

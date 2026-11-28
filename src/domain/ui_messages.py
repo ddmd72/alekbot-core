@@ -200,6 +200,10 @@ class UIMessage(Enum):
     GEO_NOT_SAVED = "geo_not_saved"
     GEO_UNAVAILABLE = "geo_unavailable"
     GEO_BOUND_CHANNEL = "geo_bound_channel"
+    # `$agent <type>` refused because the agent's intent is switched off for the user (CONFIG_OVERRIDE_HIERARCHY_RFC §3),
+    # and the notice for a bound channel's turn refused for the same reason.
+    AGENT_BIND_REFUSED = "agent_bind_refused"
+    AGENT_BOUND_TURN_REFUSED = "agent_bound_turn_refused"
     GEO_DM_ONLY = "geo_dm_only"
     GEO_USE_TELEGRAM_PIN = "geo_use_telegram_pin"
     GEO_TELEGRAM_VENUE = "geo_telegram_venue"
