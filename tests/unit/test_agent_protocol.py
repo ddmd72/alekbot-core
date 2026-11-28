@@ -158,7 +158,7 @@ class TestIntentUnavailableResponse:
 
         assert response.status == AgentStatus.FAILED
         assert response.error_code == AgentErrorCode.INTENT_UNAVAILABLE == "intent_unavailable"
-        assert response.error == "tutor_chat is not available on this profile."
+        assert response.error == "tutor_chat is turned off for this user; calling it again gets the same answer."
         assert (response.task_id, response.agent_id, response.result, response.confidence) == (
             "task123", "coordinator", None, 0.0)
 

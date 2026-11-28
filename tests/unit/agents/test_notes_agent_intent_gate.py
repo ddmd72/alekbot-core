@@ -5,6 +5,7 @@ stand-in for the delegated specialist."""
 from __future__ import annotations
 
 from src.domain.agent import AgentMessage, AgentResponse
+from src.domain.intent_access_texts import intent_unavailable_text
 from src.infrastructure.agent_manifest import COMPUTE
 from tests.support.denied_profile import denying
 from tests.support.scripted_llm import text, tool_results, tools
@@ -42,7 +43,7 @@ async def test_a_denied_intent_is_refused_to_the_notes_model_and_never_runs():
 
     await rig.delegate()
 
-    assert rig.results_of("delegate_to_specialist") == ["Tool error: compute is not available on this profile."]
+    assert rig.results_of("delegate_to_specialist") == [f"Tool error: {intent_unavailable_text('compute')}"]
     assert rig.compute.received == []
     assert rig.finished()
 

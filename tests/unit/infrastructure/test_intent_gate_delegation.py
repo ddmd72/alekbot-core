@@ -1,23 +1,23 @@
 """A delegation to an intent the user's effective configuration turns off never runs, and the model reads a refusal
 that retrying cannot fix (CONFIG_OVERRIDE_HIERARCHY_RFC §3). One test per path into `handle_delegation`: the engine's
-single dispatch (SYNC and ASYNC), the fan-out, and Lelik's voice dispatch. Real coordinator and registry over the seam
+single dispatch (SYNC and ASYNC) and the fan-out. Lelik's voice dispatch refuses before it reaches the coordinator
+(tests/unit/agents/test_turned_off_intents_note.py). Real coordinator and registry over the seam
 world; the specialists are recording stand-ins, so "did not run" is `received == []`."""
 from __future__ import annotations
 
 from typing import Any, Dict
-from unittest.mock import AsyncMock
 
-from src.agents.lelik_agent import LelikAgent
 from src.domain.agent import AgentMessage, AgentResponse
+from src.domain.intent_access_texts import intent_unavailable_text
 from src.domain.llm import ToolCall
-from src.domain.voice_mode import VoiceMode
-from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES
 from src.infrastructure.agent_manifest import SMART_RESPONSE
 from src.infrastructure.delegation_engine import DelegationEngine
 from tests.support.denied_profile import denying, with_user_entry
 from tests.support.seam_world import ACCOUNT, USER, SeamWorld
 
-REFUSAL = "Tool error: {} is not available on this profile."
+
+def _refusal(intent: str) -> str:
+    return f"Tool error: {intent_unavailable_text(intent)}"
 
 
 def _answers(text: str):
@@ -47,7 +47,7 @@ async def test_a_denied_sync_intent_is_a_tool_error_and_the_specialist_never_run
 
     result = await _dispatch(world, "search_memory")
 
-    assert result.result_str == REFUSAL.format("search_memory")
+    assert result.result_str == _refusal("search_memory")
     assert result.failed is True
     assert "Correct your input" not in result.result_str
     assert memory.received == []
@@ -60,7 +60,7 @@ async def test_a_denied_async_intent_is_refused_and_nothing_is_enqueued(monkeypa
 
     result = await _dispatch(world, "create_document")
 
-    assert result.result_str == REFUSAL.format("create_document")
+    assert result.result_str == _refusal("create_document")
     assert result.failed is True
     assert world.requests() == []
     assert planner.received == []
@@ -74,7 +74,7 @@ async def test_a_denied_primary_of_a_fanout_refuses_and_dispatches_no_secondary(
 
     result = await _dispatch(world, "search_web", fanout=True)
 
-    assert result.result_str == REFUSAL.format("search_web")
+    assert result.result_str == _refusal("search_web")
     assert result.failed is True
     assert web.received == [] and maps.received == []
 
@@ -113,24 +113,3 @@ async def test_an_available_intent_runs_unchanged(monkeypatch):
 
     assert result.failed is False and "facts" in result.result_str
     assert len(memory.received) == 1
-
-
-async def test_lelik_voice_dispatch_of_a_permitted_intent_the_user_denies_reads_the_refusal(monkeypatch):
-    world = SeamWorld(monkeypatch)
-    world.coordinator._effective_config = denying("search_memory")
-    memory = world.agent("facts_memory_agent").always(_answers("facts"))
-    persona = AsyncMock()
-    persona.primary_channel.return_value = None
-    lelik = LelikAgent(
-        config=AsyncMock(agent_id=f"lelik_agent_{USER}"), telephony=AsyncMock(), from_number="+1",
-        status_callback_url="https://x/voice/status", prompt_builder=AsyncMock(), persona=persona,
-        notifications=AsyncMock(), voice_profile=VOICE_PROVIDER_PROFILES["openai"],
-    )
-    lelik.coordinator = world.coordinator
-    assert "search_memory" in lelik.permitted_intents(VoiceMode.LELIK)
-
-    outcome = await lelik.delegate_outcome(USER, ACCOUNT, {"intent": "search_memory", "query": "q"}, call_context=[])
-
-    assert outcome.text == REFUSAL.format("search_memory")
-    assert outcome.failed is True
-    assert memory.received == []

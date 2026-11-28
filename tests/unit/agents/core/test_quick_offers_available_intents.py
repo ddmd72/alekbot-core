@@ -2,6 +2,7 @@
 the gate in `handle_delegation` stays the enforcement. Alex Doe is `usr-1`, Clara is `usr-2`."""
 from src.agents.core.quick_response_agent import QuickResponseAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
+from src.domain.intent_access_texts import no_intents_line
 from src.domain.user import PerformanceTier
 from src.infrastructure.agent_manifest import QUICK_RESPONSE, Intent
 from src.ports.llm_port import ProviderCapabilities
@@ -57,13 +58,15 @@ async def test_a_user_with_no_denies_gets_the_declaration_built_from_the_registr
     assert await _offered(coordinator, "usr-2") == expected
 
 
-async def test_with_every_intent_denied_no_delegate_tool_is_declared():
+async def test_with_every_intent_denied_the_delegate_tool_is_declared_with_no_intent():
     names = [i["name"] for i in coordinator_denying({}).get_available_intents_for(QUICK_RESPONSE)]
     llm = ScriptedLLM([text("ok")])
 
     await _quick(llm, coordinator_denying({"usr-1": names})).execute(_message())
 
-    assert not [t for t in (llm.requests[0].tools or []) if t["name"] == "delegate_to_specialist"]
+    tool = delegate_tool(llm.requests[0].tools)
+    assert delegate_intents(tool) == []
+    assert f"Available intents:\n{no_intents_line()}\n\n" in tool["description"]
 
 
 async def test_a_registry_with_no_intent_keeps_the_empty_delegate_tool_as_before():

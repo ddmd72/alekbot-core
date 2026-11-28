@@ -3,6 +3,7 @@ included (CONFIG_OVERRIDE_HIERARCHY_RFC §3); the gate in `handle_delegation` st
 `usr-1`, Clara is `usr-2`."""
 from src.agents.core.smart_response_agent import _EXTERNAL_TASKS_OFFER
 from src.domain.agent import AgentStatus
+from src.domain.intent_access_texts import no_intents_line
 from src.domain.user import UserBotConfig
 from src.infrastructure.agent_manifest import SMART_RESPONSE, Intent
 from tests.support.denied_profile import coordinator_denying, delegate_intents, delegate_tool
@@ -60,7 +61,7 @@ async def test_the_task_queue_intent_is_still_offered_to_another_flagged_user():
     assert QUEUE in delegate_intents(await _offered(coordinator, "usr-2", flag=True))
 
 
-async def test_with_every_intent_denied_no_delegate_tool_is_declared():
+async def test_with_every_intent_denied_the_delegate_tool_is_declared_with_no_intent():
     coordinator = coordinator_denying({})
     names = [i["name"] for i in coordinator.get_available_intents_for(SMART_RESPONSE)]
     llm = ScriptedLLM([text("ok")])
@@ -70,7 +71,9 @@ async def test_with_every_intent_denied_no_delegate_tool_is_declared():
                                                  origin_platform="slack", origin_channel_id="C1"))
 
     assert response.status == AgentStatus.SUCCESS
-    assert not [t for t in llm.requests[0].tools if t["name"] == "delegate_to_specialist"]
+    tool = delegate_tool(llm.requests[0].tools)
+    assert delegate_intents(tool) == []
+    assert f"Available intents:\n{no_intents_line()}\n\n" in tool["description"]
 
 
 def test_without_a_user_the_eval_scripts_call_offers_the_whole_registry():
