@@ -8,12 +8,14 @@ store error at ERROR, everything else at INFO. Content is never logged.
 """
 
 import asyncio
+import secrets
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
 from ..domain.exceptions import EmailFileNotTransferable, WorkspaceConflict, WorkspaceFileTooLarge, WorkspaceRefused
+from ..domain.untrusted_text import EXTERNAL_REMINDER, EXTERNAL_TAG, wrap_untrusted
 from ..domain.user_drive import DriveFileTooLargeError, DriveNotConnectedError, DrivePathError, DriveRefRefused
 from ..domain.workspace import (
     COMMANDS,
@@ -45,6 +47,7 @@ from ..domain.workspace import (
     folder_of,
     format_size,
     is_long_text,
+    is_outside_written,
     is_text,
     is_whole_file_request,
     number_lines,
@@ -102,6 +105,10 @@ def _lines(text: str) -> str:
     return f"{n} line{'' if n == 1 else 's'}"
 
 
+def _nonce() -> str:
+    return secrets.token_hex(8)
+
+
 def _now(text: str, data: bytes) -> str:
     """The tail of a write result: how big the file is now, so the model never views it just to find out (D18)."""
     return f" · file now {_lines(text)} · {format_size(len(data))}"
@@ -109,8 +116,14 @@ def _now(text: str, data: bytes) -> str:
 
 class WorkspaceService:
 
-    def __init__(self, store: WorkspaceStorePort, file_conversion: Optional["FileConversionService"] = None) -> None:
+    def __init__(
+        self,
+        store: WorkspaceStorePort,
+        file_conversion: Optional["FileConversionService"] = None,
+        nonce: Callable[[], str] = _nonce,
+    ) -> None:
         self._store = store
+        self._nonce = nonce
         # Copy sources from chat uploads and delivered documents (§7.3 copy). None → such copies are refused.
         self._file_conversion = file_conversion
 
@@ -181,6 +194,13 @@ class WorkspaceService:
             int((time.monotonic() - started) * 1000),
         )
 
+    def _mark(self, path: str, text: str) -> str:
+        """The text of an outside-written file wrapped as outside content; any other path is returned as is."""
+        if not is_outside_written(path):
+            return text
+        return wrap_untrusted(text, nonce=self._nonce(), store="workspace", ref=f"{WORKSPACE_REF_PREFIX}{path}",
+                              label=path)
+
     # -- view / history ----------------------------------------------------------------------------------------
 
     async def _view(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
@@ -211,16 +231,19 @@ class WorkspaceService:
             # B1: an earlier attempt of this same fire wrote it; name the version from before the fire.
             versions = await self._store.list(call.user_id, path, include_versions=True)
             parts.append(render_same_fire_line(prior_generation_before_fire(versions, call.fire_key)))
-        parts += self._body(text, entry.size, args)
+        parts += self._body(path, text, entry.size, args)
         return WorkspaceResult(text="\n".join(parts), generations={path: entry.generation})
 
-    @staticmethod
-    def _body(text: str, size: int, args: Mapping[str, Any]) -> List[str]:
-        """The text window, or for a long file viewed without a range its outline (D18)."""
+    def _body(self, path: str, text: str, size: int, args: Mapping[str, Any]) -> List[str]:
+        """The text window, or for a long file viewed without a range its outline (D18). For an outside-written
+        file the shown file text is wrapped; the notes the code adds stay outside the wrapper."""
+        outside = is_outside_written(path)
+        lead = [EXTERNAL_REMINDER] if outside else []
         if is_long_text(text) and is_whole_file_request(args.get("offset"), args.get("limit")):
-            return [render_outline(text, size)]
+            return lead + [self._mark(path, render_outline(text, size))]
         window = number_lines(text, args.get("offset"), args.get("limit"))
-        return [p for p in (window.text, window_note(window)) if p]
+        shown = self._mark(path, window.text) if window.text else window.text
+        return lead + [p for p in (shown, window_note(window)) if p]
 
     @staticmethod
     def _binary(path: str, generation: int, log: _LogFields) -> WorkspaceResult:
@@ -237,7 +260,7 @@ class WorkspaceService:
         if text is None:
             raise WorkspaceRefused(binary_message(path), reason="binary")
         parts = [render_view_header(blob.entry, len(text.splitlines()), version_view=True)]
-        parts += self._body(text, blob.entry.size, args)
+        parts += self._body(path, text, blob.entry.size, args)
         # Read-only: not recorded, so no later create can overwrite on the strength of an old version (§7.3).
         return WorkspaceResult(text="\n".join(parts))
 
@@ -324,10 +347,14 @@ class WorkspaceService:
         text, matches = await asyncio.to_thread(
             render_grep, pattern, path, files, matcher,
             context=parse_context(args.get("context")), files_only=parse_flag(args.get("files_only")),
+            mark=self._mark,
         )
         if skipped:
             shown = ", ".join(skipped[:5]) + (f" and {len(skipped) - 5} more" if len(skipped) > 5 else "")
             text += f"\n(skipped, over the {format_size(MAX_FILE_BYTES)} file cap: {shown})"
+        if any(is_outside_written(p) for p, _ in files) and "\n" in text and f"<{EXTERNAL_TAG} " in text:
+            head, _, rest = text.partition("\n")
+            text = f"{head}\n{EXTERNAL_REMINDER}\n{rest}"
         log.files = len(files)
         log.matches = matches
         # Line numbers only: an insert at a line taken from this grep passes the staleness guard, but a grep is not a

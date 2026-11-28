@@ -284,6 +284,8 @@ Local dev shares the live bucket: with `GOOGLE_CLOUD_PROJECT` set, `load_setting
 `GCS_WORKSPACE_BUCKET` from Secret Manager, and the developer's own account needs object access. Another bucket name in
 `.env` points elsewhere; with the key empty and no project, no workspace is built.
 
+An outside scheduled job may hold create-only access to one user's inbox folder (`scratch/inbox/`) in the workspace bucket; the bot reads files there as outside content.
+
 **Media bucket: the task files' age rule** (`docs/10_rfcs/EXTERNAL_TASK_QUEUE_RFC.md` §5.12). The copies of the files an
 external task carries live in `GCS_MEDIA_BUCKET` under `external_tasks/{user_id}/{task_id}/`; no code deletes them, only
 this lifecycle rule, applied by hand: delete at `TASK_MAX_AGE_S` (`src/domain/external_task.py`, 7 days) plus one day,

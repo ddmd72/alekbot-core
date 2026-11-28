@@ -30,6 +30,8 @@ FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/", "binary_file
 TEXT_FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/")
 BINARY_FOLDER = "binary_files/"
 SCRATCH_FOLDER = "scratch/"
+# Files under this folder are written by an outside job, not by the bot; their text is read as outside content.
+INBOX_PREFIX = "scratch/inbox/"
 TEXT_EXTENSIONS: Tuple[str, ...] = SKILL_FILE_EXTENSIONS
 
 # Caps (D4, §6). Soft: two concurrent creates can land one file over.
@@ -143,6 +145,11 @@ def parse_workspace_path(raw: object, *, allow_folder: bool = False) -> str:
 def workspace_kind(path: str) -> str:
     """`text` for the skill-file extensions (§6), else `binary`. UTF-8 is checked where the bytes are read."""
     return "text" if path.lower().endswith(TEXT_EXTENSIONS) else "binary"
+
+
+def is_outside_written(path: str) -> bool:
+    """True when the path lies under the inbox folder, where an outside job writes. Decided by the path alone."""
+    return path.startswith(INBOX_PREFIX) and len(path) > len(INBOX_PREFIX)
 
 
 def folder_of(path: str) -> str:
@@ -768,8 +775,11 @@ def render_grep(
     *,
     context: int = GREP_DEFAULT_CONTEXT,
     files_only: bool = False,
+    mark: Optional[Callable[[str, str], str]] = None,
 ) -> Tuple[str, int]:
     """(text, number of matches found) of a grep over `files` (path, decoded text), already in the order to show.
+
+    `mark(path, text)`, when given, wraps a file's shown lines (not its path line) — used for outside-written files.
 
     A match is one matching line. At most GREP_MAX_MATCHES match lines and GREP_MAX_OUTPUT_BYTES are shown, then the
     trailer; the header counts everything found.
@@ -805,6 +815,8 @@ def render_grep(
                 if k:
                     block.append("--")
                 block += [f"{n}{':' if n in hit_set else '-'}{_cut_line(src[n - 1])}" for n in range(lo, hi + 1)]
+            if mark is not None and len(block) > 1:
+                block = [path, mark(path, "\n".join(block[1:]))]
         size = sum(len(b.encode("utf-8")) + 1 for b in block)
         if used + size > GREP_MAX_OUTPUT_BYTES:
             capped = True
