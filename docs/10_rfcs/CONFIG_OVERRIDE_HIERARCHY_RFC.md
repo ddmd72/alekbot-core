@@ -86,10 +86,16 @@ INTENT_UNAVAILABLE`, status failed). Every delegation path goes through it:
 | ASYNC intents | at enqueue (the queued task later runs without a second check) |
 
 Rendering of a refusal:
-- The delegation engine returns a tool result `Tool error: <intent> is not available on this profile.` — without the
-  "correct your input and try again" line it adds to other specialist failures, since retrying cannot help.
-- Notes shows the failure's error text to its model instead of "No result".
+- The delegation engine returns a tool result `Tool error: <intent> is turned off for this user; calling it again gets
+  the same answer.` — without the "correct your input and try again" line it adds to other specialist failures, since
+  retrying cannot help. It names no level, so it holds whether the user, the account or a SYSTEM default turned it off.
+- Notes shows the failure's error text to its model (`Tool error: <error>`) instead of "No result".
 - Fan-out: the engine checks the primary intent before dispatching secondaries; a denied primary dispatches nothing.
+  Denied secondaries are dropped before dispatch, so the merged answer never claims a specialist answered that was not
+  asked; with none left, the primary runs as a plain single dispatch.
+- Lelik checks availability itself before dispatching and returns a voice-safe note with no intent id in it (`Tool
+  error: this request is turned off for this caller; asking again gets the same answer.`), the same way it refuses
+  intents a voice call does not permit.
 - Bound channels: a bound turn to a denied agent tells the user the agent is not available on their profile; binding
   a channel to a denied agent (`$agent`) is refused.
 
@@ -97,7 +103,11 @@ Rendering of a refusal:
 Each orchestrator (Smart, Quick, Notes, Tutor, DomainResearcher, Lelik) builds its delegate tool from the intents the
 coordinator returns for the current user (`AgentCoordinator.available_intents_for`), so a denied intent is not offered.
 The filter is a courtesy; the gate stays the enforcement: the shared agent-selection prompt token still names every
-agent.
+agent. Because that token keeps describing the turned-off intents, the declaration says so when, and only when, the
+profile filter removed one (a sentence telling the model not to call the intents missing from the list and to tell the
+user they are turned off); other removals (Lelik's native search, Smart's external-tasks offer) do not add it. When the
+filter removes every intent, Smart and Quick still declare the tool, with "none: every specialist is turned off for this
+user" as its list; Tutor, DomainResearcher and Notes omit an empty tool as before.
 
 ## 4. The seven steps (one pull request each)
 
@@ -131,4 +141,7 @@ agent.
 - **An intent is not a feature.** Denying the email intent does not stop the daily email review, the drive MCP
   connector or `$` commands. A "feature off" need gets its own gate at that entry point.
 - **ASYNC tasks queued before a deny still run.**
+- **A step another feature takes internally is not gated by the step's own intent.** Deep research delivers its report
+  by enqueueing the HTML page generator directly, so denying `create_html_page` does not stop the report page of an
+  allowed deep research.
 - **No editor.** No Cabinet editor and no account admin UI until a need exists; edits are made by hand in Firestore.
