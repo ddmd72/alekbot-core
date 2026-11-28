@@ -76,6 +76,9 @@ class Auth:
         return VerifiedAccessToken(token=token, client_id="client-1", user_id="u1", account_id="acc1",
                                    scopes=["drive_read"], resource=DRIVE, expires_at=4_102_444_800)
 
+    async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+        return True
+
 
 class Conversion:
     """Records every download and every open's caller; the scan answers as `DocumentService` does for the connector
@@ -485,3 +488,48 @@ class TestAccountLock:
             res = await world.call(name, **arguments)
             assert res["isError"] is True and res["content"][0]["text"] == ACCOUNT_LOCKED_TOOL_ERROR
         assert world.search.queries == ["Tom's plan"] and world.conversion.downloads == []
+
+
+class TestGrantRecheck:
+    """The grant is re-checked on every OAuth call, as the tasks app does: a grant revoked in the Cabinet is the neutral
+    refusal while its access token has not expired, and nothing is read."""
+
+    async def test_a_revoked_grant_is_the_neutral_refusal_and_reads_nothing(self, world, monkeypatch):
+        asked: list = []
+
+        class Revoked(Auth):
+            async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+                asked.append((user_id, grant_id))
+                return False
+
+        monkeypatch.setattr(world, "fresh_app", lambda: build_drive_mcp_app(
+            authorization_service=Revoked(), auth_config=AUTH_CONFIG, tools=world.tools))
+        for name, arguments in (("search_drive", {"query": "Tom's plan"}), ("open_drive_file", {"file_ref": ref("d1")}),
+                                ("get_note", {"item_ref": ref("d1")})):
+            assert text_of(await world.call(name, **arguments)).split("\n") == NEUTRAL
+        assert asked == [("u1", None)] * 3
+        assert world.search.queries == [] and world.conversion.downloads == [] and world.conversion.callers == []
+
+    async def test_a_failing_lock_check_answers_the_type_only(self, world, monkeypatch, caplog):
+        class Broken:
+            async def is_inactive(self, user_id: str) -> bool:
+                raise RuntimeError("store down while reading Tom's plan")
+
+        monkeypatch.setattr(world, "fresh_app", lambda: build_drive_mcp_app(
+            authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=world.tools, inactive_users=Broken()))
+        caplog.set_level(logging.DEBUG)
+        res = await world.call("search_drive", query="Tom's plan")
+        assert res["isError"] is True and res["content"][0]["text"] == "Drive operation failed: RuntimeError."
+        assert "failed: RuntimeError" in caplog.text and "Tom's plan" not in res["content"][0]["text"]
+        assert world.search.queries == []
+
+    async def test_a_failing_grant_check_answers_the_type_only(self, world, monkeypatch):
+        class Broken(Auth):
+            async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+                raise RuntimeError("store down while reading Tom's plan")
+
+        monkeypatch.setattr(world, "fresh_app", lambda: build_drive_mcp_app(
+            authorization_service=Broken(), auth_config=AUTH_CONFIG, tools=world.tools))
+        res = await world.call("search_drive", query="Tom's plan")
+        assert res["isError"] is True and res["content"][0]["text"] == "Drive operation failed: RuntimeError."
+        assert world.search.queries == []

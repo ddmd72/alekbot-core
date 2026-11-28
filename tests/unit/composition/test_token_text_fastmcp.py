@@ -41,6 +41,9 @@ class Auth:
         return VerifiedAccessToken(token=token, client_id="client-1", user_id="u1", account_id="acc1",
                                    scopes=["drive_read"], resource=DRIVE, expires_at=4_102_444_800)
 
+    async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+        return True
+
 
 class Clock:
     def __init__(self) -> None:

@@ -66,6 +66,14 @@ Every tool call of every app reads the token's user fresh (`InactiveUserCheck`) 
 `ACCOUNT_LOCKED_TOOL_ERROR` for a locked account (`CABINET_DEVICE_SESSIONS_RFC.md` §7.8): an access token issued before
 the lock still verifies until it expires.
 
+The grant is re-checked on every call of every resource: the facts and drive
+handlers, like the tasks and inbox ones, ask `grant_allowed(user, gid)` for an OAuth token (the verifiers carry `gid`
+through), so a grant revoked in the Cabinet, or a user taken off the whitelist, is refused on the next call: the facts
+tool answers `GRANT_REFUSED_TOOL_ERROR`, the drive tools the neutral refusal. A voice token is no OAuth grant and is
+not checked (it has its own lifetime and revocation). Every handler answers a failure of its own checks (the lock read,
+the grant read) or of its operation by the exception's type name only, with a fixed text; the facts tool logs the count
+and lengths of the phrases, never the phrases.
+
 A third thing lives here because it shares the verifiers: the **voice token kind**, a per-call, read-only token that
 lets Lelik's xAI voice session call the drive resource.
 

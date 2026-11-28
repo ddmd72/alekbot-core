@@ -81,6 +81,11 @@ class Kit:
             MagicMock(), jwt_secret=OAUTH_SECRET, mcp_resource_uri=FACTS_URI, consent_base_url=f"{BASE}/mcp/consent",
             allowed_redirect_hosts=("claude.ai",), drive_resource_uri=DRIVE_URI, scope_of=SCOPE_OF,
             user_repo=self.user_repo, whitelist_repo=self.whitelist_repo)
+        self.oauth.grant_allowed = self._grant_allowed   # type: ignore[method-assign]  # the grant store is a mock here
+
+    @staticmethod
+    async def _grant_allowed(user_id: str, grant_id: Optional[str]) -> bool:
+        return True
 
     @property
     def docs(self) -> Dict[str, Any]:

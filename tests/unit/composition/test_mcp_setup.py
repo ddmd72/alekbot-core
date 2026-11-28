@@ -76,7 +76,7 @@ def components(memory_agent):
     async def memory_search(user_id):
         return memory_agent
 
-    return build_mcp_components(
+    built = build_mcp_components(
         db_client=MagicMock(),
         env_config=MagicMock(),
         auth_config=_auth_config(),
@@ -86,6 +86,12 @@ def components(memory_agent):
         user_repo=allowing_repos("u1")[0],
         whitelist_repo=allowing_repos("u1")[1],
     )
+
+    async def granted(user_id, grant_id):
+        return True
+
+    built.authorization_service.grant_allowed = granted   # the grant re-check is tested on its own
+    return built
 
 
 @pytest.fixture
