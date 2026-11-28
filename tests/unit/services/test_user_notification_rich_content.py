@@ -1,11 +1,15 @@
 """A `file` / `widget` rich-content item Smart returns on a background path reaches the chat as the real file
 (notify_answer_copy for a call's answer, notify for reminders and reviews), not as its fallback text."""
 import logging
+import time
+
+import jwt
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.domain.agent import AgentResponse, AgentStatus
+from src.domain.file_access import DEFAULT_FILE_LINK_TTL, EMAIL_REVIEW_FILE_LINK_TTL
 from src.domain.messaging import RichContent, SmartResponse
 from src.domain.notification import NotificationChannel
 from src.domain.notification_kind import NotificationKind
@@ -141,3 +145,29 @@ async def test_answer_copy_sends_an_html_page_as_the_users_capability_link(monke
     await svc.notify_answer_copy("u1", "a1", _page_answer("Here is the page."))
     [link] = [t for t in channel.texts if t.startswith("https://alek.example.com/f/")]
     assert tokens.verify(link.rsplit("/", 1)[-1]).user_id == "u1" and media.files == []
+
+
+def _lifetime(link):
+    """Seconds from now to the token's expiry (the link lifetime, give or take the test's own runtime)."""
+    claims = jwt.decode(link.rsplit("/", 1)[-1], "s" * 40, algorithms=["HS256"])
+    return round((claims["exp"] - time.time()) / 60) * 60
+
+
+async def test_notify_with_the_email_review_class_stores_the_page_gated_with_the_short_lifetime(monkeypatch):
+    svc, channel, media = _build(answer=_page_answer("Your review."))
+    tokens = _linking(monkeypatch, svc, media)
+    await svc.notify("u1", "a1", "alert", kind=NotificationKind.REMINDER, storage_class="email_review")
+    [link] = [t for t in channel.texts if t.startswith("https://alek.example.com/f/")]
+    access = tokens.verify(link.rsplit("/", 1)[-1])
+    assert access.user_id == "u1" and access.key.startswith("email_review/u1/")
+    assert access.gated is True and _lifetime(link) == EMAIL_REVIEW_FILE_LINK_TTL
+
+
+async def test_notify_without_a_storage_class_keeps_the_default_prefix_and_lifetime(monkeypatch):
+    svc, channel, media = _build(answer=_page_answer("Your trip page."))
+    tokens = _linking(monkeypatch, svc, media)
+    await svc.notify("u1", "a1", "alert", kind=NotificationKind.REMINDER)
+    [link] = [t for t in channel.texts if t.startswith("https://alek.example.com/f/")]
+    access = tokens.verify(link.rsplit("/", 1)[-1])
+    assert access.key.startswith("html/")
+    assert access.gated is False and _lifetime(link) == DEFAULT_FILE_LINK_TTL

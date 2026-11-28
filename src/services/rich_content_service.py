@@ -41,6 +41,11 @@ if TYPE_CHECKING:
     from .file_link_service import FileLinkService
 
 
+# storage_class → object-key prefix of a stored html page. A page without a class keeps the default `html/` prefix;
+# `email_review/` is the prefix FileLinkService gates behind the Cabinet session with the short link lifetime.
+_STORAGE_CLASS_PREFIX = {"email_review": "email_review"}
+
+
 class RichContentService:
     """Converts and delivers rich content items via PlatformMediaPort / MediaStoragePort."""
 
@@ -58,7 +63,13 @@ class RichContentService:
         # (decisions/rich_content_one_delivery_path.md), never as its storage key.
         self._link_service = link_service
 
-    async def process(self, content: RichContent, channel_id: str, user_id: Optional[str] = None) -> Optional[str]:
+    async def process(
+        self,
+        content: RichContent,
+        channel_id: str,
+        user_id: Optional[str] = None,
+        storage_class: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Process a single RichContent item and deliver it to the platform.
 
@@ -66,13 +77,14 @@ class RichContentService:
             content:    Structured content descriptor from LLM output
             channel_id: Platform-specific channel identifier
             user_id:    The owner, for an html page's capability link; without it the page is uploaded as a file
+            storage_class: The run's storage class (e.g. "email_review"); an html page is stored under its key prefix
 
         Returns:
             The `/f/<token>` link if an html page was stored privately,
             None for all other types (direct upload or skip).
         """
         if content.content_type == "file":
-            return await self._handle_file(content, channel_id, user_id)
+            return await self._handle_file(content, channel_id, user_id, storage_class)
         elif content.content_type == "widget":
             await self._handle_widget(content, channel_id)
             return None
@@ -89,6 +101,7 @@ class RichContentService:
         response_channel: ResponseChannel,
         thread_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        storage_class: Optional[str] = None,
     ) -> None:
         """
         Route one rich-content item to the right delivery path (chat turns and background notifications alike):
@@ -96,7 +109,8 @@ class RichContentService:
           - table and others → ResponseChannel.send_rich_content (Block Kit / fallback)
 
         When process() returns a link (an html page → `/f/<token>`), it is sent as a plain message so
-        Slack unfurls it as a preview. `user_id` is the owner the link is minted for.
+        Slack unfurls it as a preview. `user_id` is the owner the link is minted for; `storage_class` files the page
+        under that class's key prefix.
         """
         if content.content_type not in _MEDIA_CONTENT_TYPES:
             await response_channel.send_rich_content(content, thread_id=thread_id)
@@ -110,7 +124,7 @@ class RichContentService:
             )
             await response_channel.send_rich_content(content, thread_id=thread_id)
             return
-        url = await self.process(content, channel_id, user_id)
+        url = await self.process(content, channel_id, user_id, storage_class)
         if url:
             await response_channel.send_message(url, thread_id=thread_id)
 
@@ -118,7 +132,9 @@ class RichContentService:
     # Private handlers
     # ------------------------------------------------------------------
 
-    async def _handle_file(self, content: RichContent, channel_id: str, user_id: Optional[str] = None) -> Optional[str]:
+    async def _handle_file(
+        self, content: RichContent, channel_id: str, user_id: Optional[str] = None, storage_class: Optional[str] = None,
+    ) -> Optional[str]:
         filename = content.data.get("filename", "document.md").strip()
         title = content.data.get("title", filename).strip()
         text_content = content.data.get("content", "")
@@ -133,7 +149,7 @@ class RichContentService:
         # private store fails (logged as ERROR there), the page is uploaded below like any other file (as on
         # Telegram), never posted as its storage key and never dropped.
         if ext == "html" and self._can_link(user_id):
-            link = await self._store_html(text_content, filename, user_id)
+            link = await self._store_html(text_content, filename, user_id, storage_class)
             if link:
                 return link
 
@@ -210,7 +226,9 @@ class RichContentService:
     def _can_link(self, user_id: Optional[str]) -> bool:
         return bool(self._storage_port and self._link_service and user_id)
 
-    async def _store_html(self, html_content: str, filename: str, user_id: Optional[str] = None) -> Optional[str]:
+    async def _store_html(
+        self, html_content: str, filename: str, user_id: Optional[str] = None, storage_class: Optional[str] = None,
+    ) -> Optional[str]:
         """Store the page in the private bucket and return its `/f/<token>` link for `user_id`; None (nothing
         stored) when no link can be minted or the upload fails."""
         storage, links = self._storage_port, self._link_service
@@ -220,7 +238,8 @@ class RichContentService:
             return None
         try:
             html_bytes = html_content.encode("utf-8")
-            key = f"html/{uuid.uuid4()}-{filename}"
+            prefix = _STORAGE_CLASS_PREFIX.get(storage_class or "")
+            key = f"{prefix}/{user_id}/{uuid.uuid4()}-{filename}" if prefix else f"html/{uuid.uuid4()}-{filename}"
             stored_key = await storage.store(
                 data=html_bytes,
                 key=key,
