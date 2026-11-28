@@ -1,7 +1,7 @@
-"""A task a reminder's run hands over is shown to the owner at once (owner's decision 2026-11-24): after the run's answer,
-in the reminder's channel, the receipt file (front matter with the note, then the brief) and a short literal message
-that it was handed over from a reminder; no command, no button, nothing to confirm. The task itself is queued at once,
-as before.
+"""A task a reminder's run hands over is shown to the owner at once (owner's decision 2026-11-24): the create posts it
+itself the moment the task is queued, before the run's answer, in the reminder's channel: the receipt file (front matter
+with the note, then the brief) and a short literal message that it was handed over from a reminder; no command, no
+button, nothing to confirm. The task itself is queued at once.
 
 The real stack of `test_external_task_reminder_chain.py`: `ExecuteReminderTask` over the real note adapter, the real
 `UserNotificationService` with the real localization, the real coordinator and registry, a real Smart and the lazily
@@ -10,7 +10,7 @@ records every post in order. Alex Doe is `usr-1`.
 """
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import yaml
 
@@ -69,7 +69,7 @@ class Sessions:
         self.appended.append((session_id, messages))
 
 
-async def test_a_reminder_runs_task_is_shown_after_the_answer_as_a_notice_with_no_command(monkeypatch):
+async def test_a_reminder_runs_task_is_shown_before_the_answer_as_a_notice_with_no_command(monkeypatch):
     world = await ExternalTaskWorld().seed()
     notes = FirestoreAgentNoteAdapter(EvalDb(), EnvironmentConfig())
     pin_datetime(monkeypatch, firestore_agent_note_adapter, T0)
@@ -78,7 +78,8 @@ async def test_a_reminder_runs_task_is_shown_after_the_answer_as_a_notice_with_n
 
     smart_llm = ScriptedLLM([tools(HAND_OFF), text(ANSWER)])
     specialist_llm = ScriptedLLM([tools(CREATE), text("Queued.")])
-    coordinator = _chain(world, specialist_llm)
+    late = LateNotifications()
+    coordinator = _chain(world, specialist_llm, notifications=late)
     smart = smart_rig(smart_llm, user_id=USER_ID, coordinator=coordinator, session_store=SimpleNamespace(
         load_session=_sessions([])), user_config=UserBotConfig(external_tasks_enabled=True))
     coordinator.register_agent(smart)
@@ -87,7 +88,7 @@ async def test_a_reminder_runs_task_is_shown_after_the_answer_as_a_notice_with_n
         user_id=USER_ID, platform=ORIGIN.platform, channel_id=ORIGIN.channel_id, updated_at=datetime.now(timezone.utc))
     channel, sessions, factory = Channel(), Sessions(), MagicMock()
     factory.create.return_value = channel
-    notifications = UserNotificationService(
+    late.service = notifications = UserNotificationService(
         state_repo=state_repo, channel_factory=factory, coordinator=coordinator, notification_sla=NOTIFICATION_SLA,
         session_store=sessions, localization=LocalizationService(FileLocalizationAdapter()),
         inactive_users=InactiveUserCheck(world.users))
@@ -101,11 +102,12 @@ async def test_a_reminder_runs_task_is_shown_after_the_answer_as_a_notice_with_n
     assert answer[1] == 200
     [task] = world.tasks.tasks.values()
     assert task.status is ExternalTaskStatus.QUEUED and (task.note, task.entry) == (NOTE, TaskEntry.REMINDER)
-    factory.create.assert_called_with(platform=ORIGIN.platform, channel_id=ORIGIN.channel_id)   # the reminder's channel
+    assert factory.create.call_args_list and all(                                     # the reminder's channel
+        c == call(platform=ORIGIN.platform, channel_id=ORIGIN.channel_id) for c in factory.create.call_args_list)
 
     header = en.UI_STRINGS[UIMessage.EXTERNAL_TASK_QUEUED_FROM_REMINDER.value].format(worker="research", title=TITLE)
-    [(said, answer_text), (filed, filename, title, content), (lit, message)] = channel.posts
-    assert (said, answer_text) == ("text", ANSWER)                                     # the answer first
+    [(filed, filename, title, content), (lit, message), (said, answer_text)] = channel.posts
+    assert (said, answer_text) == ("text", ANSWER)                         # the answer last: the receipt came at create
     assert (filed, filename, title) == ("file", f"task-{task.task_id}.txt", TITLE)
     assert content.startswith(b"---\n")
     head, _, body = content.decode("utf-8")[len("---\n"):].partition("\n---\n")
@@ -116,3 +118,70 @@ async def test_a_reminder_runs_task_is_shown_after_the_answer_as_a_notice_with_n
     [(_, history)] = sessions.appended
     assert [m.role for m in history] == ["user", "model"]                              # the alert and the answer only
     assert all(NOTE not in (part.text or "") + (part.full_text or "") for m in history for part in m.parts)
+
+
+class LateNotifications:
+    """The notification service the specialist posts through, bound once built: the service needs the coordinator the
+    chain builds, and the chain hands this object to the factory. Every call goes to the one real service."""
+
+    service = None
+
+    async def post_task_receipt(self, *args, **kwargs):
+        return await self.service.post_task_receipt(*args, **kwargs)
+
+
+async def _fire_reminder(monkeypatch, smart_script):
+    """One reminder fire through the real stack, with the specialist's receipts posted through the same notification
+    service as the run. Returns the world, the channel and the runner's answer."""
+    world = await ExternalTaskWorld().seed()
+    notes = FirestoreAgentNoteAdapter(EvalDb(), EnvironmentConfig())
+    pin_datetime(monkeypatch, firestore_agent_note_adapter, T0)
+    note = await notes.create_note(NoteCreate(
+        user_id=USER_ID, text="irrigation comparison", instruction=f"Hand this to research: {TEXT}", due=T0))
+
+    smart_llm = ScriptedLLM(smart_script)
+    specialist_llm = ScriptedLLM([tools(CREATE), text("Queued.")])
+    late = LateNotifications()
+    coordinator = _chain(world, specialist_llm, notifications=late)
+    smart = smart_rig(smart_llm, user_id=USER_ID, coordinator=coordinator, session_store=SimpleNamespace(
+        load_session=_sessions([])), user_config=UserBotConfig(external_tasks_enabled=True))
+    coordinator.register_agent(smart)
+    state_repo = AsyncMock()
+    state_repo.get_primary.return_value = NotificationChannel(
+        user_id=USER_ID, platform=ORIGIN.platform, channel_id=ORIGIN.channel_id, updated_at=datetime.now(timezone.utc))
+    channel, factory = Channel(), MagicMock()
+    factory.create.return_value = channel
+    late.service = UserNotificationService(
+        state_repo=state_repo, channel_factory=factory, coordinator=coordinator, notification_sla=NOTIFICATION_SLA,
+        session_store=Sessions(), localization=LocalizationService(FileLocalizationAdapter()),
+        inactive_users=InactiveUserCheck(world.users))
+    runner = ExecuteReminderTask(
+        notes_port=notes, user_repo=world.users, ensure_agents=AsyncMock(), notification_service=late.service,
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
+    answer = await runner({"task_type": "execute_reminder", "note_id": note.note_id, "user_id": USER_ID,
+                           "due_at": T0.isoformat()}, {})
+    assert specialist_llm.unanswered == 0 and specialist_llm.pending() == 0
+    return world, channel, answer, smart_llm
+
+
+async def test_a_reminders_task_receipt_is_posted_when_it_is_queued_once_before_the_answer(monkeypatch):
+    world, channel, answer, smart_llm = await _fire_reminder(monkeypatch, [tools(HAND_OFF), text(ANSWER)])
+
+    assert answer[1] == 200 and smart_llm.unanswered == 0 and smart_llm.pending() == 0
+    [task] = world.tasks.tasks.values()
+    assert task.status is ExternalTaskStatus.QUEUED and task.entry is TaskEntry.REMINDER
+    assert [p[0] for p in channel.posts] == ["file", "literal", "text"]        # the receipt, once, then the answer
+    assert channel.posts[0][1] == f"task-{task.task_id}.txt" and channel.posts[2] == ("text", ANSWER)
+
+
+async def test_a_reminders_task_receipt_stands_when_the_turn_fails_after_the_create(monkeypatch):
+    world, channel, _, _ = await _fire_reminder(monkeypatch, [tools(HAND_OFF), RuntimeError("provider down")])
+
+    [task] = world.tasks.tasks.values()
+    assert task.status is ExternalTaskStatus.QUEUED                            # queued, and its worker may be woken
+    header = en.UI_STRINGS[UIMessage.EXTERNAL_TASK_QUEUED_FROM_REMINDER.value].format(worker="research", title=TITLE)
+    receipt = ("literal", f"{header}\nTask id: `{task.task_id}`")
+    [(filed, filename, *_)] = [p for p in channel.posts if p[0] == "file"]      # one receipt file
+    assert (filed, filename) == ("file", f"task-{task.task_id}.txt") and channel.posts[1] == receipt
+    assert channel.posts.count(receipt) == 1                                    # then only the reminder's own notice
+    assert all(p[0] != "text" for p in channel.posts)                          # no answer

@@ -16,15 +16,16 @@ account lock, read fresh). A refusal is a success carrying one code-written line
 A task it creates in a chat turn waits for the owner's confirmation (the service's `TaskEntry.CHAT`): the owner is shown
 its exact text and note and a command only they see, and nothing leaves until they send it. One it creates while a
 reminder runs (`TaskEntry.REMINDER`) is queued at once: the owner approved that reminder when it was set, and is shown
-the task as a show-only notice (no command) after the reminder run's answer. Every task carries a note the model writes
+the task as a show-only notice (no command) that the create posts itself through `notifications`, the moment the task
+is queued, so the notice stands however the reminder's run then ends. Every task carries a note the model writes
 from the instruction: the bot's own return instructions, handed back by the completion alert and never shown to a worker.
 The entry is computed once per run from the context, never by the model. A worker's result or failure reason read by
 `get_external_task` reaches the orchestrator inside its outside-content wrapper.
 
 The answer is composed by code from the pass-through record of every tool call (`external_task_tools.recorded`): every
 result verbatim and in order, then the model's short note (plain specialist text, like every specialist's own words),
-then a line when the run was cut. Receipts come from the record too, so a run cut by the soft deadline, the turn
-cap or an engine exception after a create still posts the owner's receipt; the agent answers success whenever it got
+then a line when the run was cut. A chat create's receipt comes from the record too, so a run cut by the soft
+deadline, the turn cap or an engine exception after a create still posts the owner's receipt; the agent answers success whenever it got
 that far (a failure would drop the delivery items). The only failure paths: an empty instruction and a prompt that
 cannot be built, both before any tool can run.
 
@@ -70,6 +71,7 @@ from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_manifest import EXTERNAL_TASKS
 from ..infrastructure.delegation_engine import DelegationEngine, DelegationResult, LocalToolHandler, ToolResult
 from ..infrastructure.external_task_tools import (
+    ReceiptPoster,
     build_cancel_external_task_declaration,
     build_create_external_task_declaration,
     build_get_external_task_declaration,
@@ -88,6 +90,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..ports.prompt_builder_port import PromptBuilderPort
     from ..services.external_task_service import ExternalTaskService
+    from ..services.user_notification_service import UserNotificationService
 
 AGENT_TYPE = EXTERNAL_TASKS.agent_type
 EMPTY_INSTRUCTION = "The instruction is empty: name the worker and give the whole brief, or say which task is meant."
@@ -155,9 +158,11 @@ class ExternalTaskAgent(BaseAgent):
         prompt_builder: "PromptBuilderPort",
         thinking: Optional[str] = None,
         monotonic: Callable[[], float] = time.monotonic,
+        notifications: Optional["UserNotificationService"] = None,
     ) -> None:
         """`service` is None in a deployment without a task queue: every run then answers `ANSWER_UNAVAILABLE_SYSTEM`.
-        `thinking` is the user's `agent_thinking["external_tasks"]`; None takes the config's effort."""
+        `thinking` is the user's `agent_thinking["external_tasks"]`; None takes the config's effort. `notifications`
+        posts a reminder create's receipt to the run's channel; None posts none (logged at error level)."""
         super().__init__(config)
         self._set_execution_context(execution_context)
         self._llm = execution_context.provider
@@ -166,6 +171,7 @@ class ExternalTaskAgent(BaseAgent):
         self._prompt_builder = prompt_builder
         self.thinking = thinking if thinking is not None else CONFIG.thinking_effort
         self._monotonic = monotonic
+        self._notifications = notifications
 
     async def can_handle(self, message: AgentMessage) -> bool:
         return message.intent == AgentIntent.QUERY
@@ -209,7 +215,9 @@ class ExternalTaskAgent(BaseAgent):
 
         instruction = Message(role="user", parts=[MessagePart(text=commission)])
         record: Record = []
-        handlers = self._handlers(service, user_id, task_origin(context), commission, workers, entry)
+        origin = task_origin(context)
+        handlers = self._handlers(service, user_id, origin, commission, workers, entry,
+                                  self._receipt_poster(user_id, str(context.get("account_id") or ""), origin))
         declarations = self._declarations(workers, entry)
         boundary = "" if PROMPT_CACHE_BOUNDARY in prompt else f"\n\n{PROMPT_CACHE_BOUNDARY}"
         state = render_queue_state([w.label for w in workers])
@@ -238,9 +246,22 @@ class ExternalTaskAgent(BaseAgent):
             agent_type=AGENT_TYPE, user_id=user_id, account_id=account_id, include_biographical=False,
             include_directives=False, include_location=False)
 
+    def _receipt_poster(self, user_id: str, account_id: str, origin: TaskOrigin) -> Optional[ReceiptPoster]:
+        """Posts a reminder create's receipt to the channel the run speaks in (the task's origin)."""
+        notifications = self._notifications
+        if notifications is None:
+            return None
+
+        async def post(data: Mapping[str, Any]) -> bool:
+            return await notifications.post_task_receipt(
+                user_id, account_id, data, channel_id_override=origin.channel_id or None,
+                platform_override=origin.platform or None)
+        return post
+
     @staticmethod
     def _handlers(service: "ExternalTaskService", user_id: str, origin: TaskOrigin, commission: str,
-                  workers: Sequence[ExternalWorker], entry: TaskEntry) -> Dict[str, LocalToolHandler]:
+                  workers: Sequence[ExternalWorker], entry: TaskEntry,
+                  post_receipt: Optional[ReceiptPoster]) -> Dict[str, LocalToolHandler]:
         handlers: Dict[str, LocalToolHandler] = {
             LIST_EXTERNAL_TASKS_TOOL: make_list_handler(service, user_id),
             LIST_EXTERNAL_WORKERS_TOOL: make_list_workers_handler(service, user_id),
@@ -249,7 +270,7 @@ class ExternalTaskAgent(BaseAgent):
         }
         if workers:
             handlers[CREATE_EXTERNAL_TASK_TOOL] = make_create_handler(
-                service, user_id, origin, commission=commission, entry=entry)
+                service, user_id, origin, commission=commission, entry=entry, post_receipt=post_receipt)
         return handlers
 
     @staticmethod
@@ -304,7 +325,7 @@ class ExternalTaskAgent(BaseAgent):
 
 
 def _receipts(record: Record) -> List[DeliveryItem]:
-    """The receipts of every create that ran, in call order: the owner's literal record of what left the system, or
-    of what waits for their confirmation."""
+    """The receipts of every chat create that ran, in call order: the owner's literal record of what waits for their
+    confirmation (a reminder create posted its own and returned none)."""
     return [item for _, result in record for item in result.delivery_items
             if item.type == EXTERNAL_TASK_RECEIPT_DELIVERY]

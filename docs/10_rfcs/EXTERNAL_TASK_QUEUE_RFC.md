@@ -1017,41 +1017,49 @@ Coercion of the user and a compromised runtime identity are out of scope, as in 
 
 ### 6.1 Prompt injection, both ways
 
-*Superseded in part (2026-11-24): the taint mitigations below are replaced by the owner's confirmation of every chat-created task (decision record `external_task_confirmation_and_alerts.md`). The wrapping of a worker's result stays.*
+*Rewritten to the built design (2026-11-28). This section describes the built design: every chat-created task
+waits for the owner's confirmation (decision record `external_task_confirmation_and_alerts.md`, which this
+section follows). The owner's map: `docs/05_building_blocks/external_task_queue/README.md`.*
 
 **Bot → worker.**
-- Smart writes the task text in a turn that may also hold outside content. An injected instruction could try to make
-  Smart create a task that carries private data out to a worker.
-- `interactive_delivery` does not stop this. The user is present, but the user did not ask for that call (§3).
-- Mitigations:
-  - **Taint (superseded 2026-11-24: every chat create is held).** A create in an execution that saw outside content is held. Only the owner's `$task send <code>` queues
-    it and sends the wake-up (§5.3).
-  - Every create, held or not, is posted to the owner literally with its full text.
-  - Workers are only those the owner registered, and a label must exist.
-  - The tool description says that a task leaves the system.
-  - The claim result marks the text as written by the assistant, possibly quoting outside material. Whether the
-    worker treats it as data is outside this system's control.
-- Residual risk: an untainted execution (no outside content entered it) can still produce a task the user did not mean.
-  The literal receipt makes it visible, and `cancel` stops it before a claim.
+- Smart writes the task text in a turn that may also hold outside content (an email, a file, a web page), and an
+  instruction inside that content could steer Smart into handing a task with private data to a worker. The owner being
+  present does not settle it: the owner did not ask for that call (§3).
+- Only two entries reach the queue, decided in code from the run's context, never by a model (`task_entry`): the
+  owner's own chat turn and a run of one of the owner's reminders. The daily review, a voice errand, a delegated Smart
+  and the delivery's alert turn have none; Smart has no queue tool of its own, and the task specialist refuses any run
+  it was not reached from directly.
+- **A chat task is held.** Whatever the turn read, a task created in a chat turn is `held`: the owner is shown its exact
+  text, its note and the files it carries in a literal receipt, and nothing leaves until the owner sends the
+  `$task send <code>` command or presses «Send». No model ever reads the code. An unsent hold expires silently.
+- **A reminder's task goes out with a show-only notice.** The owner approved the reminder when it was set, so a task its
+  run creates is queued at once (and its worker may be woken). The create posts the same literal receipt itself, with
+  no command, the moment the task is queued, so the owner sees what left whatever the rest of the run does; `cancel`
+  stops the task before a claim.
+- Workers are only those the owner registered, and a label must exist; a worker's free-text description never reaches a
+  model. The brief is the orchestrator's word for word (a create whose text is not part of the instruction is refused),
+  and a file goes out only when the instruction names it.
+- The tool description says that a task leaves the system. The claim result marks the text as written by the
+  assistant, possibly quoting outside material; whether the worker treats it as data is outside this system's control.
+- A reminder's task is queued at once; its notice shows it at once and the owner can cancel it until a worker claims it.
 
 **Worker → bot.**
-- A result and a failure reason are hostile by assumption.
-- Neither reaches a model at delivery. Delivery runs no agent turn, and its notice and history pair never quote either.
-- Every read is wrapped as outside content:
-  - `get_external_task`;
-  - `workspace` reads of a flagged file, wherever it was renamed or copied;
-  - drive reads of the results subfolder.
-- Background runs can read a result through `workspace` or the drive tools (§5.9). That read is wrapped too.
+- A result and a failure reason are untrusted by assumption.
+- **Delivery is a Smart turn with no queue entry.** The result or reason is written as a workspace file under a
+  code-written outside-content header; the alert that starts the turn names the file and carries code-made values only
+  (task id, label, path, outcome) plus the task's note, never the title, the result or the reason. That turn
+  (`background:external_task_deliver`) has no task entry, so a worker's result never starts new outbound work.
+- Every read of a result is wrapped as outside content: `get_external_task`, and `workspace` reads of the delivered
+  file wherever it was renamed or copied.
 - A result cannot forge a system note: the system tag word is neutralised on store, and the wrapper neutralises
   look-alikes.
-- **A result cannot enqueue on its own.** Any execution that read a result is tainted, so a create in it is held for the
-  owner's `$task send`. A background run has no queue tool at all.
-- It cannot write memory: no user-role line carries it, and the four tools set no `history_context`.
+- It cannot write memory: no user-role line carries it (the history pair keeps the code-made label and the alert
+  without the note), and the specialist's five tools set no `history_context`.
 - Residual risks:
-  - In the turn where the user reads a result, Smart holds its other tools (delegation, `workspace` writes). The
-    defence there is the wrapper and the rule, the same as for any email or file.
+  - In the chat turn where the owner reads a result, Smart holds its other tools; a task it creates there is held for
+    the owner's confirmation like any chat task, and the defence for the rest is the wrapper and the rule, the same as
+    for any email or file.
   - Text Smart retypes from a result into a new file (not `copy` or `rename`) carries no flag.
-  - A drive copy the user moves out of the results subfolder loses the path mapping, though its header remains.
 
 ### 6.2 Outbound requests
 

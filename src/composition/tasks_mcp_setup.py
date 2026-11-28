@@ -11,7 +11,11 @@ Named `tasks_mcp_setup`, not `mcp_tasks_setup`: the drive-notes isolation test t
 (`MCPAuthorizationService.verify_access_token` with `aud` = the tasks URI), which also requires the `wid` claim (the
 worker the grant is bound to; §5.4 "OAuth"). Without the authorization service every OAuth token is refused. A refused
 credential is no token, which the SDK answers with `401`: a locked, switched-off, revoked or not-whitelisted key is
-refused at the door, where REST answers `403` (plan Δ1). A verified key carries kind `WORKER_KEY`, the worker id, the
+refused at the door, where REST answers `403` (plan Δ1). Keys that resolve to nothing are counted in the app limiter's
+global `401` bucket, by the REST endpoint's rules (the verifier sees no client address, so no address bucket): while
+it is over its limit a key is refused before any key-store read, unless that key resolved in the last window
+(`recently_resolved`, as on REST); a credential with the prefix but no key shape is refused with no read and not
+counted. A verified key carries kind `WORKER_KEY`, the worker id, the
 scope `external_tasks`, no expiry, and in `token` the key's stored digest, never the key; a verified OAuth token carries
 kind `OAUTH`, its client, grant id (`gid`), worker id (`wid`), scope and expiry.
 
@@ -62,7 +66,7 @@ from ..domain.exceptions import ConnectorTextsUnavailable
 from ..domain.external_task import CALLS_PER_WINDOW, CLAIMS_PER_WINDOW, SUBMITS_PER_WINDOW, SubmitVia
 from ..domain.external_task_mcp_result import TaskToolAnswer
 from ..domain.external_task_refusal import ExternalTaskRefused, TaskRefusal
-from ..domain.external_worker_key import WORKER_KEY_PREFIX
+from ..domain.external_worker_key import WORKER_KEY_PREFIX, has_key_shape
 from ..domain.external_worker_principal import WorkerPrincipal
 from ..domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, normalize_phrase
 from ..domain.mcp_resource import TASKS_PATH, tasks_resource_uri
@@ -114,17 +118,35 @@ class TasksTokenVerifier:
     the tasks resource bound to a worker, or nothing."""
 
     def __init__(self, external_tasks: ExternalTaskService, gate: ExternalWorkerUserGate, resource_uri: str,
-                 authorization_service: Optional[MCPAuthorizationService] = None) -> None:
+                 authorization_service: Optional[MCPAuthorizationService] = None, *,
+                 limiter: ExternalTaskRateLimiter) -> None:
         self._tasks = external_tasks
         self._gate = gate
         self._resource_uri = resource_uri
         self._authorization = authorization_service
+        self._limiter = limiter
 
     async def verify_token(self, token: str) -> Optional[AlekAccessToken]:
         if not token.startswith(WORKER_KEY_PREFIX):
             return self._verify_oauth(token)
+        if not has_key_shape(token):     # no read is possible: refused, and not counted
+            logger.info(f"[TaskMCP] key refused: {TaskRefusal.KEY_INVALID.value}")
+            return None
+        digest = self._tasks.key_digest(token)
+        if not await self._limiter.recently_resolved(digest) \
+                and await self._limiter.unauthorized_retry_after(None) is not None:
+            logger.warning("[TaskMCP] key refused: unknown keys over their limit")
+            return None
         try:
             principal = await self._tasks.resolve_key(token)
+        except ExternalTaskRefused as refused:
+            if refused.reason is TaskRefusal.KEY_INVALID:
+                await self._limiter.forget_resolved(digest)
+                await self._limiter.count_unauthorized(None)
+            logger.info(f"[TaskMCP] key refused: {refused.reason.value}")
+            return None
+        await self._limiter.remember_resolved(digest)
+        try:
             await self._gate.check(principal)
         except ExternalTaskRefused as refused:
             logger.info(f"[TaskMCP] key refused: {refused.reason.value}")
@@ -163,7 +185,7 @@ def build_tasks_mcp_app(*, external_tasks: ExternalTaskService, limiter: Externa
     app = TokenTextFastMCP(
         texts=texts, initial=initial_texts, read_only_tools=contract.READ_ONLY_TOOLS,
         name="alekbot-tasks",
-        token_verifier=TasksTokenVerifier(external_tasks, gate, tasks_uri, authorization_service),
+        token_verifier=TasksTokenVerifier(external_tasks, gate, tasks_uri, authorization_service, limiter=limiter),
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(f"{issuer.scheme}://{issuer.netloc}"),
             resource_server_url=AnyHttpUrl(tasks_uri),

@@ -1,8 +1,9 @@
-"""`UserNotificationService.notify` posts the show-only notice of an external task its background run created (owner's
-decision 2026-11-24), and keeps out of history the alert text a caller asks it to (`system_alert_history`).
+"""`UserNotificationService.post_task_receipt` posts the show-only notice of an external task a reminder's run queued
+(owner's decision 2026-11-24), called by the create itself; `notify` posts a turn's answer and never a receipt item, so
+the notice is posted once; and `notify` keeps out of history the alert text a caller asks it to (`system_alert_history`).
 
-The real service over a recording channel and a coordinator stub that answers like Smart: a text and the receipt item
-of a queued task. Assertions are on what reached the channel, in order, and on the history pair. The real-stack path
+The real service over a recording channel and a coordinator stub that answers like Smart: a text and delivery items.
+Assertions are on what reached the channel, in order, and on the history pair. The real-stack path
 (a reminder's run through Smart and the task specialist) is `tests/unit/infrastructure/test_external_task_reminder_notice.py`.
 Alex Doe is `usr-1`; the worker is `research`.
 """
@@ -68,28 +69,23 @@ async def _notify(service: UserNotificationService, **kw):
     return await service.notify("usr-1", "acc-1", "alert", kind=NotificationKind.REMINDER, **kw)
 
 
-async def test_the_notice_follows_the_answer_and_other_items_are_left_alone():
+async def test_a_turns_answer_is_posted_alone_receipt_and_other_items_are_left_alone():
     channel = Channel()
     other = DeliveryItem(type="document", data={"filename": "x.pdf"})
     result = await _notify(_service(Bot(ANSWER, [other, DeliveryItem(EXTERNAL_TASK_RECEIPT_DELIVERY, QUEUED)]), channel))
     assert result.delivered and result.sent
-    assert [p[0] for p in channel.posts] == ["text", "file", "literal"] and channel.posts[1] == ("file", "task-t1.txt")
+    assert channel.posts == [("text", ANSWER)]                  # the create posted the receipt: never posted twice
 
 
-async def test_a_notice_alone_counts_as_sent():
-    channel = Channel()
-    result = await _notify(_service(Bot("", [DeliveryItem(EXTERNAL_TASK_RECEIPT_DELIVERY, QUEUED)]), channel))
-    assert result.sent and [p[0] for p in channel.posts] == ["file", "literal"]
-
-
-async def test_without_localization_or_when_the_file_fails_no_notice_is_posted_and_the_turn_stands():
+async def test_the_turn_stands_without_localization_or_a_working_file_and_a_receipt_item_alone_posts_nothing():
     unlocalized = Channel()
     result = await _notify(_service(Bot("", [DeliveryItem(EXTERNAL_TASK_RECEIPT_DELIVERY, QUEUED)]), unlocalized,
                                     localized=False))
     assert result.delivered and not result.sent and unlocalized.posts == []
-    broken = Channel(broken_file=True)
-    result = await _notify(_service(Bot(ANSWER, [DeliveryItem(EXTERNAL_TASK_RECEIPT_DELIVERY, QUEUED)]), broken))
-    assert result.delivered and result.sent and broken.posts == [("text", ANSWER)]
+    for channel, localized in ((Channel(), False), (Channel(broken_file=True), True)):
+        result = await _notify(_service(Bot(ANSWER, [DeliveryItem(EXTERNAL_TASK_RECEIPT_DELIVERY, QUEUED)]), channel,
+                                        localized=localized))
+        assert result.delivered and result.sent and channel.posts == [("text", ANSWER)]
 
 
 async def test_history_keeps_the_alert_a_caller_names_in_place_of_the_turns_alert():
@@ -99,3 +95,30 @@ async def test_history_keeps_the_alert_a_caller_names_in_place_of_the_turns_aler
                   system_alert_summary="label", system_alert_history="alert without the note")
     user, _ = sessions.append_messages_batch.await_args.kwargs["messages"]
     assert (user.parts[0].text, user.parts[0].full_text) == ("label", "alert without the note")
+
+
+# --- post_task_receipt: the create of a reminder's task posts its receipt itself --------------------------------------
+
+async def test_a_receipt_is_posted_to_the_named_channel_as_its_file_then_its_literal_message():
+    channel, factory = Channel(), MagicMock()
+    factory.create.side_effect = lambda platform, channel_id: channel if channel_id == "C-beds" else None
+    service = UserNotificationService(
+        state_repo=AsyncMock(), channel_factory=factory, coordinator=Bot("", []), notification_sla=NOTIFICATION_SLA,
+        localization=LocalizationService(FileLocalizationAdapter()))
+    posted = await service.post_task_receipt("usr-1", "acc-1", QUEUED, channel_id_override="C-beds",
+                                             platform_override="slack")
+    assert posted is True                                       # only the named channel exists: it went there
+    [(filed, filename), (lit, message)] = channel.posts
+    assert (filed, filename, lit) == ("file", "task-t1.txt", "literal")
+    assert "t1" in message and "$task send" not in message
+
+
+async def test_without_localization_or_when_the_file_fails_no_receipt_is_posted():
+    unlocalized = Channel()
+    assert await _service(Bot("", []), unlocalized, localized=False).post_task_receipt(
+        "usr-1", "acc-1", QUEUED) is False
+    assert unlocalized.posts == []
+    broken = Channel(broken_file=True)
+    assert await _service(Bot("", []), broken).post_task_receipt("usr-1", "acc-1", QUEUED) is False
+    assert broken.posts == []                                   # no message without its file
+

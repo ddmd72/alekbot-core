@@ -27,6 +27,7 @@ from src.domain.mcp_resource import MCPResource, ScopeRefused, bind_resource, dr
 from src.domain.secret_digest import fingerprint
 from src.domain.user import InactiveReason
 from src.domain.voice_mcp_token import McpTokenKind
+from src.services import external_task_rate_limiter as limiter_module
 from src.services.connector_text_service import ConnectorTextService
 from src.web import external_task_api as api
 from tests.support.task_file_fakes import CERTIFICATE, CERTIFICATE_REF, PLAN, PLAN_REF, InMemoryMediaStorage
@@ -84,7 +85,7 @@ def logs(monkeypatch) -> RecordingLogger:
 
 class TestVerifier:
     def verifier(self, world: World) -> tms.TasksTokenVerifier:
-        return tms.TasksTokenVerifier(world.service, world.gate, TASKS_URI)
+        return tms.TasksTokenVerifier(world.service, world.gate, TASKS_URI, limiter=world.limiter)
 
     async def test_a_live_key_is_a_worker_token_for_its_worker_with_the_tasks_scope_and_no_key_in_it(self, world):
         token = await self.verifier(world).verify_token(world.key)
@@ -126,6 +127,33 @@ class TestVerifier:
         world.whitelist.entry.allowed_emails.discard("alex@example.com")
         assert await self.verifier(world).verify_token(world.key) is None
         assert await self.verifier(world).verify_token(world.their_key) is not None
+
+    async def test_over_the_unknown_key_limit_a_key_is_refused_with_no_store_read(self, world, monkeypatch):
+        monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+        verifier = self.verifier(world)
+        for _ in range(4):
+            assert await verifier.verify_token(UNKNOWN_KEY) is None
+        reads = world.workers.get_key_reads
+        assert await verifier.verify_token(UNKNOWN_KEY) is None
+        assert await verifier.verify_token(world.watch_key) is None          # a live key not seen this window waits too
+        assert world.workers.get_key_reads == reads
+
+    async def test_a_key_that_resolved_recently_is_not_held_by_the_unknown_key_limit(self, world, monkeypatch):
+        monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+        verifier = self.verifier(world)
+        assert await verifier.verify_token(world.key) is not None
+        for _ in range(4):
+            await verifier.verify_token(UNKNOWN_KEY)
+        assert await verifier.verify_token(world.key) is not None
+
+    async def test_a_prefixed_credential_with_no_key_shape_is_not_counted(self, world, monkeypatch):
+        monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+        verifier = self.verifier(world)
+        for _ in range(10):
+            assert await verifier.verify_token(WORKER_KEY_PREFIX + "short") is None
+        reads = world.workers.get_key_reads
+        assert await verifier.verify_token(world.watch_key) is not None
+        assert world.workers.get_key_reads == reads + 1
 
     async def test_a_refused_key_is_401_at_the_door(self, world, logs):
         for key in (UNKNOWN_KEY, "not-a-key", None):

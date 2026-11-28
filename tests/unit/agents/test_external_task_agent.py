@@ -7,9 +7,12 @@ A real `ExternalTaskAgent` (`specialist_rig`) over a scripted model and its real
 """
 import asyncio
 import logging
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.domain.agent import AgentIntent, AgentStatus
 from src.domain.external_task import HOLD_S, ExternalTaskStatus
 from src.domain.external_task_entry import REMINDER_RUN_ORIGIN, TaskEntry
@@ -31,14 +34,18 @@ from src.domain.external_task_texts import (
     NOTE_QUEUED,
 )
 from src.domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest, LLMResponse
+from src.domain.notification import NotificationChannel
 from src.domain.untrusted_text import EXTERNAL_REMINDER
 from src.domain.run_deadline import CURRENT_RUN_DEADLINE
 from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
 from src.domain.user import InactiveReason
 from src.infrastructure import agent_config
+from src.infrastructure.notification_sla import NOTIFICATION_SLA
+from src.services.localization_service import LocalizationService
+from src.services.user_notification_service import UserNotificationService
 from src.agents.external_task_agent import soft_deadline
 from tests.support.external_task_agent_rig import specialist_message, specialist_rig
-from tests.support.external_task_world import ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE
+from tests.support.external_task_world import ACCOUNT_ID, ORIGIN, TEXT, TITLE, USER_ID, USERS, ExternalTaskWorld, NOTE
 from tests.support.scripted_llm import ScriptedLLM, text, tool_results, tools
 from tests.support.tool_e2e import StubPromptBuilder
 
@@ -334,15 +341,31 @@ def create_declaration(llm):
     return next(t for t in llm.requests[0].tools if t["name"] == "create_external_task")
 
 
+class RecordingReceipts:
+    """Stands for `UserNotificationService.post_task_receipt`: records every receipt the specialist posts, verbatim."""
+
+    def __init__(self) -> None:
+        self.posted = []
+
+    async def post_task_receipt(self, user_id, account_id, data, **channel):
+        self.posted.append((user_id, account_id, dict(data), channel))
+        return True
+
+
 async def test_a_reminders_create_is_queued_at_once_with_a_note_and_a_show_only_receipt(world):
-    llm, response = await run(world, [tools(CREATE), text("Handed over.")], **REMINDER_RUN)
+    llm, notifications = ScriptedLLM([tools(CREATE), text("Handed over.")]), RecordingReceipts()
+    response = await specialist_rig(llm, world, notifications=notifications).execute(
+        specialist_message(INSTRUCTION, **REMINDER_RUN))
+    assert llm.unanswered == 0 and llm.pending() == 0
 
     [task] = world.tasks.tasks.values()
     assert task.status is S.QUEUED and task.hold is None and task.text == TEXT and task.origin == ORIGIN
-    assert response.delivery_items == receipts(response)    # the receipt is the only item
-    [item] = receipts(response)
-    assert item.data == {"status": "queued", "worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
-                         "task_id": task.task_id, "command": None}    # nothing to confirm: shown, never a command
+    assert response.delivery_items == []                   # the receipt was posted by the create, not handed back
+    [(user_id, account_id, data, channel)] = notifications.posted
+    assert (user_id, account_id) == (USER_ID, ACCOUNT_ID)
+    assert channel == {"channel_id_override": ORIGIN.channel_id, "platform_override": ORIGIN.platform}
+    assert data == {"status": "queued", "worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
+                    "task_id": task.task_id, "command": None}    # nothing to confirm: shown, never a command
     queued = NOTE_QUEUED.format(task_id=task.task_id, worker="research", title=TITLE)
     assert response.result == "\n\n".join([ANSWER_RESULTS_HEAD, queued]) + f"\n\n{ANSWER_NOTE_HEAD}\nHanded over."
     assert [j["kind"] for j in world.jobs("external_task_timer")] == ["deadline"]     # no hold timer: nothing waits
@@ -374,3 +397,81 @@ async def test_the_gate_refuses_every_other_background_run(world, run_origin):
     response = await specialist_rig(llm, world).execute(
         specialist_message(INSTRUCTION, interactive_delivery=None, run_origin=run_origin))
     assert response.result == ANSWER_UNAVAILABLE_TURN and llm.requests == [] and world.tasks.tasks == {}
+
+
+# --- a reminder's create posts its own receipt, once, when the task is queued ---------------------------------------
+
+class ReceiptChannel:
+    """Records the files and literal messages posted to one channel, in order."""
+
+    def __init__(self, broken_file: bool = False) -> None:
+        self.posts = []
+        self.broken_file = broken_file
+
+    async def send_file(self, content: bytes, filename: str, title: str, thread_id=None) -> None:
+        if self.broken_file:
+            raise RuntimeError("upload failed")
+        self.posts.append(("file", filename))
+
+    async def send_literal(self, text: str, thread_id=None) -> None:
+        self.posts.append(("literal", text))
+
+
+def notifications_on(channel):
+    """The real `UserNotificationService` with the real localization over a recording channel; the primary channel is
+    another one than the run's, so a receipt that lands on the run's channel was sent there on purpose."""
+    state = AsyncMock()
+    state.get_primary.return_value = NotificationChannel(user_id=USER_ID, platform="slack", channel_id="C-other",
+                                                         updated_at=datetime(2026, 11, 23, tzinfo=timezone.utc))
+    factory = MagicMock()
+    factory.create.return_value = channel
+    service = UserNotificationService(state_repo=state, channel_factory=factory, coordinator=None,
+                                      notification_sla=NOTIFICATION_SLA,
+                                      localization=LocalizationService(FileLocalizationAdapter()))
+    return service, factory
+
+
+async def run_notified(world, script, channel, **context):
+    llm = ScriptedLLM(script)
+    notifications, factory = notifications_on(channel)
+    response = await specialist_rig(llm, world, notifications=notifications).execute(
+        specialist_message(INSTRUCTION, **context))
+    assert llm.unanswered == 0 and llm.pending() == 0
+    return response, factory
+
+
+@pytest.mark.parametrize("script", [
+    [tools(CREATE), text("Handed over.")],                     # the run ends well
+    [tools(CREATE), RuntimeError("provider down")],            # the run fails after the create
+], ids=["answered", "failed_after_the_create"])
+async def test_a_reminders_create_posts_one_receipt_to_the_runs_channel_and_returns_none(world, script):
+    channel = ReceiptChannel()
+    response, factory = await run_notified(world, script, channel, **REMINDER_RUN)
+
+    [task] = world.tasks.tasks.values()
+    assert task.status is S.QUEUED
+    assert response.status is AgentStatus.SUCCESS and response.delivery_items == []   # nothing for the caller to post
+    [(filed, filename), (lit, message)] = channel.posts
+    assert (filed, filename, lit) == ("file", f"task-{task.task_id}.txt", "literal")
+    assert task.task_id in message and "$task send" not in message
+    factory.create.assert_called_once_with(platform="slack", channel_id="C-garden")   # the run's channel
+
+
+async def test_a_chat_create_posts_nothing_itself_and_returns_its_receipt_with_the_command(world):
+    channel = ReceiptChannel()
+    response, factory = await run_notified(world, [tools(CREATE), text("Held.")], channel)
+
+    assert channel.posts == [] and factory.create.call_count == 0
+    [item] = receipts(response)
+    assert item.data["status"] == "held" and item.data["command"].startswith("$task send ")
+    assert next(iter(world.tasks.tasks.values())).status is S.HELD
+
+
+async def test_a_reminders_receipt_that_cannot_be_posted_leaves_the_task_queued_and_the_answer_standing(world):
+    channel = ReceiptChannel(broken_file=True)
+    response, _ = await run_notified(world, [tools(CREATE), text("Handed over.")], channel, **REMINDER_RUN)
+
+    [task] = world.tasks.tasks.values()
+    assert task.status is S.QUEUED and channel.posts == []      # no message without its file
+    queued = NOTE_QUEUED.format(task_id=task.task_id, worker="research", title=TITLE)
+    assert response.status is AgentStatus.SUCCESS and queued in response.result and response.delivery_items == []

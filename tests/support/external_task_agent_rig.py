@@ -2,7 +2,8 @@
 of `tests/support/external_task_world.py`.
 
 `specialist_rig(llm, world, ...)` builds it as the factory does for Alex Doe (`usr-1`): the real service unless
-`service=None` (a deployment without a task queue), `StubPromptBuilder` unless one is given. `specialist_message(query,
+`service=None` (a deployment without a task queue), `StubPromptBuilder` unless one is given, and the `notifications`
+that post a reminder create's receipt (none unless given). `specialist_message(query,
 ...)` is the message the coordinator delivers when Smart delegates `work_with_external_tasks` on the owner's chat turn:
 the call chain is the specialist alone, the turn is interactive, and the origin is the garden channel; every keyword
 replaces or adds a context key (`None` removes one).
@@ -26,7 +27,7 @@ _KEEP = object()
 
 def specialist_rig(llm: LLMPort, world: Optional[ExternalTaskWorld], *, service: Any = _KEEP,
                    prompt_builder: Optional[PromptBuilderPort] = None, thinking: Optional[str] = None,
-                   coordinator: Optional[AgentCoordinator] = None) -> ExternalTaskAgent:
+                   coordinator: Optional[AgentCoordinator] = None, notifications: Any = None) -> ExternalTaskAgent:
     agent = ExternalTaskAgent(
         config=AgentConfig(agent_id=f"{EXTERNAL_TASKS.agent_id}_{USER_ID}", agent_type=EXTERNAL_TASKS.agent_type,
                            timeout_ms=90_000),
@@ -34,6 +35,7 @@ def specialist_rig(llm: LLMPort, world: Optional[ExternalTaskWorld], *, service:
         service=(world.service if world is not None else None) if service is _KEEP else service,
         prompt_builder=prompt_builder if prompt_builder is not None else StubPromptBuilder("TASK SPECIALIST PROMPT"),
         thinking=thinking,
+        notifications=notifications,
     )
     agent.coordinator = coordinator if coordinator is not None else AgentCoordinator()
     return agent

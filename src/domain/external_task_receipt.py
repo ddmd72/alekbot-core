@@ -13,8 +13,8 @@ The header follows the task's status. A task created in a chat turn is `held`: t
 `ConversationHandler` posts it after the answer, and the command to paste is returned apart so the handler can post it
 as its own message, the easiest thing to copy back. A task created while one of the owner's reminders runs is `queued`
 at once: the receipt is a show-only notice that it was handed over from a reminder (so the owner sees at once when
-results keep spawning reminders that spawn tasks), posted after the reminder run's answer by
-`UserNotificationService.notify`; it has no command and no button.
+results keep spawning reminders that spawn tasks), posted by the create itself the moment the task is queued
+(`UserNotificationService.post_task_receipt`); it has no command and no button.
 
 On a platform with buttons (`SEND_BUTTON_PLATFORMS`, Slack) the command message carries one more way to confirm: a
 «Send» button (`send_button`). It is an interactive message of the shared mechanism (`InteractiveMessage`): its prompt

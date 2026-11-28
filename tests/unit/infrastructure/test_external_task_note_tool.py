@@ -1,8 +1,9 @@
 """`create_external_task` and the task's note (owner's decision 2026-11-24): the declaration asks for it, the handler
-refuses a create without it or with one too long, and a reminder's create returns its show-only notice.
+refuses a create without it or with one too long, and a reminder's create posts its show-only notice itself.
 
 The handler over the real service on the fakes of `tests/support/external_task_world.py`. Assertions are on what the
-stores hold, the text the model reads and the delivery item the owner's channel gets. Alex Doe is `usr-1` with the
+stores hold, the text the model reads and the receipt the owner's channel gets (a chat create's delivery item, a
+reminder create's posted receipt). Alex Doe is `usr-1` with the
 worker `research`.
 """
 import pytest
@@ -29,9 +30,9 @@ async def world():
 MISSING = object()
 
 
-async def create(world, entry=TaskEntry.CHAT, **over):
+async def create(world, entry=TaskEntry.CHAT, post_receipt=None, **over):
     """A create through the handler; an argument given as MISSING is left out of the call."""
-    handler = make_create_handler(world.service, USER_ID, ORIGIN, entry=entry)
+    handler = make_create_handler(world.service, USER_ID, ORIGIN, entry=entry, post_receipt=post_receipt)
     args = {k: v for k, v in {"worker": "research", "title": TITLE, "text": TEXT, "note": NOTE, **over}.items()
             if v is not MISSING}
     return await handler(ToolCall(name="create_external_task", args=args))
@@ -68,12 +69,19 @@ async def test_a_chat_create_puts_the_note_in_the_receipt_item(world):
     assert NOTE not in result.result_str
 
 
-async def test_a_reminders_create_returns_a_show_only_notice_with_no_command(world):
-    result = await create(world, entry=TaskEntry.REMINDER)
+async def test_a_reminders_create_posts_a_show_only_notice_with_no_command_and_returns_no_item(world):
+    posted = []
+
+    async def post_receipt(data):
+        posted.append((dict(data), {i: t.status for i, t in world.tasks.tasks.items()}))   # and the store as it posted
+        return True
+
+    result = await create(world, entry=TaskEntry.REMINDER, post_receipt=post_receipt)
     [task] = world.tasks.tasks.values()
     assert task.status is S.QUEUED and task.entry is TaskEntry.REMINDER and task.note == NOTE
     assert result.result_str == NOTE_QUEUED.format(task_id=task.task_id, worker="research", title=TITLE)
-    [item] = result.delivery_items
-    assert item.type == EXTERNAL_TASK_RECEIPT_DELIVERY
-    assert item.data == {"status": "queued", "worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
-                         "task_id": task.task_id, "command": None}
+    assert result.delivery_items == []                              # posted here, so never again by the caller
+    [(data, stored)] = posted                                       # once, after the task was queued
+    assert stored == {task.task_id: S.QUEUED}
+    assert data == {"status": "queued", "worker": "research", "title": TITLE, "text": TEXT, "note": NOTE,
+                    "task_id": task.task_id, "command": None}

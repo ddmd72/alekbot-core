@@ -119,7 +119,7 @@ rule of `src/domain/external_task_rules.py`; timers are `external_task_timer` Cl
 | Created as | `held`, hold timer only | `queued`, deadline timer, a wake-up when due |
 | Why | nothing leaves without the owner's confirmation, whatever the turn read | the owner approved the reminder when it was set |
 | Owner sees | the receipt file `task-<id>.txt`, a literal line (worker, title, id), then the command `$task send <code>` as its own message; on Slack that message carries a «Send» button | the same file and a literal line that the task was handed over from a reminder (`EXTERNAL_TASK_QUEUED_FROM_REMINDER`); no command, no button |
-| Posted by | `ConversationHandler` after the answer | `UserNotificationService.notify` after the reminder run's answer; not in history |
+| Posted by | `ConversationHandler` after the answer | the create itself, the moment the task is queued (`UserNotificationService.post_task_receipt`, to the run's channel), whatever the rest of the run does; once; not in history |
 | Model reads | a tool note with the task id and the hold; never the code | a tool note that the task is queued |
 
 **The receipt** (`src/domain/external_task_receipt.py`) is a literal notice (`src/domain/literal_notice.py`): YAML front
@@ -187,15 +187,19 @@ system prompt ends, after the cache boundary, with a `queue_state` block of work
 (`src/infrastructure/external_task_tools.py`): `create_external_task` (left out when no worker exists; the `worker`
 enum is the labels), `list_external_tasks`, `get_external_task`, `cancel_external_task`, `list_external_workers`.
 Its answer is composed by code from a record of every tool call (each result verbatim, then the model's short note,
-then a line when the run was cut), so a run cut by its soft deadline, the turn cap or an exception after a create still
-posts the receipt; it answers success whenever it got past the prompt build (no whole-run retry: it would create twice).
+then a line when the run was cut), so a run cut by its soft deadline, the turn cap or an exception after a chat create
+still posts the receipt (a reminder's create has posted its own already, shielded from a cut while it posts); it answers
+success whenever it got past the prompt build (no whole-run retry: it would create twice).
 
 **Worker MCP** `/tasks-mcp` (`src/composition/tasks_mcp_setup.py`; beside the facts and drive connectors:
 [`remote_mcp_server`](../remote_mcp_server/README.md)). Seven tools over the same service operations as REST:
 `list_tasks`, `claim_task`, `renew_lease`, `submit_task_result`, `release_task`, `fail_task`, `get_task_file`; none takes
 a user, worker or label. Two credentials:
 - a worker key as the bearer: `resolve_key` then `ExternalWorkerUserGate`, as REST, but every refusal is `401` (the
-  SDK's verifier returns a token or nothing) and REST's `401` address limits are not applied;
+  SDK's verifier returns a token or nothing). The verifier sees no client address, so only the global `401` bucket
+  applies: a key that resolves to nothing counts in it; while it is over its limit a key is refused before any
+  key-store read, unless that key resolved in the last `RATE_WINDOW_S`; a prefixed credential with no key shape is
+  refused unread and not counted;
 - an OAuth access token of the tasks resource. A client must register the scope `external_tasks` (never a default, so an
   existing connector never gains it); the consent page (`src/web/mcp_consent_app.py`) lists the owner's active workers
   and Approve needs one, and the grant is bound to it (`worker_id` on the code and refresh token, `wid` in the access
@@ -211,9 +215,12 @@ number the task does not carry (or no number) is `no_such_file`, a copy no longe
 `link_unavailable` (asking again works). A refusal is an `isError` result; no task is a success.
 
 **Worker REST** `/external-tasks/v1/*` (`src/web/external_task_api.py`; routes in `docs/06_runtime/API_REFERENCE.md`).
-Not under `/api/`, not behind the Cabinet cookie; a worker key in `Authorization: Bearer` only. Per request: the `401`
-limits (`429` + `Retry-After`, the key store not read), the key's shape, `resolve_key` (`401` for a bad key, `403` for
-locked, flag off or a revoked worker), `ExternalWorkerUserGate` (stored user active, with an email, whitelisted), the
+Not under `/api/`, not behind the Cabinet cookie; a worker key in `Authorization: Bearer` only. Per request: the key's
+shape (a credential with no key shape is `401`, or `429` while its address is over the limit, and counts under its
+address only, never in the global bucket, since it costs no read); the `401` limits (`429` + `Retry-After`, the key
+store not read): the address's, and the global one unless the key resolved in the last `RATE_WINDOW_S` (it is still
+looked up, so a revocation is never delayed); `resolve_key` (`401` for a bad key, counted under the address and
+globally; `403` for locked, flag off or a revoked worker), `ExternalWorkerUserGate` (stored user active, with an email, whitelisted), the
 worker's limits (`CALLS_PER_WINDOW`, plus `CLAIMS_PER_WINDOW` / `SUBMITS_PER_WINDOW`), then the body. Answers are
 JSON codes; another worker's task, a held task and a missing task are one `404`. A claimed task with files carries
 `files` (number, name, type, size); `GET /tasks/<task_id>/files/<n>` with the lease id in `X-Lease-Id` (a GET: never in
@@ -308,8 +315,8 @@ written once at create and deleted only by the bucket's age rule for the prefix 
 
 Tasks and results carry `purge_after` (`RETENTION_S` after the final state) and are deleted by TTL policy
 (`config/ttl_registry.json`); an open task has none. Per-worker rate windows are `WindowCounter` documents
-(`xtrate:<key>:<window>`) in the `worker_task_dedup` collection, shared by every instance; the `401` counters are in
-each instance's memory only.
+(`xtrate:<key>:<window>`) in the `worker_task_dedup` collection, shared by every instance; the `401` counters and the
+memo of recently resolved keys are in each instance's memory only.
 
 ## Security rules enforced in code
 
