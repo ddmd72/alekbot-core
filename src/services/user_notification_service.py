@@ -109,7 +109,9 @@ class UserNotificationService:
         self._platform_media[platform] = media
         self._platform_rich_content[platform] = rich_content
 
-    async def _send_rich_content(self, response_channel, platform: str, content: RichContent, user_id: str) -> None:
+    async def _send_rich_content(
+        self, response_channel, platform: str, content: RichContent, user_id: str, storage_class: Optional[str] = None,
+    ) -> None:
         """Deliver one rich-content item the way a chat turn does (an html page as `user_id`'s capability link).
         Without a registered service every type goes to the channel's own renderer, which shows only a table: a media
         type then degrades to its fallback text, so that gap is logged."""
@@ -127,7 +129,7 @@ class UserNotificationService:
         if (platform == _SLACK and content.content_type in MEDIA_CONTENT_TYPES
                 and str(getattr(response_channel, "channel_id", "")).startswith("U")):
             await response_channel.send_message("📎")
-        await service.deliver(content, response_channel, user_id=user_id)
+        await service.deliver(content, response_channel, user_id=user_id, storage_class=storage_class)
 
     async def save_channel(self, user_id: str, platform: str, channel_id: str) -> None:
         """
@@ -679,7 +681,8 @@ class UserNotificationService:
 
             if rich_content:
                 sent = True
-                await self._send_rich_content(response_channel, channel_info.platform, rich_content, user_id)
+                await self._send_rich_content(
+                    response_channel, channel_info.platform, rich_content, user_id, storage_class)
 
             for item in getattr(response, "delivery_items", None) or []:
                 if item.type == EXTERNAL_TASK_RECEIPT_DELIVERY:
