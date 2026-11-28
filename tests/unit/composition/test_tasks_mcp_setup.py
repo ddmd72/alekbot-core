@@ -334,6 +334,20 @@ class TestCallChecks:
         assert any("failed: RuntimeError" in line for line in logs.lines)
         assert TEXT not in "\n".join(logs.lines)
 
+    async def test_a_failing_lock_check_answers_the_type_only(self, world, logs):
+        await world.create()
+
+        class Broken:
+            async def is_inactive(self, user_id: str) -> bool:
+                raise RuntimeError(f"store down while reading {TEXT}")
+
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "claim_task", "arguments": {}}}
+        text = err((await world.rpc(body, inactive_users=Broken()))["result"])
+        assert "RuntimeError" in text and TEXT not in text
+        assert any("failed: RuntimeError" in line for line in logs.lines)
+        assert TEXT not in "\n".join(logs.lines)
+        assert [t.status for t in world.tasks.tasks.values()] == [ExternalTaskStatus.QUEUED]
+
     async def test_texts_lost_after_the_listing_answer_the_no_texts_line(self, world):
         class FailsOnSecondRead:
             def __init__(self, texts: ConnectorTextService) -> None:

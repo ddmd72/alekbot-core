@@ -19,6 +19,7 @@ from src.domain.entities import FactEntity, FactType
 from src.domain.memory_search_format import RESULT_EXPLANATION
 from src.domain.memory_search_texts import QUERIES_FIELD_TEXT
 from src.composition.mcp_setup import FACTS_TOOL
+from src.domain.mcp_resource import MCPResource
 from src.domain.voice_mcp_token import McpTokenKind
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.mcp_gate_fakes import allowing_repos
@@ -251,3 +252,100 @@ class TestAccountLock:
             await tool.run({"queries": ["car"]}, context=ctx)
         assert ACCOUNT_LOCKED_TOOL_ERROR in str(err.value)
         assert len(agent.calls) == 1
+
+
+def _ctx_with_grant(grant_id, kind=McpTokenKind.OAUTH, tools=None):
+    ctx = _ctx(kind=kind, tools=tools)
+    ctx.request_context.request.user.access_token.grant_id = grant_id
+    return ctx
+
+
+class TestGrantRecheck:
+    """The grant is re-checked on every call, as the tasks and inbox apps do: a grant revoked in the Cabinet is refused
+    while its access token has not expired. A voice token is no OAuth grant and is not checked."""
+
+    @staticmethod
+    def _deny(components, asked=None):
+        async def denied(user_id, grant_id):
+            if asked is not None:
+                asked.append((user_id, grant_id))
+            return False
+
+        components.authorization_service.grant_allowed = denied
+
+    async def test_a_revoked_grant_is_refused_and_nothing_is_searched(self):
+        from src.domain.mcp import GRANT_REFUSED_TOOL_ERROR
+        tool, agent, resolver, components = _setup()
+        asked: list = []
+        self._deny(components, asked)
+        with pytest.raises(ToolError) as err:
+            await tool.run({"queries": ["car"]}, context=_ctx_with_grant("grant-1"))
+        assert GRANT_REFUSED_TOOL_ERROR in str(err.value)
+        assert asked == [("user-1", "grant-1")]
+        assert agent.calls == [] and resolver.users == []
+
+    async def test_an_allowed_grant_searches(self):
+        tool, agent, _, components = _setup()
+        asked: list = []
+
+        async def allowed(user_id, grant_id):
+            asked.append((user_id, grant_id))
+            return True
+
+        components.authorization_service.grant_allowed = allowed
+        await tool.run({"queries": ["car"]}, context=_ctx_with_grant("grant-1"))
+        assert asked == [("user-1", "grant-1")] and len(agent.calls) == 1
+
+    async def test_a_voice_token_is_not_checked_against_a_grant(self):
+        tool, agent, _, components = _setup()
+        self._deny(components)
+        await tool.run({"queries": ["car"]}, context=_ctx_with_grant(None, kind=McpTokenKind.VOICE, tools=[FACTS_TOOL]))
+        assert len(agent.calls) == 1
+
+    async def test_the_verified_oauth_token_carries_its_grant_id(self):
+        from src.composition.mcp_sdk_oauth_provider import MCPSdkOAuthProvider
+        from tests.support.voice_mcp_kit import Kit
+        kit = Kit()
+        token = kit.oauth.verify_access_token(
+            kit.oauth_token(MCPResource.FACTS), resource=None)
+        assert token is not None and token.grant_id == "g-1"
+        loaded = await MCPSdkOAuthProvider(kit.oauth, kit.voice).load_access_token(kit.oauth_token(MCPResource.FACTS))
+        assert loaded is not None and loaded.grant_id == "g-1"
+
+
+class TestTypeOnlyFailures:
+    async def test_a_failing_search_answers_the_type_only(self):
+        words = "Alex owns a 2015 Skoda Fabia"
+
+        async def boom(user_id):
+            raise RuntimeError(f"store down while reading {words}")
+
+        tool = _components(boom).fastmcp._tool_manager.get_tool(FACTS_TOOL)
+        with pytest.raises(ToolError) as err:
+            await tool.run({"queries": [words]}, context=_ctx())
+        assert "RuntimeError" in str(err.value) and words not in str(err.value)
+
+    async def test_a_failing_grant_check_answers_the_type_only(self):
+        tool, agent, _, components = _setup()
+        words = "Alex owns a 2015 Skoda Fabia"
+
+        async def boom(user_id, grant_id):
+            raise RuntimeError(f"store down while reading {words}")
+
+        components.authorization_service.grant_allowed = boom
+        with pytest.raises(ToolError) as err:
+            await tool.run({"queries": [words]}, context=_ctx_with_grant("grant-1"))
+        assert "RuntimeError" in str(err.value) and words not in str(err.value)
+        assert agent.calls == []
+
+
+class TestLog:
+    async def test_the_search_line_carries_counts_and_lengths_never_the_phrases(self, caplog):
+        import logging
+        caplog.set_level(logging.DEBUG)
+        words = "Alex owns a 2015 Skoda Fabia"
+        tool, _, _, _ = _setup()
+        await tool.run({"queries": [words, "car"]}, context=_ctx())
+        line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("🔎 MCP get_user_context"))
+        assert "queries=2" in line and f"lengths={[len(words), 3]}" in line
+        assert words not in "\n".join(r.getMessage() for r in caplog.records)

@@ -313,3 +313,20 @@ class TestDriveTools:
 def test_the_voice_cap_is_the_rfc_starting_point():
     assert VOICE_RESULT_MAX_CHARS == 8000 and drive_mcp_setup.RESULT_MAX_CHARS == 100_000
 
+
+
+class TestGrantRecheckSkipsVoice:
+    """The drive's grant re-check covers OAuth tokens only: a voice token has its own lifetime and revocation."""
+
+    async def test_a_revoked_oauth_grant_is_refused_while_a_voice_call_reads(self, drive_world):
+        w, kit, tokens = drive_world
+
+        async def revoked(user_id, grant_id):
+            return False
+
+        kit.oauth.grant_allowed = revoked
+        oauth = await _drive_call(w, kit, kit.oauth_token(MCPResource.DRIVE, user_id="u"), "search_drive",
+                                  query="Tom's plan")
+        voice = await _drive_call(w, kit, tokens.drive, "search_drive", query="Tom's plan")
+        assert oauth.split("\n") == NEUTRAL and w.plan_path not in oauth
+        assert w.plan_path in voice

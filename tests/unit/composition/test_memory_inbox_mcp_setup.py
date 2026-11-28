@@ -383,3 +383,31 @@ async def test_a_missing_token_leaves_the_app_unbuilt_and_alerts(world):
     sink = Sink()
     assert await _built(world, alert_sink=sink) is None
     assert [post.split(":")[0] for post in sink.posts] == [ims.ALERT_SUBJECT]
+
+
+# -------------------------------------------------------------------------------------------------- failures
+
+
+async def test_a_failing_lock_check_stores_nothing_and_answers_a_fixed_text(world, caplog):
+    class Broken:
+        async def is_inactive(self, user_id: str) -> bool:
+            raise RuntimeError(f"store down while reading {CLARA}")
+
+    world.inactive = Broken()
+    caplog.set_level(logging.INFO)
+    text = err(await world.call({"items": [CLARA]}))
+    assert text == ims._FAILED_TEXT and CLARA not in text
+    assert "failed: RuntimeError" in caplog.text and CLARA not in caplog.text
+    assert world.inbox.docs == {}
+
+
+async def test_a_failing_grant_check_stores_nothing_and_answers_a_fixed_text(world, monkeypatch, caplog):
+    async def boom(user_id, grant_id):
+        raise RuntimeError(f"store down while reading {CLARA}")
+
+    monkeypatch.setattr(world.mcp, "grant_allowed", boom)
+    caplog.set_level(logging.INFO)
+    text = err(await world.call({"items": [CLARA]}))
+    assert text == ims._FAILED_TEXT and CLARA not in text
+    assert "failed: RuntimeError" in caplog.text and CLARA not in caplog.text
+    assert world.inbox.docs == {}
