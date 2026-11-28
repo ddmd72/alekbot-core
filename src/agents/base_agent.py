@@ -33,6 +33,7 @@ from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPo
 from ..domain.run_deadline import CURRENT_RUN_DEADLINE
 from ..domain.turn_clock import CURRENT_TURN_CLOCK
 from ..domain.llm import LLMResponse as _LLMResponse
+from ..domain.intent_access_texts import no_intents_line, turned_off_intents_note
 from ..domain.local_time import local_stamp
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
@@ -769,16 +770,19 @@ class BaseAgent(ABC):
         return build_tool_turn(response, tool_results)
 
     @staticmethod
-    def _build_delegate_tool_declaration(available_intents: list) -> dict:
+    def _build_delegate_tool_declaration(available_intents: list, turned_off: bool = False) -> dict:
         """Build the delegate_to_specialist tool declaration for LLM APIs.
 
         Collects context_schema fields from all available intents and exposes
         them as typed properties on the context parameter — so Gemini can
         populate them from the conversation instead of generating an empty {}.
+
+        `turned_off`: the user's profile removed at least one intent from the list (never another cause of a shorter
+        list). agents_registry in the system prompt still describes those, so the description says so.
         """
         intents_description = "\n".join(
             f"- {i['name']}: {i['description']}" for i in available_intents
-        ) or "(no specialist agents registered)"
+        ) or (no_intents_line() if turned_off else "(no specialist agents registered)")
 
         context_properties: dict = {}
         for intent in available_intents:
@@ -810,6 +814,7 @@ class BaseAgent(ABC):
                 f"Available intents:\n{intents_description}\n\n"
                 "See agents_registry in your system prompt for per-intent "
                 "query formulation rules and required context fields."
+                + (f" {turned_off_intents_note()}" if turned_off else "")
             ),
             "parameters": {
                 "type": "object",

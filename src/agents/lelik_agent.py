@@ -33,6 +33,7 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
+from ..domain.intent_access_texts import voice_intent_unavailable_text
 from ..domain.llm import ToolCall
 from ..domain.language import LanguageCode
 from ..domain.messaging import session_id_for
@@ -153,12 +154,15 @@ class LelikAgent(BaseAgent):
             session_key=key,
         )
         available = await self.coordinator.available_intents_for(self._descriptor, user_id) if self.coordinator else []
+        # Counted before the native-search removal below: that is another cause and the note would be false for it.
+        turned_off = bool(self.coordinator) and len(available) < len(
+            self.coordinator.get_available_intents_for(self._descriptor))
         native_search = self._native_search_active()
         if native_search:
             # The provider searches the web itself inside the session; the delegated light search would be a second path.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
         mcp_servers = self._mcp_servers_for(mode)
-        tools = self._tool_declarations(mode, available)
+        tools = self._tool_declarations(mode, available, turned_off)
         session = replace(self._voice_profile.session, builtin_search=native_search)
         config: Dict[str, Any] = {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
         if mcp_servers:
@@ -178,7 +182,9 @@ class LelikAgent(BaseAgent):
             has_caller_message=any(is_caller_message(entry) for entry in history),
         )
 
-    def _tool_declarations(self, mode: VoiceMode, available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _tool_declarations(
+        self, mode: VoiceMode, available: List[Dict[str, Any]], turned_off: bool = False,
+    ) -> List[Dict[str, Any]]:
         """The session's tools. An interpreter call opens with none (owner rule, 2026-11-11): it only translates, with
         no memory, no drive, no delegation and no send_to_chat. Its one exception, the call-local
         `set_language_pair`, is never declared here: the relay offers it mid-call only while an "Ask Lelik" cycle is
@@ -186,7 +192,7 @@ class LelikAgent(BaseAgent):
         `available` and, when the manifest has the errand, send_to_chat."""
         if mode is VoiceMode.INTERPRETER:
             return []
-        tools = [self._build_delegate_tool_declaration(available)] if available else []
+        tools = [self._build_delegate_tool_declaration(available, turned_off)] if available else []
         if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
             tools.append(_send_to_chat_tool_declaration())
         return tools
@@ -233,6 +239,10 @@ class LelikAgent(BaseAgent):
             shown = intent[:40] if isinstance(intent, str) and intent.isidentifier() else "<invalid>"
             logger.warning(f"voice delegate refused: intent {shown!r} is outside the voice allowlist")
             return VoiceDelegationOutcome(text="Tool error: this request is not available in a voice call.", failed=True)
+        if not await self.coordinator.is_intent_available(intent, user_id):
+            # The engine's refusal names the intent; this text is read aloud, so it names nothing.
+            logger.warning("voice delegate refused: the intent is turned off on the caller's profile")
+            return VoiceDelegationOutcome(text=voice_intent_unavailable_text(), failed=True)
         context: Dict[str, Any] = {
             "user_id": user_id,
             "account_id": account_id,

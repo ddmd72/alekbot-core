@@ -30,6 +30,7 @@ def _agent(channel=None, available=None):
         voice_profile=VOICE_PROVIDER_PROFILES["openai"],
     )
     coordinator = MagicMock()
+    coordinator.is_intent_available = AsyncMock(return_value=True)
     coordinator.CALL_CHAIN_KEY = AgentCoordinator.CALL_CHAIN_KEY
     coordinator.get_available_intents_for.return_value = available if available is not None else [
         {"name": "search_memory", "description": "memory"},

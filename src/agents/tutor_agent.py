@@ -176,8 +176,9 @@ class TutorAgent(BaseAgent):
             if self.coordinator:
                 available = await self.coordinator.available_intents_for(
                     self._descriptor, self.user_id or message.context.get("user_id"))
+                turned_off = len(available) < len(self.coordinator.get_available_intents_for(self._descriptor))
                 if available:
-                    tools = [self._build_delegate_tool_declaration(available)]
+                    tools = [self._build_delegate_tool_declaration(available, turned_off)]
 
             base_request = LLMRequest(
                 model_name=self.model_name,

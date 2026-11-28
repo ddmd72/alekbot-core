@@ -27,6 +27,7 @@ def _agent():
         voice_profile=VOICE_PROVIDER_PROFILES["openai"],
     )
     coordinator = MagicMock()
+    coordinator.is_intent_available = AsyncMock(return_value=True)
     coordinator.CALL_CHAIN_KEY = AgentCoordinator.CALL_CHAIN_KEY
     coordinator.handle_delegation = AsyncMock(
         return_value=AgentResponse.success(task_id="t", agent_id="a", result=_FINDINGS))
