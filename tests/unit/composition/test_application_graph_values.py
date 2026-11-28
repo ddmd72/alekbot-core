@@ -83,7 +83,7 @@ async def test_the_coordinator_reads_intent_availability_from_the_graphs_user_an
     await app.account_repo.update_account(account)
     user = await app.user_repo.get_user(USER_ID)
     user.config = UserBotConfig(intent_access={"generate_image": True})
-    await app.user_repo.update_user(user)
+    await app.user_repo.create_user(user)
 
     assert await app.coordinator.is_intent_available("tutor_chat", USER_ID) is False
     assert await app.coordinator.is_intent_available("generate_image", USER_ID) is True
