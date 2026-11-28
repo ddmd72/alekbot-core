@@ -476,6 +476,7 @@ DOC_GENERATOR = AgentDescriptor(
     capabilities={Intent.GENERATE_DOCX_CODE: ExecutionMode.ASYNC},
     description="LLM-driven DOCX code generation via Node.js subprocess",
     internal=True,
+    access_gated=False,  # a step of create_document: denying it breaks DocPlanner, the feature is create_document
     dispatch_deadline_s=1220,  # 1100s agent timeout (DocGeneratorAgentConfig.timeout_ms) + 2 min overhead
 )
 
@@ -936,6 +937,7 @@ ALEK = AgentDescriptor(
     agent_type="alek",
     eager=False,
     internal=True,  # offered only to allowlists that name it (Lelik); never to Smart/Quick
+    access_gated=False,  # Lelik's way to Alek: denying it breaks the call rather than removing a feature
     # send_to_chat is ASYNC (§4.15.2): a Cloud Task, because Cloud Run throttles the CPU of anything left
     # running after the response is sent. The gateway posts the outcome to chat itself.
     capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC, Intent.SEND_TO_CHAT: ExecutionMode.ASYNC},

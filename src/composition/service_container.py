@@ -24,8 +24,10 @@ from ..adapters.firestore_confirmed_people_repo import FirestoreConfirmedPeopleR
 from ..adapters.firestore_profile_answer_repo import FirestoreProfileAnswerRepository
 from ..adapters.firestore_repo import FirestoreFactRepository
 from ..adapters.firestore_session_store import FirestoreSessionStore
+from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..adapters.fact_management_adapter import FactManagementAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from ..domain.config_resolution import SystemConfig
 from ..domain.deduplication_service import SmartDeduplication
 from ..domain.drive_transcript_plan import effective_monthly_cap
 from ..services.configuration_service import ConfigurationService
@@ -105,6 +107,8 @@ from .email_classifier_runner import EmailClassifierRunner
 from .fact_profiler_runner import FactProfilerRunner, profiler_model
 from ..ports.quota_service import QuotaService
 from ..ports.user_repository import UserRepository
+from ..infrastructure.agent_manifest import ALL_DESCRIPTORS
+from ..infrastructure.agent_registry import system_intent_defaults
 from ..utils.logger import logger
 
 
@@ -307,7 +311,13 @@ class ServiceContainer:
         # ------------------------------------------------------------------
         # Config + biographical context (shared; per-user limits resolved later)
         # ------------------------------------------------------------------
-        self.config_service = ConfigurationService()
+        # The graph passes its user store; a container built without one (scripts, tests) reads users through a store
+        # of its own over the same database.
+        self.config_service = ConfigurationService(
+            user_repo=user_repo if user_repo is not None else FirestoreUserRepository(db_client, env_config, account_repo),
+            account_repo=account_repo,
+            system=SystemConfig(intent_access=system_intent_defaults(ALL_DESCRIPTORS)),
+        )
         self.repository = FirestoreFactRepository(
             db_client,
             env_config,

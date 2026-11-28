@@ -33,7 +33,8 @@ Coverage:
 """
 import pytest
 
-from src.infrastructure.agent_registry import AgentDescriptor, AgentRegistry, ExecutionMode
+from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
+from src.infrastructure.agent_registry import AgentDescriptor, AgentRegistry, ExecutionMode, system_intent_defaults
 
 
 # ---------------------------------------------------------------------------
@@ -251,3 +252,21 @@ class TestListAgents:
 
     def test_empty_registry_returns_empty_list(self):
         assert AgentRegistry().list_agents() == []
+
+
+class TestSystemIntentDefaults:
+
+    def test_every_intent_of_a_gated_descriptor_takes_its_default_and_ungated_ones_are_absent(self):
+        on = _desc("on", intents=("a", "b"))
+        off = AgentDescriptor(agent_id="off", capabilities={"c": ExecutionMode.SYNC}, available_by_default=False)
+        plumbing = AgentDescriptor(agent_id="step", capabilities={"d": ExecutionMode.ASYNC}, access_gated=False)
+
+        assert system_intent_defaults([on, off, plumbing]) == {"a": True, "b": True, "c": False}
+
+    def test_the_manifest_gates_user_facing_intents_and_not_the_plumbing_other_agents_call(self):
+        defaults = system_intent_defaults(ALL_DESCRIPTORS)
+
+        assert {"generate_docx_code", "ask_alek", "send_to_chat"}.isdisjoint(defaults)
+        assert defaults["tutor_chat"] is True
+        assert defaults["create_document"] is True
+        assert all(defaults.values())  # additive: no intent is off by default today

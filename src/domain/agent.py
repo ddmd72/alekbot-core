@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from .intent_access_texts import intent_unavailable_text
 from .task_complexity import TaskComplexity
 
 
@@ -70,6 +71,11 @@ class AgentStatus(str, Enum):
     FAILED = "failed"            # Task failed
     TIMEOUT = "timeout"          # Task exceeded timeout
     CANNOT_HANDLE = "cannot_handle"  # Agent cannot process this task
+
+
+class AgentErrorCode(str, Enum):
+    """Why a FAILED response failed, where a caller must tell one cause from the others."""
+    INTENT_UNAVAILABLE = "intent_unavailable"  # the intent is turned off on the caller's profile
 
 
 @dataclass
@@ -149,6 +155,7 @@ class AgentResponse:
     suggestions: Optional[List[str]] = None  # Alternative actions/agents
     delivery_items: List[DeliveryItem] = field(default_factory=list)
     history_context: Optional[Dict[str, Any]] = None
+    error_code: Optional[AgentErrorCode] = None
 
     @classmethod
     def success(
@@ -191,7 +198,20 @@ class AgentResponse:
             error=error,
             suggestions=suggestions
         )
-    
+
+    @classmethod
+    def intent_unavailable(cls, intent: str, task_id: str, agent_id: str) -> "AgentResponse":
+        """A FAILED response for an intent turned off on the caller's profile; every failure path handles it as is."""
+        return cls(
+            task_id=task_id,
+            agent_id=agent_id,
+            status=AgentStatus.FAILED,
+            result=None,
+            confidence=0.0,
+            error=intent_unavailable_text(intent),
+            error_code=AgentErrorCode.INTENT_UNAVAILABLE,
+        )
+
     @classmethod
     def cannot_handle(
         cls,

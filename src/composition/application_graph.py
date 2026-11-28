@@ -304,6 +304,7 @@ def _build_coordinator(container: ServiceContainer, ops: Operations) -> AgentCoo
             container.file_conversion_service.prefetch if container.file_conversion_service else None
         ),
         alert_sink=ops.alert_sink,
+        effective_config=container.config_service.effective_for,
     )
     coordinator.register_agent(ops.billing_agent)
     return coordinator

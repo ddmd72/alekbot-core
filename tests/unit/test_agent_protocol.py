@@ -8,6 +8,7 @@ from src.domain.agent import (
     AgentMessage,
     AgentResponse,
     AgentConfig,
+    AgentErrorCode,
     AgentIntent,
     AgentStatus
 )
@@ -148,3 +149,19 @@ class TestAgentProtocol:
         assert AgentStatus.FAILED == "failed"
         assert AgentStatus.TIMEOUT == "timeout"
         assert AgentStatus.CANNOT_HANDLE == "cannot_handle"
+
+
+class TestIntentUnavailableResponse:
+
+    def test_a_refused_intent_is_a_failure_with_its_code_and_a_text_naming_no_level(self):
+        response = AgentResponse.intent_unavailable("tutor_chat", task_id="task123", agent_id="coordinator")
+
+        assert response.status == AgentStatus.FAILED
+        assert response.error_code == AgentErrorCode.INTENT_UNAVAILABLE == "intent_unavailable"
+        assert response.error == "tutor_chat is not available on this profile."
+        assert (response.task_id, response.agent_id, response.result, response.confidence) == (
+            "task123", "coordinator", None, 0.0)
+
+    def test_other_responses_carry_no_error_code(self):
+        assert AgentResponse.failure(task_id="t", agent_id="a", error="boom").error_code is None
+        assert AgentResponse.success(task_id="t", agent_id="a", result="ok").error_code is None
