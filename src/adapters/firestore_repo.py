@@ -16,7 +16,6 @@ from ..domain.fact_resolution import ForwardWalk
 from ..domain.fact_review_overview import LISTABLE_STATES
 from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
-from ..domain.deduplication_service import SmartDeduplication
 from ..ports.repository import FactRepository
 from ..config.environment import EnvironmentConfig
 from ..utils.timer import log_execution_time
@@ -119,24 +118,20 @@ class FirestoreFactRepository(FactRepository):
         db_client,
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
-        dedup_service: Optional[SmartDeduplication] = None,
     ):
         """
         Initialize repository with database client and environment config.
 
         Session 2026-02-07: Hexagonal Architecture Refactoring
-        Session 2026-02-20: Added dedup_service via DI (removed lazy service import).
 
         Args:
             db_client: Firestore AsyncClient instance
             env_config: Environment configuration for collection isolation
             embedding_service: Service for generating embeddings (DI)
-            dedup_service: Smart deduplication logic (DI; defaults to SmartDeduplication())
         """
         self.db = db_client
         self.env_config = env_config
         self._embedding_service = embedding_service
-        self._dedup_service = dedup_service or SmartDeduplication()
 
         # Environment-aware collection names (decisions/collection_prefix_retained.md)
         # collection naming (decisions/collection_prefix_retained.md): Use semantic domain_facts_v2
