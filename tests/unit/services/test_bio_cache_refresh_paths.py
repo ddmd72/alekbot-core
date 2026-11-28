@@ -42,6 +42,9 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilit
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.configuration_service import ConfigurationService
+from src.domain.config_resolution import SystemConfig
+from src.ports.account_repository import AccountRepository
+from src.ports.user_repository import UserRepository
 from src.services.fact_profile_service import FactProfileService
 from src.services.fact_write_service import FactWriteService
 from src.services.search_enrichment_service import SearchEnrichmentService
@@ -106,7 +109,7 @@ def account_fact_world(kit_db: Any = None, groups: Any = None) -> Tuple[FactStor
     store = FactStore(indexes=INDEXES_FILE, kit_db=kit_db, groups=dict(groups or {}))
     repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.fail_on = set()
-    bio = BiographicalContextService(repo, config_service=ConfigurationService(), account_repo=AccountLimits())
+    bio = BiographicalContextService(repo, config_service=ConfigurationService(user_repo=MagicMock(spec=UserRepository), account_repo=MagicMock(spec=AccountRepository), system=SystemConfig(intent_access={})), account_repo=AccountLimits())
     return store, repo, bio
 
 

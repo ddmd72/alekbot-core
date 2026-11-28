@@ -21,6 +21,9 @@ from src.services.session_service import SessionService
 from src.domain.device_session import SessionAuthKind
 from tests.support.cabinet_session_kit import CabinetSessionKit
 from src.services.configuration_service import ConfigurationService
+from src.domain.config_resolution import SystemConfig
+from src.ports.account_repository import AccountRepository
+from src.ports.user_repository import UserRepository
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
 from src.domain.whitelist import WhitelistEntry
@@ -92,7 +95,7 @@ def session_service():
 @pytest.fixture
 def config_service():
     """Create ConfigurationService."""
-    return ConfigurationService()
+    return ConfigurationService(user_repo=MagicMock(spec=UserRepository), account_repo=MagicMock(spec=AccountRepository), system=SystemConfig(intent_access={}))
 
 
 # ============================================================================

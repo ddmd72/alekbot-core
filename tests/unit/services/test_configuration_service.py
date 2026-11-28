@@ -12,6 +12,9 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.config_resolution import SystemConfig
 from src.services.configuration_service import ConfigurationService
+from src.ports.account_repository import AccountRepository
+from src.ports.user_repository import UserRepository
+from unittest.mock import MagicMock
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
 from tests.support.firestore_eval import EvalDb
@@ -23,7 +26,7 @@ from tests.support.firestore_eval import EvalDb
 @pytest.fixture
 def config_service():
     """Create ConfigurationService instance."""
-    return ConfigurationService()
+    return ConfigurationService(user_repo=MagicMock(spec=UserRepository), account_repo=MagicMock(spec=AccountRepository), system=SystemConfig(intent_access={}))
 
 
 @pytest.fixture
