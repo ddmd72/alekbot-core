@@ -472,6 +472,60 @@ async def test_the_limit_clears_when_the_window_ends(world, monkeypatch):
     assert (await world.call("GET", "/tasks", world.key)).status_code == 200
 
 
+async def test_credentials_with_no_key_shape_do_not_fill_the_global_401_bucket(world, monkeypatch):
+    monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+    for n in range(10):
+        for key in (None, "short", WORKER_KEY_PREFIX + "A" * 42):
+            refused = await world.call("GET", "/tasks", key, headers={"X-Forwarded-For": f"198.51.100.{n}"})
+            assert refused.status_code == 401
+    assert (await world.call("GET", "/tasks", world.key, headers={"X-Forwarded-For": "192.0.2.1"})).status_code == 200
+    assert (await world.call("GET", "/tasks", UNKNOWN_KEY, headers={"X-Forwarded-For": "192.0.2.1"})).status_code == 401
+
+
+async def test_credentials_with_no_key_shape_still_count_under_their_address(world, monkeypatch):
+    monkeypatch.setattr(limiter_module, "UNAUTHORIZED_PER_ADDRESS_PER_WINDOW", 2)
+    assert [(await world.call("GET", "/tasks", "short")).status_code for _ in range(3)] == [401, 401, 429]
+    assert (await world.call("GET", "/tasks", "short")).status_code == 429
+    elsewhere = {"X-Forwarded-For": "198.51.100.7"}
+    assert (await world.call("GET", "/tasks", "short", headers=elsewhere)).status_code == 401
+
+
+async def test_well_shaped_unknown_keys_fill_the_global_bucket_but_a_recently_resolved_key_still_gets_through(
+        world, monkeypatch):
+    monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+    assert (await world.call("GET", "/tasks", world.key)).status_code == 200            # resolves: remembered
+    for n in range(4):
+        await world.call("GET", "/tasks", UNKNOWN_KEY, headers={"X-Forwarded-For": f"198.51.100.{n}"})
+    elsewhere = {"X-Forwarded-For": "192.0.2.1"}
+    reads = world.workers.get_key_reads
+    assert (await world.call("GET", "/tasks", UNKNOWN_KEY, headers=elsewhere)).status_code == 429
+    assert (await world.call("GET", "/tasks", world.watch_key, headers=elsewhere)).status_code == 429  # not seen yet
+    assert world.workers.get_key_reads == reads                                          # refused before any read
+    assert (await world.call("GET", "/tasks", world.key, headers=elsewhere)).status_code == 200
+
+
+async def test_a_resolved_key_that_is_revoked_is_held_by_the_global_bucket_again(world, monkeypatch):
+    monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+    assert (await world.call("GET", "/tasks", world.key)).status_code == 200
+    digest = world.service.key_digest(world.key)
+    await world.workers.revoke_key("usr-1", world.research.worker_id, digest, T0)
+    assert (await world.call("GET", "/tasks", world.key)).status_code == 401             # looked up: no delay
+    for n in range(3):
+        await world.call("GET", "/tasks", UNKNOWN_KEY, headers={"X-Forwarded-For": f"198.51.100.{n}"})
+    reads = world.workers.get_key_reads
+    assert (await world.call("GET", "/tasks", world.key, headers={"X-Forwarded-For": "192.0.2.1"})).status_code == 429
+    assert world.workers.get_key_reads == reads
+
+
+async def test_a_resolved_key_is_held_by_the_global_bucket_again_once_its_window_has_passed(world, monkeypatch):
+    monkeypatch.setattr(limiter_module, "UNAUTHORIZED_GLOBAL_PER_WINDOW", 3)
+    assert (await world.call("GET", "/tasks", world.key)).status_code == 200
+    world.at(RATE_WINDOW_S + 1)
+    for n in range(4):
+        await world.call("GET", "/tasks", UNKNOWN_KEY, headers={"X-Forwarded-For": f"198.51.100.{n}"})
+    assert (await world.call("GET", "/tasks", world.key, headers={"X-Forwarded-For": "192.0.2.1"})).status_code == 429
+
+
 # ------------------------------------------------------------------------------------------------------ 403
 
 async def test_a_user_not_on_the_whitelist_gets_403_not_enabled(world):

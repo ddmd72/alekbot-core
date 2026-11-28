@@ -271,7 +271,9 @@ every listing; the server instructions are served from the texts last read.
   scope `external_tasks`, no expiry, and in its `token` field the key's stored digest, never the key; an OAuth token has
   kind `OAUTH`, its client, `gid`, `wid`, scope and expiry. The facts and drive verifiers know nothing of keys, and a
   tasks access token's audience is not theirs, so both are `401` there. Built without the authorization service, the
-  app refuses every OAuth token.
+  app refuses every OAuth token. Worker keys that resolve to nothing are counted in the app limiter's global `401`
+  bucket (the verifier sees no client address): while it is over its limit a key is refused before any key-store read,
+  unless it resolved in the last window; a prefixed credential with no key shape is refused unread and not counted.
 - **One call** (`_TaskCaller.run`): the principal from the token (`via=oauth` and the client id for an OAuth token);
   the account lock (`ACCOUNT_LOCKED_TOOL_ERROR`); the texts; for an OAuth token, `grant_allowed(user, gid)` (the grant
   still has an active refresh token, the user is active and whitelisted), so a grant revoked in the Cabinet is refused

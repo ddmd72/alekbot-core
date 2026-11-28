@@ -10,10 +10,12 @@ What the models read and what the owner reads are different channels:
 - the result for a create is a tool note with the task id and what happens next (in a chat turn: the task waits for
   the owner's confirmation); the raw confirmation code is NEVER in it. The specialist's model reads it, and so does
   the orchestrator, which gets every result word for word in the specialist's answer;
-- the owner's channel is the returned `DeliveryItem`, posted literally after the answer: the receipt file (the title,
-  the worker, the task's note, then the task's full text) and, for a chat create, the command that confirms it. A
-  reminder's create returns the same item with no command; `UserNotificationService.notify` posts it after the reminder
-  run's answer, as a show-only notice.
+- the owner's channel: for a chat create, the returned `DeliveryItem`, posted literally after the answer: the receipt
+  file (the title, the worker, the task's note, then the task's full text) and the command that confirms it. A
+  reminder's create posts the same receipt itself, with no command, as a show-only notice the moment the task is
+  queued (`post_receipt`, the way the reminder notices are posted from inside their tool), and returns no item: the
+  task is queued and its worker may be woken before the rest of the run, so the owner's record of it never depends on
+  how that run ends, and it is posted once.
 
 The brief is the orchestrator's: given the instruction (`commission`), a create whose text is not a part of it, after
 whitespace is normalised on both sides, is refused with `ERROR_NOT_THE_BRIEF` and creates nothing. The task's note is
@@ -28,13 +30,15 @@ reveals whether a task exists.
 Public interface:
     build_create_external_task_declaration(workers, *, entry=CHAT) / build_list_… / build_list_external_workers_… / build_get_… /
     build_cancel_…() -> declaration
-    make_create_handler(service, user_id, origin, *, commission=None, entry=CHAT) -> LocalToolHandler
+    make_create_handler(service, user_id, origin, *, commission=None, entry=CHAT, post_receipt=None) -> LocalToolHandler
+    ReceiptPoster                                   posts a reminder create's receipt data; True when it was posted
     make_list_handler / make_list_workers_handler / make_get_handler / make_cancel_handler(service, user_id)
     recorded(handlers, sink) -> handlers           each call's (ToolCall, ToolResult) appended to `sink`, in call order
 """
+import asyncio
 import secrets
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..domain.agent import DeliveryItem
 from ..domain.external_task import HOLD_S, ExternalTaskStatus, TaskFailureCode, TaskOrigin
@@ -108,6 +112,8 @@ from .delegation_engine import LocalToolHandler, ToolResult
 
 if TYPE_CHECKING:
     from ..services.external_task_service import ExternalTaskService
+
+ReceiptPoster = Callable[[Mapping[str, Any]], Awaitable[bool]]
 
 _REFUSAL_LINES: Dict[TaskRefusal, str] = {
     TaskRefusal.UNKNOWN_WORKER: ERROR_NOT_FOUND,
@@ -261,12 +267,16 @@ def _first_unnamed(files: Sequence[str], commission: Optional[str]) -> Optional[
 
 
 def make_create_handler(service: "ExternalTaskService", user_id: str, origin: TaskOrigin, *,
-                        commission: Optional[str] = None, entry: TaskEntry = TaskEntry.CHAT) -> LocalToolHandler:
+                        commission: Optional[str] = None, entry: TaskEntry = TaskEntry.CHAT,
+                        post_receipt: Optional[ReceiptPoster] = None) -> LocalToolHandler:
     """`entry` is set by the agent from the run's context, never by the model. A create in a chat turn always waits for
-    the owner's confirmation, whatever the turn read; one in a reminder's run is queued at once, and its receipt is a
-    show-only notice with no command. Both return the receipt item. With a `commission` (the orchestrator's
-    instruction), a text that is not a part of it is refused before the service is asked; None checks nothing (the
-    handler tested alone). The note is required, like the worker, the title and the text."""
+    the owner's confirmation, whatever the turn read, and returns the receipt item (the caller posts it with the
+    command). One in a reminder's run is queued at once; its receipt, a show-only notice with no command, is posted
+    through `post_receipt` before the tool returns (shielded, so a run cut while it posts still posts it), and no item
+    is returned. A receipt that cannot be posted is logged at error level and never raised: the task is already
+    queued. With a `commission` (the orchestrator's instruction), a text that is not a part of it is refused before
+    the service is asked; None checks nothing (the handler tested alone). The note is required, like the worker, the
+    title and the text."""
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         args = _args(tool_call)
@@ -303,12 +313,32 @@ def make_create_handler(service: "ExternalTaskService", user_id: str, origin: Ta
         if created.files:
             result += " " + NOTE_FILES.format(files="; ".join(
                 NOTE_FILE_ITEM.format(number=f.number, name=f.name, size=size_label(f.size)) for f in created.files))
+        if entry is TaskEntry.REMINDER:
+            await _post_reminder_receipt(post_receipt, receipt_data(created), created.task_id)
+            return ToolResult(name=tool_call.name, result_str=result)
         return ToolResult(
             name=tool_call.name, result_str=result,
             delivery_items=[DeliveryItem(type=EXTERNAL_TASK_RECEIPT_DELIVERY, data=receipt_data(created))],
         )
 
     return handle
+
+
+async def _post_reminder_receipt(post_receipt: Optional[ReceiptPoster], data: Mapping[str, Any], task_id: str) -> None:
+    """The show-only receipt of a task a reminder's run queued, posted once, here. Never raises; a cancel of the run
+    while it posts does not stop the post (shielded)."""
+    if post_receipt is None:
+        logger.error("[external_task_tools] receipt not posted: no notifier task=%s", task_id)
+        return
+    try:
+        posted = await asyncio.shield(post_receipt(data))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error("[external_task_tools] receipt failed task=%s: %s", task_id, type(exc).__name__)
+        return
+    if not posted:
+        logger.error("[external_task_tools] receipt not posted task=%s", task_id)
 
 
 def make_list_handler(service: "ExternalTaskService", user_id: str) -> LocalToolHandler:

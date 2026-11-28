@@ -105,6 +105,14 @@ the bot loops "result → new reminder → new task".
 the opposite of what it is for. Carrying the note in history for later turns: the consolidator reads a user-role line as
 the owner's words, and the note is the bot's. Confirming reminder-run tasks: unchanged, for the reason given under "Alternatives rejected" above.
 
+## Amendment (2026-11-28): the reminder task's notice is posted at create
+
+The show-only notice of a reminder-run task is posted by the create itself, the moment the task is queued, through
+`UserNotificationService.post_task_receipt` (the way the reminder notices are posted from inside their tool), not from
+a receipt item on the run's answer. The task is queued and its worker may be woken before the run ends, so the owner's
+record of what left must not depend on the run answering: a run that fails or hits its cap after the create still
+shows it, and it is posted once. The chat task's receipt, command and button are unchanged.
+
 ## Revise when
 
 - The owner finds the confirmation step too heavy for tasks they asked for explicitly.

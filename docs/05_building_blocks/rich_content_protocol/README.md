@@ -89,10 +89,10 @@ A body with one child is screenshotted as that child, otherwise the body is, wit
    `_send_answer_text` (a stored Slack user id, `U...`, gets an `<@U...>` mention), the history pair is saved, and a `structured_data`
    item goes through `_send_rich_content` into step 2 above. The history pair's user line is the caller's
    `system_alert_summary` (else the alert), with the full alert as `full_text`, or `system_alert_history` when the caller
-   gives one (the external task alert keeps its bot-written note out of history that way). The only delivery item a
-   background run's reply posts is an external task's receipt (`EXTERNAL_TASK_RECEIPT_DELIVERY`, a reminder's run queues
-   its task at once): its literal notice, file then message, after the reply, no command, not in history; every other
-   item is dropped.
+   gives one (the external task alert keeps its bot-written note out of history that way). A background run's delivery
+   items are dropped: the receipt of an external task a reminder's run queues is posted by the create itself, at once,
+   through `post_task_receipt` (its literal notice, file then message, to the run's channel, no command, not in
+   history), so it never rides on the reply.
 4. `NotifyResult` (`src/domain/notify_result.py`) tells the caller how far it got: whether the user got a message and whether the turn started.
    Callers decide their own retry rule: reminder and daily review retry only when `is_retryable_failure` (turn never
    started); the deep-research notice retries whenever nothing was sent (see `notify`'s docstring).

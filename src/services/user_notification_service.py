@@ -15,14 +15,14 @@ Callers:
   - AgentWorkerHandler (async document delivery via notify_document_link / notify_file_bytes)
 """
 from datetime import datetime, timezone
-from typing import Callable, Dict, Mapping, Optional, Protocol, TYPE_CHECKING
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
 from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY
 from ..domain.drive_note_receipt import (
     drive_note_call_event, drive_note_call_posted, drive_note_late_event, render_drive_note_erase, render_drive_note_receipt,
 )
-from ..domain.external_task_receipt import EXTERNAL_TASK_RECEIPT_DELIVERY, render as render_external_task_receipt
+from ..domain.external_task_receipt import render as render_external_task_receipt
 from ..domain.language import LanguageCode
 from ..domain.literal_notice import LiteralNotice
 from ..domain.llm import Message, MessagePart
@@ -684,10 +684,6 @@ class UserNotificationService:
                 await self._send_rich_content(
                     response_channel, channel_info.platform, rich_content, user_id, storage_class)
 
-            for item in getattr(response, "delivery_items", None) or []:
-                if item.type == EXTERNAL_TASK_RECEIPT_DELIVERY:
-                    sent = await self._post_task_notice(response_channel, user_id, item) or sent
-
             return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent, turn_started=True)
 
         except Exception as exc:
@@ -705,24 +701,29 @@ class UserNotificationService:
                 turn_started=turn_started,
             )
 
-    async def _post_task_notice(self, response_channel, user_id: str, item: DeliveryItem) -> bool:
-        """The show-only notice of an external task a background run created (a reminder's run queues its task at once,
-        EXTERNAL_TASK_CONFIRMATION_AND_ALERTS): the receipt file, then its message literally, after the run's answer,
-        so the owner sees at once what their reminder handed over. A background run never holds a task, so no command
-        is ever posted here. Not written to history. Returns whether it was posted; a failure is logged."""
+    async def post_task_receipt(self, user_id: str, account_id: str, data: Mapping[str, Any], *,
+                                channel_id_override: Optional[str] = None,
+                                platform_override: Optional[str] = None) -> bool:
+        """The show-only notice of an external task a reminder's run queued (EXTERNAL_TASK_CONFIRMATION_AND_ALERTS),
+        posted by the create itself the moment the task is queued, so the owner sees what their reminder handed over
+        whatever the rest of the run does: the receipt file, then its message literally, in the owner's UI language, to
+        the run's channel (the overrides; else `notify_raw`'s fallback chain). A queued task's receipt has no command.
+        Not written to history. Returns whether it was posted; without localization, or when the file fails, nothing
+        is posted (logged)."""
         strings = await self.ui_strings(user_id)
         if strings is None:
             logger.error(f"[Notification] No localization wired: task notice not posted for {user_id[:8]}")
             return False
         try:
-            notice, _ = render_external_task_receipt(item.data, strings)
-            await response_channel.send_file(content=notice.content, filename=notice.filename, title=notice.title)
-            await response_channel.send_literal(notice.message)
+            notice, _ = render_external_task_receipt(data, strings)
         except Exception as exc:
-            logger.error(f"[Notification] Task notice failed for {user_id[:8]}: {exc}", exc_info=True)
+            logger.error(f"[Notification] Task notice not rendered for {user_id[:8]}: {type(exc).__name__}")
             return False
-        logger.info(f"📬 [Notification] Task notice posted for {user_id[:8]}")
-        return True
+        posted = await self.notify_raw(user_id, account_id, notice.message, channel_id_override=channel_id_override,
+                                       platform_override=platform_override, literal=True, attachment=notice)
+        if posted:
+            logger.info(f"📬 [Notification] Task notice posted for {user_id[:8]}")
+        return posted
 
     async def notify_document_link(
         self,

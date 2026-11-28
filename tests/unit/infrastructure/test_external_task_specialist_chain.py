@@ -51,7 +51,7 @@ class _Factory(AgentFactoryPort):
         return await UserAgentFactory.create_agent_on_demand(self.fake, agent_type, user_id)
 
 
-def _chain(world: ExternalTaskWorld, specialist_llm: ScriptedLLM) -> AgentCoordinator:
+def _chain(world: ExternalTaskWorld, specialist_llm: ScriptedLLM, notifications=None) -> AgentCoordinator:
     registry = AgentRegistry()
     for descriptor in ALL_DESCRIPTORS:
         registry.register(descriptor)
@@ -64,7 +64,8 @@ def _chain(world: ExternalTaskWorld, specialist_llm: ScriptedLLM) -> AgentCoordi
         _cache={USER_ID: {"_user_context": ctx, "_lazy_agent_ids": [], "last_used": time.time()}},
         _creation_locks={}, _LAZY_BUILDERS=UserAgentFactory._LAZY_BUILDERS,
         _LAZY_AGENT_IDS=UserAgentFactory._LAZY_AGENT_IDS, coordinator=coordinator, prompt_content_store=None,
-        quota_service=None, context_builder=context_builder, external_tasks=world.service)
+        quota_service=None, context_builder=context_builder, external_tasks=world.service,
+        notification_service=notifications)
     coordinator.set_agent_factory(_Factory(fake))
     return coordinator
 

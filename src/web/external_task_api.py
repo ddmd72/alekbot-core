@@ -5,9 +5,14 @@ only. One thin handler per route over `ExternalTaskService`; answers are JSON `{
 texts of `MCP_TASK_RESULT_TEXTS` are a later step).
 
 Per request, in order:
-1. `401` limits already exhausted (this address, or all addresses) -> `429` + `Retry-After`; the key store is not read;
-2. `Authorization: Bearer` parsed and the key's shape checked (`has_key_shape`); a malformed key is `401` and counts;
-3. `resolve_key`; `key_invalid` is `401` and counts; the service's own refusals (locked, flag off, revoked) are `403`;
+1. `Authorization: Bearer` parsed and the key's shape checked (`has_key_shape`). A credential with no key shape costs no
+   read: it is `429` + `Retry-After` while this address is over its `401` limit, else `401`, counted under this
+   address only, never in the global bucket;
+2. `401` limits already exhausted -> `429` + `Retry-After`, the key store not read: this address, and all addresses
+   together unless this key resolved in the last `RATE_WINDOW_S` (`recently_resolved`; it is still looked up below, so
+   a revocation is never delayed);
+3. `resolve_key`; `key_invalid` is `401` and counts under this address and globally (and drops the key from the
+   resolved memo); a key that resolves is remembered; the service's own refusals (locked, flag off, revoked) are `403`;
 4. the whitelist, which the core leaves out (`ExternalWorkerUserGate`, shared with the MCP resource): the stored user
    must still exist, have an email and be whitelisted;
 5. this worker's limits: `CALLS_PER_WINDOW`, and `CLAIMS_PER_WINDOW` on claim, `SUBMITS_PER_WINDOW` on submit;
@@ -84,9 +89,9 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
     bp = Blueprint("external_task_api", __name__, url_prefix="/external-tasks/v1")
     gate = ExternalWorkerUserGate(user_repo, whitelist_repo)
 
-    async def unauthorized() -> Response:
+    async def unauthorized(address: str, *, include_global: bool) -> Response:
         """The one `401` answer; counted, and a `429` once the count is over a limit."""
-        wait = await limiter.count_unauthorized(client_address(request.headers.get("X-Forwarded-For")))
+        wait = await limiter.count_unauthorized(address, include_global=include_global)
         if wait is not None:
             logger.warning("[TaskAPI] rate limited: unauthorized")
             return _rate_limited(wait)
@@ -95,13 +100,17 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
 
     async def authenticate(scopes: Tuple[Tuple[str, int], ...]) -> WorkerPrincipal:
         address = client_address(request.headers.get("X-Forwarded-For"))
-        wait = await limiter.unauthorized_retry_after(address)
+        key = _bearer_key()
+        if not has_key_shape(key):     # no read is possible: the shared global bucket is left alone
+            wait = await limiter.unauthorized_retry_after(address, include_global=False)
+            if wait is not None:
+                raise _Early(_rate_limited(wait))
+            raise _Early(await unauthorized(address, include_global=False))
+        digest = external_tasks.key_digest(key)
+        known = await limiter.recently_resolved(digest)
+        wait = await limiter.unauthorized_retry_after(address, include_global=not known)
         if wait is not None:
             raise _Early(_rate_limited(wait))
-        key = _bearer_key()
-        if not has_key_shape(key):
-            raise _Early(await unauthorized())
-        digest = external_tasks.key_digest(key)
         wait = await limiter.key_retry_after(digest, [scope for scope, _ in scopes])
         if wait is not None:     # this key tripped a limit of this route in this window: refused before any read
             raise _Early(_rate_limited(wait))
@@ -109,8 +118,10 @@ def create_external_task_api_blueprint(external_tasks: ExternalTaskService, *, l
             principal = await external_tasks.resolve_key(key)
         except ExternalTaskRefused as refused:
             if refused.reason is TaskRefusal.KEY_INVALID:
-                raise _Early(await unauthorized())
+                await limiter.forget_resolved(digest)
+                raise _Early(await unauthorized(address, include_global=True))
             raise
+        await limiter.remember_resolved(digest)
         await gate.check(principal)
         worker = f"{principal.user_id}:{principal.worker_id}"
         for scope, limit in scopes:

@@ -2,11 +2,22 @@
 
 Public interface:
     ExternalTaskRateLimiter(counter, *, clock)
-        .unauthorized_retry_after(address) -> Optional[int]     memory only: seconds to wait, None = open
-        .count_unauthorized(address) -> Optional[int]            one `401` answer: counted per address and globally,
-                                                                 in memory only (an anonymous call writes nothing)
+        .unauthorized_retry_after(address, *, include_global=True) -> Optional[int]
+                                                                 memory only: seconds to wait, None = open
+        .count_unauthorized(address, *, include_global=True) -> Optional[int]
+                                                                 one `401` answer: counted per address and (unless
+                                                                 `include_global` is False) globally, in memory only
+                                                                 (an anonymous call writes nothing)
+        .recently_resolved(key_digest) -> bool                   memory only: the key resolved within `RATE_WINDOW_S`
+        .remember_resolved(key_digest) / .forget_resolved(key_digest)
         .key_retry_after(key_digest, scopes) -> Optional[int]    memory only: a key whose limit tripped this window
         .hit(scope, worker_key, limit, key_digest) -> Optional[int]  one authorised call of a worker; seconds to wait or None
+
+The `401` buckets bound how often an instance reads the key store for keys that resolve to nothing. The address is
+optional: a caller that has none (the MCP resource's token verifier) counts in the global bucket only. A credential that
+is not even shaped like a key is refused before any read, so it is counted per address only and never fills the global
+bucket every caller shares. A key that resolved in the last `RATE_WINDOW_S` is not held back by the global bucket: it is
+still looked up on every call (a revocation is never delayed by the memo), and the address bucket still applies.
 
 Per-worker counts live in a store every instance sees (`WindowCounter`). `401` counts never touch it: they are fixed
 windows in this instance's memory, bounded in size, so a flood of keyless calls writes nothing. Each instance also remembers the windows it saw
@@ -19,7 +30,7 @@ Over the limit means the (limit + 1)-th hit of a window. A counter failure on an
 """
 import asyncio
 from datetime import datetime
-from typing import Callable, Dict, Iterable, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..domain.external_task import (
     RATE_WINDOW_S,
@@ -43,6 +54,7 @@ class ExternalTaskRateLimiter:
         self._clock = clock
         self._exhausted: Dict[str, int] = {}    # key -> epoch second its exhausted window ends
         self._unauthorized: Dict[str, Tuple[int, int]] = {}    # `401` key -> (epoch second its window ends, count)
+        self._resolved: Dict[str, float] = {}    # key digest -> epoch second until which it counts as recently resolved
         self._lock = asyncio.Lock()
 
     def _window_end(self, now: datetime) -> int:
@@ -78,11 +90,12 @@ class ExternalTaskRateLimiter:
             return await self._remember(key, now)
         return None
 
-    async def unauthorized_retry_after(self, address: str) -> Optional[int]:
-        """Whether this address, or every address together, is already over its `401` limit; memory only."""
+    async def unauthorized_retry_after(self, address: Optional[str], *, include_global: bool = True) -> Optional[int]:
+        """Whether this address, or (with `include_global`) every address together, is already over its `401` limit;
+        memory only. No address: the global bucket only."""
         now = self._clock().timestamp()
         async with self._lock:
-            waits = [self._over(key, limit, now) for key, limit in self._unauthorized_keys(address)]
+            waits = [self._over(key, limit, now) for key, limit in self._unauthorized_keys(address, include_global)]
         live = [w for w in waits if w is not None]
         return max(live) if live else None
 
@@ -93,20 +106,24 @@ class ExternalTaskRateLimiter:
         return max(1, int(entry[0] - now))
 
     @staticmethod
-    def _unauthorized_keys(address: str):
-        return ((address_key(address), UNAUTHORIZED_PER_ADDRESS_PER_WINDOW),
-                (GLOBAL_KEY, UNAUTHORIZED_GLOBAL_PER_WINDOW))
+    def _unauthorized_keys(address: Optional[str], include_global: bool) -> List[Tuple[str, int]]:
+        keys = [(address_key(address), UNAUTHORIZED_PER_ADDRESS_PER_WINDOW)] if address is not None else []
+        if include_global:
+            keys.append((GLOBAL_KEY, UNAUTHORIZED_GLOBAL_PER_WINDOW))
+        return keys
 
-    async def count_unauthorized(self, address: str) -> Optional[int]:
-        """Count one `401` answer under the address and globally, in this instance's memory only: an anonymous request
-        must write nothing, or a flood of keyless calls would be a flood of store writes. Seconds to wait when either
-        is now over its limit. The limits are per instance, which still bounds each instance's key-store reads."""
+    async def count_unauthorized(self, address: Optional[str], *, include_global: bool = True) -> Optional[int]:
+        """Count one `401` answer under the address and (with `include_global`) globally, in this instance's memory
+        only: an anonymous request must write nothing, or a flood of keyless calls would be a flood of store writes.
+        Seconds to wait when either is now over its limit. The limits are per instance, which still bounds each
+        instance's key-store reads. A credential with no key shape costs no read, so the caller counts it with
+        `include_global=False`; no address counts globally only."""
         now_dt = self._clock()
         now = now_dt.timestamp()
         end = self._window_end(now_dt)
         waits = []
         async with self._lock:
-            for key, limit in self._unauthorized_keys(address):
+            for key, limit in self._unauthorized_keys(address, include_global):
                 entry = self._unauthorized.get(key)
                 count = entry[1] + 1 if entry is not None and entry[0] > now else 1
                 self._unauthorized.pop(key, None)
@@ -123,6 +140,35 @@ class ExternalTaskRateLimiter:
         self._unauthorized = {k: v for k, v in self._unauthorized.items() if v[0] > now}
         while len(self._unauthorized) > MAX_TRACKED_UNAUTHORIZED:
             del self._unauthorized[next(iter(self._unauthorized))]
+
+    async def recently_resolved(self, key_digest: str) -> bool:
+        """Whether this key resolved to a worker within the last `RATE_WINDOW_S`; memory only."""
+        now = self._clock().timestamp()
+        async with self._lock:
+            until = self._resolved.get(key_digest)
+            if until is None:
+                return False
+            if until <= now:
+                del self._resolved[key_digest]
+                return False
+            return True
+
+    async def remember_resolved(self, key_digest: str) -> None:
+        """The key just resolved: for the next `RATE_WINDOW_S` the global `401` bucket does not hold it back. Bounded
+        like the other memos (expired entries first, then the oldest)."""
+        now = self._clock().timestamp()
+        async with self._lock:
+            self._resolved.pop(key_digest, None)
+            self._resolved[key_digest] = now + RATE_WINDOW_S     # re-inserted last: insertion order is age order
+            if len(self._resolved) > MAX_TRACKED_UNAUTHORIZED:
+                self._resolved = {k: v for k, v in self._resolved.items() if v > now}
+                while len(self._resolved) > MAX_TRACKED_UNAUTHORIZED:
+                    del self._resolved[next(iter(self._resolved))]
+
+    async def forget_resolved(self, key_digest: str) -> None:
+        """The key no longer resolves (revoked): the global bucket applies to it at once."""
+        async with self._lock:
+            self._resolved.pop(key_digest, None)
 
     async def key_retry_after(self, key_digest: str, scopes: Iterable[str]) -> Optional[int]:
         """Seconds to wait when a limit this key tripped in the current window covers one of `scopes`; memory only, so

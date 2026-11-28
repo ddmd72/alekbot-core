@@ -1044,6 +1044,7 @@ class UserAgentFactory(AgentFactoryPort):
             service=self.external_tasks,
             prompt_builder=ctx.prompt_builder,
             thinking=ctx.user_profile.config.get_thinking_for_agent(EXTERNAL_TASKS.agent_type),
+            notifications=self.notification_service,
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:
