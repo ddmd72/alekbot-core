@@ -64,3 +64,13 @@ async def test_with_every_intent_denied_no_delegate_tool_is_declared():
     await _quick(llm, coordinator_denying({"usr-1": names})).execute(_message())
 
     assert not [t for t in (llm.requests[0].tools or []) if t["name"] == "delegate_to_specialist"]
+
+
+async def test_a_registry_with_no_intent_keeps_the_empty_delegate_tool_as_before():
+    from src.infrastructure.agent_coordinator import AgentCoordinator
+
+    llm = ScriptedLLM([text("ok")])
+
+    await _quick(llm, AgentCoordinator()).execute(_message())
+
+    assert delegate_intents(delegate_tool(llm.requests[0].tools)) == []

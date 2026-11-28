@@ -82,3 +82,9 @@ def test_without_a_user_the_eval_scripts_call_offers_the_whole_registry():
     assert delegate_intents(tool) == [
         i["name"] for i in [*coordinator.get_available_intents_for(SMART_RESPONSE),
                             *coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]]
+
+
+async def test_a_registry_with_no_intent_keeps_the_empty_delegate_tool_as_before():
+    from src.infrastructure.agent_coordinator import AgentCoordinator
+
+    assert delegate_intents(await _offered(AgentCoordinator())) == []

@@ -819,7 +819,8 @@ class SmartResponseAgent(BaseAgent):
         available_intents: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """Build tool declarations for LLM API. `available_intents` is `_offered_intents` of the turn; omitted, every
-        intent of the registry is offered (no user: the eval script). With no intent left to offer, no delegate tool."""
+        intent of the registry is offered (no user: the eval script). When the user's profile left no intent of a non-empty
+        offer, no delegate tool."""
         if not self.coordinator:
             return [self._build_delegate_tool_declaration([])]
         if available_intents is None:
@@ -827,7 +828,9 @@ class SmartResponseAgent(BaseAgent):
             if offer_external_tasks:
                 available_intents = [
                     *available_intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
-        return [self._build_delegate_tool_declaration(available_intents)] if available_intents else []
+        if not available_intents and self.coordinator.get_available_intents_for(self._descriptor):
+            return []  # the user's profile turned every intent off: nothing to delegate to
+        return [self._build_delegate_tool_declaration(available_intents)]
 
     def _summarize_history(self, history: List[Message]) -> str:
         """Summarize message history for debugging."""
