@@ -21,6 +21,7 @@ def _agent(response: AgentResponse) -> LelikAgent:
         voice_profile=VOICE_PROVIDER_PROFILES["openai"],
     )
     coordinator = MagicMock()
+    coordinator.is_intent_available = AsyncMock(return_value=True)
     coordinator.CALL_CHAIN_KEY = AgentCoordinator.CALL_CHAIN_KEY
     coordinator.handle_delegation = AsyncMock(return_value=response)
     agent.coordinator = coordinator
