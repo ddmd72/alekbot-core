@@ -138,7 +138,7 @@ class TestInput:
         await tool.run({"queries": ["a1", "b2", "c3", "d4", "e5"]}, context=_ctx())
         assert agent.calls[0][0] == ["a1", "b2", "c3", "d4"]
         search_line = next(m for m in lines if "queries=" in m)
-        assert "dropped=1" in search_line and "'a1'" in search_line
+        assert "dropped=1" in search_line and "queries=4 lengths=[2, 2, 2, 2]" in search_line
 
     async def test_nothing_usable_is_the_one_rejection_and_nothing_is_searched(self):
         tool, agent, resolver, _ = _setup()

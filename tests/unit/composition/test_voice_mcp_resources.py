@@ -12,18 +12,21 @@ Real services throughout (`tests/support/voice_mcp_kit.py`); the memory search a
 """
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, List
 
 import httpx
 import pytest
 
+from src.adapters.firestore_mcp_client_repository import FirestoreMCPClientRepository
 from src.composition import drive_mcp_setup
 from src.composition.drive_mcp_setup import DriveTokenVerifier, build_drive_mcp_app
 from src.composition.mcp_sdk_oauth_provider import MCPSdkOAuthProvider
-from src.composition.mcp_setup import build_mcp_components
+from src.composition.mcp_setup import SCOPE_OF, build_mcp_components
 from src.domain import drive_connector_contract as c
 from src.domain.drive_connector_access import ConnectorAccess
+from src.domain.mcp import MCPRefreshToken
 from src.domain.mcp_resource import MCPResource
 from src.domain.entities import FactEntity, FactType
 from src.domain.fact_search_result import PhraseSearchResult
@@ -172,12 +175,20 @@ class FactsApp:
         async def memory_search(user_id: str) -> RecordingSearch:
             return self.search
 
+        self.db = EvalDb()
         components = build_mcp_components(
-            db_client=EvalDb(), env_config=ENV, auth_config=FACTS_AUTH, memory_search=memory_search,
+            db_client=self.db, env_config=ENV, auth_config=FACTS_AUTH, memory_search=memory_search,
             cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=kit.user_repo,
             whitelist_repo=kit.whitelist_repo)
         # the components' own authorization service signs with the same OAuth secret as the kit's
         self.app = components.fastmcp
+
+    async def grant(self, grant_id: str = "g-1") -> None:
+        """Stores the active refresh token of the kit's OAuth grant: the facts tool re-checks the grant on every call."""
+        repo = FirestoreMCPClientRepository(self.db, ENV, cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
+        await repo.save_refresh_token(MCPRefreshToken(
+            token_hash="h-1", client_id="client-1", user_id=USER, account_id=ACCOUNT, scopes=[SCOPE_OF[MCPResource.FACTS]],
+            resource=FACTS_URI, expires_at=datetime.now(timezone.utc) + timedelta(days=1), grant_id=grant_id))
 
     async def call(self, token: str) -> httpx.Response:
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -213,9 +224,11 @@ class TestFactsTool:
 
     async def test_an_oauth_call_logs_as_before(self, kit, caplog):
         caplog.set_level(logging.DEBUG)
-        await FactsApp(kit, [_fact(1)]).call(kit.oauth_token(MCPResource.FACTS))
+        app = FactsApp(kit, [_fact(1)])
+        await app.grant()
+        await app.call(kit.oauth_token(MCPResource.FACTS))
         lines = [r.getMessage() for r in caplog.records if "MCP get_user_context" in r.getMessage()]
-        assert f"queries={[QUERY]!r}" in lines[0] and not any("client=voice" in line for line in lines)
+        assert f"queries=1 lengths=[{len(QUERY)}]" in lines[0] and not any("client=voice" in line for line in lines)
 
 
 # ----------------------------------------------------------------------------- the drive tools over HTTP
