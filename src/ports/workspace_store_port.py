@@ -27,11 +27,14 @@ class WorkspaceStorePort(ABC):
         Errors: nothing matches → []."""
 
     @abstractmethod
-    async def read(self, user_id: str, path: str, generation: Optional[int] = None) -> WorkspaceBlob:
+    async def read(self, user_id: str, path: str, generation: Optional[int] = None,
+                   max_bytes: Optional[int] = None) -> WorkspaceBlob:
         """The live version, or that generation (live or noncurrent); bytes and entry are of the same generation.
         Tenancy: the user's prefix only.
         Errors: FileNotFoundError when absent, when the generation is unknown or erased, or when that version is gone
-        between the metadata and the media read."""
+        between the metadata and the media read; WorkspaceFileTooLarge (a WorkspaceRefused carrying `size` and `limit`)
+        when the stored size is over `max_bytes` (default MAX_FILE_BYTES), decided from the metadata before any media
+        byte is read."""
 
     @abstractmethod
     async def put(

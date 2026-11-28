@@ -32,8 +32,8 @@ class MemoryInboxRepository(ABC):
     async def add_submissions(self, user_id: str, account_id: str, client: SubmittingClient,
                               drafts: Sequence[SubmissionDraft], now: datetime, day: str) -> AddReceipt:
         """Store the drafts as `received` submissions at `now`, in order, as far as the user's count for the owner-local
-        `day` allows (RECEIVED_PER_DAY); the rest are not stored and counted as `over_day`. The count lives on the state
-        record, updated in the same atomic step; a new `day` starts it again at zero. No drafts: nothing is written."""
+        `day` allows (RECEIVED_PER_DAY) and the client's own count for it allows (RECEIVED_PER_CLIENT_PER_DAY); the
+        rest are not stored and counted as `over_day`. The counts live on the state record, updated in the same atomic step; a new `day` starts it again at zero. No drafts: nothing is written."""
 
     @abstractmethod
     async def received(self, user_id: str, limit: int) -> List[Submission]:

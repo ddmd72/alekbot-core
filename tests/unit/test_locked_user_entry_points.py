@@ -84,7 +84,8 @@ NOT_A_USER_ENTRY: Dict[Tuple[str, str], str] = {
                                           "its summary posts through channel resolution (proactive_delivery)",
     ("POST", "/voice/delegate/abandon"): "a late answer posts through channel resolution (proactive_delivery)",
     ("GET", "/geo/<link_id>"): "a one-time link page; the turn its POST queues re-authorizes through IAM (chat)",
-    ("POST", "/geo/<link_id>"): "a one-time link; the turn it queues re-authorizes through IAM (chat, geo_mark_turn)",
+    ("POST", "/geo/<link_id>"): "a one-time link: the redeem reads the stored user fresh and refuses an inactive one "
+                                "(GeoMarkService); the turn it queues re-authorizes through IAM (chat, geo_mark_turn)",
     ("GET", "/d/<link_id>"): "a one-time drive link: MCPAuthorizationService.grant_allowed decides (mcp_grants)",
     ("GET", "/f/<token>"): "a capability link to one file, sent to the chat before the lock: not covered by decision "
                            "(it gives what the chat history already showed)",

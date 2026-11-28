@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
-from ..domain.exceptions import EmailFileNotTransferable, WorkspaceConflict, WorkspaceRefused
+from ..domain.exceptions import EmailFileNotTransferable, WorkspaceConflict, WorkspaceFileTooLarge, WorkspaceRefused
 from ..domain.user_drive import DriveFileTooLargeError, DriveNotConnectedError, DrivePathError, DriveRefRefused
 from ..domain.workspace import (
     COMMANDS,
@@ -282,8 +282,12 @@ class WorkspaceService:
             raise WorkspaceRefused(str(e), reason="pattern") from e
         entries = await self._store.list(call.user_id, path)   # one call: scope and sizes before any read
         in_path = [e for e in entries if e.path == path or path == "" or path.endswith("/")]
-        scope = [e for e in in_path if e.live and workspace_kind(e.path) == "text"]
+        text_files = [e for e in in_path if e.live and workspace_kind(e.path) == "text"]
+        scope = [e for e in text_files if e.size <= MAX_FILE_BYTES]
+        skipped = sorted(e.path for e in text_files if e.size > MAX_FILE_BYTES)
         if path and not path.endswith("/") and not scope:
+            if skipped:
+                raise WorkspaceRefused(f"{path}: file over {format_size(MAX_FILE_BYTES)}", reason="caps")
             if any(e.live for e in in_path):
                 raise WorkspaceRefused(f"{path} is not a text file; grep searches text files only", reason="binary")
             raise FileNotFoundError(path)
@@ -305,6 +309,9 @@ class WorkspaceService:
                     blob = await self._store.read(call.user_id, entry.path)
                 except FileNotFoundError:   # deleted since the list
                     return None
+                except WorkspaceFileTooLarge:   # grew past the cap since the list
+                    skipped.append(entry.path)
+                    return None
             text = _decode(blob.data)
             if text is None:
                 return None
@@ -318,6 +325,9 @@ class WorkspaceService:
             render_grep, pattern, path, files, matcher,
             context=parse_context(args.get("context")), files_only=parse_flag(args.get("files_only")),
         )
+        if skipped:
+            shown = ", ".join(skipped[:5]) + (f" and {len(skipped) - 5} more" if len(skipped) > 5 else "")
+            text += f"\n(skipped, over the {format_size(MAX_FILE_BYTES)} file cap: {shown})"
         log.files = len(files)
         log.matches = matches
         # Line numbers only: an insert at a line taken from this grep passes the staleness guard, but a grep is not a

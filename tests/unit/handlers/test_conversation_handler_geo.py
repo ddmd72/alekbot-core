@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import List, Optional, Tuple
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.support.active_users import ActiveUsers
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.domain.agent import AgentResponse
@@ -70,7 +71,8 @@ class World:
         users = SimpleNamespace(get_user=AsyncMock(return_value=None))
         self.service = GeoMarkService(
             links=self.links, geocoder=Geocoder(), sessions=self.sessions, channels=MagicMock(), task_queue=queue,
-            users=users, localization=FileLocalizationAdapter(), digest_key=b"g" * 32, base_url="https://app.example")
+            users=users, localization=FileLocalizationAdapter(), digest_key=b"g" * 32, base_url="https://app.example",
+            inactive_users=ActiveUsers())
         self.handler = ConversationHandler(
             coordinator=MagicMock(), agent_factory=MagicMock(),
             global_config=ConsolidationSettings(threshold=50, batch_size=30),

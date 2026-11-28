@@ -635,7 +635,9 @@ anything is read or marked), the owner's confirmed people list is read once, and
 (`ConsolidationAgentConfig.email_triage_passes`) reads up to `email_card_batch_size` unconsolidated mails: every one whose
 card is settled (`src/domain/email_memory_candidate.py::SETTLED_FOR_MEMORY`), plus every one indexed longer ago than
 `MEMORY_CARD_WAIT` whatever its card (no online retry of `pending` exists, so strict waiting would starve those mails),
-oldest `indexed_at` first. The message is one code header line (`EMAIL_CANDIDATES_HEADER`), then one numbered JSON object
+oldest `indexed_at` first. The pass actor is `email`, whose row (`src/domain/pass_actor.py`) never sets a directive: a fact
+it creates or merges is written with `directive=false` whatever the model sent (the conversation and inbox passes keep
+the flag as sent). The message is one code header line (`EMAIL_CANDIDATES_HEADER`), then one numbered JSON object
 per mail:
 - a carded mail whose card reads back is sent as its code-filtered card (`card_candidate`: sender, subject, the sent
   moment in the owner's zone as `date`, the card's type, life areas, title, summary, verified time points, the names and
@@ -1257,8 +1259,9 @@ one tool, `submit_user_information(items)` (remote MCP map: `docs/05_building_bl
 account comes from the token. Items are normalised liberally (`src/domain/memory_inbox_items.py`): `information` required,
 `basis` (`said` | `document` | `inferred`, anything else `inferred`), `said_when`, `happens_when`; caps cut and never fail
 (`MAX_ITEMS_PER_CALL` 20, `MAX_INFORMATION_CHARS` 1000, `MAX_WHEN_CHARS` 200). `RECEIVED_PER_DAY` (100) per user per
-owner-local day is counted on the state document inside the write's transaction; items past it are not stored and not an
-error. `MemoryInboxService.submit` (`src/services/memory_inbox_service.py`) stores them `received`.
+owner-local day and `RECEIVED_PER_CLIENT_PER_DAY` (50) per registered client within it are counted on the state document
+inside the write's transaction; items past either are not stored and not an error. Items after the 20th usable one are
+counted, not parsed. `MemoryInboxService.submit` (`src/services/memory_inbox_service.py`) stores them `received`.
 
 **Store.** One collection, two kinds of record under one `status` (`src/domain/memory_inbox.py`); the port is
 `src/ports/memory_inbox_repository.py`, the adapter `src/adapters/firestore_memory_inbox_repository.py`. Every status

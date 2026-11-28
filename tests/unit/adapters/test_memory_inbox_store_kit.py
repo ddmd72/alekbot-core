@@ -32,6 +32,9 @@ UTC = timezone.utc
 AT = datetime(2026, 11, 25, 9, 0, tzinfo=UTC)
 DAY = "2026-11-25"
 CLIENT = SubmittingClient(client_id="c1", client_name="Desk assistant")
+# The day's total is shared by several clients: one client's own share of the day is half of it.
+OTHER = SubmittingClient(client_id="cli-x", client_name="Other")
+THIRD = SubmittingClient(client_id="cli-b", client_name="Inspector")
 COIMBRA = "Clara booked the Coimbra weekend"
 TRIAGE_TEXT = "Clara booked the Coimbra weekend, March 6-8"
 DRAFT = DraftClass(directive=False, temporal_class="event", context_priority="medium", expiry={"kind": "none"})
@@ -103,14 +106,16 @@ async def test_add_submissions_stores_received_records_and_counts_the_owner_day(
 
 
 async def test_the_day_cap_stores_up_to_one_hundred_and_reports_the_rest(store):
-    assert await store.repo.add_submissions("u1", "a1", CLIENT, [draft()] * 98, AT, DAY) == AddReceipt(98, 0)
-    assert await store.repo.add_submissions("u1", "a1", CLIENT, [draft()] * 5, AT, DAY) == AddReceipt(2, 3)
-    assert await store.repo.add_submissions("u1", "a1", CLIENT, [draft()], AT, DAY) == AddReceipt(0, 1)
+    assert await store.repo.add_submissions("u1", "a1", CLIENT, [draft()] * 50, AT, DAY) == AddReceipt(50, 0)
+    assert await store.repo.add_submissions("u1", "a1", OTHER, [draft()] * 48, AT, DAY) == AddReceipt(48, 0)
+    assert await store.repo.add_submissions("u1", "a1", THIRD, [draft()] * 5, AT, DAY) == AddReceipt(2, 3)
+    assert await store.repo.add_submissions("u1", "a1", THIRD, [draft()], AT, DAY) == AddReceipt(0, 1)
     assert len(store.docs) == 100 and (await store.repo.state("u1")).received_day == (DAY, 100)
 
 
 async def test_a_new_owner_day_restarts_the_count(store):
-    await store.repo.add_submissions("u1", "a1", CLIENT, [draft()] * 100, AT, DAY)
+    await store.repo.add_submissions("u1", "a1", CLIENT, [draft()] * 50, AT, DAY)
+    await store.repo.add_submissions("u1", "a1", OTHER, [draft()] * 50, AT, DAY)
     r = await store.repo.add_submissions("u1", "a1", CLIENT, [draft()] * 5, AT + timedelta(hours=20), "2026-11-26")
     assert r == AddReceipt(stored=5, over_day=0)
     assert (await store.repo.state("u1")).received_day == ("2026-11-26", 5)

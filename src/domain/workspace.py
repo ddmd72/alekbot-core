@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from pydantic import BaseModel
 
 from .drive_ref import REF_PREFIX as DRIVE_REF_PREFIX
-from .exceptions import WorkspaceRefused
+from .exceptions import WorkspaceFileTooLarge, WorkspaceRefused
 from .skill import SKILL_FILE_EXTENSIONS
 
 WORKSPACE_TOOL = "workspace"
@@ -533,6 +533,14 @@ def render_mutation_echo(r: Replacement) -> str:
 # What view and history show (§7.4)
 # ---------------------------------------------------------------------------------------------------------------------
 
+def refuse_if_over(path: str, size: int, max_bytes: Optional[int] = None) -> None:
+    """The store's read rule: a stored file over `max_bytes` (default MAX_FILE_BYTES) is refused from its size alone,
+    before any byte is downloaded."""
+    limit = MAX_FILE_BYTES if max_bytes is None else max_bytes
+    if size > limit:
+        raise WorkspaceFileTooLarge(f"{path}: file over {format_size(limit)}", size, limit)
+
+
 def format_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"
@@ -557,16 +565,55 @@ def binary_message(path: str) -> str:
     return f"{path} is binary; open it with open_file and file_ref workspace:{path}"
 
 
+ORIGIN_MAX_CHARS = 80
+_ORIGIN_PREFIXES: Tuple[str, ...] = ("background:", "voice:")
+_ORIGIN_OUTSIDE = "outside"
+_ORIGIN_RE = re.compile(r"[A-Za-z0-9_.:@\-]+")
+
+
+def display_origin(origin: str) -> str:
+    """The writer label shown in views and listings. The bot stamps `chat`, `background:<detail>` or `voice:<detail>`;
+    an object stamped any other way (written outside the bot) shows as `outside`, so its metadata never reaches the
+    model as free text. A label is one short line of plain token characters."""
+    if not origin:
+        return "unknown"
+    known = origin == "chat" or origin.startswith(_ORIGIN_PREFIXES)
+    if not known or len(origin) > ORIGIN_MAX_CHARS or not _ORIGIN_RE.fullmatch(origin):
+        return _ORIGIN_OUTSIDE
+    return origin
+
+
+FIRE_MAX_CHARS = 120
+_FIRE_RE = re.compile(r"[A-Za-z0-9_.:@+\-]+")
+
+
+def display_fire(fire: str) -> str:
+    """The fire key shown next to a writer: a single short line of token characters, else `outside`."""
+    if len(fire) > FIRE_MAX_CHARS or not _FIRE_RE.fullmatch(fire):
+        return _ORIGIN_OUTSIDE
+    return fire
+
+
+def _shown_target(renamed_to: Optional[str]) -> Optional[str]:
+    """A rename target is shown only when it reads as a workspace path (never raw stored text)."""
+    if not renamed_to:
+        return None
+    try:
+        return parse_workspace_path(renamed_to)
+    except WorkspaceRefused:
+        return None
+
+
 def render_view_header(entry: WorkspaceEntry, total_lines: int, *, version_view: bool = False) -> str:
     """Neutral (D17): path, generation, size, last writer and time — for history and debugging, not protection."""
     where = (
         f"version {entry.generation}, not current" if version_view and not entry.live
         else f"generation {entry.generation}"
     )
-    fire = f" (fire {entry.fire})" if entry.fire else ""
+    fire = f" (fire {display_fire(entry.fire)})" if entry.fire else ""
     return (
         f"[workspace:{entry.path} · {where} · {total_lines} lines · {format_size(entry.size)}\n"
-        f" last written {_when(entry.updated)} by {entry.origin or 'unknown'}{fire}]"
+        f" last written {_when(entry.updated)} by {display_origin(entry.origin)}{fire}]"
     )
 
 
@@ -658,7 +705,7 @@ def render_listing(prefix: str, entries: Sequence[WorkspaceEntry], depth: object
             if shown >= LISTING_MAX_ENTRIES:
                 return
             shown += 1
-            lines.append(f"{indent}{name} · {format_size(e.size)} · {_day(e.updated)} · {e.origin or 'unknown'}")
+            lines.append(f"{indent}{name} · {format_size(e.size)} · {_day(e.updated)} · {display_origin(e.origin)}")
 
     walk(root, 1)
     if collapsed:
@@ -778,17 +825,18 @@ def render_missing(path: str, versions: Sequence[WorkspaceEntry]) -> str:
         return f"workspace:{path} does not exist and never did."
     newest = old[0]
     when = _when(newest.deleted_at) if newest.deleted_at else "at an unknown time"
-    by = f" by {newest.deleted_by}" if newest.deleted_by else ""
-    if newest.renamed_to:
+    by = f" by {display_origin(newest.deleted_by)}" if newest.deleted_by else ""
+    target = _shown_target(newest.renamed_to)
+    if target:
         second = (
-            f"It was renamed to {newest.renamed_to} {('on ' + _when(newest.deleted_at)) if newest.deleted_at else 'at an unknown time'}{by}; update the reminder's workspace_file "
-            f"(manage_self_reminders, context={{\"workspace_file\": \"{newest.renamed_to}\"}}) or rename it back."
+            f"It was renamed to {target} {('on ' + _when(newest.deleted_at)) if newest.deleted_at else 'at an unknown time'}{by}; update the reminder's workspace_file "
+            f"(manage_self_reminders, context={{\"workspace_file\": \"{target}\"}}) or rename it back."
         )
     else:
         second = f"It was deleted {when}{by}."
     lines = [f"workspace:{path} does not exist.", f"{second} Versions kept:"]
     lines += [
-        f"  {v.generation} · {_when(v.updated)} · {v.origin or 'unknown'} · {format_size(v.size)}"
+        f"  {v.generation} · {_when(v.updated)} · {display_origin(v.origin)} · {format_size(v.size)}"
         for v in old[:LISTING_MAX_ENTRIES]
     ]
     if len(old) > LISTING_MAX_ENTRIES:
@@ -801,9 +849,10 @@ def _status(v: WorkspaceEntry) -> str:
     if v.live:
         return "current"
     when = f" {_when(v.deleted_at)}" if v.deleted_at else ""
-    by = f" by {v.deleted_by}" if v.deleted_by else ""
-    if v.renamed_to:
-        return f"renamed to {v.renamed_to}{by}{when}"
+    by = f" by {display_origin(v.deleted_by)}" if v.deleted_by else ""
+    target = _shown_target(v.renamed_to)
+    if target:
+        return f"renamed to {target}{by}{when}"
     if v.deleted_by:
         return f"deleted{by}{when}"
     return f"replaced{when}"
@@ -818,10 +867,10 @@ def render_history(path: str, entries: Sequence[WorkspaceEntry]) -> str:
         return f"workspace:{path} has no history: it never existed."
     lines = [f"history of workspace:{path} — {_count(len(versions), 'version')}"]
     for v in versions[:LISTING_MAX_ENTRIES]:
-        fire = f" · fire {v.fire}" if v.fire else ""
+        fire = f" · fire {display_fire(v.fire)}" if v.fire else ""
         restored = f" · restored from {v.restored_from}" if v.restored_from else ""
         lines.append(
-            f"  {v.generation} · {_when(v.updated)} · {format_size(v.size)} · {v.origin or 'unknown'}"
+            f"  {v.generation} · {_when(v.updated)} · {format_size(v.size)} · {display_origin(v.origin)}"
             f"{fire}{restored} · {_status(v)}"
         )
     if len(versions) > LISTING_MAX_ENTRIES:
@@ -845,7 +894,7 @@ def _render_folder_history(prefix: str, entries: Sequence[WorkspaceEntry]) -> st
         state = f"current, {format_size(e.size)}" if e.live else _status(e)
         lines.append(
             f"  {e.path} · {_count(counts[e.path], 'version')} · {state} · last written {_when(e.updated)} "
-            f"by {e.origin or 'unknown'}"
+            f"by {display_origin(e.origin)}"
         )
     if len(rows) > LISTING_MAX_ENTRIES:
         lines.append(f"  …{len(rows) - LISTING_MAX_ENTRIES} more")

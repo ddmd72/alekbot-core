@@ -7,9 +7,9 @@ not text is empty (a number is its digits); an unknown field is ignored.
 
 Per item: `information` trimmed, an empty one drops the item (`dropped_empty`); `basis` read leniently (trimmed, any
 case) as `said` / `document` / `inferred`, anything else `inferred`, the least trusted; `said_when` and `happens_when`
-trimmed. Caps cut, never fail: usable items past MAX_ITEMS_PER_CALL are dropped (`over_call`; an empty item does not
-count against the cap), and a field over its char cap (MAX_INFORMATION_CHARS, MAX_WHEN_CHARS) is cut there and named in
-the draft's `cut` (`cut_fields` counts them over the call).
+trimmed. Caps cut, never fail: every item after the MAX_ITEMS_PER_CALL-th usable one is dropped unparsed
+(`over_call`; an empty item before that point does not count against the cap), and a field over its char cap
+(MAX_INFORMATION_CHARS, MAX_WHEN_CHARS) is cut there and named in the draft's `cut` (`cut_fields` counts them over the call).
 """
 import json
 from dataclasses import dataclass
@@ -38,11 +38,12 @@ def normalize_items(raw: Any) -> NormalizedItems:
     drafts: List[SubmissionDraft] = []
     dropped_empty = over_call = cut_fields = 0
     for element in _elements(raw):
+        if len(drafts) >= MAX_ITEMS_PER_CALL:  # the rest are counted, not parsed
+            over_call += 1
+            continue
         draft = _draft(element)
         if draft is None:
             dropped_empty += 1
-        elif len(drafts) >= MAX_ITEMS_PER_CALL:
-            over_call += 1
         else:
             drafts.append(draft)
             cut_fields += len(draft.cut)

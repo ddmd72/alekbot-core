@@ -183,7 +183,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             # Domain-level normalization (was duplicated here — now in domain/entities.py)
             metadata = normalize_fact_taxonomy(metadata)
 
-            attrs = parse_new_fact(self._new_fact_data(content, metadata), context.timezone)
+            attrs = parse_new_fact(self._new_fact_data(content, metadata), context.timezone, context.actor)
             decision = new_fact_decision(attrs, "create_fact")
             now = datetime.now(timezone.utc)
             derived = await self._derived_from_dates(attrs, metadata["account_id"], context)
@@ -548,7 +548,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         logger.info(f"🔀 [FactManagement] Merging {len(fact_ids)} facts...")
         account_id = metadata.get("account_id")
         metadata = normalize_fact_taxonomy(metadata)
-        attrs = parse_new_fact(self._new_fact_data(merged_content, metadata), context.timezone)
+        attrs = parse_new_fact(self._new_fact_data(merged_content, metadata), context.timezone, context.actor)
         decision = new_fact_decision(attrs, "merge_facts")
 
         notes: List[str] = []
@@ -569,6 +569,10 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             if not sources:
                 logger.error("❌ [FactManagement] No facts successfully superseded")
                 return self._merge_failed("Failed to supersede any facts")
+            if not context.actor.may_set_directive and any(source.fact.directive for source in sources):
+                logger.warning("⚠️  [FactManagement] A directive is not merged by the %s pass", context.actor)
+                return self._merge_failed(
+                    "Tool error: a standing directive is merged only by the conversation pass; nothing was written")
             if merged is None:
                 now = datetime.now(timezone.utc)
                 reported, date_notes = reported_date_for_merge(

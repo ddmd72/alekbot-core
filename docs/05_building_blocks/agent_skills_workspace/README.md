@@ -63,7 +63,7 @@ memory. Nothing is stored.
 
 **Workspace files** — a dedicated, versioned GCS bucket, object name `{user_id}/{path}`, path under one of four
 folders (`FOLDERS`: three text folders and `BINARY_FOLDER`). Every version carries
-object metadata: `origin` (who wrote it: `chat`, `background:<task or kind>`, `voice:<tool>`), `fire` (the reminder fire
+object metadata: `origin` (who wrote it: `chat`, `background:<task or kind>`, `voice:<tool>`; a view or listing shows a label of any other shape, or over `ORIGIN_MAX_CHARS`, as `outside`, via `display_origin`; a read of a stored file over `MAX_FILE_BYTES` is refused on its metadata before the download), `fire` (the reminder fire
 key, when a reminder run wrote it), `write_id`, `restored_from`; a deleted version carries `deleted_by`, `deleted_fire`,
 `renamed_to`, `delete_id`. Writer: `GcsWorkspaceAdapter`, only through `WorkspaceService`. Readers: the tool, the
 `workspace:` ref pipeline, and the drive-intent scan script. Caps (`MAX_FILES_PER_USER`, `MAX_BYTES_PER_USER`, `MAX_FILE_BYTES`,

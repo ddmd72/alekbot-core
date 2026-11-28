@@ -26,7 +26,14 @@ from src.domain import memory_inbox_mcp_contract as c
 from src.domain.billing import BillingAccount
 from src.domain.exceptions import ConnectorTextsUnavailable
 from src.domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, MCPClient
-from src.domain.memory_inbox import MAX_ITEMS_PER_CALL, RECEIVED_PER_DAY, Basis, SubmissionDraft, SubmittingClient
+from src.domain.memory_inbox import (
+    MAX_ITEMS_PER_CALL,
+    RECEIVED_PER_CLIENT_PER_DAY,
+    RECEIVED_PER_DAY,
+    Basis,
+    SubmissionDraft,
+    SubmittingClient,
+)
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.voice_mcp_token import McpTokenKind
 from src.services.connector_text_service import ConnectorTextService
@@ -218,11 +225,15 @@ async def test_a_json_encoded_array_is_taken(world):
 
 
 async def test_cuts_and_the_day_cap_are_named_not_errors(world):
-    already = RECEIVED_PER_DAY - 5
-    receipt = await world.service.submit(user_id="u1", account_id="a1", client=SubmittingClient("cli-x", "Other"),
-                                         drafts=[SubmissionDraft(f"item {i}", Basis.SAID, "", "")
-                                                 for i in range(already)])
-    assert receipt.stored == already
+    already = RECEIVED_PER_DAY - 5  # stored by two other clients, each within its own share of the day
+    stored = 0
+    for client, count in ((SubmittingClient("cli-x", "Other"), RECEIVED_PER_CLIENT_PER_DAY),
+                          (SubmittingClient("cli-b", "Inspector"), already - RECEIVED_PER_CLIENT_PER_DAY)):
+        receipt = await world.service.submit(user_id="u1", account_id="a1", client=client,
+                                             drafts=[SubmissionDraft(f"item {i}", Basis.SAID, "", "")
+                                                     for i in range(count)])
+        stored += receipt.stored
+    assert stored == already
     sent = [f"{CLARA} {i}" for i in range(MAX_ITEMS_PER_CALL + 1)]
     assert ok(await world.call({"items": sent})) == ["<RECEIVED 5>", "<CUT 1>", "<OVER_DAY 15>"]
     assert len(world.received()) == RECEIVED_PER_DAY

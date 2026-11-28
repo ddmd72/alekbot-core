@@ -3,6 +3,7 @@ geocoder only when `GOOGLE_SEARCH_API_KEY` is set, and no service without a task
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from tests.support.active_users import ActiveUsers
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.google_geocoding_adapter import GEOCODE_URL
 from src.composition.geo_mark_setup import build_geo_mark_service
@@ -21,7 +22,8 @@ def _build(config, db=None, queue="make"):
     return build_geo_mark_service(
         config, db or EvalDb(), ENV, digest_key=b"g" * 32, service_url="https://app.example",
         session_store=SimpleNamespace(), channel_factory=SimpleNamespace(), task_queue=task_queue,
-        user_repo=SimpleNamespace(), localization_port=FileLocalizationAdapter())
+        user_repo=SimpleNamespace(), localization_port=FileLocalizationAdapter(),
+        inactive_users=ActiveUsers())
 
 
 async def test_with_the_key_marks_get_the_google_address(monkeypatch):
@@ -61,3 +63,12 @@ async def test_links_live_in_the_geo_mark_links_collection():
 
 def test_without_a_task_queue_there_is_no_service():
     assert _build({"GOOGLE_SEARCH_API_KEY": "geo-key-test"}, queue=None) is None
+
+
+async def test_the_account_lock_check_is_handed_to_the_service():
+    lock = SimpleNamespace()
+    service = build_geo_mark_service(
+        {}, EvalDb(), ENV, digest_key=b"g" * 32, service_url="https://app.example",
+        session_store=SimpleNamespace(), channel_factory=SimpleNamespace(), task_queue=make_task_queue()[0],
+        user_repo=SimpleNamespace(), localization_port=FileLocalizationAdapter(), inactive_users=lock)
+    assert service is not None and service._inactive_users is lock

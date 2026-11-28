@@ -1229,3 +1229,18 @@ class TestReviewDirectives:
 
         agent._review_directives.assert_awaited_once()
         assert {"action": "UPDATE"} in result["operations"]
+
+
+class TestSearchLogLine:
+
+    async def test_the_search_line_carries_lengths_never_the_query_text(self, caplog):
+        import logging
+        fm = AsyncMock(spec=FactManagementPort)
+        fm.search_existing_facts = AsyncMock(return_value=[])
+        agent, _, _, _ = _make_agent(fact_management=fm)
+        tc = ToolCall(name="search_existing_facts", args={
+            "keywords": ["Coimbra"], "primary_query": "Clara booked the Coimbra weekend", "alternative_query": "", "limit": 5})
+        with caplog.at_level(logging.INFO):
+            await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
+        text = " ".join(r.getMessage() for r in caplog.records if "search_existing_facts(" in r.getMessage())
+        assert "primary_chars=32" in text and "Coimbra" not in text

@@ -64,7 +64,7 @@ from ..domain.email_open_texts import (
 from ..domain.email_ref import email_file_label, escape_email_name, format_email_ref, parse_email_ref
 from ..domain.exceptions import (
     EmailFileNotTransferable, EmailMessageGone, EmailNotConnected, EmailPartTooLarge, EmailPartUnavailable,
-    FileNotResolved, WorkspaceRefused,
+    FileNotResolved, WorkspaceFileTooLarge, WorkspaceRefused,
 )
 from ..domain.llm import MessagePart
 from ..domain.native_format import NativeFormat
@@ -109,6 +109,13 @@ def _too_large_line(path: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTE
     return (f"[Tool note: '{path}' is {format_size(size_bytes)}; files above "
             f"{format_size(limit_bytes)} cannot be read as text yet. Long audio and video "
             f"processing is not available yet.]")
+
+
+def _workspace_text_note(ref: str, size_bytes: int) -> str:
+    """The note for a workspace text file over what open_file inlines: it points to `view` windows."""
+    return (f"[Tool note: '{ref}' is {format_size(size_bytes)}; open_file reads a workspace text file only "
+            f"up to {format_size(OPEN_FILE_MAX_TEXT_BYTES)}. Read it in parts with the workspace tool: "
+            f"command view, path {parse_workspace_path(ref)}, offset and limit (lines).]")
 
 
 class _Opening(NamedTuple):
@@ -336,17 +343,23 @@ class FileConversionService:
                     return _Opening(OpenedFile(None, note=_too_large_line(item.path, item.size_bytes, cap)), display)
                 content = await self._require_drive().download(handle, item.item_id)
         elif kind is FileRefKind.WORKSPACE:
-            path, content = await self._read_workspace(ref, user_id)
+            try:
+                path, content = await self._read_workspace(ref, user_id, for_open=True)
+            except WorkspaceFileTooLarge as e:  # over the cap for this kind of file: nothing was downloaded
+                logger.warning("[FileOpen] too_large store=workspace ref=%s size=%d limit=%d", ref, e.size, e.limit)
+                if e.limit == OPEN_FILE_MAX_TEXT_BYTES:
+                    return _Opening(OpenedFile(None, note=_workspace_text_note(ref, e.size)), display)
+                return _Opening(OpenedFile(None, note=_too_large_line(ref, e.size, e.limit)), display)
+            except WorkspaceRefused as e:
+                logger.warning("[FileOpen] refused store=workspace ref=%s: %s", ref, e)
+                return _Opening(OpenedFile(None, note=f"[Tool note: {e}.]"), display)
             declared_mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
             name = path
             if workspace_kind(path) == "text":
                 if len(content) > OPEN_FILE_MAX_TEXT_BYTES:
                     logger.warning("[FileOpen] too_large store=workspace ref=%s size=%d limit=%d",
                                    ref, len(content), OPEN_FILE_MAX_TEXT_BYTES)
-                    return _Opening(OpenedFile(None, note=(
-                        f"[Tool note: '{ref}' is {format_size(len(content))}; open_file reads a workspace text file only "
-                        f"up to {format_size(OPEN_FILE_MAX_TEXT_BYTES)}. Read it in parts with the workspace tool: "
-                        f"command view, path {path}, offset and limit (lines).]")), display)
+                    return _Opening(OpenedFile(None, note=_workspace_text_note(ref, len(content))), display)
                 try:
                     # The skill: rule — text kinds are decoded, never mime-guessed (§12).
                     text = content.decode("utf-8")
@@ -512,7 +525,7 @@ class FileConversionService:
             raise DriveFileTooLargeError(item, MAX_DRIVE_DOWNLOAD_BYTES)
         return await self._require_drive().download(handle, item.item_id)
 
-    async def _read_workspace(self, ref: str, user_id: str) -> Tuple[str, bytes]:
+    async def _read_workspace(self, ref: str, user_id: str, *, for_open: bool = False) -> Tuple[str, bytes]:
         """The live bytes of a `workspace:` ref, for the requesting user. Any folder: draft_skill's from_file reads
         scratch/; open_file's files/-only rule lives in FileManagementAgent (§12)."""
         if self._workspace is None:
@@ -521,7 +534,10 @@ class FileConversionService:
             path = parse_workspace_path(ref)
         except WorkspaceRefused as e:
             raise FileNotFoundError(str(e)) from e
-        blob = await self._workspace.read(user_id, path)
+        limit: Optional[int] = None
+        if for_open:  # open_file's caps, decided from the stored size before the download
+            limit = OPEN_FILE_MAX_TEXT_BYTES if workspace_kind(path) == "text" else MAX_FILE_BYTES
+        blob = await self._workspace.read(user_id, path, max_bytes=limit)
         return path, blob.data
 
     async def _download_by_ref(self, ref: str, user_id: str) -> bytes:

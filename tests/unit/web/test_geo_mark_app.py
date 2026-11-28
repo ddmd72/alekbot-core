@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 import pytest
 from quart import Quart
 
+from tests.support.active_users import ActiveUsers
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.domain.geo_mark import LINK_TTL_S, GeoLinkBinding, GeoPlace
@@ -87,7 +88,8 @@ class World:
         self.service = GeoMarkService(
             links=self.links, geocoder=Geocoder(address), sessions=self.sessions, channels=self.channels,  # type: ignore[arg-type]
             task_queue=self.queue, users=Users(), localization=FileLocalizationAdapter(), digest_key=b"g" * 32,  # type: ignore[arg-type]
-            base_url="https://app.example", clock=lambda: datetime(2026, 11, 18, 18, 40, tzinfo=timezone.utc))
+            base_url="https://app.example", inactive_users=ActiveUsers(),
+            clock=lambda: datetime(2026, 11, 18, 18, 40, tzinfo=timezone.utc))
         self.app = Quart(__name__)
         self.app.register_blueprint(create_geo_mark_blueprint(self.service))
         self.client = self.app.test_client()

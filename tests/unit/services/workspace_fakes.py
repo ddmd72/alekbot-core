@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from src.domain.exceptions import WorkspaceConflict
-from src.domain.workspace import WorkspaceBlob, WorkspaceDeleteMeta, WorkspaceEntry, WorkspaceWriteMeta
+from src.domain.workspace import refuse_if_over, WorkspaceBlob, WorkspaceDeleteMeta, WorkspaceEntry, WorkspaceWriteMeta
 from src.ports.workspace_store_port import WorkspaceStorePort
 
 T0 = datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc)
@@ -89,10 +89,12 @@ class InMemoryWorkspaceStore(WorkspaceStorePort):
             out.extend(item[0] for item in items if include_versions or item[0].live)
         return out
 
-    async def read(self, user_id: str, path: str, generation: Optional[int] = None) -> WorkspaceBlob:
+    async def read(self, user_id: str, path: str, generation: Optional[int] = None,
+                   max_bytes: Optional[int] = None) -> WorkspaceBlob:
         await self._enter("read", path)
         for entry, data in self.objects.get((user_id, path), []):
             if (generation is None and entry.live) or entry.generation == generation:
+                refuse_if_over(path, entry.size, max_bytes)
                 return WorkspaceBlob(data=data, entry=entry)
         raise FileNotFoundError(path)
 
