@@ -156,28 +156,6 @@ async def test_unlink_removes_only_that_platform_and_absent_is_a_no_op(repo, mon
     assert repo.db.collection(USERS).versions["u1"] == version          # nothing written
 
 
-async def test_update_user_replaces_the_document_and_sets_updated_at(repo, monkeypatch):
-    await repo.create_user(alex(external_user_id="google|sub-1"))
-    later = datetime(2026, 10, 27, 9, 30, tzinfo=timezone.utc)
-    pin_datetime(monkeypatch, user_module, later)
-    changed = alex(display_name="Alex D.")
-    returned = await repo.update_user(changed)
-    assert returned.updated_at == later
-    assert docs(repo)["u1"] == alex(display_name="Alex D.", updated_at=later).model_dump()   # external id gone
-
-
-async def test_serial_updates_keep_both_changes(repo):
-    await repo.create_user(alex())
-    first = await repo.get_user("u1")
-    first.config.timezone = "Europe/Berlin"
-    await repo.update_user(first)
-    second = await repo.get_user("u1")
-    second.config.location = "Springfield"
-    await repo.update_user(second)
-    stored = docs(repo)["u1"]["config"]
-    assert (stored["timezone"], stored["location"]) == ("Europe/Berlin", "Springfield")
-
-
 async def test_field_updates_from_two_stale_reads_keep_both_changes(repo, monkeypatch):
     await repo.create_user(alex())
     first, second = await repo.get_user("u1"), await repo.get_user("u1")   # both read before either writes

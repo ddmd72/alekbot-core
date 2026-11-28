@@ -16,7 +16,6 @@ from ..domain.fact_resolution import ForwardWalk
 from ..domain.fact_review_overview import LISTABLE_STATES
 from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
-from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
 from ..ports.repository import FactRepository
 from ..config.environment import EnvironmentConfig
@@ -824,99 +823,6 @@ class FirestoreFactRepository(FactRepository):
             if _has_aborted_in_chain(exc):
                 raise FactWriteConflict(fact_id) from exc
             raise
-
-    async def add_fact_if_unique(
-        self, 
-        fact: FactEntity, 
-        similarity_threshold: float = 0.96
-    ) -> tuple[bool, Optional[str]]:
-        """
-        Add fact only if no semantic duplicate exists using smart deduplication.
-        
-        SESSION 2026-02-08: Improved deduplication strategy
-        - Raised threshold from 0.85 to 0.96 (less aggressive)
-        - Number-aware comparison (sorted, order-independent)
-        - Length-based heuristic for detail preservation
-        - Philosophy: Better to add duplicate than lose important information
-        
-        Algorithm (SmartDeduplication):
-        1. similarity < 0.96 → NOT duplicate
-        2. Numbers differ (sorted) → NOT duplicate
-        3. similarity < 0.98 AND new more detailed → NOT duplicate
-        4. Otherwise → DUPLICATE
-        
-        Args:
-            fact: Fact entity to add
-            similarity_threshold: Minimum similarity for duplicate check (default: 0.96)
-            
-        Returns:
-            Tuple (was_added: bool, fact_id_or_duplicate_id: str)
-        """
-        if not fact.vector:
-            fact_id = await self.add_fact(fact)
-            return True, fact_id
-
-        # Convert similarity threshold to distance threshold
-        # similarity > 0.96  =>  distance < 0.04
-        distance_threshold = 1.0 - similarity_threshold
-
-        # Search for the nearest neighbor
-        vector_query = self.facts_col.where(
-            filter=FieldFilter("account_id", "==", fact.account_id)
-        ).where(
-            filter=FieldFilter("state", "==", "current")  # dedupe only against visible facts
-        ).find_nearest(
-            vector_field="vector",
-            query_vector=fact.vector,  # REMOVED Vector() wrapper
-            distance_measure=DistanceMeasure.COSINE,
-            limit=1,
-            distance_threshold=distance_threshold
-        )
-
-        docs = await vector_query.get()
-        
-        if docs:
-            # Found similar fact → run smart deduplication
-            existing_doc = docs[0]
-            existing_data = existing_doc.to_dict()
-            
-            # Convert Vector back to list for similarity calculation
-            if 'vector' in existing_data and isinstance(existing_data['vector'], Vector):
-                existing_data['vector'] = list(existing_data['vector'])
-            
-            existing_data = self._migrate_ownership_fields(existing_data)
-            existing_fact = FactEntity(**existing_data)
-            
-            # Calculate exact similarity using domain utility
-            if fact.vector is None or existing_fact.vector is None:
-                raise ValueError(f"fact {existing_fact.id} matched by vector search has no vector to compare")
-            similarity = cosine_similarity(fact.vector, existing_fact.vector)
-            
-            # Use SmartDeduplication for intelligent comparison
-            is_duplicate, reason = self._dedup_service.is_duplicate(
-                fact.text,
-                existing_fact.text,
-                similarity
-            )
-            
-            if is_duplicate:
-                logger.debug(
-                    f"⏭️  [Dedup] Duplicate detected: {reason} | "
-                    f"similarity={similarity:.3f} | "
-                    f"new='{fact.text[:50]}...' | "
-                    f"existing_id={existing_doc.id[:8]}"
-                )
-                return False, existing_doc.id
-            else:
-                logger.debug(
-                    f"✅ [Dedup] NOT duplicate: {reason} | "
-                    f"similarity={similarity:.3f} | "
-                    f"adding new fact: '{fact.text[:50]}...'"
-                )
-
-        # No duplicate found (or smart dedup said NOT duplicate), add the fact
-        fact_id = await self.add_fact(fact)
-        return True, fact_id
 
     async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         """Write `context` to the account's cache document (FactRepository port)."""
