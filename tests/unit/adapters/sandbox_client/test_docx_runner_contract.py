@@ -47,7 +47,8 @@ async def _no_sleep(_s):
 
 @pytest.fixture
 def runner(tmp_path):
-    engine = DocxRenderEngine(ChildLauncher(user=None), output_root=_private(tmp_path))
+    # The child shares this uid with the test runner; RLIMIT_NPROC counts every thread of the uid.
+    engine = DocxRenderEngine(ChildLauncher(user=None, nproc=4000, nofile=256), output_root=_private(tmp_path))
     transport = real_app_transport(tmp_path, engine=engine, ceiling=BIG)
     client = SandboxHttpClient(BASE, good_token, transport=transport, sleep=_no_sleep)
     return SandboxDocxRunner(client, memory_bytes=BIG.memory_bytes)
