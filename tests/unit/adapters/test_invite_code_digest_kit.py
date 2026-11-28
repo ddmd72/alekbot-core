@@ -44,7 +44,7 @@ class World:
     async def team(self) -> None:
         await self.accounts.create_account(BillingAccount(account_id=OWNER_ACC, iam_policy={OWNER: "OWNER"}))
         await self.accounts.create_account(BillingAccount(account_id=MEMBER_ACC, iam_policy={MEMBER: "OWNER"}))
-        await self.users.update_user(UserProfile(user_id=MEMBER, email="clara@example.com", account_id=MEMBER_ACC))
+        await self.users.create_user(UserProfile(user_id=MEMBER, email="clara@example.com", account_id=MEMBER_ACC))
         self.db.collection(WHITELIST).docs["config"] = {"allowed_emails": ["clara@example.com"], "allowed_domains": []}
 
 

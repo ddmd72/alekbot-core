@@ -356,14 +356,6 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
             self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
             self._record("stale_due_fact", fact_id=due.fact_id)
 
-    async def add_fact_if_unique(
-        self, fact: FactEntity, similarity_threshold: float = 0.85
-    ) -> tuple[bool, Optional[str]]:
-        async with self._lock:
-            self._put(fact)
-            self._record("add_fact_if_unique", fact_id=fact.id, duplicate_check="not run")
-        return True, fact.id
-
     async def refresh_cache(
         self, owner_id: str, facts_limit: Optional[int] = None, principles_limit: Optional[int] = None
     ) -> None:

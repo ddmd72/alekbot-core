@@ -17,7 +17,6 @@ def mock_user_repo():
     repo = AsyncMock(spec=UserRepository)
     repo.get_user = AsyncMock()
     repo.get_user_by_platform_id = AsyncMock()
-    repo.update_user = AsyncMock(side_effect=lambda x: x)
     repo.create_user = AsyncMock(side_effect=lambda x: x)
     return repo
 
@@ -90,7 +89,7 @@ async def test_team_invite_consumption(invite_service, mock_user_repo, mock_acco
     
     # 5. Verify
     # Joiner's account_id updated
-    updated_joiner = mock_user_repo.update_user.call_args[0][0]
+    updated_joiner = mock_user_repo.update_user_fields.call_args[0][0]
     assert updated_joiner.account_id == "acc-owner"
     
     # Account IAM policy updated (the one member entry, written by its field path)

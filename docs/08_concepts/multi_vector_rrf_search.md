@@ -113,7 +113,6 @@ A shorter candidate against a longer kept fact is a duplicate; the reverse is no
 | Scored fact search (`FactSearchService._is_duplicate`) | on, default thresholds | the same rule over the kept list |
 | Consolidation search (`skip_semantic_dedup=True`) | off | the agent must see every candidate to decide a MERGE |
 | Consolidation writes (`FactWriteService.build_facts`) | none | the model decides duplicates after searching |
-| `FirestoreFactRepository.add_fact_if_unique` | on, defaults | no production caller in `src/`; consolidation does not use it |
 
 **Why consolidation turns it off:** the consolidator searches before it writes and needs the scattered, overlapping
 facts side by side to merge them. A filtered result would hide exactly the facts it exists to merge. RRF already

@@ -575,8 +575,7 @@ The tools (`ConsolidationAgent._execute_fact_management_tools`, adapter
 - `count_words(text)`: word count against the 40-word fact limit.
 
 **Deduplication is the model's decision.** Code does not reject a near-duplicate on this path; the prompt makes the model
-search first and DISCARD (no tool call) what is already known. `FirestoreFactRepository.add_fact_if_unique` has no
-production caller.
+search first and DISCARD (no tool call) what is already known. No repository method dedups on write.
 
 **Rules that decide what is stored** (prompt tokens, mirrored in `prompts_snapshot/tokens/system/`):
 - `Domain_Scope` (POLICIES): never process ASSISTANT statements as facts unless the USER confirms with new information;

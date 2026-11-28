@@ -34,7 +34,6 @@ def _repo(enabled):
     repo = MagicMock()
     profile = SimpleNamespace(config=SimpleNamespace(drive_copy_deep_research=enabled))
     repo.get_user = AsyncMock(return_value=profile)
-    repo.update_user = AsyncMock()
     return repo, profile
 
 

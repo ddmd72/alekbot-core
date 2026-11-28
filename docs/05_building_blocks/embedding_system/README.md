@@ -45,8 +45,7 @@ whose stamp differs (`src/composition/service_container.py`, `src/composition/dr
 
 Task-type rule: the stored side embeds with `RETRIEVAL_DOCUMENT` (also the default when no task is passed); the query
 side embeds with `RETRIEVAL_QUERY`. `SEMANTIC_SIMILARITY` has no caller outside the adapter: fact dedup compares stored
-vectors with `cosine_similarity` (`src/adapters/firestore_repo.py::FirestoreFactRepository.add_fact_if_unique`;
-read side `src/services/search_enrichment_service.py::SearchEnrichmentService._deduplicate_semantic`). Entry points:
+vectors with `cosine_similarity` (read side `src/services/search_enrichment_service.py::SearchEnrichmentService._deduplicate_semantic`). Entry points:
 `src/services/fact_write_service.py::FactWriteService._generate_multi_vectors` (stored, three vectors per fact from
 `src/domain/fact_embedding.py::fact_embedding_texts`) and `src/services/drive_search_service.py` (query).
 

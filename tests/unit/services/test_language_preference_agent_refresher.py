@@ -23,10 +23,6 @@ class _Users:
     async def get_user(self, user_id: str):
         return self.user if user_id == USER_ID else None
 
-    async def update_user(self, user: UserProfile):
-        self.user = user
-        return user
-
     async def update_user_fields(self, user: UserProfile, fields):
         self.user = user
         return user

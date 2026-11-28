@@ -14,12 +14,10 @@ from .document_hardening import (  # noqa: F401 — re-exported: the hardening's
     ArchiveTooLargeError,
     check_zip_container,
 )
-from ..domain.document_limits import MAX_CONVERTED_CHARS
+from ..domain.document_limits import MAX_CONVERTED_CHARS  # noqa: F401 — re-exported (tests import it from here)
 from ..domain.document_limits import MAX_FILE_BYTES  # noqa: F401 — re-exported (tests import it from here)
 from ..domain.document_open_texts import conversion_alert as _conversion_alert  # noqa: F401 — re-exported
-from ..domain.document_open_texts import cut_note
 from ..domain.document_open_texts import size_alert as _size_alert  # noqa: F401 — re-exported
-from .logger import logger
 
 HISTORY_PREVIEW_CHARS = 1000         # chars kept in history stub per file
 
@@ -140,15 +138,6 @@ def transcription_alert(filename: str) -> str:
         f"so its content is NOT available. Do not guess what was said. Tell the user the "
         f"voice message could not be recognised and ask them to repeat it or write it out.]"
     )
-
-
-def truncate_with_alert(text: str, filename: str) -> str:
-    """Truncate text to MAX_CONVERTED_CHARS and append a system alert if needed."""
-    if len(text) <= MAX_CONVERTED_CHARS:
-        return text
-    omitted = len(text) - MAX_CONVERTED_CHARS
-    logger.info(f"[FileConversion] Truncated '{filename}' to {MAX_CONVERTED_CHARS} chars ({omitted} omitted)")
-    return text[:MAX_CONVERTED_CHARS] + "\n" + cut_note(filename, MAX_CONVERTED_CHARS, omitted)
 
 
 def make_history_stub(full_output: str, filename: str) -> str:

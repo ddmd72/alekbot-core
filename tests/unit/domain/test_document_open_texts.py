@@ -42,12 +42,6 @@ def test_file_conversion_serves_the_moved_notes():
     assert file_conversion._conversion_alert is texts.conversion_alert
 
 
-def test_truncate_with_alert_ends_with_the_cut_note():
-    cap = file_conversion.MAX_CONVERTED_CHARS
-    out = file_conversion.truncate_with_alert("a" * (cap + 7), "scan_0012.pdf")
-    assert out == "a" * cap + "\n" + texts.cut_note("scan_0012.pdf", cap, 7)
-
-
 def test_not_in_time_reads_the_same_for_both():
     assert texts.still_working_note("scan_0012.pdf") == texts.deadline_note("scan_0012.pdf")
     assert "'scan_0012.pdf' could not be read in time; try again" in texts.deadline_note("scan_0012.pdf")

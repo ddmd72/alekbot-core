@@ -380,23 +380,6 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def add_fact_if_unique(
-        self, 
-        fact: FactEntity, 
-        similarity_threshold: float = 0.85
-    ) -> tuple[bool, Optional[str]]:
-        """Store `fact` unless a near-duplicate is already current in its account.
-
-        Tenancy: compares only `state == "current"` facts of fact.account_id.
-        Duplicate: the nearest fact by cosine within 1 - similarity_threshold that
-            SmartDeduplication judges a duplicate. A fact without a vector is stored unchecked.
-        Returns: (True, fact.id) when stored; (False, id of the existing duplicate) when skipped.
-        Atomicity: check, then write; two concurrent duplicates can both be stored (observed).
-        Defaults: the adapter's default threshold is 0.96 (observed); the caller passes it explicitly.
-        """
-        pass
-
-    @abstractmethod
     async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         """Replace the cached biographical context of account `owner_id` with `context`.
 
