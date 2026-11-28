@@ -417,6 +417,11 @@ class AgentCoordinator:
                 suggestions=[i["name"] for i in self._registry.get_available_intents()]
             )
 
+        user_id = context.get("user_id", "")
+        if not await self.is_intent_available(intent, user_id):
+            logger.info(f"Intent '{intent}' is turned off on the profile of user {user_id[:8]}; refused (from {calling_agent_id})")
+            return AgentResponse.intent_unavailable(intent, task_id="delegation", agent_id="coordinator")
+
         chain: List[str] = list(context.get(self.CALL_CHAIN_KEY) or [])
         refusal = await self._refuse_if_looping(manifest.agent_id, chain, calling_agent_id)
         if refusal is not None:

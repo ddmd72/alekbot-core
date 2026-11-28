@@ -252,6 +252,8 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.GEO_NOT_SAVED.value: "⚠️ La position n'a pas été enregistrée. Partagez-la à nouveau.",
     UIMessage.GEO_UNAVAILABLE.value: "Le partage de position n'est pas disponible pour le moment.",
     UIMessage.GEO_BOUND_CHANNEL.value: "Les positions ne sont enregistrées que dans un canal ordinaire ; celui-ci est lié à un agent.",
+    UIMessage.AGENT_BIND_REFUSED.value: "Cet agent n'est pas disponible sur votre profil. Le canal reste tel qu'il était.",
+    UIMessage.AGENT_BOUND_TURN_REFUSED.value: "L'agent de ce canal n'est plus disponible sur votre profil. Envoyez `$agent off` pour rendre le canal à l'assistant principal.",
     UIMessage.GEO_DM_ONLY.value: "Les positions ne peuvent être partagées que dans vos messages privés avec moi. Envoyez $geo là-bas.",
     UIMessage.GEO_USE_TELEGRAM_PIN.value: "Dans Telegram, partagez votre position depuis le menu 📎 : Position, puis envoyez votre position actuelle.",
     UIMessage.GEO_TELEGRAM_VENUE.value: "Un lieu choisi dans la liste n'est pas enregistré comme votre position. Pour partager où vous êtes, envoyez votre position actuelle.",
