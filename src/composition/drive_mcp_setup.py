@@ -179,15 +179,16 @@ def build_drive_mcp_app(
     if tools is None:
         return FastMCP(**settings)
     app = TokenTextFastMCP(texts=tools.texts, initial=tools.initial_texts, **settings)
-    _register_tools(app, tools, inactive_users)
+    _register_tools(app, tools, inactive_users, authorization_service)
     _check_contract(app)
     return app
 
 
 def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools,
-                    inactive_users: Optional[InactiveUserCheck] = None) -> None:
+                    inactive_users: Optional[InactiveUserCheck] = None,
+                    authorization_service: Optional[MCPAuthorizationService] = None) -> None:
     ops = tools.operations
-    call = _Caller(app, tools.quota, inactive_users)
+    call = _Caller(app, tools.quota, inactive_users, authorization_service)
 
     @app.tool(name=SEARCH_DRIVE, meta={MAX_RESULT_SIZE_META_KEY: RESULT_MAX_CHARS})
     async def search_drive(ctx: Context, query: _Text = "", folder: _Text = "", drives: _Joined = "",
@@ -268,10 +269,12 @@ class _Caller:
     """Runs one tool call: auth (and the account lock), texts, context, timeout, compose, guard, span, log."""
 
     def __init__(self, app: TokenTextFastMCP, quota: Optional[QuotaService] = None,
-                 inactive_users: Optional[InactiveUserCheck] = None) -> None:
+                 inactive_users: Optional[InactiveUserCheck] = None,
+                 authorization_service: Optional[MCPAuthorizationService] = None) -> None:
         self._app = app
         self._quota = quota
         self._inactive_users = inactive_users
+        self._authorization = authorization_service
 
     async def run(self, tool: str, op: DriveOp, ctx: Context, run: _Run, *,
                   paging: Optional[ConnectorPaging] = None) -> CallToolResult:
@@ -286,9 +289,18 @@ class _Caller:
         client = " client=voice" if voice else ""
         # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a token issued before it verifies until it expires; the
         # stored user, read fresh, refuses the call before any read.
-        if self._inactive_users is not None and await self._inactive_users.is_inactive(user_id):
-            logger.warning(f"🔒 [DriveMCP] tool={tool} user={user_id[:8]} status=account_locked{client}")
-            return _error_result(ACCOUNT_LOCKED_TOOL_ERROR)
+        try:
+            if self._inactive_users is not None and await self._inactive_users.is_inactive(user_id):
+                logger.warning(f"🔒 [DriveMCP] tool={tool} user={user_id[:8]} status=account_locked{client}")
+                return _error_result(ACCOUNT_LOCKED_TOOL_ERROR)
+            # The grant is re-checked on every call (as the tasks app): a grant revoked in the Cabinet, or a user taken
+            # off the whitelist, is refused on the next call. A voice token is no OAuth grant.
+            grant_ok = voice or (self._authorization is not None
+                                 and await self._authorization.grant_allowed(user_id, token.grant_id))
+        except Exception as exc:
+            # the type only: an exception's message can carry the user's data
+            logger.error(f"❌ [DriveMCP] tool={tool} user={user_id[:8]} failed: {type(exc).__name__}{client}")
+            return _error_result(f"Drive operation failed: {type(exc).__name__}.")
         with start_span(f"mcp.drive.{tool}", {"tool": tool}) as span:
             if voice:
                 span.set_attribute("client", "voice")
@@ -299,8 +311,9 @@ class _Caller:
                 span.set_attribute("status", "no_texts")
                 return _error_result("The drive connector's texts are not available; try again later.")
             answered: Union[DriveOutcome, ConnectorCall]
-            if not tool_permitted(token.kind, token.tools, tool):
-                # Outside the token's tools claim: the neutral refusal, before any read (§5.3).
+            if not grant_ok or not tool_permitted(token.kind, token.tools, tool):
+                # A grant no longer allowed, or outside the token's tools claim: the neutral refusal, before any read
+                # (§5.3).
                 answered = DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text="", success=False)
             else:
                 context = {"user_id": user_id, "account_id": account_id, "run_origin": RUN_ORIGIN}

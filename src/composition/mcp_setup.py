@@ -32,11 +32,12 @@ from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientReposit
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..agents.memory_search_agent import FactsMemoryAgent
-from ..domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, normalize_queries, queries_dropped
+from ..domain.mcp import ACCOUNT_LOCKED_TOOL_ERROR, GRANT_REFUSED_TOOL_ERROR, normalize_queries, queries_dropped
 from ..domain.memory_search_format import format_search_result
 from ..domain.memory_search_texts import NO_RECORDS_TEXT, QUERIES_FIELD_TEXT
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
+from ..domain.voice_mcp_token import McpTokenKind
 from ..ports.cipher_port import CipherPort
 from ..ports.user_repository import UserRepository
 from ..ports.whitelist_repository import WhitelistRepository
@@ -291,12 +292,7 @@ def build_mcp_components(
     )
 
     # --- Tool: get_user_context ---
-    @fastmcp.tool(
-        name=FACTS_TOOL,
-        title="Get user context from alekbot memory",
-        description=_TOOL_DESCRIPTION,
-    )
-    async def get_user_context(
+    async def _answer(
         # Accept liberally, advertise strictly. The annotations below emit
         # plain `string` / `array<string>` with no `anyOf` union (clients
         # collapse unions to an untyped value and then guess the shape),
@@ -311,6 +307,7 @@ def build_mcp_components(
         ],
         ctx: Context,
     ) -> str:
+        """The tool's body; `get_user_context` below runs it and answers a failure by its type only."""
         # Extract authenticated user from the SDK access token subclass
         request = ctx.request_context.request
         if request is None or getattr(request, "user", None) is None:
@@ -333,6 +330,15 @@ def build_mcp_components(
             logger.warning(f"🔒 MCP get_user_context: user={user_id[:8]} is inactive (account lock), refused")
             raise ToolError(ACCOUNT_LOCKED_TOOL_ERROR)
 
+        # The grant is re-checked on every call (as the tasks and inbox apps): a grant revoked in the Cabinet, or a
+        # user taken off the whitelist, is refused on the next call. A voice token is no OAuth
+        # grant: it has its own lifetime and revocation.
+        if access_token.kind is McpTokenKind.OAUTH and not await mcp_service.grant_allowed(
+            user_id, access_token.grant_id
+        ):
+            logger.warning(f"🔒 MCP get_user_context: user={user_id[:8]} grant not allowed, refused")
+            raise ToolError(GRANT_REFUSED_TOOL_ERROR)
+
         # The only legitimate input rejection: nothing to search on at all.
         # This is also the only branch allowed to instruct the model, because
         # it is the only one the server cannot resolve on its own.
@@ -341,7 +347,11 @@ def build_mcp_components(
 
         dropped = _DROPPED.get()
         cut = f" dropped={dropped}" if dropped else ""
-        logger.info(f"🔎 MCP get_user_context: user={user_id[:8]} queries={queries!r}{cut}")
+        # counts and lengths only: the phrases are the user's words
+        logger.info(
+            f"🔎 MCP get_user_context: user={user_id[:8]} queries={len(queries)} "
+            f"lengths={[len(q) for q in queries]}{cut}"
+        )
 
         with RequestContext(user_id=user_id, account_id=account_id):
             agent = await memory_search(user_id)
@@ -359,6 +369,28 @@ def build_mcp_components(
         result = format_search_result(queries, found)
         logger.info(f"✅ MCP get_user_context: user={user_id[:8]} facts={len(found.facts)} len={len(result)}")
         return result
+
+    @fastmcp.tool(
+        name=FACTS_TOOL,
+        title="Get user context from alekbot memory",
+        description=_TOOL_DESCRIPTION,
+    )
+    async def get_user_context(
+        queries: Annotated[
+            List[str],
+            BeforeValidator(_normalize_and_count),
+            Field(description=QUERIES_FIELD_TEXT),
+        ],
+        ctx: Context,
+    ) -> str:
+        try:
+            return await _answer(queries, ctx)
+        except ToolError:
+            raise
+        except Exception as exc:
+            # the type only: an exception's message can carry the user's words
+            logger.error(f"❌ MCP get_user_context failed: {type(exc).__name__}")
+            raise ToolError(f"{FACTS_TOOL} failed: {type(exc).__name__}; try again later.") from None
 
     logger.info(
         f"🧠 MCP components built: resource_uri={auth_config.mcp_resource_uri}, "

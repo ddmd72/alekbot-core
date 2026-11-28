@@ -277,7 +277,12 @@ class _TaskCaller:
                                     client_id=token.client_id if oauth else None)
         who = f"user={principal.user_id[:8]} worker={fingerprint(principal.worker_id)}"
         # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a lock after the key was verified still refuses here.
-        if await self._inactive_users.is_inactive(principal.user_id):
+        try:
+            locked = await self._inactive_users.is_inactive(principal.user_id)
+        except Exception as exc:
+            logger.error(f"❌ [TaskMCP] tool={tool} {who} failed: {type(exc).__name__}")
+            raise ToolError(f"{tool} failed: {type(exc).__name__}; try again later.") from None
+        if locked:
             logger.warning(f"🔒 [TaskMCP] tool={tool} {who} status=account_locked")
             return _answer(TaskToolAnswer(text=ACCOUNT_LOCKED_TOOL_ERROR, is_error=True, status="account_locked"))
         with start_span(f"mcp.tasks.{tool}", {"tool": tool}) as span:

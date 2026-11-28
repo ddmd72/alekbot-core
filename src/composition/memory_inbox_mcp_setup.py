@@ -148,7 +148,12 @@ class _InboxCaller:
         who = f"user={user_id[:8]} client={token.client_id[:8]}"
         # The account lock (CABINET_DEVICE_SESSIONS_RFC §7.8): a token issued before it verifies until it expires; the
         # stored user, read fresh, refuses the call before anything is stored.
-        if await self._inactive_users.is_inactive(user_id):
+        try:
+            locked = await self._inactive_users.is_inactive(user_id)
+        except Exception as exc:
+            logger.error(f"❌ [MemoryInbox] submit {who} failed: {type(exc).__name__}")
+            return _result(InboxToolAnswer(text=_FAILED_TEXT, is_error=True, status="failed"))
+        if locked:
             logger.warning(f"🔒 [MemoryInbox] submit {who} status=account_locked")
             return _result(InboxToolAnswer(text=ACCOUNT_LOCKED_TOOL_ERROR, is_error=True, status="account_locked"))
         sent = len(items.drafts) + items.over_call
@@ -162,7 +167,14 @@ class _InboxCaller:
             else:
                 # The grant is re-checked on every call (as the tasks app, EXTERNAL_TASK_QUEUE_RFC §5.4 step 3): a grant
                 # revoked in the Cabinet, or a user taken off the whitelist, is refused now, not when the token expires.
-                if not await self._authorization.grant_allowed(user_id, token.grant_id):
+                try:
+                    granted = await self._authorization.grant_allowed(user_id, token.grant_id)
+                except Exception as exc:
+                    logger.error(f"❌ [MemoryInbox] submit {who} failed: {type(exc).__name__}")
+                    granted = None
+                if granted is None:
+                    answer = InboxToolAnswer(text=_FAILED_TEXT, is_error=True, status="failed")
+                elif not granted:
                     answer = answers.refused(texts)
                 elif not items.drafts:
                     answer = answers.nothing_usable(texts)
@@ -192,6 +204,10 @@ class _InboxCaller:
         client = await self._authorization.get_client(client_id)
         return SubmittingClient(client_id=client_id,
                                 client_name=normalize_client_name(client.client_name if client else None))
+
+
+# The fixed text of a call that failed before its answer: no exception message, which can carry a user's words.
+_FAILED_TEXT = "submit_user_information failed; try again later."
 
 
 def _result(answer: InboxToolAnswer) -> CallToolResult:
