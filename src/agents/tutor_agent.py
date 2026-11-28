@@ -174,7 +174,8 @@ class TutorAgent(BaseAgent):
         try:
             tools = None
             if self.coordinator:
-                available = self.coordinator.get_available_intents_for(self._descriptor)
+                available = await self.coordinator.available_intents_for(
+                    self._descriptor, self.user_id or message.context.get("user_id"))
                 if available:
                     tools = [self._build_delegate_tool_declaration(available)]
 

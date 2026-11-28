@@ -152,7 +152,7 @@ class LelikAgent(BaseAgent):
             include_datetime=True,
             session_key=key,
         )
-        available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
+        available = await self.coordinator.available_intents_for(self._descriptor, user_id) if self.coordinator else []
         native_search = self._native_search_active()
         if native_search:
             # The provider searches the web itself inside the session; the delegated light search would be a second path.

@@ -254,7 +254,7 @@ class QuickResponseAgent(BaseAgent):
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=conversation_history,
-                tools=self._get_quick_tool_declarations(),
+                tools=await self._get_quick_tool_declarations(prompt_user_id),
                 response_schema=self._RESPONSE_SCHEMA,
                 turn_key=turn_key,
             )
@@ -405,10 +405,13 @@ class QuickResponseAgent(BaseAgent):
             return []
     
 
-    def _get_quick_tool_declarations(self) -> List[Dict[str, Any]]:
-        """Build tool declarations from AgentRegistry (all non-internal intents)."""
-        available_intents = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
-        return [self._build_delegate_tool_declaration(available_intents)]
+    async def _get_quick_tool_declarations(self, user_id: Optional[str]) -> List[Dict[str, Any]]:
+        """Build tool declarations from AgentRegistry (all non-internal intents the user's profile has on). With no
+        intent left to offer, no delegate tool."""
+        if not self.coordinator:
+            return [self._build_delegate_tool_declaration([])]
+        available_intents = await self.coordinator.available_intents_for(self._descriptor, user_id)
+        return [self._build_delegate_tool_declaration(available_intents)] if available_intents else []
 
     def _sanitize_response(self, text: str) -> str:
         """Remove tool_code blocks, API references, and empty lines from LLM output."""

@@ -526,7 +526,10 @@ class SmartResponseAgent(BaseAgent):
             offer_external_tasks = bool(
                 prompt_user_id and task_entry(message.context) is not None
                 and not self._reached_by_delegation(message) and self.user_config.external_tasks_enabled)
-            tools = self._get_tool_declarations(offer_external_tasks)
+            tools = self._get_tool_declarations(
+                offer_external_tasks,
+                await self._offered_intents(offer_external_tasks, prompt_user_id),
+            )
             local_tools = None
             if skills:
                 tools.append(build_use_skill_tool_declaration())
@@ -799,15 +802,32 @@ class SmartResponseAgent(BaseAgent):
             return None
         return await self.history_summary_service.summarize_model_response(response_text)
 
-    def _get_tool_declarations(self, offer_external_tasks: bool = False) -> List[Dict[str, Any]]:
-        """Build tool declarations for LLM API. Available intents injected from AgentRegistry; the external task
-        specialist's internal intent is added only when `offer_external_tasks` (Smart's gate held)."""
+    async def _offered_intents(self, offer_external_tasks: bool, user_id: Optional[str]) -> List[Dict[str, Any]]:
+        """The intents the delegate tool offers this user: Smart's own offer without the intents turned off on the
+        user's profile, plus the external task specialist's internal intent when `offer_external_tasks` (Smart's gate
+        held) and that intent is available to the user too. A courtesy only: `handle_delegation` is the enforcement."""
+        if not self.coordinator:
+            return []
+        intents = await self.coordinator.available_intents_for(self._descriptor, user_id)
+        if offer_external_tasks and await self.coordinator.is_intent_available(Intent.WORK_WITH_EXTERNAL_TASKS, user_id):
+            intents = [*intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
+        return intents
+
+    def _get_tool_declarations(
+        self,
+        offer_external_tasks: bool = False,
+        available_intents: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build tool declarations for LLM API. `available_intents` is `_offered_intents` of the turn; omitted, every
+        intent of the registry is offered (no user: the eval script). With no intent left to offer, no delegate tool."""
         if not self.coordinator:
             return [self._build_delegate_tool_declaration([])]
-        available_intents = self.coordinator.get_available_intents_for(self._descriptor)
-        if offer_external_tasks:
-            available_intents = [*available_intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
-        return [self._build_delegate_tool_declaration(available_intents)]
+        if available_intents is None:
+            available_intents = self.coordinator.get_available_intents_for(self._descriptor)
+            if offer_external_tasks:
+                available_intents = [
+                    *available_intents, *self.coordinator.get_available_intents_for(_EXTERNAL_TASKS_OFFER)]
+        return [self._build_delegate_tool_declaration(available_intents)] if available_intents else []
 
     def _summarize_history(self, history: List[Message]) -> str:
         """Summarize message history for debugging."""
