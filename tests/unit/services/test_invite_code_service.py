@@ -19,7 +19,6 @@ def mock_invite_repo():
 @pytest.fixture
 def mock_user_repo():
     repo = AsyncMock()
-    repo.update_user = AsyncMock(side_effect=lambda x: x)
     repo.update_user_fields = AsyncMock(side_effect=lambda x, fields: x)
     return repo
 
@@ -106,7 +105,7 @@ async def test_consume_team_invite_success(service, mock_invite_repo, mock_user_
     updated_user, fields = mock_user_repo.update_user_fields.call_args[0]
     assert updated_user.account_id == "acc-target"
     assert tuple(fields) == ("account_id",)
-    mock_user_repo.update_user.assert_not_called()
+    mock_user_repo.create_user.assert_not_called()
     
     # Verify Account IAM Updated: the one member entry by its field path, never a whole-map rewrite
     mock_account_repo.set_member_role.assert_called_once_with(

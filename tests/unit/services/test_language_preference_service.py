@@ -62,7 +62,6 @@ def _make_account(default_language=None) -> BillingAccount:
 def user_repo() -> AsyncMock:
     repo = AsyncMock(spec=UserRepository)
     repo.get_user.return_value = _make_user()
-    repo.update_user.side_effect = lambda u: u
     return repo
 
 
@@ -241,13 +240,13 @@ class TestSetPreferenceUserPersistence:
         with pytest.raises(ValueError, match="User not found"):
             await service.set_preference(_USER_ID, preferred_language=None, agent_mirror=True)
 
-    async def test_update_user_called_once(self, service, user_repo):
+    async def test_one_field_level_write(self, service, user_repo):
         """One write, field-level (owner decision O3): only the two language fields, never the whole profile."""
         await service.set_preference(_USER_ID, preferred_language=LanguageCode.EN, agent_mirror=False)
 
         user_repo.update_user_fields.assert_awaited_once()
         assert set(user_repo.update_user_fields.await_args[0][1]) == {"config.preferred_language", "config.agent_mirror"}
-        user_repo.update_user.assert_not_awaited()
+        user_repo.create_user.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

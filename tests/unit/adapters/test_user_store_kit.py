@@ -75,12 +75,12 @@ async def test_empty_tier_complexity_overrides_are_dropped_on_read(repo):
     assert got.config.complexity_settings_overrides[TaskComplexity.DEEP_REASONING].tier == PerformanceTier.PERFORMANCE
 
 
-async def test_unknown_keys_are_ignored_on_read_and_dropped_by_update(repo):
+async def test_unknown_keys_are_ignored_on_read_and_dropped_by_create(repo):
     await repo.create_user(alex())
     docs(repo)["u1"]["nickname"] = "Bo"
     got = await repo.get_user("u1")
     assert got == alex()
-    await repo.update_user(got)
+    await repo.create_user(got)
     assert "nickname" not in docs(repo)["u1"]
 
 

@@ -56,7 +56,6 @@ def user_repo():
     repo.get_user_by_external_id = AsyncMock(return_value=None)
     repo.get_user_by_email = AsyncMock(return_value=None)
     repo.get_user = AsyncMock(return_value=None)
-    repo.update_user = AsyncMock(side_effect=lambda u: u)
     repo.update_user_fields = AsyncMock(side_effect=lambda u, fields: u)
     repo.create_user = AsyncMock(side_effect=lambda u: u)
     return repo
@@ -96,7 +95,6 @@ def _assert_no_user_access(user_repo, account_repo):
     user_repo.get_user_by_external_id.assert_not_called()
     user_repo.get_user_by_email.assert_not_called()
     user_repo.get_user.assert_not_called()
-    user_repo.update_user.assert_not_called()
     user_repo.update_user_fields.assert_not_called()
     user_repo.create_user.assert_not_called()
     account_repo.create_account.assert_not_called()

@@ -22,7 +22,7 @@ from tests.support.fact_store import INDEXES_FILE, FactStore, embed
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 SINCE = NOW - timedelta(days=30)
 LIVE_WRITES = frozenset({
-    "add_fact", "add_fact_if_unique", "write_superseding", "update_fact_fields", "stale_due_fact",
+    "add_fact", "write_superseding", "update_fact_fields", "stale_due_fact",
     "archive_and_add", "save_biographical_context_cache",
 })
 
