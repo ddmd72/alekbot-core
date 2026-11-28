@@ -48,7 +48,7 @@ Nothing is stored. State is in memory, per process:
 
 `AgentDescriptor` (`src/infrastructure/agent_registry.py`) has two halves. Part A is what an agent offers (its
 intents and their execution modes, descriptions, typed `context_schemas`, `internal`, `eager`, the ASYNC dispatch
-deadline, the file prefetch opt-out). Part B is what an orchestrator may call (`allowed_intents`, `intent_remap`,
+deadline, the file prefetch opt-out, and the per-intent availability fields `available_by_default` and `access_gated`). Part B is what an orchestrator may call (`allowed_intents`, `intent_remap`,
 `intent_fanout`: secondary intents dispatched in parallel with the primary). The two orchestrator
 descriptors (`QUICK_RESPONSE`, `SMART_RESPONSE`) are class attributes of their agents and are not in `ALL_DESCRIPTORS`.
 
@@ -66,13 +66,21 @@ The wire contract is in `src/domain/agent.py`: `AgentMessage` (its `AgentIntent`
    (`decisions/allowlist_names_internal_intent.md`). Smart adds one internal intent under its own gate, the task
    specialist's `work_with_external_tasks`, by asking for an allowlist view of its descriptor that names it
    (`SmartResponseAgent._get_tool_declarations`).
-3. `BaseAgent._build_delegate_tool_declaration` renders them into the one tool, merging every `context_schemas` field.
+3. Orchestrators ask `AgentCoordinator.available_intents_for(descriptor, user_id)` instead, which drops the intents turned
+   off on the user's profile (one `ConfigurationService.effective_for` read; the filter is a courtesy, the gate in
+   flow 2 enforces).
+4. `BaseAgent._build_delegate_tool_declaration` renders them into the one tool, merging every `context_schemas` field.
 
 ### 2. A SYNC delegation
 
 1. The orchestrator calls `AgentCoordinator.handle_delegation(intent, query, context, calling_agent_id)`.
 2. The registry resolves the intent to a descriptor. An unknown intent returns a `FAILED` response ("No agent
    registered for intent") with the available intent names as suggestions.
+   Then the availability gate (`AgentCoordinator.is_intent_available`, a fresh `effective_for` read) refuses an intent
+   turned off for the user with `AgentResponse.intent_unavailable` (`error_code=AgentErrorCode.INTENT_UNAVAILABLE`).
+   `access_gated=False` descriptors (the DOCX generator, the Alek gateway) are never gated; the SYSTEM default of the
+   others is `available_by_default` (`system_intent_defaults`). Without a wired `effective_config` every intent is
+   available. The gate runs before the SYNC/ASYNC split, so an ASYNC intent is refused at enqueue.
 3. The cycle guard (`_refuse_if_looping`) refuses a target already in the call chain (`CALL_CHAIN_KEY` in the context)
    or a chain deeper than `MAX_DELEGATION_DEPTH`, logs ERROR and posts to the alert sink
    (`decisions/delegation_cycle_guard.md`).
@@ -198,6 +206,8 @@ The service is built in `build_application_graph`; without it the turn returns t
 ## Links
 
 - [`ACP_V2_SIMPLIFIED_RFC.md`](../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md): the registry design (history).
+- [`CONFIG_OVERRIDE_HIERARCHY_RFC.md`](../../10_rfcs/CONFIG_OVERRIDE_HIERARCHY_RFC.md) §3: per-intent availability
+  (levels, the gate, rendering of a refusal, the declaration filter).
 - Decisions: `decisions/allowlist_names_internal_intent.md`, `delegation_cycle_guard.md`, `delegate_mode_parameter_removed.md`,
   `delegate_tool_contract_and_strict.md`, `typed_retry_policy.md`, `transcript_integrity_one_provider.md`,
   `long_running_turns.md` (all under `docs/04_solution_strategy/decisions/`).
