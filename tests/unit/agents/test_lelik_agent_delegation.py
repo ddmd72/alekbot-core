@@ -67,7 +67,7 @@ async def test_session_config_carries_the_shared_delegate_tool_over_lelik_allowl
     # (VOICE_COMPANION_RFC §4.15.2, revised 2026-10-29); this test is about the delegate tool.
     coordinator.get_execution_mode.return_value = ExecutionMode.ASYNC
     config = await agent.session_config(user_id="u1", account_id="a1")
-    coordinator.get_available_intents_for.assert_called_once_with(LELIK)
+    coordinator.available_intents_for.assert_awaited_once_with(LELIK, "u1")
     assert [t["name"] for t in config["tools"]] == ["delegate_to_specialist", "send_to_chat"]
     tool = config["tools"][0]
     assert "- search_memory: memory" in tool["description"]
