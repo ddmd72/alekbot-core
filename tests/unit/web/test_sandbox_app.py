@@ -708,3 +708,18 @@ def _hang_guarded(fn):
 for _name, _fn in list(globals().items()):
     if _name.startswith("test_") and inspect.iscoroutinefunction(_fn):
         globals()[_name] = _hang_guarded(_fn)
+
+
+async def test_the_gate_runs_off_the_event_loop(tmp_path, monkeypatch):
+    import threading
+    seen = []
+    original = FakeGate.authorize
+
+    def recording(self, authorization, op):
+        seen.append(threading.get_ident())
+        return original(self, authorization, op)
+
+    monkeypatch.setattr(FakeGate, "authorize", recording)
+    app, *_ = make_app(tmp_path)
+    assert (await post(app)).status_code == 200
+    assert seen and seen[0] != threading.get_ident()

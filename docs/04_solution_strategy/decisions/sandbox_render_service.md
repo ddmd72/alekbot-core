@@ -74,6 +74,7 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
   `src/composition/sandbox_setup.py`); a directory it cannot close refuses start. Off Cloud Run it touches neither (a
   developer's host `/tmp` is never closed); the image's own `chmod 0700 /tmp` still covers a local docker run. Both families: no engine child needs either (TMPDIR and HOME are the request's workdir, for node too); the
   server keeps writing there as root (its stderr temp files are unlinked and 0600).
+  `/var/tmp` is closed the same way; an image without it is not refused (it is skipped, not created).
 - **Post-response drain (S0-b):** the service deploys with `--no-cpu-throttling` so the recycle sequence (which runs after
   the response) is not stalled by request-based CPU throttling. Measure the drain time with these exact flags and size the
   client's recycling retry window to it; the client makes one retry (`MAX_RECYCLING_ATTEMPTS` = 2 attempts,

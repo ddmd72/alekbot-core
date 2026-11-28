@@ -27,6 +27,13 @@ if TYPE_CHECKING:
 _RENDER_TIMEOUT_MS = 8_000
 _DEVICE_SCALE_FACTOR = 2  # Retina-quality output
 _ALLOWED_URL_SCHEMES = ("data:", "about:", "blob:")
+# Chromium network flags: no host name resolves, the proxy is a dead local port, background fetches are off.
+_NETWORK_CLOSED_ARGS = (
+    "--host-resolver-rules=MAP * ~NOTFOUND",
+    "--proxy-server=127.0.0.1:9",
+    "--proxy-bypass-list=<-loopback>",
+    "--disable-background-networking",
+)
 
 
 def is_request_allowed(url: str) -> bool:
@@ -135,10 +142,12 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
         logger.info("PlaywrightHtmlRenderer: launching Chromium (cloud_run=%s)", self._is_cloud_run)
         self._playwright = await async_playwright().start()
 
-        launch_args = []
+        # The page is rendered from markup only: no name resolves and no proxy is reachable, so a page cannot
+        # load anything from a network (the same flags as the sandbox render engine, pdf_generator/render_html.js).
+        launch_args = list(_NETWORK_CLOSED_ARGS)
         if self._is_cloud_run:
             # Required in Cloud Run non-root containers.
-            launch_args = ["--no-sandbox", "--disable-setuid-sandbox"]
+            launch_args += ["--no-sandbox", "--disable-setuid-sandbox"]
 
         self._browser = await self._playwright.chromium.launch(
             headless=True,

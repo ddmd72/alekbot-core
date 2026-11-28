@@ -26,6 +26,7 @@ Enforcement: a non-empty accepted set is verified; an empty set fails closed on 
 Run and opens only locally (`build_oidc_gate`; see `main.py`). This module only performs the cryptographic check.
 """
 
+import hashlib
 from typing import Any, Awaitable, Callable, Collection, Optional
 
 from google.auth.transport import requests as google_requests
@@ -57,12 +58,18 @@ def parse_sa_emails(*values: Optional[str]) -> frozenset[str]:
     return frozenset(emails)
 
 
+def transition_only_emails(transition_value: Optional[str], *own_values: Optional[str]) -> frozenset[str]:
+    """The transition-list identities that are not among a gate's own identities (comma-separated lists)."""
+    return parse_sa_emails(transition_value) - parse_sa_emails(*own_values)
+
+
 def build_oidc_gate(
     accepted_emails: Collection[str],
     audiences: Optional[Collection[str]] = None,
     *,
     on_cloud_run: bool = False,
     label: str = "Worker OIDC",
+    transition_emails: Collection[str] = (),
 ) -> OidcGate:
     """Async gate over ``verify_worker_oidc`` with the shared fail-closed rule.
 
@@ -70,9 +77,10 @@ def build_oidc_gate(
     here). Empty set locally: open, so manual curl triggers keep working (CLAUDE.md "Manual Triggers").
     """
     accepted = frozenset(accepted_emails)
+    transition = frozenset(transition_emails)
     if accepted:
         async def verify(authorization: Optional[str]) -> bool:
-            return verify_worker_oidc(authorization, accepted, audiences)
+            return verify_worker_oidc(authorization, accepted, audiences, transition_emails=transition)
         return verify
 
     if on_cloud_run:
@@ -92,6 +100,8 @@ def verify_worker_oidc(
     authorization_header: Optional[str],
     accepted_emails: Collection[str],
     audiences: Optional[Collection[str]] = None,
+    *,
+    transition_emails: Collection[str] = (),
 ) -> bool:
     """Return True iff the Authorization header carries a valid Google OIDC token
     issued for one of ``accepted_emails``.
@@ -103,6 +113,9 @@ def verify_worker_oidc(
     a single, known token source passes ``audiences``: the ``aud`` claim must then
     be one of them. The drive indexer does (USER_DRIVE_INDEXING_RFC §4, RFC Δ21):
     its only caller is Cloud Tasks, whose default audience is the task's target URL.
+
+    ``transition_emails`` names the identities that are accepted only through the migration list; a call accepted
+    on one of them logs one INFO line with a short fingerprint of the email, so the list can be emptied when it is unused.
 
     Never raises on a bad token: any failure (missing/malformed header, bad signature, expired
     token, email mismatch) is logged and returned as ``False`` so the route can
@@ -151,6 +164,9 @@ def verify_worker_oidc(
         logger.warning("Worker OIDC: audience claim is not one this route accepts")
         return False
 
+    if email in transition_emails:
+        fingerprint = hashlib.sha256(str(email).encode("utf-8")).hexdigest()[:8]
+        logger.info(f"Worker OIDC: call accepted through the transition list (identity {fingerprint})")
     return True
 
 

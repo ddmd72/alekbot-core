@@ -12,7 +12,9 @@ from tests.unit.sandbox_closure import ROOT, closure
 _DOCKERFILE = ROOT / "Dockerfile.sandbox"
 # S2 (RFC §7): the HTML render engine's npm manifest, lockfile and Node script join the render target.
 _HTML_ENGINE_COPIES = {"pdf_generator/package.json", "pdf_generator/package-lock.json", "pdf_generator/render_html.js"}
-_NON_CODE_COPIES = {"requirements-sandbox.txt", "docx_generator/package.json", *_HTML_ENGINE_COPIES}
+# reviewer edit, docx_generator installs with `npm ci --omit=dev`: its lockfile is copied next to its manifest.
+_DOCX_ENGINE_COPIES = {"docx_generator/package.json", "docx_generator/package-lock.json"}
+_NON_CODE_COPIES = {"requirements-sandbox.txt", *_DOCX_ENGINE_COPIES, *_HTML_ENGINE_COPIES}
 
 
 def _text() -> str:
