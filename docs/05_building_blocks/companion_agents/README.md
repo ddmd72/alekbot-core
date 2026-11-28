@@ -80,7 +80,9 @@ code that queries it ships.
 
 1. `$agent <type>` is handled in `src/handlers/conversation_handler.py::ConversationHandler._handle_agent_command`. Any
    registered agent with capabilities is bindable (the `internal` flag hides an agent from orchestrators, not from
-   binding). `$agent off` unbinds; `$agent` shows the binding.
+   binding). `$agent off` unbinds; `$agent` shows the binding. Binding to an agent whose intent is turned off on the
+   user's profile is refused with `UIMessage.AGENT_BIND_REFUSED` and nothing is saved
+   (`CONFIG_OVERRIDE_HIERARCHY_RFC.md` §3.4).
 2. The binding is built with `companion_config=descriptor.companion_default_config`
    (`src/infrastructure/agent_registry.py::AgentDescriptor`). Only the `TUTOR` descriptor in
    `src/infrastructure/agent_manifest.py` sets it, so **binding to `tutor` is what switches companion memory on**; there
@@ -99,6 +101,8 @@ code that queries it ships.
    the binding.
 2. History is loaded from the session store under `write_session_id`, then
    `coordinator.handle_delegation(intent=mode.route_intent, calling_agent_id="bound_channel")` runs the agent directly.
+   If the intent has been turned off since the binding, the availability gate refuses it and the handler sends
+   `UIMessage.AGENT_BOUND_TURN_REFUSED` (the binding stays; `$agent off` is the way out).
 3. `src/agents/tutor_agent.py::TutorAgent._converse` first asks `_build_companion_context_block` for the companion
    context, then builds its prompt (biography and directives off) with that block, applies `_apply_history_tier` with the per-message
    `history_recent_full_turns`, and runs its tool loop (`DelegationEngine`) with `search_web` as its only intent. Its

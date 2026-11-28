@@ -138,8 +138,10 @@ is a channel, not a worker (decision `lelik_send_to_chat.md`).
    (`src/domain/voice_errand.py::delegation_arguments`: `send_to_chat(request)` becomes the errand intent of the same
    name), attaches the call's recent exchanges as `call_context`, and runs it as a tracked task.
 2. The task posts to `/voice/delegate` and waits up to the `delegation_timeout_s` set in `relay_main.py::main`. The route
-   runs `LelikAgent.delegate_outcome`, which refuses an intent outside `permitted_intents`, then dispatches like any text
-   orchestrator's delegation. It runs shielded from the HTTP handler, because the relay disconnects exactly when it stops
+   runs `LelikAgent.delegate_outcome`, which refuses an intent outside `permitted_intents`, then one turned off on the
+   caller's profile (a voice-safe `Tool error:` text that names no intent, as it is read aloud), then dispatches like
+   any text orchestrator's delegation. The tools declared at call setup are the intents left after the same profile
+   filter (`CONFIG_OVERRIDE_HIERARCHY_RFC.md` §3). It runs shielded from the HTTP handler, because the relay disconnects exactly when it stops
    waiting.
 3. `ask_alek` goes to `AlekGatewayAgent`: zero LLM, it routes the commission to the user's Router so Smart answers with
    memory. Its timeout `ASK_ALEK_TIMEOUT_MS` deliberately outlasts the relay's wait.

@@ -43,7 +43,8 @@ HTTP endpoints: [API_REFERENCE.md](./API_REFERENCE.md).
    note in the slot, so the agent can tell "no file" from "file lost". The handler then runs inside a `RequestContext`
    (user and account) and calls `src/composition/user_agent_factory.py::UserAgentFactory.ensure_agents_for_user`.
    A channel bound to an agent (`ConversationHandler._resolve_session_mode`) skips the Router: the message goes
-   straight to the bound intent, and most bound channels write no session.
+   straight to the bound intent, and most bound channels write no session. If that intent has since been turned off for
+   the user, the turn is refused and the user is told.
 7. **Router.** `src/agents/core/router_agent.py::RouterAgent.execute` runs LLM triage (rule-based classification if the
    LLM call fails) beside one memory prefetch: query slots, then a scored fact search outside the biographical
    baseline, skipped when triage says `search_intent=none`
@@ -54,7 +55,8 @@ HTTP endpoints: [API_REFERENCE.md](./API_REFERENCE.md).
    `src/infrastructure/delegation_engine.py::DelegationEngine`. `delegate_to_specialist` goes through
    `DelegationEngine.dispatch` to `src/infrastructure/agent_coordinator.py::AgentCoordinator.handle_delegation`, which
    resolves intent to agent from the manifest (`src/infrastructure/agent_manifest.py`; the caller cannot choose the
-   mode, `decisions/delegate_mode_parameter_removed.md`) and refuses a cycle or an over-deep chain. A **SYNC** intent
+   mode, `decisions/delegate_mode_parameter_removed.md`), refuses an intent turned off on the user's profile
+   (`AgentErrorCode.INTENT_UNAVAILABLE`, `CONFIG_OVERRIDE_HIERARCHY_RFC.md` §3) and refuses a cycle or an over-deep chain. A **SYNC** intent
    runs inline and returns its result. An **ASYNC** intent is enqueued as an `agent_execution` task and returns an
    acknowledgement; `src/handlers/agent_worker_handler.py::AgentWorkerHandler.handle_task` runs it later and delivers
    through `UserNotificationService` to the channel that asked. Local tools are built by Smart and served by the engine itself. Roster and traps: `src/agents/CLAUDE.md`.
