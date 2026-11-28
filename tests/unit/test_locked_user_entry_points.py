@@ -250,7 +250,7 @@ class World:
         user.email, user.external_user_id = ALEX_EMAIL, "firebase|alex"
         user.auth_metadata = {"email": ALEX_EMAIL}
         user.platform_identities = {"slack": "U-alex", "telegram": "7001"}
-        await app.user_repo.update_user(user)
+        await app.user_repo.create_user(user)
         await app.notification_service.save_primary(USER, "slack", "C-alex")
         account = await app.account_repo.get_account(ACCOUNT)
         await app.device_sessions.start(user, account, label="iPhone", platform_hint="iPhone",

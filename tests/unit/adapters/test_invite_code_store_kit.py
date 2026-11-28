@@ -66,7 +66,7 @@ class InviteStore:
         await self.accounts.create_account(BillingAccount(account_id=OWNER_ACC, iam_policy={OWNER: "OWNER"}))
         for uid in members:
             await self.accounts.create_account(BillingAccount(account_id=f"acc-{uid}", iam_policy={uid: "OWNER"}))
-            await self.users.update_user(UserProfile(user_id=uid, email=f"{uid}@example.com", account_id=f"acc-{uid}"))
+            await self.users.create_user(UserProfile(user_id=uid, email=f"{uid}@example.com", account_id=f"acc-{uid}"))
         self.db.collection(WHITELIST).docs["config"] = {"allowed_emails": [f"{u}@example.com" for u in members],
                                                        "allowed_domains": []}
 

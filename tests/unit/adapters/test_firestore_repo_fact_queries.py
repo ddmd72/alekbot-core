@@ -25,30 +25,6 @@ def repo(col):
     return FirestoreFactRepository(db, cfg)
 
 
-def _filters(mock_where):
-    return [(c.kwargs["filter"].field_path, c.kwargs["filter"].op_string, c.kwargs["filter"].value)
-            for c in mock_where.call_args_list]
-
-
-@pytest.mark.asyncio
-async def test_add_fact_if_unique_prefilters_on_state_not_is_current(repo, col):
-    from src.domain.entities import FactEntity
-
-    chain = col.where.return_value
-    chain.where.return_value = chain
-    chain.find_nearest.return_value.get = AsyncMock(return_value=[])
-    repo.add_fact = AsyncMock(return_value="new-id")
-    fact = MagicMock(spec=FactEntity)
-    fact.vector = [0.1, 0.2]
-    fact.account_id = "acc"
-
-    assert await repo.add_fact_if_unique(fact) == (True, "new-id")
-
-    seen = _filters(col.where) + _filters(chain.where)
-    assert ("state", "==", "current") in seen
-    assert all(f[0] != "is_current" for f in seen)
-
-
 def _doc_ref(exists=True, account="acc"):
     ref = MagicMock()
     snap = MagicMock()

@@ -127,7 +127,7 @@ async def test_handle_oauth_callback_existing_user(auth_service, mock_auth_regis
     assert updated_arg.email == "test@example.com"
     assert tuple(fields) == ("auth_metadata",)
     assert (updated_arg.auth_metadata["email"], updated_arg.auth_metadata["name"]) == ("test@example.com", "Test User")
-    mock_user_repo.update_user.assert_not_called()
+    mock_user_repo.create_user.assert_not_called()
 
 
 @pytest.mark.asyncio

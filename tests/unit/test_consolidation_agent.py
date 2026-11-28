@@ -32,7 +32,6 @@ class TestConsolidationAgent:
         repo.get_observations = AsyncMock()
         repo.get_active_facts = AsyncMock(return_value=[])
         repo.add_fact = AsyncMock()
-        repo.add_fact_if_unique = AsyncMock(return_value=(True, "new_id"))
         repo.archive_observations = AsyncMock()
         # Returns List[Dict] — empty list is fine for tests
         repo.get_biographical_context_cached = AsyncMock(return_value=[])

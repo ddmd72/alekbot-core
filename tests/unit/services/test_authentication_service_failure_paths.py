@@ -54,9 +54,6 @@ class Google(AuthPort):
 class UsersDuringAWriteOutage(FirestoreUserRepository):
     """Reads work; the write the sign-in needs fails the way a Firestore outage does."""
 
-    async def update_user(self, user: UserProfile) -> UserProfile:
-        raise ServiceUnavailable("firestore unavailable")
-
     async def update_user_fields(self, user: UserProfile, fields: Sequence[str]) -> UserProfile:
         raise ServiceUnavailable("firestore unavailable")
 

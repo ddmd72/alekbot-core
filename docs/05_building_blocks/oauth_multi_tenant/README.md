@@ -194,7 +194,7 @@ resolves per-intent availability (`UserBotConfig.intent_access`) over the same l
   converts before writing. Writing a member is a field-path update, never a whole-map write, so concurrent adds are kept.
 - **Profile writes after a read are field-level.** OAuth link and team join write only the changed fields
   (`update_user_fields`), and `unlink_platform_identity` a single dotted path, so a concurrent lock or language change
-  is not undone by a whole-document `update_user`/`create_user` rewrite (`ports/user_repository.py::UserRepository`).
+  is not undone by a whole-document `create_user` rewrite (`ports/user_repository.py::UserRepository`).
 - **Joining a team overwrites the user's `account_id`.** Data the user owned in their previous account is not migrated
   (`consume_team_invite` comment).
 - **A deliberate disconnect must not read as a loss.** Gmail records it (`mark_disconnected`); To Do's disconnect resets

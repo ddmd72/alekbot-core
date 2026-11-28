@@ -8,10 +8,10 @@ class UserRepository(ABC):
     Holds for every method:
     - Tenancy: user_id is global; lookups by platform identity, email or external id search all users.
     - Legacy: complexity overrides with an empty tier are dropped on read; unknown keys are ignored on read and dropped
-      by the next create/update. A record that fails UserProfile validation otherwise: no writer produces one;
+      by the next create_user. A record that fails UserProfile validation otherwise: no writer produces one;
       behaviour pending the data audit.
-    - Atomicity: create_user and update_user replace the whole record with no precondition;
-      of two concurrent read-change-write updates of one user only the last survives. update_user_fields and
+    - Atomicity: create_user replaces the whole record with no precondition;
+      of two concurrent read-change-write rewrites of one user only the last survives. update_user_fields and
       unlink_platform_identity write only the named fields (and updated_at), so concurrent updates of other fields are kept.
       link_platform_identity checks the identity and writes in one atomic step.
     - Errors: backend errors propagate.
@@ -151,11 +151,6 @@ class UserRepository(ABC):
         """Write the profile under user_id (replaces any existing record)."""
         pass
     
-    @abstractmethod
-    async def update_user(self, user: UserProfile) -> UserProfile:
-        """Write the whole profile and set updated_at; see Atomicity."""
-        pass
-
     @abstractmethod
     async def update_user_fields(self, user: UserProfile, fields: Sequence[str]) -> UserProfile:
         """Write only `fields` of `user` (dotted paths into the profile, e.g. "config.preferred_language") and set

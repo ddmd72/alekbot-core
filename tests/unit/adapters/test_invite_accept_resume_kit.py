@@ -135,7 +135,7 @@ async def test_a_completed_code_re_presented_after_the_user_moved_on_is_refused_
     await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     user = await store.users.get_user("usr-new")
     user.account_id = "acc-usr-new"                                # moved on, e.g. by another team's invite
-    await store.users.update_user(user)
+    await store.users.create_user(user)
     before = (dict(store.docs[key()]), await members(store))
 
     with pytest.raises(ValueError, match="expired or already used"):

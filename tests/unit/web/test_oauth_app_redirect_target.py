@@ -5,7 +5,7 @@ from tests.unit.web.test_oauth_app_refusals import World, _set_cookies
 
 async def _sign_in(w: World, next_value: str | None = None, *, planted_cookie: str | None = None):
     await w.seed()
-    await w.users.update_user(UserProfile(user_id="user-a", account_id="account-a", external_user_id="google|sub-1"))
+    await w.users.create_user(UserProfile(user_id="user-a", account_id="account-a", external_user_id="google|sub-1"))
     login = await w.client.get("/auth/login/google" if next_value is None else f"/auth/login/google?next={next_value}")
     assert login.status_code == 302
     stored = {c.name: c.value for c in w.client.cookie_jar}

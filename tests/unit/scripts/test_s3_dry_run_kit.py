@@ -78,7 +78,7 @@ def memory_dir(tmp_path, monkeypatch):
 
 
 _LIVE_WRITES = frozenset({
-    "add_fact", "add_fact_if_unique", "write_superseding", "update_fact_fields", "stale_due_fact",
+    "add_fact", "write_superseding", "update_fact_fields", "stale_due_fact",
     "save_biographical_context_cache",
 })
 assert _LIVE_WRITES <= FactRepository.__abstractmethods__
@@ -241,7 +241,7 @@ async def test_invalidate_refuses_a_foreign_account_a_missing_id_and_a_page_olde
     assert [w["kind"] for w in repo.writes] == ["write_superseding"]
 
 
-async def test_stale_due_fact_and_add_fact_if_unique_write_the_overlay_only(store):
+async def test_stale_due_fact_writes_the_overlay_only(store):
     due_id = put_raw(store, "due-1", "walks daily", expires_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
                      expiry_kind="horizon", ttl_days=30)
     before = live_state(store)
@@ -250,12 +250,11 @@ async def test_stale_due_fact_and_add_fact_if_unique_write_the_overlay_only(stor
     now = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
     await repo.stale_due_fact(due, stale_fields(due, now))
-    stored, new_id = await repo.add_fact_if_unique((await repo.get_fact_by_id(due_id)).model_copy(update={"id": "extra"}))
 
-    assert live_state(store) == before and (stored, new_id) == (True, "extra")
+    assert live_state(store) == before
     fact = await repo.get_fact_by_id(due_id)
     assert fact.state is FactState.STALE and fact.stale_since == now
-    assert [w["kind"] for w in repo.writes] == ["stale_due_fact", "add_fact_if_unique"]
+    assert [w["kind"] for w in repo.writes] == ["stale_due_fact"]
     with pytest.raises(FactWriteConflict):
         await repo.stale_due_fact(due, stale_fields(due, now))
 

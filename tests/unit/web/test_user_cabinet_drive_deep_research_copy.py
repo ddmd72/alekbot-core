@@ -27,7 +27,6 @@ def _users(enabled=False, missing=False):
     repo = MagicMock()
     profile = SimpleNamespace(config=SimpleNamespace(drive_copy_deep_research=enabled))
     repo.get_user = AsyncMock(return_value=None if missing else profile)
-    repo.update_user = AsyncMock()
     repo.update_user_fields = AsyncMock()
     return repo, profile
 
@@ -75,14 +74,14 @@ class TestPut:
         assert resp.status_code == 200 and (await resp.get_json()) == {"enabled": enabled}
         assert profile.config.drive_copy_deep_research is enabled
         repo.update_user_fields.assert_awaited_once_with(profile, ("config.drive_copy_deep_research",))
-        repo.update_user.assert_not_called()
+        repo.create_user.assert_not_called()
 
     @pytest.mark.parametrize("body", [{}, {"enabled": "yes"}, {"enabled": 1}])
     async def test_bool_required(self, body):
         repo, _ = _users()
         async with _app(repo).test_client() as client:
             assert (await client.put(_URL, headers=_AUTH, json=body)).status_code == 400
-        repo.update_user.assert_not_called()
+        repo.create_user.assert_not_called()
         repo.update_user_fields.assert_not_called()
 
     async def test_unknown_user(self):

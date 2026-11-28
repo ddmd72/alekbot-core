@@ -28,7 +28,6 @@ from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..adapters.fact_management_adapter import FactManagementAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..domain.config_resolution import SystemConfig
-from ..domain.deduplication_service import SmartDeduplication
 from ..domain.drive_transcript_plan import effective_monthly_cap
 from ..services.configuration_service import ConfigurationService
 from ..services.biographical_context_service import BiographicalContextService
@@ -322,7 +321,6 @@ class ServiceContainer:
             db_client,
             env_config,
             embedding_service=self.embedding_service,
-            dedup_service=SmartDeduplication(),
         )
         # Rebuilds the biographical cache over the repository; every fact-write path takes it as its refresher.
         self.biographical_context_service = BiographicalContextService(

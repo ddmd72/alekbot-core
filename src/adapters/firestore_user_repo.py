@@ -46,8 +46,8 @@ class FirestoreUserRepository(UserRepository):
     Firestore implementation of UserRepository.
 
     Firestore mechanics (the port states the observable contract): collection `EnvironmentConfig.domain_users_collection`,
-    document id `user_id`, body `UserProfile.model_dump()` written with a plain `set` (no precondition) by create_user,
-    and update_user; unlink_platform_identity (the `platform_identities.<platform>` path, `DELETE_FIELD`) and
+    document id `user_id`, body `UserProfile.model_dump()` written with a plain `set` (no precondition) by create_user;
+    unlink_platform_identity (the `platform_identities.<platform>` path, `DELETE_FIELD`) and
     update_user_fields (the given dotted paths) are an `update` of those paths and `updated_at` (a missing document
     raises NotFound). Lookups are single-field equality queries with `limit(1)`
     (`platform_identities.<platform>` is a dotted path). link_platform_identity reads the user and queries the identity
@@ -243,11 +243,6 @@ class FirestoreUserRepository(UserRepository):
     async def create_user(self, user: UserProfile) -> UserProfile:
         await self.users_col.document(user.user_id).set(user.model_dump())
         logger.info(f"👤 Created new user: {user.user_id} ({user.display_name})")
-        return user
-
-    async def update_user(self, user: UserProfile) -> UserProfile:
-        user.updated_at = datetime.now(timezone.utc)
-        await self.users_col.document(user.user_id).set(user.model_dump())
         return user
 
     async def update_user_fields(self, user: UserProfile, fields: Sequence[str]) -> UserProfile:

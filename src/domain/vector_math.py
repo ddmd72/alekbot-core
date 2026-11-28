@@ -23,7 +23,6 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     Range: 0.0 to 1.0 (higher = more similar)
 
     This centralizes vector math to avoid duplication:
-    - WRITE path: firestore_repo.add_fact_if_unique()
     - READ path: search_enrichment_service._deduplicate_semantic()
 
     Args:
